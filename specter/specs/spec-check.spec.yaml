@@ -1,0 +1,151 @@
+spec:
+  id: spec-check
+  version: "1.0.0"
+  status: approved
+  tier: 1
+
+  context:
+    system: Specter toolchain
+    feature: Spec type checker
+    description: >
+      The core analysis tool. Walks the dependency graph produced by spec-resolve
+      and validates semantic consistency across specs. MVP focuses on deterministic,
+      structural checks. AI-assisted semantic checks are deferred to a later phase.
+    dependencies:
+      - "deep-diff (1.x) or custom tree differ"
+    related_specs:
+      - "spec-parse.spec.yaml"
+      - "spec-resolve.spec.yaml"
+    assumptions:
+      - "Input is a validated SpecGraph from spec-resolve"
+      - "Constraints with validation rules enable deterministic checking"
+      - "Free-text constraints are checked by AI in a later phase"
+
+  objective:
+    summary: >
+      Perform structural type-checking across the spec dependency graph.
+      Detect orphan constraints, structural conflicts between connected specs,
+      and breaking changes between spec versions.
+    scope:
+      includes:
+        - "Orphan constraint detection (constraints not referenced by any AC)"
+        - "Structural conflict detection between dependent specs"
+        - "Breaking change detection (compare current spec to previous version)"
+        - "Tier-aware severity (Tier 1 = error, Tier 3 = warning)"
+        - "Diagnostic output with spec ID, constraint ID, and explanation"
+      excludes:
+        - "Semantic conflict detection (AI-assisted, Phase 8)"
+        - "Gap detection (uncovered input paths, Phase 8)"
+        - "Cross-project analysis"
+        - "Auto-fixing or auto-resolution of conflicts"
+
+  constraints:
+    - id: C-01
+      description: "MUST detect all orphan constraints in every spec (constraints with no AC reference)"
+      type: technical
+      enforcement: error
+
+    - id: C-02
+      description: "MUST respect tier-based severity: Tier 1 orphans are errors, Tier 3 are info"
+      type: technical
+      enforcement: error
+
+    - id: C-03
+      description: "MUST detect structural conflicts where a downstream spec contradicts an upstream constraint"
+      type: technical
+      enforcement: error
+
+    - id: C-04
+      description: "MUST classify spec-version changes as breaking/additive/patch per SDD versioning rules"
+      type: technical
+      enforcement: error
+
+    - id: C-05
+      description: "MUST NOT produce false positives on valid specs (zero false positive rate for structural checks)"
+      type: technical
+      enforcement: error
+
+    - id: C-06
+      description: "MUST NOT depend on any CLI framework — pure function from SpecGraph to Diagnostic[]"
+      type: technical
+      enforcement: error
+
+  depends_on:
+    - spec_id: spec-parse
+      version_range: "^1.0.0"
+      relationship: requires
+    - spec_id: spec-resolve
+      version_range: "^1.0.0"
+      relationship: requires
+
+  acceptance_criteria:
+    - id: AC-01
+      description: "Spec with constraint C-03 not referenced by any AC produces OrphanConstraint diagnostic"
+      inputs:
+        spec: "spec with C-01 (ref by AC-01), C-02 (ref by AC-02), C-03 (not referenced)"
+      expected_output:
+        type: "Diagnostic"
+        kind: "orphan_constraint"
+        constraint_id: "C-03"
+      references_constraints: ["C-01"]
+      priority: critical
+
+    - id: AC-02
+      description: "Tier 1 orphan constraint is reported as error; Tier 3 as info"
+      inputs:
+        tier_1_spec: "tier 1, orphan C-03"
+        tier_3_spec: "tier 3, orphan C-03"
+      expected_output:
+        tier_1_severity: "error"
+        tier_3_severity: "info"
+      references_constraints: ["C-01", "C-02"]
+      priority: high
+
+    - id: AC-03
+      description: "Spec A requires field X (C-01: MUST), Spec B (depends on A) AC handles X being absent = structural conflict"
+      inputs:
+        spec_a: "constraint C-01: email MUST be required"
+        spec_b: "depends on A, AC-01 handles case where email is absent"
+      expected_output:
+        type: "Diagnostic"
+        kind: "structural_conflict"
+      references_constraints: ["C-03"]
+      priority: critical
+
+    - id: AC-04
+      description: "Removing a field between versions is classified as MAJOR (breaking)"
+      inputs:
+        v1: "spec with field 'legacy_token'"
+        v2: "spec without 'legacy_token'"
+      expected_output:
+        change_type: "breaking"
+        requires_major_bump: true
+      references_constraints: ["C-04"]
+      priority: high
+
+    - id: AC-05
+      description: "Adding an optional field between versions is classified as MINOR (additive)"
+      inputs:
+        v1: "spec without 'refresh_token'"
+        v2: "spec with optional 'refresh_token'"
+      expected_output:
+        change_type: "additive"
+        requires_minor_bump: true
+      references_constraints: ["C-04"]
+      priority: high
+
+    - id: AC-06
+      description: "Spec where all constraints are referenced by ACs produces zero orphan diagnostics"
+      inputs:
+        spec: "all constraints referenced"
+      expected_output:
+        orphan_count: 0
+      references_constraints: ["C-05"]
+      priority: critical
+
+  changelog:
+    - version: "1.0.0"
+      date: "2026-03-28"
+      author: "specter-team"
+      type: initial
+      description: "Initial spec for the Specter type checker (structural checks only)"

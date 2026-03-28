@@ -1,0 +1,190 @@
+spec:
+  id: spec-parse
+  version: "1.0.0"
+  status: approved
+  tier: 1
+
+  context:
+    system: Specter toolchain
+    feature: YAML-to-AST parser
+    description: >
+      The foundational tool in the Specter toolchain. Parses .spec.yaml files,
+      validates them against the canonical JSON Schema, and produces typed SpecAST
+      objects. Every other tool depends on spec-parse producing correct, validated output.
+    dependencies:
+      - "yaml (eemeli/yaml 2.x)"
+      - "ajv (8.x)"
+    assumptions:
+      - "Input files are UTF-8 encoded YAML"
+      - "The canonical JSON Schema is the source of truth for spec structure"
+
+  objective:
+    summary: >
+      Parse .spec.yaml files into validated, typed SpecAST objects.
+      Reject malformed specs with actionable error messages that include
+      line numbers and field paths.
+    scope:
+      includes:
+        - "YAML parsing with syntax error handling"
+        - "JSON Schema validation against the canonical spec-schema.json"
+        - "Typed AST construction from validated YAML"
+        - "Error reporting with line numbers and JSON field paths"
+        - "Batch parsing of multiple spec files"
+      excludes:
+        - "Dependency resolution (that is spec-resolve)"
+        - "Semantic validation across specs (that is spec-check)"
+        - "File discovery and glob patterns (that is the registry)"
+        - "YAML generation or spec authoring"
+
+  constraints:
+    - id: C-01
+      description: "MUST validate against the canonical JSON Schema (spec-schema.json)"
+      type: technical
+      enforcement: error
+
+    - id: C-02
+      description: "MUST report errors with the YAML line number and JSON path of the failing field"
+      type: technical
+      enforcement: error
+
+    - id: C-03
+      description: "MUST NOT silently ignore unknown fields (additionalProperties enforcement)"
+      type: technical
+      enforcement: error
+
+    - id: C-04
+      description: "MUST produce a typed SpecAST object on success, never raw YAML or untyped objects"
+      type: technical
+      enforcement: error
+
+    - id: C-05
+      description: "MUST handle YAML syntax errors gracefully (return structured error, not crash)"
+      type: technical
+      enforcement: error
+
+    - id: C-06
+      description: "SHOULD support YAML anchors and aliases (&anchor / *alias)"
+      type: technical
+      enforcement: warning
+
+    - id: C-07
+      description: "MUST collect all validation errors before returning (not fail-fast on first error)"
+      type: technical
+      enforcement: error
+
+    - id: C-08
+      description: "MUST NOT depend on any CLI framework or I/O — pure function from string/buffer to SpecAST|ParseError[]"
+      type: technical
+      enforcement: error
+
+  acceptance_criteria:
+    - id: AC-01
+      description: "Valid spec file is parsed into a SpecAST with all required fields populated"
+      inputs:
+        file: "fixtures/valid/simple.spec.yaml"
+      expected_output:
+        type: "SpecAST"
+        fields_present: ["id", "version", "status", "tier", "context", "objective", "constraints", "acceptance_criteria"]
+      references_constraints: ["C-01", "C-04"]
+      priority: critical
+
+    - id: AC-02
+      description: "Spec missing required field 'id' returns ParseError with field path 'spec.id'"
+      inputs:
+        file: "fixtures/invalid/missing-id.spec.yaml"
+      expected_output:
+        type: "ParseError"
+        error_path: "spec.id"
+        error_type: "required"
+      references_constraints: ["C-01", "C-02"]
+      priority: critical
+
+    - id: AC-03
+      description: "Spec with unknown field returns ParseError identifying the extra field"
+      inputs:
+        file: "fixtures/invalid/extra-field.spec.yaml"
+      expected_output:
+        type: "ParseError"
+        error_type: "additionalProperties"
+      references_constraints: ["C-03"]
+      priority: high
+
+    - id: AC-04
+      description: "Malformed YAML (bad indentation) returns ParseError with line number"
+      inputs:
+        file: "fixtures/invalid/bad-yaml.spec.yaml"
+      expected_output:
+        type: "ParseError"
+        has_line_number: true
+      references_constraints: ["C-02", "C-05"]
+      priority: critical
+
+    - id: AC-05
+      description: "Spec with invalid version format (e.g., 'v1.0' instead of '1.0.0') returns error"
+      inputs:
+        file: "fixtures/invalid/bad-version.spec.yaml"
+      expected_output:
+        type: "ParseError"
+        error_path: "spec.version"
+        error_type: "pattern"
+      references_constraints: ["C-01"]
+      priority: high
+
+    - id: AC-06
+      description: "Spec with all optional fields omitted parses successfully"
+      inputs:
+        file: "fixtures/valid/minimal.spec.yaml"
+      expected_output:
+        type: "SpecAST"
+        optional_fields_absent: ["depends_on", "trust_level", "environment", "tags", "changelog", "generated_from"]
+      references_constraints: ["C-01", "C-04"]
+      priority: high
+
+    - id: AC-07
+      description: "Spec using YAML anchors and aliases is parsed with anchors resolved"
+      inputs:
+        file: "fixtures/valid/with-anchors.spec.yaml"
+      expected_output:
+        type: "SpecAST"
+        anchors_resolved: true
+      references_constraints: ["C-06"]
+      priority: medium
+
+    - id: AC-08
+      description: "Spec with multiple errors returns all errors, not just the first"
+      inputs:
+        file: "fixtures/invalid/multiple-errors.spec.yaml"
+      expected_output:
+        type: "ParseError[]"
+        min_error_count: 2
+      references_constraints: ["C-02", "C-07"]
+      priority: high
+
+    - id: AC-09
+      description: "Invalid constraint ID format (e.g., 'c1' instead of 'C-01') returns error"
+      inputs:
+        file: "fixtures/invalid/bad-constraint-id.spec.yaml"
+      expected_output:
+        type: "ParseError"
+        error_path: "spec.constraints[0].id"
+        error_type: "pattern"
+      references_constraints: ["C-01"]
+      priority: medium
+
+    - id: AC-10
+      description: "Invalid AC ID format (e.g., 'ac1' instead of 'AC-01') returns error"
+      inputs:
+        file: "fixtures/invalid/bad-ac-id.spec.yaml"
+      expected_output:
+        type: "ParseError"
+        error_path: "spec.acceptance_criteria[0].id"
+        error_type: "pattern"
+      references_constraints: ["C-01"]
+      priority: medium
+
+  changelog:
+    - version: "1.0.0"
+      date: "2026-03-28"
+      author: "specter-team"
+      type: initial
+      description: "Initial spec for the Specter YAML parser"

@@ -1,0 +1,133 @@
+spec:
+  id: spec-coverage
+  version: "1.0.0"
+  status: approved
+  tier: 2
+
+  context:
+    system: Specter toolchain
+    feature: Spec-to-test traceability matrix
+    description: >
+      Measures how thoroughly specs are covered by tests. Scans test files for
+      @spec and @ac annotations and produces a coverage matrix showing which
+      ACs have tests and which are uncovered.
+    dependencies:
+      - "fast-glob (3.x)"
+    related_specs:
+      - "spec-parse.spec.yaml"
+    assumptions:
+      - "Test files use @spec and @ac annotations in comments or decorators"
+      - "Annotation format: // @spec <spec-id> and // @ac <AC-id>"
+
+  objective:
+    summary: >
+      Produce a traceability matrix mapping spec IDs to their acceptance criteria
+      to test files. Report coverage percentage per spec and identify uncovered ACs.
+    scope:
+      includes:
+        - "Scan test files for @spec and @ac annotations"
+        - "Map annotations to specs parsed by spec-parse"
+        - "Calculate coverage percentage per spec"
+        - "Identify uncovered ACs (in spec but no test references them)"
+        - "Identify specs with zero test coverage"
+        - "Tier-aware coverage thresholds (Tier 1: 100%, Tier 2: 80%, Tier 3: 50%)"
+      excludes:
+        - "Code file mapping (spec to source files)"
+        - "Automatic detection without explicit annotations"
+        - "Test execution or validation of test correctness"
+        - "Code coverage integration (Istanbul, coverage.py)"
+
+  constraints:
+    - id: C-01
+      description: "MUST recognize @spec annotations in single-line comments (// @spec <id> and # @spec <id>)"
+      type: technical
+      enforcement: error
+
+    - id: C-02
+      description: "MUST recognize @ac annotations in single-line comments (// @ac <AC-id> and # @ac <AC-id>)"
+      type: technical
+      enforcement: error
+
+    - id: C-03
+      description: "MUST report coverage as a percentage: (covered ACs / total ACs) * 100"
+      type: technical
+      enforcement: error
+
+    - id: C-04
+      description: "MUST flag specs below their tier threshold as failing"
+      type: business
+      enforcement: error
+
+    - id: C-05
+      description: "MUST NOT depend on any CLI framework — pure function from SpecAST[] + file paths to CoverageReport"
+      type: technical
+      enforcement: error
+
+  depends_on:
+    - spec_id: spec-parse
+      version_range: "^1.0.0"
+      relationship: requires
+
+  acceptance_criteria:
+    - id: AC-01
+      description: "Test file with @spec user-auth and @ac AC-01, AC-02 maps correctly"
+      inputs:
+        test_file: "user-auth.test.ts with // @spec user-auth and // @ac AC-01 and // @ac AC-02"
+        spec: "user-auth with AC-01, AC-02, AC-03"
+      expected_output:
+        spec_id: "user-auth"
+        covered_acs: ["AC-01", "AC-02"]
+        uncovered_acs: ["AC-03"]
+        coverage_pct: 66.7
+      references_constraints: ["C-01", "C-02", "C-03"]
+      priority: critical
+
+    - id: AC-02
+      description: "Spec with no matching test files reports 0% coverage"
+      inputs:
+        spec: "orphan-spec with AC-01, AC-02"
+        test_files: "none match"
+      expected_output:
+        coverage_pct: 0
+        status: "SPEC ONLY"
+      references_constraints: ["C-03"]
+      priority: high
+
+    - id: AC-03
+      description: "Tier 1 spec at 80% coverage is flagged as failing (threshold is 100%)"
+      inputs:
+        spec: "tier 1, 4 of 5 ACs covered"
+      expected_output:
+        coverage_pct: 80
+        passes_threshold: false
+        required_threshold: 100
+      references_constraints: ["C-04"]
+      priority: high
+
+    - id: AC-04
+      description: "Tier 3 spec at 60% coverage passes (threshold is 50%)"
+      inputs:
+        spec: "tier 3, 3 of 5 ACs covered"
+      expected_output:
+        coverage_pct: 60
+        passes_threshold: true
+        required_threshold: 50
+      references_constraints: ["C-04"]
+      priority: medium
+
+    - id: AC-05
+      description: "Python-style annotations (# @spec, # @ac) are recognized"
+      inputs:
+        test_file: "test_auth.py with # @spec user-auth and # @ac AC-01"
+      expected_output:
+        spec_id: "user-auth"
+        covered_acs: ["AC-01"]
+      references_constraints: ["C-01", "C-02"]
+      priority: medium
+
+  changelog:
+    - version: "1.0.0"
+      date: "2026-03-28"
+      author: "specter-team"
+      type: initial
+      description: "Initial spec for the Specter coverage tool"

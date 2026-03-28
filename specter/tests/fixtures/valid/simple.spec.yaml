@@ -1,0 +1,30 @@
+spec:
+  id: test-simple
+  version: "1.0.0"
+  status: approved
+  tier: 2
+
+  context:
+    system: Test system
+    feature: Simple feature
+    description: A simple spec for testing the parser
+
+  objective:
+    summary: Validate that the parser handles a well-formed spec with all required fields.
+    scope:
+      includes:
+        - Basic parsing
+      excludes:
+        - Complex features
+
+  constraints:
+    - id: C-01
+      description: "MUST parse correctly"
+      type: technical
+      enforcement: error
+
+  acceptance_criteria:
+    - id: AC-01
+      description: "Parser returns a valid SpecAST"
+      references_constraints: ["C-01"]
+      priority: critical

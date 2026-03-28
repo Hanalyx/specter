@@ -1,0 +1,177 @@
+spec:
+  id: spec-resolve
+  version: "1.0.0"
+  status: approved
+  tier: 1
+
+  context:
+    system: Specter toolchain
+    feature: Dependency graph builder
+    description: >
+      Builds a directed acyclic graph from the depends_on fields across all specs
+      in a project. Detects structural graph issues that would cause downstream
+      tools to produce incorrect results.
+    dependencies:
+      - "graphlib (2.x)"
+      - "semver (7.x)"
+    related_specs:
+      - "spec-parse.spec.yaml"
+    assumptions:
+      - "All input specs have been validated by spec-parse"
+      - "depends_on references use spec IDs, not file paths"
+
+  objective:
+    summary: >
+      Build a directed dependency graph from all .spec.yaml files in a project.
+      Detect and report circular dependencies, dangling references, and semver
+      version incompatibilities.
+    scope:
+      includes:
+        - "Discover all .spec.yaml files recursively from project root"
+        - "Parse each spec using spec-parse"
+        - "Build directed graph (nodes = specs, edges = depends_on)"
+        - "Detect circular dependencies"
+        - "Detect dangling references (depends_on non-existent spec)"
+        - "Detect semver range mismatches"
+        - "Output: SpecGraph + diagnostics list"
+      excludes:
+        - "Semantic conflict detection (that is spec-check)"
+        - "Transitive dependency flattening"
+        - "Lock file generation"
+        - "Graph visualization (future feature)"
+
+  constraints:
+    - id: C-01
+      description: "MUST discover .spec.yaml files recursively from the project root"
+      type: technical
+      enforcement: error
+
+    - id: C-02
+      description: "SHOULD respect .specterignore file if present (glob patterns, like .gitignore)"
+      type: technical
+      enforcement: warning
+
+    - id: C-03
+      description: "MUST detect ALL circular dependencies, not just the first one found"
+      type: technical
+      enforcement: error
+
+    - id: C-04
+      description: "MUST report the full cycle path for each circular dependency (e.g., A -> B -> C -> A)"
+      type: technical
+      enforcement: error
+
+    - id: C-05
+      description: "MUST detect dangling references where depends_on.spec_id does not match any discovered spec"
+      type: technical
+      enforcement: error
+
+    - id: C-06
+      description: "MUST validate semver ranges in depends_on.version_range against actual spec versions"
+      type: technical
+      enforcement: error
+
+    - id: C-07
+      description: "MUST produce a typed SpecGraph object with nodes, edges, and topological ordering"
+      type: technical
+      enforcement: error
+
+    - id: C-08
+      description: "MUST NOT depend on any CLI framework — pure function from SpecAST[] to SpecGraph|Diagnostic[]"
+      type: technical
+      enforcement: error
+
+  depends_on:
+    - spec_id: spec-parse
+      version_range: "^1.0.0"
+      relationship: requires
+
+  acceptance_criteria:
+    - id: AC-01
+      description: "Three specs with valid linear dependencies produce a correct graph"
+      inputs:
+        specs: ["a.spec.yaml (depends on b)", "b.spec.yaml (depends on c)", "c.spec.yaml (no deps)"]
+      expected_output:
+        type: "SpecGraph"
+        node_count: 3
+        edge_count: 2
+        topological_order: ["c", "b", "a"]
+      references_constraints: ["C-01", "C-07"]
+      priority: critical
+
+    - id: AC-02
+      description: "Two specs in a cycle produce a CircularDependency diagnostic"
+      inputs:
+        specs: ["a.spec.yaml (depends on b)", "b.spec.yaml (depends on a)"]
+      expected_output:
+        type: "Diagnostic"
+        kind: "circular_dependency"
+        cycle_path: ["a", "b", "a"]
+      references_constraints: ["C-03", "C-04"]
+      priority: critical
+
+    - id: AC-03
+      description: "Spec depending on non-existent ID produces DanglingReference diagnostic"
+      inputs:
+        specs: ["a.spec.yaml (depends on nonexistent)"]
+      expected_output:
+        type: "Diagnostic"
+        kind: "dangling_reference"
+        spec_id: "a"
+        missing_dep: "nonexistent"
+      references_constraints: ["C-05"]
+      priority: critical
+
+    - id: AC-04
+      description: "Spec depending on B@^1.0.0 when B is at 2.0.0 produces VersionMismatch diagnostic"
+      inputs:
+        specs: ["a.spec.yaml (depends on b@^1.0.0)", "b.spec.yaml (version 2.0.0)"]
+      expected_output:
+        type: "Diagnostic"
+        kind: "version_mismatch"
+        spec_id: "a"
+        dependency: "b"
+        required: "^1.0.0"
+        actual: "2.0.0"
+      references_constraints: ["C-06"]
+      priority: high
+
+    - id: AC-05
+      description: "Specs with no depends_on fields produce a graph with no edges"
+      inputs:
+        specs: ["a.spec.yaml (no deps)", "b.spec.yaml (no deps)"]
+      expected_output:
+        type: "SpecGraph"
+        node_count: 2
+        edge_count: 0
+      references_constraints: ["C-07"]
+      priority: medium
+
+    - id: AC-06
+      description: "Three-node cycle (A->B->C->A) is detected with full path"
+      inputs:
+        specs: ["a.spec.yaml (depends on b)", "b.spec.yaml (depends on c)", "c.spec.yaml (depends on a)"]
+      expected_output:
+        type: "Diagnostic"
+        kind: "circular_dependency"
+        cycle_includes: ["a", "b", "c"]
+      references_constraints: ["C-03", "C-04"]
+      priority: high
+
+    - id: AC-07
+      description: "Two duplicate spec IDs produce DuplicateId diagnostic"
+      inputs:
+        specs: ["file1.spec.yaml (id: user-auth)", "file2.spec.yaml (id: user-auth)"]
+      expected_output:
+        type: "Diagnostic"
+        kind: "duplicate_id"
+        duplicate_id: "user-auth"
+      references_constraints: ["C-07"]
+      priority: high
+
+  changelog:
+    - version: "1.0.0"
+      date: "2026-03-28"
+      author: "specter-team"
+      type: initial
+      description: "Initial spec for the Specter dependency graph builder"
