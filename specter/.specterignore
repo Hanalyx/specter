@@ -1,0 +1,8 @@
+# Ignore test fixtures — these are for specter's own tests, not real specs
+tests/fixtures/
+
+# Ignore build output
+dist/
+
+# Ignore dependencies
+node_modules/

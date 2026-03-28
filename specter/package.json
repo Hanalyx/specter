@@ -8,12 +8,14 @@
     "specter": "dist/index.js"
   },
   "scripts": {
-    "build": "tsup src/index.ts --format esm --dts --clean",
+    "build": "tsup src/index.ts --format esm --dts --clean --tsconfig tsconfig.build.json",
     "dev": "tsup src/index.ts --format esm --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src/ tests/",
+    "format": "prettier --write 'src/**/*.ts' 'tests/**/*.ts'",
+    "format:check": "prettier --check 'src/**/*.ts' 'tests/**/*.ts'",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm run lint && npm run test"
   },
@@ -30,25 +32,29 @@
   "author": "Specter Team",
   "license": "MIT",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=24.0.0"
   },
   "dependencies": {
     "ajv": "^8.17.0",
     "ajv-formats": "^3.0.0",
     "chalk": "^5.4.0",
     "cli-table3": "^0.6.5",
-    "commander": "^13.1.0",
+    "commander": "^14.0.0",
     "fast-glob": "^3.3.0",
-    "graphlib": "^2.1.8",
+    "@dagrejs/graphlib": "^4.0.0",
     "semver": "^7.7.0",
     "yaml": "^2.7.0"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "@eslint/js": "^10.0.0",
+    "@types/node": "^24.0.0",
     "@types/semver": "^7.5.0",
-    "eslint": "^9.0.0",
+    "@vitest/coverage-v8": "^4.0.0",
+    "eslint": "^10.0.0",
+    "prettier": "^3.5.0",
     "tsup": "^8.4.0",
-    "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.32.0",
+    "vitest": "^4.0.0"
   }
 }

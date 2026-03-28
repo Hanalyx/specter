@@ -12,7 +12,7 @@ spec:
       in a project. Detects structural graph issues that would cause downstream
       tools to produce incorrect results.
     dependencies:
-      - "graphlib (2.x)"
+      - "@dagrejs/graphlib (4.x)"
       - "semver (7.x)"
     related_specs:
       - "spec-parse.spec.yaml"

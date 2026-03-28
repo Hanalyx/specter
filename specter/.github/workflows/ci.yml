@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths: ['specter/**']
+  pull_request:
+    branches: [main]
+    paths: ['specter/**']
+
+defaults:
+  run:
+    working-directory: specter
+
+jobs:
+  check:
+    name: Typecheck, Lint, Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: specter/.nvmrc
+          cache: npm
+          cache-dependency-path: specter/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Test
+        run: npm test
+
+      - name: Test coverage
+        run: npm run test:coverage

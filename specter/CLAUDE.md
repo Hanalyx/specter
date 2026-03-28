@@ -32,9 +32,9 @@ specter/
 
 ## Tech Stack
 
-- TypeScript on Node.js 20+
+- TypeScript on Node.js 24+
 - pnpm, tsup, Vitest, Commander.js
-- Ajv (JSON Schema), graphlib (dependency graph), semver, yaml (eemeli)
+- Ajv (JSON Schema), @dagrejs/graphlib (dependency graph), semver, yaml (eemeli)
 
 ## Key Schema
 
