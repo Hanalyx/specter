@@ -20,11 +20,17 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Test
-coverage/
+# Test coverage output (vitest --coverage)
+/coverage/
 
 # pnpm
 .pnpm-debug.log
+
+# Claude Code instructions (local, not shipped)
+CLAUDE.md
+
+# Research (internal, not shipped)
+research/
 
 # Misc
 *.tgz

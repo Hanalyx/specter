@@ -122,7 +122,7 @@ spec:
       expected_output:
         spec_id: "user-auth"
         covered_acs: ["AC-01"]
-      references_constraints: ["C-01", "C-02"]
+      references_constraints: ["C-01", "C-02", "C-05"]
       priority: medium
 
   changelog:

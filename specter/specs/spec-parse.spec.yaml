@@ -85,7 +85,7 @@ spec:
       expected_output:
         type: "SpecAST"
         fields_present: ["id", "version", "status", "tier", "context", "objective", "constraints", "acceptance_criteria"]
-      references_constraints: ["C-01", "C-04"]
+      references_constraints: ["C-01", "C-04", "C-08"]
       priority: critical
 
     - id: AC-02

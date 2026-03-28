@@ -1,118 +1,190 @@
-# Mastering Spec-Driven Development (SDD)
+# Specter
 
-> *"If the AI fails to build it correctly, the fault lies in the Spec, not the Code."*
-
-A comprehensive course that teaches developers how to stop writing code via loose prompts and start **architecting systems via structured specifications**. By the end, you'll think like a Product Architect — writing specs that any AI model can execute faithfully.
-
-## Why This Course Exists
-
-The AI coding landscape has evolved through three distinct eras:
-
-1. **Vibe Coding (2022-2024)** — "Build me a login page" and hoping for the best
-2. **Structured Prompting (2024-2025)** — Better prompts, but still too ambiguous for complex systems
-3. **Spec-Driven Development (2025-Present)** — Formal specifications as contracts between human intent and AI execution
-
-Most developers are still stuck in eras 1 or 2. This course takes you to era 3.
-
-## What You'll Learn
-
-- Write **micro-specs** with Context, Objective, and Constraints that eliminate ambiguity
-- Design **schemas, component contracts, and API blueprints** before any code is written
-- Build **validation pipelines** where tests are generated from specs before implementation
-- Orchestrate **multi-agent workflows** (Architect, Builder, Critic) for complex feature builds
-- Manage **spec evolution** as requirements change without breaking existing systems
-- Master the **human-in-the-loop** — knowing exactly where AI deviates and how to prevent it
-
-## Course Structure
-
-| Module | Level | Chapters | What You'll Master |
-|--------|-------|:--------:|---------------------|
-| [**01 — Foundations**](sddbook/MODULE_01/) | Beginner | 4 | The contract mindset, SSOT, micro-spec anatomy |
-| [**02 — Architecture**](sddbook/MODULE_02/) | Intermediate | 4 | Schema-first design, component contracts, API blueprints, state specs |
-| [**03 — Validation**](sddbook/MODULE_03/) | Intermediate | 3 | TDD for AI, intent drift linting, context window strategy |
-| [**04 — Orchestration**](sddbook/MODULE_04/) | Advanced | 3 | Multi-agent workflows, evolutionary specs, environment-aware specs |
-| [**05 — Maintenance**](sddbook/MODULE_05/) | Advanced | 3 | Refactor specs, documentation as code, human-in-the-loop |
-
-**17 chapters | 28,000+ lines of lecture content | Beginner to Advanced**
-
-See the full [Table of Contents](sddbook/INDEX.md) for a detailed breakdown of every section.
-
-## Where to Start
-
-**Complete beginner?** Start at [Module 01, Chapter 1: From Prose to Protocol](sddbook/MODULE_01/CHAPTER_01.md) and work sequentially.
-
-**Experienced developer new to AI-assisted coding?** Read Module 01 Chapters 1-2 for the philosophy, then jump to [Module 02](sddbook/MODULE_02/) for hands-on architecture patterns.
-
-**Already using AI coding tools (Cursor, Claude Code, Copilot)?** Skim Module 01, then focus on [Module 03 (Validation)](sddbook/MODULE_03/) and [Module 04 (Orchestration)](sddbook/MODULE_04/).
-
-**Team lead or architect?** Go straight to [SSOT](sddbook/MODULE_01/CHAPTER_02.md), [Multi-Agent Workflows](sddbook/MODULE_04/CHAPTER_01.md), and [Human-in-the-Loop](sddbook/MODULE_05/CHAPTER_03.md).
-
-## What's Inside Each Chapter
-
-Every chapter is written as a **full lecture** from a patient, knowledgeable professor and includes:
-
-- Real-world examples grounded in how **Anthropic, Google, OpenAI, Meta, Microsoft, Stripe**, and other industry leaders approach these problems
-- Production-grade **TypeScript, Python, YAML, and JSON** code examples (not pseudocode)
-- **Professor's Aside** callouts with hard-won wisdom and industry context
-- **Practical exercises** with evaluation rubrics
-- **Anti-patterns** — what NOT to do, and why
-
-## Key Concepts at a Glance
-
-| Concept | What It Means |
-|---------|---------------|
-| **Micro-Spec** | A structured specification with three pillars: Context, Objective, Constraints |
-| **SSOT** | Single Source of Truth — the spec is authoritative; code is derived from it |
-| **Intent Drift** | When AI output gradually deviates from the original specification |
-| **Approval Gate** | A human checkpoint where AI work is validated before proceeding |
-| **Spec Coverage** | How much of a specification has corresponding test cases |
-| **Architect/Builder/Critic** | Three-agent pattern for AI-assisted development at scale |
-
-## The SDD Toolkit
-
-The course references and teaches patterns using:
-
-- **Markdown/MDX** — Human-readable, AI-parseable specification format
-- **TypeScript (Zod) / Python (Pydantic)** — Runtime type validation for specs
-- **OpenAPI/Swagger** — API specification standard
-- **JSON Schema** — Universal data shape language
-- **ESLint custom rules** — Automated spec compliance enforcement
-- **Mermaid.js** — Text-based diagrams for logic flows within specs
-- **IDE configurations** — `.cursorrules`, `CLAUDE.md`, `.github/copilot-instructions.md`
-
-## Repository Layout
+**A type system for specs.** Validates, links, and type-checks `.spec.yaml` files the way `tsc` validates `.ts` files.
 
 ```
-spec-dd/
-├── README.md                  # You are here
-├── CLAUDE.md                  # AI assistant guidance for this repo
-├── spec-dd_learning.md        # Original course syllabus
-└── sddbook/
-    ├── INDEX.md               # Full table of contents
-    ├── MODULE_01/             # Foundations (Beginner)
-    │   ├── CHAPTER_01.md      # From Prose to Protocol
-    │   ├── CHAPTER_02.md      # The Single Source of Truth
-    │   ├── CHAPTER_03.md      # Anatomy of a Micro-Spec
-    │   └── CHAPTER_04.md      # Practice: From Vibe to Spec
-    ├── MODULE_02/             # Architecture (Intermediate)
-    │   ├── CHAPTER_01.md      # Schema-First Design
-    │   ├── CHAPTER_02.md      # The Component Contract
-    │   ├── CHAPTER_03.md      # API Blueprinting
-    │   └── CHAPTER_04.md      # State Management Specs
-    ├── MODULE_03/             # Validation (Intermediate)
-    │   ├── CHAPTER_01.md      # Spec-to-Test Mapping
-    │   ├── CHAPTER_02.md      # Automated Linting of Intent
-    │   └── CHAPTER_03.md      # The Context Window Strategy
-    ├── MODULE_04/             # Orchestration (Advanced)
-    │   ├── CHAPTER_01.md      # The Multi-Agent Workflow
-    │   ├── CHAPTER_02.md      # Evolutionary Specs
-    │   └── CHAPTER_03.md      # Environment-Aware Specs
-    └── MODULE_05/             # Maintenance (Advanced)
-        ├── CHAPTER_01.md      # The Refactor Spec
-        ├── CHAPTER_02.md      # Documentation as Code
-        └── CHAPTER_03.md      # The Human-in-the-Loop (Capstone)
+$ specter sync
+
+Specter Sync
+
+  PASS parse: 5 spec(s) parsed successfully
+  PASS resolve: 5 specs, 8 dependencies resolved
+  PASS check: 0 warning(s), 0 info
+  PASS coverage: 5 spec(s) meet coverage thresholds
+
+All checks passed.
 ```
+
+## The Problem
+
+AI coding tools generate code from specifications. But nobody validates the specifications themselves. Specs are untyped YAML documents -- they can contradict each other, have orphaned constraints with no test coverage, reference dependencies that don't exist, and silently rot as code evolves.
+
+**Specter treats specs as typed artifacts in a dependency graph, subject to static analysis.** It catches spec errors before code is ever generated.
+
+## What Specter Does
+
+| Command | What It Catches |
+|---------|-----------------|
+| `specter parse` | Malformed specs, missing fields, invalid IDs, wrong types -- like a compiler catching syntax errors |
+| `specter resolve` | Circular dependencies, dangling references, version mismatches -- like a linker catching undefined symbols |
+| `specter check` | Orphan constraints (no AC references them), structural conflicts between specs -- like a type checker catching errors |
+| `specter coverage` | Specs without tests, ACs without coverage, below-threshold modules -- like code coverage but for specifications |
+| `specter sync` | Runs the full pipeline in CI. Blocks the merge if specs are broken. |
+
+## Quick Start
+
+```bash
+# Install
+git clone https://github.com/Hanalyx/specter.git
+cd specter/specter
+npm install && npm run build
+
+# Validate your specs
+node dist/index.js parse specs/*.spec.yaml
+
+# Run the full pipeline
+node dist/index.js sync
+```
+
+See the [Getting Started guide](specter/docs/GETTING_STARTED.md) for a complete walkthrough.
+
+## Write Your First Spec
+
+```yaml
+spec:
+  id: user-registration
+  version: "1.0.0"
+  status: approved
+  tier: 1
+
+  context:
+    system: Auth service
+    description: Handles new user account creation
+
+  objective:
+    summary: >
+      Register a new user with email and password.
+      Return a JWT token on success.
+
+  constraints:
+    - id: C-01
+      description: "email MUST be a valid RFC 5322 address"
+      type: technical
+      enforcement: error
+    - id: C-02
+      description: "password MUST be at least 8 characters"
+      type: security
+      enforcement: error
+
+  acceptance_criteria:
+    - id: AC-01
+      description: "Returns 201 with JWT when registration succeeds"
+      references_constraints: ["C-01", "C-02"]
+    - id: AC-02
+      description: "Returns 400 when email is invalid"
+      references_constraints: ["C-01"]
+    - id: AC-03
+      description: "Returns 400 when password is too short"
+      references_constraints: ["C-02"]
+    - id: AC-04
+      description: "Returns 409 when email already registered"
+      references_constraints: ["C-01"]
+```
+
+Then validate it:
+
+```bash
+specter parse user-registration.spec.yaml
+# PASS user-registration.spec.yaml -- user-registration@1.0.0
+```
+
+## How It Works
+
+Specter implements the **Spec-Driven Development (SDD)** methodology as infrastructure:
+
+```
+.spec.yaml files
+      |
+  [spec-parse]     Validate YAML against canonical JSON Schema
+      |
+  [spec-resolve]   Build dependency graph, detect cycles and broken refs
+      |
+  [spec-check]     Find orphan constraints, structural conflicts, breaking changes
+      |
+  [spec-coverage]  Map specs to tests, enforce tier-based coverage thresholds
+      |
+  [spec-sync]      Gate CI on all of the above
+```
+
+The core insight: **specs should work like a type system.** Constraints are type definitions. ACs are function signatures. `depends_on` is an import statement. An orphaned constraint is an unused variable. A missing AC is a missing null check.
+
+## The Spec Type System Analogy
+
+| Programming Concept | Spec Equivalent |
+|---|---|
+| Type definition | Constraint -- defines what's allowed |
+| Function signature | AC -- defines input to output |
+| Import statement | `depends_on` -- creates a contract between specs |
+| Type error | Spec conflict -- caught before tests run |
+| Unused variable | Orphan constraint -- no AC references it |
+| Missing null check | Spec gap -- a path with no AC coverage |
+
+## Tier-Based Enforcement
+
+Not all specs need the same rigor:
+
+| Tier | Risk Level | Examples | Coverage Target |
+|------|-----------|---------|-----------------|
+| **1** | Security / Money | Auth, payments, encryption | 100% |
+| **2** | Business Logic | Booking flow, pricing | 80% |
+| **3** | Utility | Helpers, formatters | 50% |
+
+Specter adjusts enforcement severity per tier. A Tier 1 orphan constraint is an error. A Tier 3 orphan is informational.
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Getting Started](specter/docs/GETTING_STARTED.md) | Write and validate your first spec in 5 minutes |
+| [Spec Schema Reference](specter/docs/SPEC_SCHEMA_REFERENCE.md) | Every field in the `.spec.yaml` format |
+| [CLI Reference](specter/docs/CLI_REFERENCE.md) | All commands, options, and exit codes |
+| [FAQ](specter/docs/FAQ.md) | Common questions about SDD and Specter |
+| [MVP Value Proposition](specter/docs/MVP_VALUE_PROPOSITION.md) | What you get today, what's coming next |
+
+## Background: Spec-Driven Development
+
+Specter is the tooling implementation of the SDD methodology taught in [Mastering Spec-Driven Development](sddbook/README.md) -- a 17-chapter course covering the full lifecycle from writing specs to multi-agent orchestration.
+
+## Dogfooding
+
+Specter validates its own specs. The tool has 5 specs with 33 acceptance criteria, 41 tests, and 100% spec coverage across all tiers. Every feature was specified before it was implemented.
+
+```
+$ specter coverage
+
+Spec ID                 Tier  ACs     Covered  Coverage  Status
+-----------------------------------------------------------------
+spec-check              T1    6       6        100%      PASS
+spec-coverage           T2    5       5        100%      PASS
+spec-parse              T1    10      10       100%      PASS
+spec-resolve            T1    7       7        100%      PASS
+spec-sync               T2    5       5        100%      PASS
+
+5 specs: 5 passing, 0 failing
+```
+
+## Tech Stack
+
+- TypeScript on Node.js 24+
+- Ajv (JSON Schema validation, draft 2020-12)
+- @dagrejs/graphlib (dependency graph)
+- Commander.js (CLI)
+- Vitest (testing)
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
-All course materials are the intellectual property of the author. All rights reserved.
+MIT

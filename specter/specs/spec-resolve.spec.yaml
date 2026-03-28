@@ -96,7 +96,7 @@ spec:
         node_count: 3
         edge_count: 2
         topological_order: ["c", "b", "a"]
-      references_constraints: ["C-01", "C-07"]
+      references_constraints: ["C-01", "C-02", "C-07", "C-08"]
       priority: critical
 
     - id: AC-02

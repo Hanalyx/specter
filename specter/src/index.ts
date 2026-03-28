@@ -3,6 +3,9 @@
 import { Command } from 'commander';
 import { runParse } from './cli/commands/parse.js';
 import { runResolve } from './cli/commands/resolve.js';
+import { runCheck } from './cli/commands/check.js';
+import { runCoverage } from './cli/commands/coverage.js';
+import { runSyncCommand } from './cli/commands/sync.js';
 
 const program = new Command();
 
@@ -34,9 +37,8 @@ program
   .description('Run type-checking rules across the spec graph')
   .option('--json', 'output results as JSON')
   .option('--tier <tier>', 'override tier enforcement level', parseInt)
-  .action((_options: { json?: boolean; tier?: number }) => {
-    // TODO: Implement per specs/spec-check.spec.yaml
-    console.log('specter check — not yet implemented');
+  .action((options: { json?: boolean; tier?: number }) => {
+    runCheck(options);
   });
 
 program
@@ -44,9 +46,17 @@ program
   .description('Generate spec-to-test traceability matrix')
   .option('--json', 'output results as JSON')
   .option('--tests <glob>', 'glob pattern for test files', '**/*.test.{ts,js,py}')
-  .action((_options: { json?: boolean; tests?: string }) => {
-    // TODO: Implement per specs/spec-coverage.spec.yaml
-    console.log('specter coverage — not yet implemented');
+  .action((options: { json?: boolean; tests?: string }) => {
+    runCoverage(options);
+  });
+
+program
+  .command('sync')
+  .description('Run full validation pipeline (parse + resolve + check + coverage)')
+  .option('--json', 'output results as JSON')
+  .option('--tests <glob>', 'glob pattern for test files', '**/*.test.{ts,js,py}')
+  .action((options: { json?: boolean; tests?: string }) => {
+    runSyncCommand(options);
   });
 
 program

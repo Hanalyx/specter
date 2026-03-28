@@ -140,7 +140,7 @@ spec:
         spec: "all constraints referenced"
       expected_output:
         orphan_count: 0
-      references_constraints: ["C-05"]
+      references_constraints: ["C-05", "C-06"]
       priority: critical
 
   changelog:
