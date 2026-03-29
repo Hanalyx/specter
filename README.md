@@ -34,16 +34,16 @@ AI coding tools generate code from specifications. But nobody validates the spec
 ## Quick Start
 
 ```bash
-# Install
+# Build from source (produces a single binary, zero runtime dependencies)
 git clone https://github.com/Hanalyx/specter.git
 cd specter/specter
-npm install && npm run build
+make build
 
 # Validate your specs
-node dist/index.js parse specs/*.spec.yaml
+bin/specter parse specs/*.spec.yaml
 
 # Run the full pipeline
-node dist/index.js sync
+bin/specter sync
 ```
 
 See the [Getting Started guide](specter/docs/GETTING_STARTED.md) for a complete walkthrough.
@@ -149,7 +149,6 @@ Specter adjusts enforcement severity per tier. A Tier 1 orphan constraint is an 
 | [Spec Schema Reference](specter/docs/SPEC_SCHEMA_REFERENCE.md) | Every field in the `.spec.yaml` format |
 | [CLI Reference](specter/docs/CLI_REFERENCE.md) | All commands, options, and exit codes |
 | [FAQ](specter/docs/FAQ.md) | Common questions about SDD and Specter |
-| [MVP Value Proposition](specter/docs/MVP_VALUE_PROPOSITION.md) | What you get today, what's coming next |
 
 ## Background: Spec-Driven Development
 
@@ -157,7 +156,7 @@ Specter is the tooling implementation of the SDD methodology taught in [Masterin
 
 ## Dogfooding
 
-Specter validates its own specs. The tool has 5 specs with 33 acceptance criteria, 41 tests, and 100% spec coverage across all tiers. Every feature was specified before it was implemented.
+Specter validates its own specs. The tool has 5 specs with 33 acceptance criteria, 37 tests, and passes its own structural checks. Every feature was specified before it was implemented.
 
 ```
 $ specter coverage
@@ -175,11 +174,11 @@ spec-sync               T2    5       5        100%      PASS
 
 ## Tech Stack
 
-- TypeScript on Node.js 24+
-- Ajv (JSON Schema validation, draft 2020-12)
-- @dagrejs/graphlib (dependency graph)
-- Commander.js (CLI)
-- Vitest (testing)
+- Go (single binary, zero runtime dependencies, cross-compiles to all platforms)
+- santhosh-tekuri/jsonschema v6 (JSON Schema validation, draft 2020-12)
+- Masterminds/semver v3 (dependency version matching)
+- Cobra (CLI)
+- gopkg.in/yaml.v3 (YAML parsing)
 
 ## Contributing
 
