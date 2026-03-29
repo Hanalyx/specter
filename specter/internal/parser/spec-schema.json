@@ -1,0 +1,375 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://specter.dev/schemas/spec/v1.0.0",
+  "title": "SDD Micro-Spec",
+  "description": "Canonical schema for Spec-Driven Development .spec.yaml files. This is the type definition for the type system.",
+  "type": "object",
+  "required": ["spec"],
+  "additionalProperties": false,
+  "properties": {
+    "spec": {
+      "type": "object",
+      "required": ["id", "version", "status", "tier", "context", "objective", "constraints", "acceptance_criteria"],
+      "additionalProperties": false,
+      "properties": {
+
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "description": "Unique identifier. Lowercase, alphanumeric, hyphens only. Used in depends_on references and test annotations.",
+          "examples": ["user-registration", "payment-create-intent", "auth-jwt-validation"]
+        },
+
+        "version": {
+          "type": "string",
+          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(-[a-zA-Z0-9.]+)?$",
+          "description": "Semantic version (MAJOR.MINOR.PATCH with optional pre-release tag).",
+          "examples": ["1.0.0", "2.1.0", "1.0.0-draft"]
+        },
+
+        "status": {
+          "type": "string",
+          "enum": ["draft", "review", "approved", "deprecated", "removed"],
+          "description": "Lifecycle status. Only 'approved' specs are enforced by spec-sync."
+        },
+
+        "tier": {
+          "type": "integer",
+          "enum": [1, 2, 3],
+          "description": "Risk tier. 1 = Security/Money (strictest). 2 = Core Business Logic. 3 = Utility/Internal."
+        },
+
+        "context": {
+          "type": "object",
+          "required": ["system"],
+          "additionalProperties": true,
+          "properties": {
+            "system": {
+              "type": "string",
+              "description": "What system or service does this spec belong to?"
+            },
+            "feature": {
+              "type": "string",
+              "description": "What feature area within the system?"
+            },
+            "description": {
+              "type": "string",
+              "description": "Plain-language overview of why this spec exists."
+            },
+            "dependencies": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "External dependencies (libraries, services, APIs)."
+            },
+            "existing_patterns": {
+              "type": "string",
+              "description": "Relevant coding patterns, conventions, or architectural decisions."
+            },
+            "related_specs": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Other spec files that interact with this one."
+            },
+            "assumptions": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Things taken as given. If wrong, spec needs revision."
+            }
+          }
+        },
+
+        "objective": {
+          "type": "object",
+          "required": ["summary"],
+          "additionalProperties": false,
+          "properties": {
+            "summary": {
+              "type": "string",
+              "description": "1-3 sentence description. Uses the Delta Principle: describes the change, not the state."
+            },
+            "scope": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "includes": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Explicit list of what is in scope."
+                },
+                "excludes": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Explicit list of what is out of scope. Prevents AI scope creep."
+                }
+              }
+            }
+          }
+        },
+
+        "constraints": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/constraint" },
+          "description": "Inviolable rules. Each is a hard boundary on the solution space."
+        },
+
+        "acceptance_criteria": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/acceptance_criterion" },
+          "description": "Testable conditions that define 'done'. Each AC maps to at least one test."
+        },
+
+        "depends_on": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/dependency_ref" },
+          "description": "Other specs this depends on. Creates edges in the dependency graph."
+        },
+
+        "trust_level": {
+          "type": "string",
+          "enum": ["full_auto", "auto_with_review", "human_required"],
+          "description": "AI autonomy level. Maps to MODULE_05 CH03 trust spectrum."
+        },
+
+        "environment": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "required_vars": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Environment variables this implementation requires."
+            },
+            "deployment_targets": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Where this deploys (production, staging, edge)."
+            }
+          }
+        },
+
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Free-form tags for categorization and filtering."
+        },
+
+        "changelog": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/changelog_entry" },
+          "description": "Version history. Most recent entry first."
+        },
+
+        "generated_from": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "source_file": {
+              "type": "string",
+              "description": "Path to the source code this spec was reverse-compiled from."
+            },
+            "test_files": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Paths to associated test files."
+            },
+            "extraction_date": {
+              "type": "string",
+              "format": "date",
+              "description": "When the reverse compilation occurred."
+            }
+          },
+          "description": "Present only on reverse-compiled specs. Tracks provenance."
+        }
+      }
+    }
+  },
+
+  "$defs": {
+
+    "constraint": {
+      "type": "object",
+      "required": ["id", "description"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^C-\\d{2,}$",
+          "description": "Constraint ID. Format: C-01, C-02, etc.",
+          "examples": ["C-01", "C-02", "C-10"]
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable constraint. Should use RFC 2119 language (MUST, MUST NOT, SHOULD, MAY)."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["technical", "security", "performance", "accessibility", "business"],
+          "description": "Category of constraint."
+        },
+        "enforcement": {
+          "type": "string",
+          "enum": ["error", "warning", "info"],
+          "default": "error",
+          "description": "Severity when violated."
+        },
+        "validation": {
+          "$ref": "#/$defs/constraint_validation",
+          "description": "Optional machine-readable validation rule. Enables deterministic checking by spec-check."
+        }
+      }
+    },
+
+    "constraint_validation": {
+      "type": "object",
+      "required": ["field", "rule", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "field": {
+          "type": "string",
+          "description": "The field this validation applies to."
+        },
+        "rule": {
+          "type": "string",
+          "enum": ["type", "min", "max", "pattern", "enum", "required", "format", "custom"],
+          "description": "The type of validation rule."
+        },
+        "value": {
+          "description": "The value for the rule. Type depends on the rule type.",
+          "oneOf": [
+            { "type": "string" },
+            { "type": "number" },
+            { "type": "boolean" },
+            { "type": "array", "items": { "type": "string" } }
+          ]
+        }
+      }
+    },
+
+    "acceptance_criterion": {
+      "type": "object",
+      "required": ["id", "description"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^AC-\\d{2,}$",
+          "description": "Acceptance criterion ID. Format: AC-01, AC-02, etc.",
+          "examples": ["AC-01", "AC-02", "AC-10"]
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of the expected behavior."
+        },
+        "inputs": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Input values or conditions that trigger this behavior."
+        },
+        "expected_output": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "What should happen when the inputs are provided."
+        },
+        "error_cases": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["condition", "expected_behavior"],
+            "additionalProperties": false,
+            "properties": {
+              "condition": { "type": "string" },
+              "expected_behavior": { "type": "string" }
+            }
+          },
+          "description": "Error conditions and their expected handling."
+        },
+        "references_constraints": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^C-\\d{2,}$"
+          },
+          "description": "Which constraints this AC validates. Used for orphan detection."
+        },
+        "gap": {
+          "type": "boolean",
+          "default": false,
+          "description": "True if this AC was identified by gap analysis (no existing test covers it)."
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["critical", "high", "medium", "low"],
+          "description": "Implementation priority."
+        }
+      }
+    },
+
+    "dependency_ref": {
+      "type": "object",
+      "required": ["spec_id"],
+      "additionalProperties": false,
+      "properties": {
+        "spec_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "description": "The id of the spec being depended on."
+        },
+        "version_range": {
+          "type": "string",
+          "description": "Semver range (e.g., '^1.0.0', '>=2.0.0 <3.0.0'). If omitted, any version accepted.",
+          "examples": ["^1.0.0", ">=2.0.0", "~1.2.0"]
+        },
+        "relationship": {
+          "type": "string",
+          "enum": ["requires", "extends", "conflicts_with"],
+          "default": "requires",
+          "description": "Nature of the dependency."
+        }
+      }
+    },
+
+    "changelog_entry": {
+      "type": "object",
+      "required": ["version", "date", "description"],
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "type": "string",
+          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(-[a-zA-Z0-9.]+)?$"
+        },
+        "date": {
+          "type": "string",
+          "format": "date"
+        },
+        "author": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["initial", "major", "minor", "patch"]
+        },
+        "description": {
+          "type": "string"
+        },
+        "changes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type", "detail"],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["addition", "removal", "modification", "deprecation"]
+              },
+              "section": { "type": "string" },
+              "detail": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

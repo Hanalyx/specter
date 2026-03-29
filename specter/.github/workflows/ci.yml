@@ -14,31 +14,28 @@ defaults:
 
 jobs:
   check:
-    name: Typecheck, Lint, Test
+    name: Vet, Test, Build
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-go@v5
         with:
-          node-version-file: specter/.nvmrc
-          cache: npm
-          cache-dependency-path: specter/package-lock.json
+          go-version-file: specter/go.mod
+          cache-dependency-path: specter/go.sum
 
-      - run: npm ci
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Format check
-        run: npm run format:check
+      - name: Vet
+        run: go vet ./...
 
       - name: Test
-        run: npm test
+        run: go test ./...
 
-      - name: Test coverage
-        run: npm run test:coverage
+      - name: Build
+        run: go build -o bin/specter ./cmd/specter/
+
+      - name: Dogfood
+        run: |
+          bin/specter parse specs/*.spec.yaml
+          bin/specter resolve
+          bin/specter check

@@ -1,37 +1,21 @@
-# Dependencies
-node_modules/
-
 # Build output
-dist/
-
-# Environment
-.env
-.env.*
-!.env.example
+bin/
+specter-linux-*
+specter-darwin-*
+specter-windows-*
 
 # IDE
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
 
 # OS
 .DS_Store
-Thumbs.db
 
-# Test coverage output (vitest --coverage)
-/coverage/
+# Test coverage
+coverage.out
 
-# pnpm
-.pnpm-debug.log
-
-# Claude Code instructions (local, not shipped)
+# Claude Code instructions
 CLAUDE.md
 
-# Research (internal, not shipped)
+# Research (internal)
 research/
-
-# Misc
-*.tgz
-*.log

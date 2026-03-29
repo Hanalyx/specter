@@ -1,7 +1,0 @@
-spec:
-  id: test-bad-yaml
-  version: "1.0.0"
-    status: draft
-  tier: 2
-# Intentionally broken YAML — the indentation above is wrong.
-# "status" is indented under "version" which makes it invalid YAML.

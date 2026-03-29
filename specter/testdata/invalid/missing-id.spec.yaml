@@ -1,0 +1,19 @@
+spec:
+  # id is intentionally missing
+  version: "1.0.0"
+  status: draft
+  tier: 2
+
+  context:
+    system: Test system
+
+  objective:
+    summary: This spec is missing the required 'id' field.
+
+  constraints:
+    - id: C-01
+      description: "MUST have an id"
+
+  acceptance_criteria:
+    - id: AC-01
+      description: "Should fail validation"

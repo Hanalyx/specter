@@ -1,0 +1,19 @@
+spec:
+  id: test-minimal
+  version: "1.0.0"
+  status: draft
+  tier: 3
+
+  context:
+    system: Test system
+
+  objective:
+    summary: A minimal spec with only required fields and no optional fields.
+
+  constraints:
+    - id: C-01
+      description: "MUST work with minimal fields"
+
+  acceptance_criteria:
+    - id: AC-01
+      description: "Parser succeeds with only required fields present"

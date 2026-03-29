@@ -13,7 +13,7 @@ Specter follows Spec-Driven Development. Contributions follow the same methodolo
 ```bash
 git clone https://github.com/YOUR_USERNAME/specter.git
 cd specter/specter
-npm install
+go build ./cmd/specter/
 git checkout -b feat/your-feature
 ```
 
@@ -24,23 +24,21 @@ Every change needs a spec. If you're adding a new check rule, write `specs/your-
 Use the canonical schema. Validate your spec:
 
 ```bash
-npm run build && node dist/index.js parse specs/your-rule.spec.yaml
+./specter parse specs/your-rule.spec.yaml
 ```
 
 ### 3. Write Tests from ACs
 
-Every acceptance criterion in your spec becomes a test. Annotate tests:
+Every acceptance criterion in your spec becomes a test. Annotate tests with `@spec` and `@ac`:
 
-```typescript
-/**
- * @spec your-rule
- */
-describe('your-rule', () => {
-  // @ac AC-01
-  it('AC-01: does the thing', () => {
+```go
+// @spec your-rule
+package yourrule
+
+// @ac AC-01
+func TestDoesTheThing(t *testing.T) {
     // ...
-  });
-});
+}
 ```
 
 ### 4. Implement
@@ -50,10 +48,8 @@ Now write the code. The spec tells you what to build. The tests tell you when yo
 ### 5. Verify
 
 ```bash
-npm run check          # typecheck + lint + test
-npm run format:check   # formatting
-npm run build          # builds
-node dist/index.js sync  # Specter validates itself
+make check   # go vet + go test + go build
+make dogfood # specter validates its own specs
 ```
 
 All must pass.
@@ -76,7 +72,7 @@ See [RELEASE_PLAN.md](specter/docs/RELEASE_PLAN.md) for the full commit conventi
 
 ## What Makes a Good Contribution
 
-- **New check rules** -- detect new classes of spec errors (see `src/core/checker/rules/`)
+- **New check rules** -- detect new classes of spec errors (see `internal/checker/`)
 - **Schema improvements** -- new optional fields that improve spec expressiveness
 - **Bug fixes** -- with a test that reproduces the bug
 - **Documentation** -- especially real-world examples of specs
@@ -90,10 +86,11 @@ See [RELEASE_PLAN.md](specter/docs/RELEASE_PLAN.md) for the full commit conventi
 
 ## Architecture Notes
 
-- `src/core/` is a **pure function library** -- no I/O, no CLI, no side effects
-- `src/cli/` is the **thin CLI wrapper** -- reads files, calls core, formats output
-- Checker rules are **individual files** in `src/core/checker/rules/` -- add new rules without touching the orchestrator
-- Tests live in `tests/unit/` mirroring the `src/` structure
+- `internal/` packages are **pure function libraries** -- no I/O, no CLI, no side effects
+- `cmd/specter/` is the **thin CLI wrapper** (Cobra) -- reads files, calls internal packages, formats output
+- Checker rules live in `internal/checker/` -- add new rules without touching the orchestrator
+- Tests are colocated with source (`internal/parser/parse_test.go` next to `parse.go`)
+- Test fixtures live in `testdata/`
 
 ## Questions?
 
