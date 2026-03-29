@@ -10,14 +10,12 @@ Specter's core philosophy: **"Discipline can drift. Infrastructure cannot."** Ra
 
 ## Prerequisites
 
-- **Node.js 24.0.0 or later** -- Specter uses modern ES module features that require Node 24+.
-- **npm** (included with Node.js)
+- **Go 1.22 or later** -- Specter is built in Go and distributed as a single binary.
 
 Verify your setup:
 
 ```bash
-node --version   # Should print v24.x.x or higher
-npm --version
+go version   # Should print go1.22.x or higher
 ```
 
 ## Installation
@@ -29,20 +27,25 @@ Clone the repository and build:
 ```bash
 git clone <repository-url>
 cd specter
-npm install
-npm run build
+make build
+```
+
+This produces a binary at `bin/specter`. You can also build directly with Go:
+
+```bash
+go build -o bin/specter ./cmd/specter/
 ```
 
 After building, you can run Specter directly:
 
 ```bash
-node dist/index.js parse specs/
+bin/specter parse specs/
 ```
 
-Or link it globally for convenience:
+Or install it to your `$GOPATH/bin` for global access:
 
 ```bash
-npm link
+go install github.com/Hanalyx/specter/cmd/specter@latest
 specter parse specs/
 ```
 
@@ -486,6 +489,6 @@ Specter discovers `.spec.yaml` files recursively, so subdirectories work without
 
 ## Next Steps
 
-- **[Spec Schema Reference](../src/core/schema/spec-schema.json)** -- The canonical JSON Schema that defines every field, type, and constraint. This is the source of truth.
+- **[Spec Schema Reference](../internal/parser/spec-schema.json)** -- The canonical JSON Schema that defines every field, type, and constraint. This is the source of truth.
 - **[Specter's own specs](../specs/)** -- Specter dogfoods its own format. Read `spec-parse.spec.yaml` for a real-world example of a production spec.
 - **CLI Commands** -- Beyond `parse`, Specter includes `resolve` (dependency graph), `check` (type-checking), and `coverage` (traceability matrix). Run `specter --help` for the full list.

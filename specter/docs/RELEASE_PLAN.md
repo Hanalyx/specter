@@ -8,8 +8,8 @@
 - [x] 41 tests, 33 ACs, 100% spec coverage
 - [x] All checks pass: typecheck, lint, format, test, build
 - [x] Specter validates its own specs (dogfooding proof)
-- [x] Node 24+ target, TypeScript 5.9, ESLint 10
-- [ ] Security audit: `npm audit` passes with 0 vulnerabilities
+- [x] Go 1.22+ target, go vet, go test
+- [ ] Security audit: `go vet ./...` and `govulncheck ./...` pass with 0 vulnerabilities
 - [ ] License file (MIT) at repo root
 - [ ] CONTRIBUTING.md with contribution guidelines
 - [ ] CODE_OF_CONDUCT.md
@@ -29,11 +29,11 @@
 
 ### Repository Setup
 
-- [ ] GitHub repo description and topics (`sdd`, `spec-driven-development`, `yaml`, `validation`, `cli`, `typescript`)
+- [ ] GitHub repo description and topics (`sdd`, `spec-driven-development`, `yaml`, `validation`, `cli`, `golang`)
 - [ ] GitHub Actions CI workflow verified on GitHub (not just local)
 - [ ] Branch protection on `main` (require CI pass, require review)
 - [ ] `.github/CODEOWNERS` file
-- [ ] npm package name reserved (`specter-sdd` or `@specter/cli`)
+- [ ] goreleaser configuration for cross-platform binary builds
 
 ---
 
@@ -103,14 +103,14 @@ All commits follow [Conventional Commits](https://www.conventionalcommits.org/):
 | `chore` | none | `chore: update dependencies` |
 | `test` | none | `test(coverage): add edge case for empty test files` |
 | `refactor` | none | `refactor(resolver): simplify cycle detection` |
-| `ci` | none | `ci: add Node 24 to test matrix` |
-| `perf` | PATCH | `perf(parse): cache compiled Ajv validator` |
+| `ci` | none | `ci: add Go 1.22 to test matrix` |
+| `perf` | PATCH | `perf(parse): cache compiled JSON Schema validator` |
 
 ### Scopes
 
 | Scope | What It Covers |
 |-------|---------------|
-| `schema` | Changes to `spec-schema.json` or `types.ts` |
+| `schema` | Changes to `spec-schema.json` or schema types |
 | `parse` | spec-parse (M1) |
 | `resolve` | spec-resolve (M2) |
 | `check` | spec-check (M3) |
@@ -130,7 +130,7 @@ Use [release-please](https://github.com/googleapis/release-please) (Google's rel
 3. Generates CHANGELOG.md entries
 4. Creates a release PR with version bump
 5. On merge: creates GitHub Release + git tag
-6. Triggers npm publish
+6. Triggers goreleaser to build and publish binaries
 
 **Why release-please over alternatives:**
 - `semantic-release`: More opinionated, harder to configure for monorepo
@@ -150,7 +150,6 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  id-token: write
 
 jobs:
   release-please:
@@ -162,31 +161,30 @@ jobs:
       - uses: googleapis/release-please-action@v4
         id: release
         with:
-          release-type: node
+          release-type: go
           path: specter
           package-name: specter
 
-  publish:
+  goreleaser:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
         with:
-          node-version-file: specter/.nvmrc
-          registry-url: https://registry.npmjs.org
+          fetch-depth: 0
 
-      - name: Install and build
-        working-directory: specter
-        run: npm ci && npm run build
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
 
-      - name: Publish to npm
-        working-directory: specter
-        run: npm publish --provenance --access public
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 ### Configuration: release-please-config.json
@@ -196,7 +194,7 @@ jobs:
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "packages": {
     "specter": {
-      "release-type": "node",
+      "release-type": "go",
       "package-name": "specter",
       "changelog-path": "CHANGELOG.md",
       "bump-minor-pre-major": true,
@@ -212,57 +210,51 @@ jobs:
 
 ---
 
-## 4. npm Package Strategy
+## 4. Binary Distribution Strategy
 
-### Package Name
+### Distribution Channels
 
-**Preferred:** `specter-sdd`
-**Fallback:** `@hanalyx/specter`
+Specter is distributed as a single static binary with zero runtime dependencies.
 
-Check availability:
+**Homebrew (macOS and Linux):**
 ```bash
-npm view specter-sdd
-npm view @hanalyx/specter
+brew install hanalyx/tap/specter
 ```
 
-### package.json Updates for Publishing
+**Go install (requires Go toolchain):**
+```bash
+go install github.com/Hanalyx/specter/cmd/specter@latest
+```
 
-```json
-{
-  "name": "specter-sdd",
-  "version": "0.1.0",
-  "description": "A type system for specs. Validates, links, and type-checks .spec.yaml files.",
-  "bin": {
-    "specter": "dist/index.js"
-  },
-  "files": [
-    "dist/",
-    "src/core/schema/spec-schema.json",
-    "README.md",
-    "LICENSE"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/Hanalyx/specter.git",
-    "directory": "specter"
-  },
-  "homepage": "https://github.com/Hanalyx/specter#readme",
-  "bugs": {
-    "url": "https://github.com/Hanalyx/specter/issues"
-  }
-}
+**GitHub Releases (all platforms):**
+
+Download pre-built binaries for Linux, macOS (Intel and Apple Silicon), and Windows from the [GitHub Releases](https://github.com/Hanalyx/specter/releases) page. goreleaser produces archives for each platform on every tagged release.
+
+### Build Configuration
+
+The `go.mod` file at the repository root defines the module path and dependencies. The `Makefile` provides build targets:
+
+```bash
+make build       # Build for current platform -> bin/specter
+make build-all   # Cross-compile for linux/darwin/windows
+make clean       # Remove built binaries
 ```
 
 ### Install Experience (Goal)
 
 ```bash
-# Global install
-npm install -g specter-sdd
+# Homebrew
+brew install hanalyx/tap/specter
 specter sync
 
-# Project install
-npm install --save-dev specter-sdd
-npx specter sync
+# Go install
+go install github.com/Hanalyx/specter/cmd/specter@latest
+specter sync
+
+# Direct download (example for Linux amd64)
+curl -Lo specter.tar.gz https://github.com/Hanalyx/specter/releases/latest/download/specter_Linux_x86_64.tar.gz
+tar xzf specter.tar.gz
+./specter sync
 ```
 
 ---
@@ -276,7 +268,7 @@ npx specter sync
 - [ ] Push to GitHub as public repo
 - [ ] Write announcement post (dev.to, Reddit r/programming, HN)
 - [ ] Share with SDD community (GitHub Spec Kit, Kiro, OpenSpec users)
-- [ ] Publish to npm as `0.1.0-beta.1`
+- [ ] Publish binaries via goreleaser as `v0.1.0-beta.1`
 - [ ] Collect feedback via GitHub Issues
 
 **Success metric:** 10+ GitHub stars, 3+ external issues filed.
@@ -301,7 +293,7 @@ npx specter sync
 - [ ] Full documentation review
 - [ ] Publish `1.0.0`
 
-**Success metric:** npm weekly downloads > 100. GitHub stars > 500.
+**Success metric:** GitHub release downloads > 100/week. GitHub stars > 500.
 
 ---
 
@@ -312,7 +304,7 @@ npx specter sync
 **Bug Report:**
 ```markdown
 **Specter version:** (output of `specter --version`)
-**Node version:** (output of `node --version`)
+**Go version:** (output of `go version`)
 **OS:**
 
 **Steps to reproduce:**
@@ -377,6 +369,6 @@ npx specter sync
 1. **Create LICENSE file** (MIT)
 2. **Create CONTRIBUTING.md** (fork, branch, spec-first, PR)
 3. **Set up release-please** (GitHub Action + config)
-4. **Reserve npm package name**
+4. **Configure goreleaser** (`.goreleaser.yaml` with cross-compile targets)
 5. **Push to Hanalyx/specter and verify CI**
 6. **Tag v0.1.0**

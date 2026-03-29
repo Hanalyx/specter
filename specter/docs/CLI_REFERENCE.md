@@ -11,18 +11,16 @@ Specter is a spec compiler toolchain -- "a type system for specs." It validates,
 
 ```bash
 # From the specter directory
-pnpm install
-pnpm run build
+make build
 
 # Run directly
-node dist/index.js <command>
+bin/specter <command>
 
-# Or link globally
-pnpm link --global
-specter <command>
+# Or build with Go and install to $GOPATH/bin
+go build -o bin/specter ./cmd/specter/
 ```
 
-Requires Node.js 24.0.0 or later.
+Requires Go 1.22 or later.
 
 ---
 
@@ -54,7 +52,7 @@ specter parse [files...] [--json]
 
 | Argument | Required | Description |
 |----------|----------|-------------|
-| `files...` | No | One or more `.spec.yaml` file paths. If omitted, discovers all `*.spec.yaml` files in the current directory tree (excluding `node_modules/` and `dist/`). |
+| `files...` | No | One or more `.spec.yaml` file paths. If omitted, discovers all `*.spec.yaml` files in the current directory tree (excluding `.git/` and `testdata/`). |
 
 **Options:**
 
@@ -126,7 +124,7 @@ $ specter parse broken.spec.yaml --json
 
 **Behavior:**
 
-- Validates each file against the canonical JSON Schema (`src/core/schema/spec-schema.json`).
+- Validates each file against the canonical JSON Schema (`internal/parser/spec-schema.json`).
 - Reports errors with the YAML line number and JSON field path when available.
 - Collects all validation errors before returning (does not fail-fast on the first error).
 - Rejects unknown fields (`additionalProperties` enforcement).
@@ -267,7 +265,7 @@ def test_valid_credentials():
     ...
 ```
 
-Both `//` (JavaScript/TypeScript) and `#` (Python) comment styles are recognized.
+Both `//` (Go, JavaScript, TypeScript) and `#` (Python, Ruby, Shell) comment styles are recognized. Go tests use the `//` style.
 
 **Planned behavior:**
 
@@ -333,16 +331,13 @@ Specter respects a `.specterignore` file in the project root. The format follows
 
 ```
 # Ignore test fixtures -- these are for specter's own tests, not real specs
-tests/fixtures/
+testdata/
 
 # Ignore build output
-dist/
-
-# Ignore dependencies
-node_modules/
+bin/
 ```
 
-The `.specterignore` file is used by `specter resolve` (M2) during recursive file discovery. The `specter parse` command uses its own ignore list (`node_modules/`, `dist/`) when no explicit files are provided.
+The `.specterignore` file is used by `specter resolve` during recursive file discovery. The `specter parse` command uses its own ignore list (`.git/`, `testdata/`) when no explicit files are provided.
 
 ---
 
@@ -351,7 +346,7 @@ The `.specterignore` file is used by `specter resolve` (M2) during recursive fil
 | Milestone | Command | Status |
 |-----------|---------|--------|
 | M1 | `specter parse` | Available |
-| M2 | `specter resolve` | Planned |
+| M2 | `specter resolve` | Available |
 | M3 | `specter check` | Planned |
 | M4 | `specter coverage` | Planned |
 | M5 | `spec-sync` (CI enforcement) | Planned |

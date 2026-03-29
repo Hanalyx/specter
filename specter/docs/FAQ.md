@@ -78,7 +78,7 @@ Start small and work outward:
 4. **Integrate into CI.** Once you have specs for critical paths, add `specter parse` and `specter check` to your CI pipeline to prevent regressions.
 5. **Expand incrementally.** Add specs for new features as they are built. Over time, spec coverage grows organically.
 
-A reverse compiler (M6) is planned that will extract draft specs from existing TypeScript code. It analyzes source files structurally and produces `.spec.yaml` files that capture the current behavior as a starting point for refinement.
+A reverse compiler (M6) is planned that will extract draft specs from existing code. It will target **TypeScript first** (Express and Fastify frameworks), analyzing source files structurally and producing `.spec.yaml` files that capture the current behavior as a starting point for refinement.
 
 ---
 
@@ -162,7 +162,7 @@ Today, you can add `specter parse` to your CI pipeline as a validation step:
 ```yaml
 # GitHub Actions example
 - name: Validate specs
-  run: npx specter parse
+  run: specter parse
 ```
 
 The exit code is `0` on success and `1` on failure, so it integrates with any CI system that checks exit codes.
@@ -173,7 +173,7 @@ The exit code is `0` on success and `1` on failure, so it integrates with any CI
 
 The `.spec.yaml` format is **language-agnostic**. Specs describe behavioral contracts, not implementation details. You can write specs for systems built in any language.
 
-The toolchain itself is built in TypeScript and runs on Node.js.
+The toolchain is built in Go and distributed as a single binary with zero runtime dependencies.
 
 For test coverage (`specter coverage`), annotation scanning supports:
 

@@ -1,7 +1,7 @@
 # Spec Schema Reference
 
 > Canonical reference for `.spec.yaml` files validated by Specter.
-> Schema source: `src/core/schema/spec-schema.json` (v1.0.0)
+> Schema source: `internal/parser/spec-schema.json` (v1.0.0)
 
 ---
 
