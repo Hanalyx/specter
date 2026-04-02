@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    working-directory: specter
+
+jobs:
+  test:
+    name: Vet, Test, Dogfood
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: specter/go.mod
+          cache-dependency-path: specter/go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build
+        run: go build -o bin/specter ./cmd/specter/
+
+      - name: Dogfood
+        run: |
+          bin/specter parse specs/*.spec.yaml
+          bin/specter resolve
+          bin/specter check
+
+  release:
+    name: Build and Release
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: specter/go.mod
+          cache-dependency-path: specter/go.sum
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean
+          workdir: specter
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

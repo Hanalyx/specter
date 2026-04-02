@@ -10,11 +10,11 @@
 - [x] Specter validates its own specs (dogfooding proof)
 - [x] Go 1.22+ target, go vet, go test
 - [ ] Security audit: `go vet ./...` and `govulncheck ./...` pass with 0 vulnerabilities
-- [ ] License file (MIT) at repo root
-- [ ] CONTRIBUTING.md with contribution guidelines
+- [x] License file (MIT) at repo root
+- [x] CONTRIBUTING.md with contribution guidelines
 - [ ] CODE_OF_CONDUCT.md
-- [ ] Issue templates (bug report, feature request, spec proposal)
-- [ ] PR template
+- [x] Issue templates (bug report, feature request)
+- [x] PR template
 
 ### Documentation Readiness
 
@@ -24,7 +24,7 @@
 - [x] docs/CLI_REFERENCE.md
 - [x] docs/FAQ.md
 - [x] docs/MVP_VALUE_PROPOSITION.md
-- [ ] CHANGELOG.md (auto-generated from commits)
+- [x] CHANGELOG.md
 - [ ] docs/CONTRIBUTING_SPECS.md (how to write specs for contributions)
 
 ### Repository Setup
@@ -32,8 +32,8 @@
 - [ ] GitHub repo description and topics (`sdd`, `spec-driven-development`, `yaml`, `validation`, `cli`, `golang`)
 - [ ] GitHub Actions CI workflow verified on GitHub (not just local)
 - [ ] Branch protection on `main` (require CI pass, require review)
-- [ ] `.github/CODEOWNERS` file
-- [ ] goreleaser configuration for cross-platform binary builds
+- [x] `.github/CODEOWNERS` file
+- [x] goreleaser configuration for cross-platform binary builds
 
 ---
 
@@ -121,9 +121,11 @@ All commits follow [Conventional Commits](https://www.conventionalcommits.org/):
 | `docs` | Documentation |
 | `deps` | Dependency updates |
 
-### Tooling: release-please
+### Tooling: release-please (deferred)
 
-Use [release-please](https://github.com/googleapis/release-please) (Google's release automation) for auto-versioning:
+> **Note:** For alpha releases, Specter uses manual tagging with goreleaser. release-please will be adopted post-alpha when the release cadence justifies automation.
+
+[release-please](https://github.com/googleapis/release-please) (Google's release automation) is planned for future auto-versioning:
 
 1. Parses conventional commit messages since last release
 2. Determines version bump (major/minor/patch)
@@ -221,14 +223,17 @@ Specter is distributed as a single static binary with zero runtime dependencies.
 brew install hanalyx/tap/specter
 ```
 
-**Go install (requires Go toolchain):**
+**DEB package (Debian/Ubuntu):**
 ```bash
-go install github.com/Hanalyx/specter/cmd/specter@latest
+# Download from GitHub Releases, then:
+sudo dpkg -i specter_*.deb
 ```
 
 **GitHub Releases (all platforms):**
 
 Download pre-built binaries for Linux, macOS (Intel and Apple Silicon), and Windows from the [GitHub Releases](https://github.com/Hanalyx/specter/releases) page. goreleaser produces archives for each platform on every tagged release.
+
+> **Note:** `go install github.com/Hanalyx/specter/cmd/specter@latest` does not currently work because `go.mod` lives in the `specter/` subdirectory rather than the repo root. Use binary downloads or DEB packages instead. This will be addressed in a future repo restructure.
 
 ### Build Configuration
 

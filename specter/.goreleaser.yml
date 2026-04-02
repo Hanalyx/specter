@@ -1,0 +1,70 @@
+version: 2
+
+project_name: specter
+
+builds:
+  - main: ./cmd/specter/
+    binary: specter
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^chore:"
+      - "^ci:"
+      - "^test:"
+
+release:
+  prerelease: auto
+
+nfpms:
+  - id: specter-deb
+    package_name: specter
+    formats:
+      - deb
+      # Phase B: add rpm here
+    vendor: Hanalyx
+    homepage: "https://github.com/Hanalyx/spec-dd"
+    maintainer: "Hanalyx <noreply@hanalyx.com>"
+    description: "A type system for specs — validate, link, and type-check .spec.yaml files"
+    license: MIT
+    bindir: /usr/bin
+
+# Phase B: Homebrew tap
+# brews:
+#   - repository:
+#       owner: Hanalyx
+#       name: homebrew-tap
+#       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+#     directory: Formula
+#     homepage: "https://github.com/Hanalyx/spec-dd"
+#     description: "A type system for specs"
+#     license: "MIT"
+#     test: |
+#       system "#{bin}/specter", "--version"
