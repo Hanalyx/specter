@@ -1,7 +1,7 @@
 .PHONY: build test lint check clean
 
 BINARY := bin/specter
-VERSION := 0.1.0-alpha.1
+VERSION := dev
 
 build:
 	go build -ldflags "-X main.version=$(VERSION)" -o $(BINARY) ./cmd/specter/

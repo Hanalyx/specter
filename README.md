@@ -33,17 +33,44 @@ AI coding tools generate code from specifications. But nobody validates the spec
 
 ## Quick Start
 
-```bash
-# Build from source (produces a single binary, zero runtime dependencies)
-git clone https://github.com/Hanalyx/specter.git
-cd specter/specter
-make build
+### Install
 
+**Download binary** from [GitHub Releases](https://github.com/Hanalyx/spec-dd/releases):
+
+```bash
+# Linux (amd64)
+curl -Lo specter.tar.gz https://github.com/Hanalyx/spec-dd/releases/latest/download/specter_Linux_x86_64.tar.gz
+tar xzf specter.tar.gz
+sudo mv specter /usr/local/bin/
+
+# Verify
+specter --version
+```
+
+**DEB package** (Debian/Ubuntu):
+
+```bash
+curl -Lo specter.deb https://github.com/Hanalyx/spec-dd/releases/latest/download/specter_amd64.deb
+sudo dpkg -i specter.deb
+```
+
+**Build from source:**
+
+```bash
+git clone https://github.com/Hanalyx/spec-dd.git
+cd spec-dd/specter
+make build
+bin/specter --version
+```
+
+### Use
+
+```bash
 # Validate your specs
-bin/specter parse specs/*.spec.yaml
+specter parse specs/*.spec.yaml
 
 # Run the full pipeline
-bin/specter sync
+specter sync
 ```
 
 See the [Getting Started guide](specter/docs/GETTING_STARTED.md) for a complete walkthrough.
