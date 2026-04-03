@@ -2,6 +2,23 @@
 
 All notable changes to Specter will be documented in this file.
 
+## [0.2.2] - 2026-04-03
+
+### Fixed
+
+- P0: Map unknown `validation.rule` values to `"custom"` — Specter no longer rejects its own output for Go struct tags (`gte`, `lte`, `oneof`), Python Field kwargs (`min_length`, `max_length`), or Prisma attrs (`unique`)
+- P1: Add `.spec.tsx`, `.spec.jsx`, `.spec.js` to TypeScript test file detection — previously 713 test assertions silently lost in refine
+- P1: Fix test description truncation on embedded quotes — `it("'visible' value")` no longer stops at the first `'`
+- P1: Filter Python comment directives (`# isort`, `# noqa`, `# type:`, `# pragma`) from constraint extraction
+- P2: Incorporate parent directory into spec ID for generic filenames (`index.ts` → `auth-index`, `main.go` → `rest-main`, `route.ts` → `users-route`)
+
+### Added
+
+- `normalizeValidationRule()` in core engine with alias mapping (gte→min, lte→max, oneof→enum, etc.)
+- Generic filename detection list for spec ID collision prevention
+- Improvement roadmap document (`docs/IMPROVEMENT_ROADMAP.md`)
+- Updated CLAUDE.md with mission statement, design principle, and bug priority framework
+
 ## [0.2.1] - 2026-04-03
 
 ### Fixed

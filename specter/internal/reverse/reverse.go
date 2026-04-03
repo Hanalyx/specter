@@ -364,9 +364,10 @@ func assembleSpec(groupKey string, group *fileGroup, adapter Adapter, systemName
 			Enforcement: "error",
 		}
 		if c.Field != "" && c.Rule != "" && c.Value != nil {
+			rule := normalizeValidationRule(c.Rule)
 			specConstraints[i].Validation = &schema.ConstraintValidation{
 				Field: c.Field,
-				Rule:  c.Rule,
+				Rule:  rule,
 				Value: c.Value,
 			}
 		}
@@ -506,6 +507,35 @@ func buildConstraintDescription(c ExtractedConstraint) string {
 	default:
 		return fmt.Sprintf("%s MUST satisfy %s constraint", field, c.Rule)
 	}
+}
+
+// validRules is the set of validation.rule values allowed by the spec schema.
+var validRules = map[string]bool{
+	"type": true, "min": true, "max": true, "pattern": true,
+	"enum": true, "required": true, "format": true, "custom": true,
+}
+
+// ruleAliases maps common framework-specific rule names to their canonical equivalents.
+var ruleAliases = map[string]string{
+	"min_length": "min", "max_length": "max", "minlength": "min", "maxlength": "max",
+	"gte": "min", "ge": "min", "lte": "max", "le": "max",
+	"gt": "min", "lt": "max",
+	"oneof": "enum", "in": "enum",
+	"email": "format", "url": "format", "uuid": "format", "uri": "format",
+	"iscolor": "format", "hexcolor": "format", "rgb": "format", "rgba": "format",
+	"unique": "custom",
+}
+
+// normalizeValidationRule maps adapter-emitted rule names to the spec schema's allowed values.
+// Unknown rules are mapped to "custom" so Specter never rejects its own output.
+func normalizeValidationRule(rule string) string {
+	if validRules[rule] {
+		return rule
+	}
+	if canonical, ok := ruleAliases[rule]; ok {
+		return canonical
+	}
+	return "custom"
 }
 
 func findGapConstraintIndex(gapDesc string, constraints []ExtractedConstraint) int {
