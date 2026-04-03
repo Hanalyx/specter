@@ -214,10 +214,15 @@ func Reverse(input ReverseInput, adapters []Adapter) *ReverseResult {
 			for _, e := range parseResult.Errors {
 				errMsgs = append(errMsgs, fmt.Sprintf("[%s] %s: %s", e.Type, e.Path, e.Message))
 			}
+			sourceFile := ""
+			if spec.GeneratedFrom != nil {
+				sourceFile = spec.GeneratedFrom.SourceFile
+			}
 			result.Diagnostics = append(result.Diagnostics, ReverseDiagnostic{
 				Kind:     "validation_failed",
 				Severity: "error",
-				Message:  fmt.Sprintf("generated spec %s failed validation: %s", spec.ID, strings.Join(errMsgs, "; ")),
+				Message:  fmt.Sprintf("generated spec %s (from %s) failed validation: %s", spec.ID, sourceFile, strings.Join(errMsgs, "; ")),
+				File:     sourceFile,
 			})
 			continue
 		}
@@ -340,6 +345,11 @@ func assembleSpec(groupKey string, group *fileGroup, adapter Adapter, systemName
 
 	specID := GenerateSpecID(groupKey)
 
+	// For Next.js App Router files (route.ts), derive ID from route path instead
+	if specID == "route" && len(routes) > 0 {
+		specID = GenerateSpecIDFromRoute(routes[0].Path)
+	}
+
 	// Build constraints
 	specConstraints := make([]schema.Constraint, len(constraints))
 	for i, c := range constraints {
@@ -353,7 +363,7 @@ func assembleSpec(groupKey string, group *fileGroup, adapter Adapter, systemName
 			Type:        "technical",
 			Enforcement: "error",
 		}
-		if c.Field != "" && c.Rule != "" {
+		if c.Field != "" && c.Rule != "" && c.Value != nil {
 			specConstraints[i].Validation = &schema.ConstraintValidation{
 				Field: c.Field,
 				Rule:  c.Rule,

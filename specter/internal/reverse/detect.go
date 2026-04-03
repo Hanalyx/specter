@@ -53,7 +53,7 @@ func DetectAdapter(files []SourceFile, adapters []Adapter) Adapter {
 func DetectLanguage(path string) string {
 	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {
-	case ".ts", ".tsx", ".js", ".jsx":
+	case ".ts", ".tsx", ".js", ".jsx", ".prisma":
 		return "typescript"
 	case ".py":
 		return "python"

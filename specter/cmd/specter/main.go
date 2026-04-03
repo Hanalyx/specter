@@ -510,6 +510,38 @@ func reverseCmd() *cobra.Command {
 				return nil
 			})
 
+			// Look for manifest files in parent directories (for system name inference)
+			manifests := []string{"package.json", "go.mod", "pyproject.toml"}
+			absTarget, _ := filepath.Abs(targetPath)
+			dir := absTarget
+			for {
+				for _, m := range manifests {
+					mPath := filepath.Join(dir, m)
+					if data, err := os.ReadFile(mPath); err == nil {
+						// Only add if not already found during walk
+						alreadyFound := false
+						for _, f := range files {
+							abs, _ := filepath.Abs(f.Path)
+							if abs == mPath {
+								alreadyFound = true
+								break
+							}
+						}
+						if !alreadyFound {
+							files = append(files, reverse.SourceFile{
+								Path:    mPath,
+								Content: string(data),
+							})
+						}
+					}
+				}
+				parent := filepath.Dir(dir)
+				if parent == dir {
+					break
+				}
+				dir = parent
+			}
+
 			if len(files) == 0 {
 				fmt.Println("No source files found.")
 				os.Exit(1)
