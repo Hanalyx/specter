@@ -1,0 +1,266 @@
+spec:
+  id: spec-reverse
+  version: "1.0.0"
+  status: draft
+  tier: 2
+
+  context:
+    system: Specter toolchain
+    feature: Reverse compiler — extract draft specs from existing code
+    description: >
+      Solves the cold-start problem for SDD adoption. Given existing source code
+      and test files, the reverse compiler extracts draft .spec.yaml files by
+      detecting validation schemas, test assertions, route definitions, and
+      import relationships. Uses a plugin adapter architecture so each language
+      (TypeScript, Python, Go) has its own extraction logic while the core
+      engine handles assembly, gap detection, and validation.
+    dependencies:
+      - "gopkg.in/yaml.v3 (YAML output)"
+      - "internal/parser (round-trip validation)"
+      - "internal/schema (SpecAST types)"
+    related_specs:
+      - "spec-parse"
+      - "spec-coverage"
+    assumptions:
+      - "Source code uses well-known frameworks (Zod, Pydantic, Go struct tags)"
+      - "Test files follow standard naming conventions per language"
+      - "Extraction is regex-based for v1.0 — no AST parsing, no AI"
+      - "Generated specs always have status: draft and require human review"
+
+  objective:
+    summary: >
+      Extract draft .spec.yaml files from existing codebases by analyzing source
+      code for validation constraints, test files for acceptance criteria, and
+      import graphs for dependencies. Flag untested constraints as gaps.
+    scope:
+      includes:
+        - "Adapter interface for language-specific extraction"
+        - "TypeScript adapter: Zod schemas, Jest/Vitest tests, Next.js/Express routes"
+        - "Python adapter: Pydantic models, pytest tests, FastAPI/Django routes"
+        - "Go adapter: struct validate tags, _test.go files, net/http/gin/chi routes"
+        - "Core engine: assemble SpecAST from adapter output"
+        - "Gap detection: constraints without corresponding test assertions"
+        - "Spec ID generation from file/module names"
+        - "Provenance tracking via generated_from metadata"
+        - "Output validation via parser.ParseSpec() round-trip"
+        - "Auto-detection of language adapter from file extensions"
+      excludes:
+        - "AI-assisted gap filling or context generation"
+        - "Tree-sitter or full AST parsing"
+        - "Custom adapter plugins loaded at runtime"
+        - "OpenAPI/Swagger ingestion"
+        - "Database schema extraction"
+        - "Watch/incremental mode"
+
+  constraints:
+    - id: C-01
+      description: "MUST define an Adapter interface with methods: Name, Detect, IsTestFile, ExtractRoutes, ExtractConstraints, ExtractAssertions, ExtractImports, InferSystemName"
+      type: technical
+      enforcement: error
+
+    - id: C-02
+      description: "MUST assemble valid schema.SpecAST objects from adapter output with all required fields populated (id, version, status, tier, context, objective, constraints, acceptance_criteria)"
+      type: technical
+      enforcement: error
+
+    - id: C-03
+      description: "MUST set status to 'draft' and populate generated_from metadata (source_file, test_files, extraction_date) on all reverse-compiled specs"
+      type: technical
+      enforcement: error
+
+    - id: C-04
+      description: "MUST detect gaps — constraints found in code that have no corresponding test assertion — and generate ACs with gap: true"
+      type: business
+      enforcement: error
+
+    - id: C-05
+      description: "MUST generate spec IDs in kebab-case matching pattern ^[a-z][a-z0-9-]*$ from file or module names"
+      type: technical
+      enforcement: error
+
+    - id: C-06
+      description: "MUST validate all generated YAML by round-tripping through parser.ParseSpec() before output"
+      type: technical
+      enforcement: error
+
+    - id: C-07
+      description: "MUST auto-detect the appropriate adapter from file extensions when no --adapter flag is provided"
+      type: technical
+      enforcement: error
+
+    - id: C-08
+      description: "MUST NOT depend on any CLI framework or perform I/O — pure function from []SourceFile to ReverseResult"
+      type: technical
+      enforcement: error
+
+    - id: C-09
+      description: "MUST support three built-in adapters: typescript, python, go"
+      type: business
+      enforcement: error
+
+    - id: C-10
+      description: "MUST generate auto-numbered constraint IDs (C-01, C-02) and AC IDs (AC-01, AC-02) with no gaps"
+      type: technical
+      enforcement: error
+
+  acceptance_criteria:
+    - id: AC-01
+      description: "Go source file with struct validate tags produces spec with constraints"
+      inputs:
+        source_file: "handler.go with `validate:\"required,min=1,max=100\"` struct tags"
+        adapter: "go"
+      expected_output:
+        constraints_count: 3
+        constraint_rules: ["required", "min", "max"]
+        status: "draft"
+      references_constraints: ["C-01", "C-02", "C-09"]
+      priority: critical
+
+    - id: AC-02
+      description: "Go test file with t.Run sub-tests produces ACs"
+      inputs:
+        test_file: "handler_test.go with t.Run(\"returns 200 on valid input\", ...)"
+        adapter: "go"
+      expected_output:
+        ac_count: 1
+        ac_description: "returns 200 on valid input"
+      references_constraints: ["C-01", "C-02"]
+      priority: critical
+
+    - id: AC-03
+      description: "TypeScript Zod schema produces constraints with field names and rules"
+      inputs:
+        source_file: "schema.ts with z.object({ email: z.string().email(), age: z.number().min(18) })"
+        adapter: "typescript"
+      expected_output:
+        constraints_count: 2
+        fields: ["email", "age"]
+        rules: ["format", "min"]
+      references_constraints: ["C-01", "C-02", "C-09"]
+      priority: critical
+
+    - id: AC-04
+      description: "Jest test with describe/it blocks produces ACs"
+      inputs:
+        test_file: "auth.test.ts with it('returns 401 when unauthorized', ...)"
+        adapter: "typescript"
+      expected_output:
+        ac_count: 1
+        ac_description: "returns 401 when unauthorized"
+      references_constraints: ["C-01", "C-02"]
+      priority: critical
+
+    - id: AC-05
+      description: "Python Pydantic model with Field validators produces constraints"
+      inputs:
+        source_file: "models.py with name: str = Field(min_length=1, max_length=255)"
+        adapter: "python"
+      expected_output:
+        constraints_count: 2
+        rules: ["min", "max"]
+      references_constraints: ["C-01", "C-02", "C-09"]
+      priority: critical
+
+    - id: AC-06
+      description: "Pytest function produces AC"
+      inputs:
+        test_file: "test_auth.py with def test_returns_403_for_non_admin():"
+        adapter: "python"
+      expected_output:
+        ac_count: 1
+        ac_description: "returns 403 for non admin"
+      references_constraints: ["C-01", "C-02"]
+      priority: critical
+
+    - id: AC-07
+      description: "Constraint without matching test assertion produces gap AC"
+      inputs:
+        source_file: "schema.ts with z.string().email()"
+        test_file: "schema.test.ts with NO email validation test"
+      expected_output:
+        gap_ac_count: 1
+        gap: true
+        priority: "high"
+      references_constraints: ["C-04"]
+      priority: critical
+
+    - id: AC-08
+      description: "Spec ID generated from file path in kebab-case"
+      inputs:
+        file_path: "src/UserRegistration.ts"
+      expected_output:
+        spec_id: "user-registration"
+      references_constraints: ["C-05"]
+      priority: high
+
+    - id: AC-09
+      description: "Generated YAML passes parser.ParseSpec() validation"
+      inputs:
+        source_file: "any valid source with at least one constraint and one test"
+      expected_output:
+        parse_result_ok: true
+      references_constraints: ["C-06"]
+      priority: critical
+
+    - id: AC-10
+      description: "Generated spec includes generated_from provenance metadata"
+      inputs:
+        source_file: "handler.go"
+        test_files: ["handler_test.go"]
+      expected_output:
+        generated_from:
+          source_file: "handler.go"
+          test_files: ["handler_test.go"]
+          extraction_date: "2026-04-02"
+      references_constraints: ["C-03"]
+      priority: high
+
+    - id: AC-11
+      description: "Auto-detect selects Go adapter for directory with .go files"
+      inputs:
+        files: ["main.go", "handler.go", "handler_test.go"]
+      expected_output:
+        adapter: "go"
+      references_constraints: ["C-07"]
+      priority: high
+
+    - id: AC-12
+      description: "Auto-detect selects TypeScript adapter for directory with .ts files"
+      inputs:
+        files: ["index.ts", "schema.ts", "auth.test.ts"]
+      expected_output:
+        adapter: "typescript"
+      references_constraints: ["C-07"]
+      priority: high
+
+    - id: AC-13
+      description: "Constraint and AC IDs are auto-numbered sequentially"
+      inputs:
+        source_file: "file with 3 constraints and 2 tests"
+      expected_output:
+        constraint_ids: ["C-01", "C-02", "C-03"]
+        ac_ids: ["AC-01", "AC-02"]
+      references_constraints: ["C-10"]
+      priority: high
+
+    - id: AC-14
+      description: "Core engine is a pure function with no I/O"
+      inputs:
+        function: "reverse.Reverse()"
+      expected_output:
+        no_file_reads: true
+        no_cli_deps: true
+      references_constraints: ["C-08"]
+      priority: high
+
+  depends_on:
+    - spec_id: spec-parse
+      version_range: "^1.0.0"
+      relationship: requires
+
+  changelog:
+    - version: "1.0.0"
+      date: "2026-04-02"
+      author: "specter-team"
+      type: initial
+      description: "Initial spec for the reverse compiler with adapter plugin architecture"
