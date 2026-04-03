@@ -12,6 +12,7 @@ import (
 	"github.com/Hanalyx/specter/internal/parser"
 	"github.com/Hanalyx/specter/internal/resolver"
 	"github.com/Hanalyx/specter/internal/schema"
+	"github.com/Hanalyx/specter/internal/reverse"
 	specsync "github.com/Hanalyx/specter/internal/sync"
 	"github.com/spf13/cobra"
 )
@@ -31,6 +32,7 @@ func main() {
 	root.AddCommand(checkCmd())
 	root.AddCommand(coverageCmd())
 	root.AddCommand(syncCmd())
+	root.AddCommand(reverseCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -450,5 +452,149 @@ func syncCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
 	cmd.Flags().StringVar(&testsGlob, "tests", "", "Glob pattern for test files")
+	return cmd
+}
+
+func reverseCmd() *cobra.Command {
+	var (
+		jsonOutput  bool
+		adapterName string
+		outputDir   string
+		groupBy     string
+		dryRun      bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "reverse [path]",
+		Short: "Extract draft .spec.yaml files from existing source code",
+		Long:  "Analyze source code and test files to generate draft .spec.yaml specifications. Uses language-specific adapters (typescript, python, go) to extract constraints from validation schemas, acceptance criteria from test assertions, and gaps where constraints lack test coverage.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			targetPath := "."
+			if len(args) > 0 {
+				targetPath = args[0]
+			}
+
+			// Walk target path and read source files
+			var files []reverse.SourceFile
+			skipDirs := map[string]bool{
+				"node_modules": true, "dist": true, ".git": true,
+				"vendor": true, "__pycache__": true, ".next": true,
+				"testdata": true, "bin": true,
+			}
+
+			_ = filepath.Walk(targetPath, func(path string, info os.FileInfo, err error) error {
+				if err != nil {
+					return nil
+				}
+				if info.IsDir() && skipDirs[info.Name()] {
+					return filepath.SkipDir
+				}
+				if info.IsDir() {
+					return nil
+				}
+				lang := reverse.DetectLanguage(path)
+				if lang == "" {
+					base := filepath.Base(path)
+					if base != "package.json" && base != "go.mod" && base != "pyproject.toml" {
+						return nil
+					}
+				}
+				data, readErr := os.ReadFile(path)
+				if readErr != nil {
+					return nil
+				}
+				files = append(files, reverse.SourceFile{
+					Path:    path,
+					Content: string(data),
+				})
+				return nil
+			})
+
+			if len(files) == 0 {
+				fmt.Println("No source files found.")
+				os.Exit(1)
+			}
+
+			adapters := []reverse.Adapter{
+				&reverse.TypeScriptAdapter{},
+				&reverse.PythonAdapter{},
+				&reverse.GoAdapter{},
+			}
+
+			date := "2026-04-02"
+
+			input := reverse.ReverseInput{
+				Files:       files,
+				AdapterName: adapterName,
+				GroupBy:     groupBy,
+				Date:        date,
+			}
+
+			result := reverse.Reverse(input, adapters)
+
+			if jsonOutput {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				_ = enc.Encode(map[string]interface{}{
+					"specs":       result.Specs,
+					"diagnostics": result.Diagnostics,
+					"summary":     result.Summary,
+				})
+				if result.Summary.SpecsGenerated == 0 {
+					os.Exit(1)
+				}
+				return nil
+			}
+
+			for _, d := range result.Diagnostics {
+				fmt.Fprintf(os.Stderr, "%s [%s] %s\n", d.Severity, d.Kind, d.Message)
+			}
+
+			if result.Summary.SpecsGenerated == 0 {
+				fmt.Println("No specs generated. Check diagnostics above.")
+				os.Exit(1)
+			}
+
+			for _, gs := range result.Specs {
+				if dryRun {
+					fmt.Printf("--- %s (dry-run) ---\n", gs.FileName)
+					fmt.Println(gs.YAML)
+					for _, w := range gs.Warnings {
+						fmt.Fprintf(os.Stderr, "  warning: %s\n", w)
+					}
+					continue
+				}
+
+				outPath := filepath.Join(outputDir, gs.FileName)
+				if mkErr := os.MkdirAll(outputDir, 0755); mkErr != nil {
+					fmt.Fprintf(os.Stderr, "error creating output directory: %v\n", mkErr)
+					os.Exit(1)
+				}
+				if wErr := os.WriteFile(outPath, []byte(gs.YAML), 0644); wErr != nil {
+					fmt.Fprintf(os.Stderr, "error writing %s: %v\n", outPath, wErr)
+					os.Exit(1)
+				}
+				fmt.Printf("GENERATED %s — %s@%s (%d constraints, %d ACs)\n",
+					outPath, gs.Spec.ID, gs.Spec.Version,
+					len(gs.Spec.Constraints), len(gs.Spec.AcceptanceCriteria))
+				for _, w := range gs.Warnings {
+					fmt.Fprintf(os.Stderr, "  warning: %s\n", w)
+				}
+			}
+
+			fmt.Printf("\nSummary: %d spec(s) generated, %d constraint(s), %d assertion(s), %d gap(s)\n",
+				result.Summary.SpecsGenerated, result.Summary.ConstraintsFound,
+				result.Summary.AssertionsFound, result.Summary.GapsDetected)
+
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
+	cmd.Flags().StringVar(&adapterName, "adapter", "", "Language adapter (typescript, python, go). Auto-detects if omitted")
+	cmd.Flags().StringVarP(&outputDir, "output", "o", "specs", "Output directory for generated .spec.yaml files")
+	cmd.Flags().StringVar(&groupBy, "group-by", "file", "Grouping strategy: file or directory")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview output without writing files")
+
 	return cmd
 }
