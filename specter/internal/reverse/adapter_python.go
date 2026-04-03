@@ -101,6 +101,15 @@ func (a *PythonAdapter) ExtractConstraints(path, content string) []ExtractedCons
 		lineNum := i + 1
 		trimmed := strings.TrimSpace(line)
 
+		// Skip comment-only lines and common directives
+		if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") ||
+			strings.Contains(trimmed, "# noqa") || strings.Contains(trimmed, "# isort") ||
+			strings.Contains(trimmed, "# type:") || strings.Contains(trimmed, "# pragma") ||
+			strings.Contains(trimmed, "# fmt:") || strings.Contains(trimmed, "# pylint") ||
+			strings.Contains(trimmed, "# noinspection") {
+			continue
+		}
+
 		// Pydantic Field() with validators
 		if m := pydanticFieldRE.FindStringSubmatch(trimmed); len(m) > 2 {
 			fieldName := m[1]

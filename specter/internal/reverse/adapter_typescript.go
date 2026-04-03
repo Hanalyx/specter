@@ -24,7 +24,7 @@ func (a *TypeScriptAdapter) IsTestFile(path string) bool {
 	if strings.Contains(path, "__tests__/") {
 		return true
 	}
-	for _, suffix := range []string{".test.ts", ".test.tsx", ".spec.ts", ".test.js", ".test.jsx"} {
+	for _, suffix := range []string{".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx", ".test.js", ".test.jsx", ".spec.js", ".spec.jsx"} {
 		if strings.HasSuffix(path, suffix) {
 			return true
 		}
@@ -406,8 +406,10 @@ func (a *TypeScriptAdapter) extractPatternConstraints(path, content string) []Ex
 // --- Assertion Extraction (Jest/Vitest) ---
 
 var (
-	describeBlockRE = regexp.MustCompile(`describe\(\s*['"]([^'"]+)['"]`)
-	itTestRE        = regexp.MustCompile(`(?:it|test)\(\s*['"]([^'"]+)['"]`)
+	describeBlockDQ = regexp.MustCompile(`describe\(\s*"([^"]+)"`)
+	describeBlockSQ = regexp.MustCompile(`describe\(\s*'([^']+)'`)
+	itTestDQ        = regexp.MustCompile("(?:it|test)\\(\\s*\"([^\"]+)\"")
+	itTestSQ        = regexp.MustCompile(`(?:it|test)\(\s*'([^']+)'`)
 )
 
 func (a *TypeScriptAdapter) ExtractAssertions(path, content string) []ExtractedAssertion {
@@ -418,13 +420,19 @@ func (a *TypeScriptAdapter) ExtractAssertions(path, content string) []ExtractedA
 	for i, line := range lines {
 		lineNum := i + 1
 
-		// Track describe block context
-		if m := describeBlockRE.FindStringSubmatch(line); len(m) > 1 {
+		// Track describe block context (try double-quoted, then single-quoted)
+		if m := describeBlockDQ.FindStringSubmatch(line); len(m) > 1 {
+			currentDescribe = m[1]
+		} else if m := describeBlockSQ.FindStringSubmatch(line); len(m) > 1 {
 			currentDescribe = m[1]
 		}
 
-		// Extract it/test assertions
-		if m := itTestRE.FindStringSubmatch(line); len(m) > 1 {
+		// Extract it/test assertions (try double-quoted, then single-quoted)
+		m := itTestDQ.FindStringSubmatch(line)
+		if len(m) < 2 {
+			m = itTestSQ.FindStringSubmatch(line)
+		}
+		if len(m) > 1 {
 			desc := m[1]
 			testName := desc
 			if currentDescribe != "" {

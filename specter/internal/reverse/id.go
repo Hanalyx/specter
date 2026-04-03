@@ -9,8 +9,17 @@ import (
 
 var nonAlphanumRE = regexp.MustCompile(`[^a-z0-9]+`)
 
+// genericFilenames are file basenames that are too common to produce unique spec IDs.
+// When detected, the parent directory name is prepended.
+var genericFilenames = map[string]bool{
+	"index": true, "main": true, "route": true, "utils": true, "helpers": true,
+	"types": true, "constants": true, "config": true, "models": true, "schema": true,
+	"service": true, "handler": true, "controller": true, "middleware": true,
+}
+
 // GenerateSpecID creates a kebab-case spec ID from a file path.
 // The result matches the pattern ^[a-z][a-z0-9-]*$ required by the spec schema.
+// For generic filenames (index.ts, main.go, etc.), the parent directory is prepended.
 func GenerateSpecID(filePath string) string {
 	// Get base name without extension
 	base := filepath.Base(filePath)
@@ -28,9 +37,22 @@ func GenerateSpecID(filePath string) string {
 	// Lowercase and replace non-alphanumeric with hyphens
 	name = strings.ToLower(name)
 	name = nonAlphanumRE.ReplaceAllString(name, "-")
-
-	// Trim leading/trailing hyphens
 	name = strings.Trim(name, "-")
+
+	// For generic filenames, prepend parent directory
+	if genericFilenames[name] {
+		dir := filepath.Dir(filePath)
+		parentDir := filepath.Base(dir)
+		if parentDir != "" && parentDir != "." && parentDir != "/" {
+			parentDir = camelToKebab(parentDir)
+			parentDir = strings.ToLower(parentDir)
+			parentDir = nonAlphanumRE.ReplaceAllString(parentDir, "-")
+			parentDir = strings.Trim(parentDir, "-")
+			if parentDir != "" {
+				name = parentDir + "-" + name
+			}
+		}
+	}
 
 	// Ensure it starts with a letter
 	if len(name) == 0 || !unicode.IsLetter(rune(name[0])) {
