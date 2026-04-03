@@ -44,6 +44,39 @@ func GenerateSpecID(filePath string) string {
 	return name
 }
 
+// GenerateSpecIDFromRoute creates a kebab-case spec ID from an API route path.
+// e.g. "/api/webhooks/stripe" -> "webhooks-stripe", "/api/blog/[slug]" -> "blog-slug"
+func GenerateSpecIDFromRoute(routePath string) string {
+	// Strip /api/ prefix
+	path := routePath
+	if idx := strings.Index(path, "/api/"); idx >= 0 {
+		path = path[idx+len("/api/"):]
+	} else {
+		path = strings.TrimPrefix(path, "/")
+	}
+
+	// Replace path separators and brackets with hyphens
+	path = strings.ReplaceAll(path, "/", "-")
+	path = strings.ReplaceAll(path, "[", "")
+	path = strings.ReplaceAll(path, "]", "")
+
+	// Clean up and ensure valid spec ID
+	path = strings.ToLower(path)
+	path = nonAlphanumRE.ReplaceAllString(path, "-")
+	path = strings.Trim(path, "-")
+
+	if path == "" {
+		return "api-root"
+	}
+
+	// Ensure starts with letter
+	if len(path) > 0 && !unicode.IsLetter(rune(path[0])) {
+		path = "api-" + path
+	}
+
+	return path
+}
+
 // camelToKebab converts CamelCase to kebab-case.
 func camelToKebab(s string) string {
 	var result strings.Builder

@@ -34,6 +34,30 @@ func TestGenerateSpecID(t *testing.T) {
 	}
 }
 
+func TestGenerateSpecIDFromRoute(t *testing.T) {
+	tests := []struct {
+		route string
+		want  string
+	}{
+		{"/api/webhooks/stripe", "webhooks-stripe"},
+		{"/api/blog/[slug]", "blog-slug"},
+		{"/api/onboarding", "onboarding"},
+		{"/api/auth/register", "auth-register"},
+		{"/api/blog/categories", "blog-categories"},
+		{"/unknown", "unknown"},
+		{"/api/", "api-root"},
+		{"/", "api-root"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.route, func(t *testing.T) {
+			got := GenerateSpecIDFromRoute(tt.route)
+			if got != tt.want {
+				t.Errorf("GenerateSpecIDFromRoute(%q) = %q, want %q", tt.route, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGenerateSpecID_KebabCasePattern(t *testing.T) {
 	inputs := []string{
 		"UserRegistration.ts",

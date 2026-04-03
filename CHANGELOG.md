@@ -2,6 +2,24 @@
 
 All notable changes to Specter will be documented in this file.
 
+## [0.2.1] - 2026-04-03
+
+### Fixed
+
+- Fix null `validation.value` crash when Zod patterns have no extractable literal (`.email()`, `.url()`, `.optional()`, `.refine()`, `z.boolean()`, `z.array()`)
+- Fix all Next.js App Router files generating the same spec ID `route` — now derives ID from route path (e.g., `/api/webhooks/stripe` → `webhooks-stripe`)
+- Include source file path in `validation_failed` diagnostics for easier debugging
+- Find `package.json`/`go.mod`/`pyproject.toml` in parent directories for system name inference
+
+### Added
+
+- TypeScript adapter: extract constraints from TypeScript enums, union types, and `as const` arrays
+- TypeScript adapter: extract constraints from Prisma schema files (`.prisma`) — field types, `@unique`, `@db.VarChar(N)`, required/optional
+- TypeScript adapter: extract role and status constraints from code patterns (e.g., `session.user.role === "ADMIN"`)
+- TypeScript adapter: recognize `.url()`, `z.boolean()`, `z.array()` Zod patterns
+- Zod enum now extracts values (e.g., `z.enum(["a", "b"])` → `Value: "a", "b"`)
+- 85 tests (up from 77)
+
 ## [0.2.0] - 2026-04-03
 
 ### Added

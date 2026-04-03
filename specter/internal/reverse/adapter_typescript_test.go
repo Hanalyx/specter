@@ -1,7 +1,10 @@
 // @spec spec-reverse
 package reverse
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 var tsAdapter = &TypeScriptAdapter{}
 
@@ -195,6 +198,152 @@ func TestTypeScriptAdapter_Detect(t *testing.T) {
 	}
 	if tsAdapter.Detect("main.py", "") {
 		t.Error("expected Detect to return false for .py file")
+	}
+}
+
+func TestTypeScriptAdapter_ExtractConstraints_TypeScriptEnum(t *testing.T) {
+	content := `enum Role { ADMIN = "ADMIN", USER = "USER", MODERATOR = "MODERATOR" }
+`
+	constraints := tsAdapter.ExtractConstraints("types.ts", content)
+	found := false
+	for _, c := range constraints {
+		if c.Rule == "enum" && strings.Contains(c.Field, "role") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected enum constraint from TypeScript enum")
+	}
+}
+
+func TestTypeScriptAdapter_ExtractConstraints_UnionType(t *testing.T) {
+	content := `type Status = "active" | "inactive" | "pending"
+`
+	constraints := tsAdapter.ExtractConstraints("types.ts", content)
+	found := false
+	for _, c := range constraints {
+		if c.Rule == "enum" && strings.Contains(c.Field, "status") {
+			found = true
+			if c.Value == nil {
+				t.Error("expected union type values in Value field")
+			}
+		}
+	}
+	if !found {
+		t.Error("expected enum constraint from union type")
+	}
+}
+
+func TestTypeScriptAdapter_ExtractConstraints_Prisma(t *testing.T) {
+	content := `model User {
+  id        String   @id @default(cuid())
+  email     String   @unique @db.VarChar(255)
+  name      String
+  bio       String?
+  role      String   @default("USER")
+  createdAt DateTime @default(now())
+}
+`
+	constraints := tsAdapter.ExtractConstraints("schema.prisma", content)
+	if len(constraints) == 0 {
+		t.Fatal("expected constraints from Prisma schema, got none")
+	}
+
+	type fieldRule struct {
+		field string
+		rule  string
+	}
+	found := make(map[fieldRule]bool)
+	for _, c := range constraints {
+		found[fieldRule{c.Field, c.Rule}] = true
+	}
+
+	if !found[fieldRule{"email", "unique"}] {
+		t.Error("expected email unique constraint")
+	}
+	if !found[fieldRule{"email", "max"}] {
+		t.Error("expected email max constraint from @db.VarChar(255)")
+	}
+	if !found[fieldRule{"name", "required"}] {
+		t.Error("expected name required constraint")
+	}
+	if found[fieldRule{"bio", "required"}] {
+		t.Error("bio should not be required (it has ?)")
+	}
+}
+
+func TestTypeScriptAdapter_ExtractConstraints_RoleChecks(t *testing.T) {
+	content := `export function requireRole(session: Session) {
+  if (session.user.role === "ADMIN") {
+    return true;
+  }
+  if (session.user.role === "MODERATOR") {
+    return true;
+  }
+  return false;
+}
+`
+	constraints := tsAdapter.ExtractConstraints("auth.ts", content)
+	found := false
+	for _, c := range constraints {
+		if c.Field == "role" && c.Rule == "enum" {
+			found = true
+			val, ok := c.Value.(string)
+			if !ok {
+				t.Error("expected string value for role enum")
+			} else if !strings.Contains(val, "ADMIN") || !strings.Contains(val, "MODERATOR") {
+				t.Errorf("expected role enum to contain ADMIN and MODERATOR, got %q", val)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected role enum constraint from role checks")
+	}
+}
+
+func TestTypeScriptAdapter_ExtractConstraints_ZodUrl(t *testing.T) {
+	content := `const schema = z.object({
+  website: z.string().url(),
+});
+`
+	constraints := tsAdapter.ExtractConstraints("schema.ts", content)
+	found := false
+	for _, c := range constraints {
+		if c.Field == "website" && c.Rule == "format" && c.Value == "url" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected format=url constraint for z.string().url()")
+	}
+}
+
+func TestTypeScriptAdapter_ExtractConstraints_ZodBooleanArray(t *testing.T) {
+	content := `const schema = z.object({
+  active: z.boolean(),
+  tags: z.array(z.string()),
+});
+`
+	constraints := tsAdapter.ExtractConstraints("schema.ts", content)
+	type fieldRule struct {
+		field string
+		rule  string
+	}
+	found := make(map[fieldRule]bool)
+	for _, c := range constraints {
+		found[fieldRule{c.Field, c.Rule}] = true
+	}
+	if !found[fieldRule{"active", "type"}] {
+		t.Error("expected type=boolean constraint for z.boolean()")
+	}
+	if !found[fieldRule{"tags", "type"}] {
+		t.Error("expected type=array constraint for z.array()")
+	}
+}
+
+func TestTypeScriptAdapter_Detect_Prisma(t *testing.T) {
+	if !tsAdapter.Detect("schema.prisma", "") {
+		t.Error("expected Detect to return true for .prisma file")
 	}
 }
 
