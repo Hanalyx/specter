@@ -101,12 +101,20 @@ func (a *PythonAdapter) ExtractConstraints(path, content string) []ExtractedCons
 		lineNum := i + 1
 		trimmed := strings.TrimSpace(line)
 
-		// Skip comment-only lines and common directives
-		if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") ||
-			strings.Contains(trimmed, "# noqa") || strings.Contains(trimmed, "# isort") ||
-			strings.Contains(trimmed, "# type:") || strings.Contains(trimmed, "# pragma") ||
-			strings.Contains(trimmed, "# fmt:") || strings.Contains(trimmed, "# pylint") ||
-			strings.Contains(trimmed, "# noinspection") {
+		// Skip comment-only lines
+		if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+
+		// Strip inline comments before constraint matching
+		// e.g., "import foo  # isort:skip" → "import foo"
+		if idx := strings.Index(trimmed, "  #"); idx >= 0 {
+			trimmed = strings.TrimSpace(trimmed[:idx])
+		}
+		if idx := strings.Index(trimmed, "\t#"); idx >= 0 {
+			trimmed = strings.TrimSpace(trimmed[:idx])
+		}
+		if trimmed == "" {
 			continue
 		}
 

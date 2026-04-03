@@ -2,6 +2,12 @@
 
 All notable changes to Specter will be documented in this file.
 
+## [0.2.3] - 2026-04-03
+
+### Fixed
+
+- Strip inline Python comments before constraint extraction — eliminates false positives from `# isort:skip`, `# noqa`, etc. on import lines (Django: 67 → 31 constraints, 36 false positives removed)
+
 ## [0.2.2] - 2026-04-03
 
 ### Fixed
