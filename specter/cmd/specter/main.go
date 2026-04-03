@@ -462,6 +462,7 @@ func reverseCmd() *cobra.Command {
 		outputDir   string
 		groupBy     string
 		dryRun      bool
+		excludes    []string
 	)
 
 	cmd := &cobra.Command{
@@ -492,6 +493,16 @@ func reverseCmd() *cobra.Command {
 				if info.IsDir() {
 					return nil
 				}
+				// Check --exclude patterns
+				for _, pattern := range excludes {
+					if matched, _ := filepath.Match(pattern, path); matched {
+						return nil
+					}
+					// Also match against just the relative path segments
+					if strings.Contains(path, pattern) {
+						return nil
+					}
+				}
 				lang := reverse.DetectLanguage(path)
 				if lang == "" {
 					base := filepath.Base(path)
@@ -510,8 +521,9 @@ func reverseCmd() *cobra.Command {
 				return nil
 			})
 
-			// Look for manifest files in parent directories (for system name inference)
-			manifests := []string{"package.json", "go.mod", "pyproject.toml"}
+			// Look for manifest and schema files in parent directories
+			manifests := []string{"package.json", "go.mod", "pyproject.toml",
+				"prisma/schema.prisma", "schema.prisma"}
 			absTarget, _ := filepath.Abs(targetPath)
 			dir := absTarget
 			for {
@@ -627,6 +639,7 @@ func reverseCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&outputDir, "output", "o", "specs", "Output directory for generated .spec.yaml files")
 	cmd.Flags().StringVar(&groupBy, "group-by", "file", "Grouping strategy: file or directory")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview output without writing files")
+	cmd.Flags().StringArrayVar(&excludes, "exclude", nil, "Exclude paths matching pattern (can be repeated)")
 
 	return cmd
 }

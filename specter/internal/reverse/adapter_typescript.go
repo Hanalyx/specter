@@ -91,12 +91,12 @@ func inferNextJSRoutePath(filePath string) string {
 
 var (
 	zodFieldRE     = regexp.MustCompile(`(\w+)\s*:\s*z\.`)
-	zodStringMinRE = regexp.MustCompile(`z\.string\(\).*\.min\((\d+)\)`)
-	zodStringMaxRE = regexp.MustCompile(`z\.string\(\).*\.max\((\d+)\)`)
-	zodEmailRE     = regexp.MustCompile(`z\.string\(\).*\.email\(\)`)
-	zodUrlRE       = regexp.MustCompile(`z\.string\(\).*\.url\(\)`)
-	zodNumberMinRE = regexp.MustCompile(`z\.number\(\).*\.min\((\d+)\)`)
-	zodNumberMaxRE = regexp.MustCompile(`z\.number\(\).*\.max\((\d+)\)`)
+	zodStringMinRE = regexp.MustCompile(`z\.string\(\).*\.min\((\d+)`)
+	zodStringMaxRE = regexp.MustCompile(`z\.string\(\).*\.max\((\d+)`)
+	zodEmailRE     = regexp.MustCompile(`z\.string\(\).*\.email\(`)
+	zodUrlRE       = regexp.MustCompile(`z\.string\(\).*\.url\(`)
+	zodNumberMinRE = regexp.MustCompile(`z\.number\(\).*\.min\((\d+)`)
+	zodNumberMaxRE = regexp.MustCompile(`z\.number\(\).*\.max\((\d+)`)
 	zodEnumRE      = regexp.MustCompile(`z\.enum\(\[([^\]]*)\]`)
 	zodOptionalRE  = regexp.MustCompile(`\.optional\(\)`)
 	zodBooleanRE   = regexp.MustCompile(`z\.boolean\(\)`)

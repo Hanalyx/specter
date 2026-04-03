@@ -11,6 +11,7 @@ package reverse
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -343,11 +344,14 @@ func assembleSpec(groupKey string, group *fileGroup, adapter Adapter, systemName
 		return nil
 	}
 
-	specID := GenerateSpecID(groupKey)
-
-	// For Next.js App Router files (route.ts), derive ID from route path instead
-	if specID == "route" && len(routes) > 0 {
+	// For Next.js App Router files (route.ts/route.js), derive ID from route path
+	// This check runs BEFORE GenerateSpecID so route paths take priority
+	specID := ""
+	if len(routes) > 0 && isNextJSRouteFile(groupKey) {
 		specID = GenerateSpecIDFromRoute(routes[0].Path)
+	}
+	if specID == "" {
+		specID = GenerateSpecID(groupKey)
 	}
 
 	// Build constraints
@@ -536,6 +540,12 @@ func normalizeValidationRule(rule string) string {
 		return canonical
 	}
 	return "custom"
+}
+
+// isNextJSRouteFile checks if the file path ends with route.ts, route.js, etc.
+func isNextJSRouteFile(path string) bool {
+	base := filepath.Base(path)
+	return base == "route.ts" || base == "route.tsx" || base == "route.js" || base == "route.jsx"
 }
 
 func findGapConstraintIndex(gapDesc string, constraints []ExtractedConstraint) int {

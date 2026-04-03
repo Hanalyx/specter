@@ -2,6 +2,19 @@
 
 All notable changes to Specter will be documented in this file.
 
+## [0.2.4] - 2026-04-03
+
+### Fixed
+
+- Route-path ID now takes priority over generic-filename logic for Next.js App Router files (`onboarding-route` → `onboarding`, `slug-route` → `blog-slug`)
+- Zod `.min(N, "message")` and `.max(N, "message")` with custom error messages now extracted correctly (previously the closing paren regex failed when extra args were present)
+- Zod `.email("message")` and `.url("message")` with custom messages now extracted correctly
+- CLI discovers `prisma/schema.prisma` from parent directories when scanning a subdirectory like `src/`
+
+### Added
+
+- `--exclude` flag for `specter reverse` — exclude paths from scanning (e.g., `--exclude src/components --exclude "*.test.*"`)
+
 ## [0.2.3] - 2026-04-03
 
 ### Fixed
