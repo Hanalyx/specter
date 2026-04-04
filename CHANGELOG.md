@@ -2,6 +2,21 @@
 
 All notable changes to Specter will be documented in this file.
 
+## [0.3.1] - 2026-04-04
+
+### Fixed
+
+- Route-path ID now takes priority over generic-filename logic for Next.js App Router (`onboarding-route` → `onboarding`)
+- Zod `.min(N, "message")` / `.max(N, "message")` / `.email("msg")` with custom error messages now extracted correctly
+- CLI discovers `prisma/schema.prisma` from parent directories when scanning a subdirectory
+- Inline Python comment false positives eliminated (`# isort:skip`, `# noqa` on import lines)
+
+### Added
+
+- `--overwrite` flag for `specter reverse` — existing spec files are skipped by default, preserving manual edits
+- `--exclude` flag for `specter reverse` — scope scans with path exclusions
+- 3-tier pre-release CI workflow validating against 12 open-source repos (chi, fiber, validator, FastAPI, pydantic, django, cal.com, create-t3-app, payload, tRPC, TanStack, refine)
+
 ## [0.3.0] - 2026-04-03
 
 ### Added
