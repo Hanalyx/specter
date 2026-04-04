@@ -1,0 +1,47 @@
+system:
+  name: jendays
+  description: "SaaS platform for therapy practice management"
+  tier: 1
+
+domains:
+  payments:
+    tier: 1
+    description: "Payment processing via Stripe"
+    specs:
+      - checkout
+      - webhooks-stripe
+  auth:
+    tier: 1
+    description: "Authentication and authorization"
+    specs:
+      - register
+      - login
+  content:
+    tier: 2
+    description: "Blog and content management"
+    specs:
+      - blog
+
+settings:
+  specs_dir: "specs"
+  coverage:
+    tier1: 100
+    tier2: 80
+    tier3: 50
+  exclude:
+    - node_modules
+    - dist
+
+registry:
+  - id: checkout
+    file: specs/checkout.spec.yaml
+    version: "1.0.0"
+    status: approved
+    tier: 1
+    domain: payments
+  - id: register
+    file: specs/register.spec.yaml
+    version: "0.1.0"
+    status: draft
+    tier: 1
+    domain: auth

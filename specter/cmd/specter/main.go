@@ -9,10 +9,11 @@ import (
 
 	"github.com/Hanalyx/specter/internal/checker"
 	"github.com/Hanalyx/specter/internal/coverage"
+	"github.com/Hanalyx/specter/internal/manifest"
 	"github.com/Hanalyx/specter/internal/parser"
 	"github.com/Hanalyx/specter/internal/resolver"
-	"github.com/Hanalyx/specter/internal/schema"
 	"github.com/Hanalyx/specter/internal/reverse"
+	"github.com/Hanalyx/specter/internal/schema"
 	specsync "github.com/Hanalyx/specter/internal/sync"
 	"github.com/spf13/cobra"
 )
@@ -33,6 +34,7 @@ func main() {
 	root.AddCommand(coverageCmd())
 	root.AddCommand(syncCmd())
 	root.AddCommand(reverseCmd())
+	root.AddCommand(initCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -340,7 +342,7 @@ func coverageCmd() *cobra.Command {
 				allAnnotations = append(allAnnotations, coverage.ExtractAnnotations(string(data), f)...)
 			}
 
-			report := coverage.BuildCoverageReport(specs, allAnnotations)
+			report := coverage.BuildCoverageReport(specs, allAnnotations, checker.CoverageThresholdByTier)
 
 			if jsonOutput {
 				enc := json.NewEncoder(os.Stdout)
@@ -640,6 +642,95 @@ func reverseCmd() *cobra.Command {
 	cmd.Flags().StringVar(&groupBy, "group-by", "file", "Grouping strategy: file or directory")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview output without writing files")
 	cmd.Flags().StringArrayVar(&excludes, "exclude", nil, "Exclude paths matching pattern (can be repeated)")
+
+	return cmd
+}
+
+// --- Manifest Helpers ---
+
+func findManifest() (manifestPath string, projectRoot string) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", ""
+	}
+	for {
+		candidate := filepath.Join(dir, "specter.yaml")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return "", ""
+}
+
+func loadManifest() (*manifest.Manifest, string) {
+	path, root := findManifest()
+	if path == "" {
+		return manifest.Defaults(), ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return manifest.Defaults(), ""
+	}
+	m, err := manifest.ParseManifest(string(data))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: invalid specter.yaml: %v (using defaults)\n", err)
+		return manifest.Defaults(), ""
+	}
+	return m, root
+}
+
+func initCmd() *cobra.Command {
+	var (
+		name  string
+		force bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "init",
+		Short: "Initialize a specter.yaml project manifest",
+		Long:  "Scaffold a specter.yaml file from existing .spec.yaml files in the current directory. Groups all specs into a default domain with sensible settings.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := os.Stat("specter.yaml"); err == nil && !force {
+				fmt.Println("specter.yaml already exists. Use --force to overwrite.")
+				os.Exit(1)
+			}
+
+			if name == "" {
+				dir, _ := os.Getwd()
+				name = filepath.Base(dir)
+			}
+
+			specFiles := discoverSpecs()
+			var specIDs []string
+			for _, file := range specFiles {
+				data, err := os.ReadFile(file)
+				if err != nil {
+					continue
+				}
+				result := parser.ParseSpec(string(data))
+				if result.OK {
+					specIDs = append(specIDs, result.Value.ID)
+				}
+			}
+
+			yamlStr := manifest.ScaffoldManifest(name, "", specIDs)
+			if err := os.WriteFile("specter.yaml", []byte(yamlStr), 0644); err != nil {
+				fmt.Fprintf(os.Stderr, "error writing specter.yaml: %v\n", err)
+				os.Exit(1)
+			}
+
+			fmt.Printf("Created specter.yaml with %d spec(s) in system %q\n", len(specIDs), name)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&name, "name", "", "System name (defaults to directory name)")
+	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing specter.yaml")
 
 	return cmd
 }

@@ -34,8 +34,9 @@ type SyncResult struct {
 
 // SyncInput provides spec and test file contents.
 type SyncInput struct {
-	SpecFiles []FileContent // [filepath, content]
-	TestFiles []FileContent
+	SpecFiles  []FileContent // [filepath, content]
+	TestFiles  []FileContent
+	Thresholds map[int]int // optional coverage thresholds by tier; nil uses defaults
 }
 
 type FileContent struct {
@@ -130,7 +131,11 @@ func RunSync(input SyncInput) *SyncResult {
 		allAnnotations = append(allAnnotations, coverage.ExtractAnnotations(f.Content, f.Path)...)
 	}
 
-	coverageReport := coverage.BuildCoverageReport(specs, allAnnotations)
+	thresholds := input.Thresholds
+	if thresholds == nil {
+		thresholds = checker.CoverageThresholdByTier
+	}
+	coverageReport := coverage.BuildCoverageReport(specs, allAnnotations, thresholds)
 	result.CoverageReport = coverageReport
 
 	if coverageReport.Summary.Failing > 0 {

@@ -1,0 +1,247 @@
+spec:
+  id: spec-manifest
+  version: "1.0.0"
+  status: draft
+  tier: 2
+
+  context:
+    system: Specter toolchain
+    feature: Project manifest, spec registry, and domain grouping
+    description: >
+      Adds a project-level manifest (specter.yaml) that defines the system,
+      groups specs into domains with tier inheritance, maintains an auto-updated
+      spec registry, and provides configurable coverage thresholds. This is the
+      missing layer that connects individual specs into a coherent system —
+      analogous to tsconfig.json for TypeScript or go.mod for Go.
+    dependencies:
+      - "gopkg.in/yaml.v3 (YAML parsing)"
+    related_specs:
+      - "spec-parse"
+      - "spec-sync"
+    assumptions:
+      - "specter.yaml is discovered by walking up from CWD"
+      - "All commands work without a specter.yaml (backward compatible)"
+      - "The registry section is auto-maintained, not manually edited"
+      - "Domain info lives in the manifest, not in individual spec files"
+
+  objective:
+    summary: >
+      Parse and validate specter.yaml project manifests. Provide tier
+      inheritance (spec -> domain -> system -> default), domain-level coverage
+      aggregation, auto-maintained spec registry, and a scaffold command for
+      first-run experience.
+    scope:
+      includes:
+        - "Parse specter.yaml into typed Manifest structure"
+        - "Validate manifest fields (system.name required, tiers 1-3, etc.)"
+        - "Discover specter.yaml by walking up from CWD"
+        - "Resolve spec tiers via cascade: spec -> domain -> system -> default(2)"
+        - "Group specs by domain for coverage reporting"
+        - "Auto-update registry from parsed specs on every sync run"
+        - "Scaffold specter.yaml from existing specs via specter init"
+        - "Configurable coverage thresholds per tier"
+        - "Backward compatibility — all commands work without manifest"
+      excludes:
+        - "Changes to spec-schema.json"
+        - "Interactive specter init (flags only)"
+        - "Nested domains or domain hierarchies"
+        - "Remote registry or spec publishing"
+        - "Domain-level dependency rules"
+
+  constraints:
+    - id: C-01
+      description: "MUST parse valid specter.yaml into a typed Manifest structure with system, domains, settings, and registry sections"
+      type: technical
+      enforcement: error
+
+    - id: C-02
+      description: "MUST require system.name field — return validation error if missing"
+      type: technical
+      enforcement: error
+
+    - id: C-03
+      description: "MUST validate tier values as 1, 2, or 3 in system.tier and domain tiers"
+      type: technical
+      enforcement: error
+
+    - id: C-04
+      description: "MUST resolve spec tiers via cascade: explicit spec tier -> domain tier -> system tier -> default 2"
+      type: business
+      enforcement: error
+
+    - id: C-05
+      description: "MUST return sensible defaults when no specter.yaml exists (specs_dir=specs, coverage T1=100 T2=80 T3=50)"
+      type: technical
+      enforcement: error
+
+    - id: C-06
+      description: "MUST auto-update the registry section from the current set of parsed specs"
+      type: business
+      enforcement: error
+
+    - id: C-07
+      description: "MUST aggregate spec-level coverage into domain-level summaries"
+      type: business
+      enforcement: error
+
+    - id: C-08
+      description: "MUST generate a valid specter.yaml scaffold from existing spec IDs"
+      type: technical
+      enforcement: error
+
+    - id: C-09
+      description: "MUST NOT break existing commands when no specter.yaml is present"
+      type: technical
+      enforcement: error
+
+    - id: C-10
+      description: "MUST NOT depend on any CLI framework — pure functions from YAML string to typed structures"
+      type: technical
+      enforcement: error
+
+  acceptance_criteria:
+    - id: AC-01
+      description: "Valid specter.yaml with all sections parses into Manifest struct"
+      inputs:
+        yaml: "system.name + domains + settings + registry"
+      expected_output:
+        manifest: "fully populated Manifest struct"
+      references_constraints: ["C-01"]
+      priority: critical
+
+    - id: AC-02
+      description: "Missing system.name returns validation error"
+      inputs:
+        yaml: "specter.yaml without system.name"
+      expected_output:
+        error: "system.name is required"
+      references_constraints: ["C-02"]
+      priority: critical
+
+    - id: AC-03
+      description: "Invalid tier (0, 4, -1) returns validation error"
+      inputs:
+        yaml: "system.tier: 4"
+      expected_output:
+        error: "tier must be 1, 2, or 3"
+      references_constraints: ["C-03"]
+      priority: high
+
+    - id: AC-04
+      description: "Spec with explicit tier ignores domain and system tier"
+      inputs:
+        spec_tier: 3
+        domain_tier: 1
+        system_tier: 2
+      expected_output:
+        resolved_tier: 3
+      references_constraints: ["C-04"]
+      priority: critical
+
+    - id: AC-05
+      description: "Spec without tier inherits domain tier"
+      inputs:
+        spec_tier: 0
+        domain_tier: 1
+      expected_output:
+        resolved_tier: 1
+      references_constraints: ["C-04"]
+      priority: critical
+
+    - id: AC-06
+      description: "Spec without tier or domain inherits system tier"
+      inputs:
+        spec_tier: 0
+        domain_tier: 0
+        system_tier: 2
+      expected_output:
+        resolved_tier: 2
+      references_constraints: ["C-04"]
+      priority: high
+
+    - id: AC-07
+      description: "Spec without any tier info defaults to 2"
+      inputs:
+        spec_tier: 0
+        domain_tier: 0
+        system_tier: 0
+      expected_output:
+        resolved_tier: 2
+      references_constraints: ["C-04"]
+      priority: high
+
+    - id: AC-08
+      description: "Defaults() returns sensible manifest when no specter.yaml exists"
+      expected_output:
+        specs_dir: "specs"
+        coverage_t1: 100
+        coverage_t2: 80
+        coverage_t3: 50
+      references_constraints: ["C-05"]
+      priority: high
+
+    - id: AC-09
+      description: "BuildRegistryFromSpecs produces entries for all parsed specs"
+      inputs:
+        specs: "3 specs with IDs checkout, login, blog"
+      expected_output:
+        registry_count: 3
+      references_constraints: ["C-06"]
+      priority: critical
+
+    - id: AC-10
+      description: "Specs in domains get correct domain field in registry"
+      inputs:
+        spec_id: "checkout"
+        domain: "payments"
+      expected_output:
+        registry_domain: "payments"
+      references_constraints: ["C-06"]
+      priority: high
+
+    - id: AC-11
+      description: "DomainCoverage aggregates per-spec coverage into per-domain summary"
+      inputs:
+        domain: "payments"
+        specs_in_domain: 3
+        coverage_pcts: [100, 90, 80]
+      expected_output:
+        avg_coverage: 90
+        passing: 3
+      references_constraints: ["C-07"]
+      priority: high
+
+    - id: AC-12
+      description: "ScaffoldManifest produces valid YAML that round-trips through ParseManifest"
+      inputs:
+        name: "my-app"
+        spec_ids: ["auth", "payments"]
+      expected_output:
+        parse_ok: true
+      references_constraints: ["C-08"]
+      priority: high
+
+    - id: AC-13
+      description: "All existing commands produce identical output without specter.yaml"
+      references_constraints: ["C-09"]
+      priority: critical
+
+    - id: AC-14
+      description: "Manifest package has zero CLI or I/O dependencies"
+      references_constraints: ["C-10"]
+      priority: high
+
+  depends_on:
+    - spec_id: spec-parse
+      version_range: "^1.0.0"
+      relationship: requires
+    - spec_id: spec-sync
+      version_range: "^1.0.0"
+      relationship: requires
+
+  changelog:
+    - version: "1.0.0"
+      date: "2026-04-03"
+      author: "specter-team"
+      type: initial
+      description: "Initial spec for project manifest, spec registry, and domain grouping"
