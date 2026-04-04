@@ -4,3 +4,8 @@ CLAUDE.md
 
 # Archived Node.js implementation (kept locally for reference)
 specter-node-archive/
+
+# Local research and planning docs (not shipped)
+research/
+SDD_NEXT_STEP_GROUNDWORK.md
+SPECTER_REPORT.md
