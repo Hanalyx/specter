@@ -1,0 +1,198 @@
+name: Pre-Release Test Suite
+
+# Runs the full 3-tier test suite before releases.
+# Tier 1: Unit tests (go vet, go test, build)
+# Tier 2: Dogfood (specter validates its own specs)
+# Tier 3: Real-world validation against 12 open-source repos
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: specter
+
+jobs:
+  # --- Tier 1: Unit Tests ---
+  tier1-unit:
+    name: "Tier 1: Unit Tests"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: specter/go.mod
+          cache-dependency-path: specter/go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build
+        run: go build -o bin/specter ./cmd/specter/
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: specter-binary
+          path: specter/bin/specter
+
+  # --- Tier 2: Dogfood ---
+  tier2-dogfood:
+    name: "Tier 2: Dogfood"
+    needs: tier1-unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: specter-binary
+          path: specter/bin
+
+      - name: Make binary executable
+        run: chmod +x bin/specter
+
+      - name: Parse all specs
+        run: bin/specter parse specs/*.spec.yaml
+
+      - name: Resolve dependency graph
+        run: bin/specter resolve
+
+      - name: Run structural checks
+        run: bin/specter check
+
+  # --- Tier 3: Real-World Validation ---
+  tier3-realworld:
+    name: "Tier 3: ${{ matrix.repo }}"
+    needs: tier1-unit
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Go repos
+          - repo: go-chi/chi
+            adapter: go
+            path: "."
+            min_specs: 40
+            min_assertions: 50
+          - repo: gofiber/fiber
+            adapter: go
+            path: "."
+            min_specs: 85
+            min_assertions: 1200
+          - repo: go-playground/validator
+            adapter: go
+            path: "."
+            min_specs: 30
+            min_assertions: 100
+          # Python repos
+          - repo: fastapi/full-stack-fastapi-template
+            adapter: python
+            path: "."
+            min_specs: 20
+            min_assertions: 55
+          - repo: pydantic/pydantic
+            adapter: python
+            path: "."
+            min_specs: 240
+            min_assertions: 4200
+          - repo: django/django
+            adapter: python
+            path: "."
+            min_specs: 850
+            min_assertions: 17000
+          # TypeScript/Next.js/React repos
+          - repo: calcom/cal.com
+            adapter: typescript
+            path: packages/prisma
+            min_specs: 3
+            min_assertions: 20
+          - repo: t3-oss/create-t3-app
+            adapter: typescript
+            path: "."
+            min_specs: 23
+            min_assertions: 0
+          - repo: payloadcms/payload
+            adapter: typescript
+            path: packages/payload/src
+            min_specs: 44
+            min_assertions: 400
+          - repo: trpc/trpc
+            adapter: typescript
+            path: packages
+            min_specs: 225
+            min_assertions: 1100
+          - repo: TanStack/router
+            adapter: typescript
+            path: packages/router-core
+            min_specs: 28
+            min_assertions: 470
+          - repo: refinedev/refine
+            adapter: typescript
+            path: packages/core
+            min_specs: 130
+            min_assertions: 1100
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: specter-binary
+          path: specter/bin
+
+      - name: Make binary executable
+        run: chmod +x bin/specter
+
+      - name: Clone target repo
+        run: git clone --depth 1 https://github.com/${{ matrix.repo }}.git /tmp/target-repo
+
+      - name: Run reverse compiler
+        id: reverse
+        run: |
+          bin/specter reverse \
+            --adapter=${{ matrix.adapter }} \
+            --dry-run \
+            --json \
+            /tmp/target-repo/${{ matrix.path }} > /tmp/result.json 2>&1 || true
+
+      - name: Validate results
+        run: |
+          echo "=== Specter Reverse Compiler Results: ${{ matrix.repo }} ==="
+
+          # Extract metrics
+          SPECS=$(cat /tmp/result.json | python3 -c "import json,sys; print(json.load(sys.stdin)['summary']['SpecsGenerated'])")
+          ASSERTIONS=$(cat /tmp/result.json | python3 -c "import json,sys; print(json.load(sys.stdin)['summary']['AssertionsFound'])")
+          VF=$(cat /tmp/result.json | python3 -c "import json,sys; print(sum(1 for d in json.load(sys.stdin)['diagnostics'] if d['Kind']=='validation_failed'))")
+
+          echo "Specs generated: $SPECS (min: ${{ matrix.min_specs }})"
+          echo "Assertions found: $ASSERTIONS (min: ${{ matrix.min_assertions }})"
+          echo "Validation failures: $VF (must be 0)"
+
+          # Assert zero validation failures (P0 — Specter must never reject its own output)
+          if [ "$VF" != "0" ]; then
+            echo "::error::VALIDATION FAILURES DETECTED: $VF specs rejected"
+            exit 1
+          fi
+
+          # Assert minimum spec count (catches regressions)
+          if [ "$SPECS" -lt "${{ matrix.min_specs }}" ]; then
+            echo "::error::REGRESSION: Only $SPECS specs generated (minimum: ${{ matrix.min_specs }})"
+            exit 1
+          fi
+
+          # Assert minimum assertion count (catches regressions)
+          if [ "$ASSERTIONS" -lt "${{ matrix.min_assertions }}" ]; then
+            echo "::error::REGRESSION: Only $ASSERTIONS assertions found (minimum: ${{ matrix.min_assertions }})"
+            exit 1
+          fi
+
+          echo "PASS: ${{ matrix.repo }} — $SPECS specs, $ASSERTIONS assertions, 0 validation failures"

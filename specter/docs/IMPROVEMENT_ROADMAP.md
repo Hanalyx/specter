@@ -121,3 +121,4 @@ Tested against 12 open-source repos on 2026-04-03:
 | **TOTAL** | | **5,434** | **1,822** | **27,012** | **18** |
 
 **Key finding:** Zero crashes across 5,434 files. Core engine is solid. All 18 validation failures trace to the same root cause (validation.rule enum too narrow).
+
