@@ -464,6 +464,7 @@ func reverseCmd() *cobra.Command {
 		outputDir   string
 		groupBy     string
 		dryRun      bool
+		overwrite   bool
 		excludes    []string
 	)
 
@@ -612,6 +613,13 @@ func reverseCmd() *cobra.Command {
 				}
 
 				outPath := filepath.Join(outputDir, gs.FileName)
+
+				// Skip existing files unless --overwrite is set
+				if _, existErr := os.Stat(outPath); existErr == nil && !overwrite {
+					fmt.Printf("SKIPPED %s (already exists, use --overwrite to replace)\n", outPath)
+					continue
+				}
+
 				if mkErr := os.MkdirAll(outputDir, 0755); mkErr != nil {
 					fmt.Fprintf(os.Stderr, "error creating output directory: %v\n", mkErr)
 					os.Exit(1)
@@ -641,6 +649,7 @@ func reverseCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&outputDir, "output", "o", "specs", "Output directory for generated .spec.yaml files")
 	cmd.Flags().StringVar(&groupBy, "group-by", "file", "Grouping strategy: file or directory")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview output without writing files")
+	cmd.Flags().BoolVar(&overwrite, "overwrite", false, "Overwrite existing spec files (default: skip)")
 	cmd.Flags().StringArrayVar(&excludes, "exclude", nil, "Exclude paths matching pattern (can be repeated)")
 
 	return cmd
