@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Hanalyx/specter/internal/checker"
 	"github.com/Hanalyx/specter/internal/schema"
 )
 
@@ -96,7 +95,7 @@ func ExtractAnnotations(fileContent, filePath string) []AnnotationMatch {
 // C-03: Reports coverage as percentage.
 // C-04: Flags specs below tier threshold.
 // C-05: Pure function.
-func BuildCoverageReport(specs []schema.SpecAST, annotations []AnnotationMatch) *CoverageReport {
+func BuildCoverageReport(specs []schema.SpecAST, annotations []AnnotationMatch, thresholds map[int]int) *CoverageReport {
 	// Group annotations by spec ID
 	annotBySpec := make(map[string]struct {
 		acIDs map[string]bool
@@ -146,7 +145,7 @@ func BuildCoverageReport(specs []schema.SpecAST, annotations []AnnotationMatch) 
 			coveragePct = float64(int(coveragePct*10)) / 10
 		}
 
-		threshold := checker.CoverageThresholdByTier[spec.Tier]
+		threshold := thresholds[spec.Tier]
 		if threshold == 0 {
 			threshold = 80
 		}

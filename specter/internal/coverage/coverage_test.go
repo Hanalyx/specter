@@ -4,6 +4,7 @@ package coverage
 import (
 	"testing"
 
+	"github.com/Hanalyx/specter/internal/checker"
 	"github.com/Hanalyx/specter/internal/schema"
 )
 
@@ -46,7 +47,7 @@ func TestCoverageMapping(t *testing.T) {
 		{File: "test.ts", SpecID: "user-auth", ACIDs: []string{"AC-01", "AC-02"}},
 	}
 
-	report := BuildCoverageReport(specs, anns)
+	report := BuildCoverageReport(specs, anns, checker.CoverageThresholdByTier)
 	e := report.Entries[0]
 
 	if len(e.CoveredACs) != 2 {
@@ -63,7 +64,7 @@ func TestCoverageMapping(t *testing.T) {
 // @ac AC-02
 func TestZeroCoverage(t *testing.T) {
 	specs := []schema.SpecAST{makeSpec("orphan", 2, "AC-01", "AC-02")}
-	report := BuildCoverageReport(specs, nil)
+	report := BuildCoverageReport(specs, nil, checker.CoverageThresholdByTier)
 
 	if report.Entries[0].CoveragePct != 0 {
 		t.Errorf("expected 0%%, got %.1f%%", report.Entries[0].CoveragePct)
@@ -80,7 +81,7 @@ func TestTier1Below100Fails(t *testing.T) {
 		{File: "test.ts", SpecID: "payment", ACIDs: []string{"AC-01", "AC-02", "AC-03", "AC-04"}},
 	}
 
-	report := BuildCoverageReport(specs, anns)
+	report := BuildCoverageReport(specs, anns, checker.CoverageThresholdByTier)
 	e := report.Entries[0]
 
 	if e.PassesThreshold {
@@ -98,7 +99,7 @@ func TestTier3At60Passes(t *testing.T) {
 		{File: "test.ts", SpecID: "utils", ACIDs: []string{"AC-01", "AC-02", "AC-03"}},
 	}
 
-	report := BuildCoverageReport(specs, anns)
+	report := BuildCoverageReport(specs, anns, checker.CoverageThresholdByTier)
 	e := report.Entries[0]
 
 	if !e.PassesThreshold {
