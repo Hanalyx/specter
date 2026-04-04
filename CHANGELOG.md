@@ -2,6 +2,20 @@
 
 All notable changes to Specter will be documented in this file.
 
+## [0.3.0] - 2026-04-03
+
+### Added
+
+- `specter.yaml` project manifest — defines system metadata, domain grouping, coverage thresholds, and spec registry
+- `specter init` command — scaffolds specter.yaml from existing specs with `--name` and `--force` flags
+- Domain grouping — group specs by business area (payments, auth, content) with tier inheritance
+- Tier cascade — spec tier → domain tier → system tier → default (2)
+- Configurable coverage thresholds per tier via manifest `settings.coverage`
+- Auto-maintained spec registry rebuilt on every sync run
+- Domain-level coverage aggregation
+- `spec-manifest.spec.yaml` — the manifest's own spec (10 constraints, 14 ACs)
+- 104 tests (up from 85), 7 specs (up from 6)
+
 ## [0.2.4] - 2026-04-03
 
 ### Fixed
