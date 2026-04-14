@@ -48,7 +48,7 @@ nfpms:
     package_name: specter
     formats:
       - deb
-      # Phase B: add rpm here
+      - rpm
     vendor: Hanalyx
     homepage: "https://github.com/Hanalyx/spec-dd"
     maintainer: "Hanalyx <noreply@hanalyx.com>"
