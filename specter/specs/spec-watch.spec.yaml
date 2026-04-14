@@ -1,0 +1,135 @@
+spec:
+  id: spec-watch
+  version: "1.0.0"
+  status: draft
+  tier: 2
+
+  context:
+    system: Specter toolchain
+    feature: File-system watcher for interactive sync
+    description: >
+      Makes the draft→check→fix authoring loop interactive by re-running the full
+      sync pipeline whenever a .spec.yaml or test file changes. Same semantics as
+      `tsc --watch` for TypeScript. Implemented with polling — no external
+      dependencies. Terminates cleanly on Ctrl+C / SIGTERM.
+    related_specs:
+      - "spec-sync"
+
+  objective:
+    summary: >
+      Poll for .spec.yaml and test file changes, re-run the sync pipeline on any
+      change, and display a compact timestamped summary per run. Exit cleanly on
+      interrupt.
+    scope:
+      includes:
+        - "Poll for changes in .spec.yaml and test files"
+        - "Re-run full sync pipeline on detected change"
+        - "Timestamped compact summary per run (PASS/FAIL + AC count)"
+        - "Configurable poll interval via --interval flag (default 500ms)"
+        - "Graceful exit on Ctrl+C / SIGTERM with exit code 0"
+        - "Initial run on startup before first poll tick"
+      excludes:
+        - "inotify / fsnotify (no external dependencies)"
+        - "Writing or modifying spec files"
+        - "Network requests"
+        - "Interactive TUI"
+
+  constraints:
+    - id: C-01
+      description: "MUST re-run the sync pipeline whenever a .spec.yaml or test file modification time changes"
+      type: technical
+      enforcement: error
+
+    - id: C-02
+      description: "MUST implement change detection via polling with no external dependencies beyond the Go standard library"
+      type: technical
+      enforcement: error
+
+    - id: C-03
+      description: "MUST print a timestamped compact summary after every run (timestamp + PASS/FAIL + spec count + AC coverage count)"
+      type: technical
+      enforcement: error
+
+    - id: C-04
+      description: "MUST exit 0 on Ctrl+C (SIGINT) or SIGTERM — no error exit on user interrupt"
+      type: technical
+      enforcement: error
+
+    - id: C-05
+      description: "MUST accept --interval flag (duration string, e.g. 500ms, 1s) to override the default 500ms poll interval"
+      type: technical
+      enforcement: error
+
+    - id: C-06
+      description: "MUST run the sync pipeline once immediately on startup before the first poll tick"
+      type: technical
+      enforcement: error
+
+    - id: C-07
+      description: "MUST continue polling even if a run produces FAIL — watch mode is for the authoring loop, not CI enforcement"
+      type: technical
+      enforcement: error
+
+    - id: C-08
+      description: "MUST print a startup message listing watched file globs and the poll interval"
+      type: technical
+      enforcement: error
+
+  acceptance_criteria:
+    - id: AC-01
+      description: "On startup, watch prints the watched globs and interval, then runs sync immediately"
+      expected_output:
+        startup_message: true
+        initial_run_before_first_tick: true
+      references_constraints: ["C-06", "C-08"]
+      priority: critical
+
+    - id: AC-02
+      description: "Modifying a .spec.yaml file triggers a re-run within one poll interval"
+      references_constraints: ["C-01"]
+      priority: critical
+
+    - id: AC-03
+      description: "Modifying a test file triggers a re-run within one poll interval"
+      references_constraints: ["C-01"]
+      priority: high
+
+    - id: AC-04
+      description: "Each run prints a line with timestamp, PASS or FAIL, and summary counts"
+      expected_output:
+        format_example: "[14:32:05] PASS  8 specs  47/52 ACs covered"
+      references_constraints: ["C-03"]
+      priority: high
+
+    - id: AC-05
+      description: "Ctrl+C exits with code 0, not 1"
+      expected_output:
+        exit_code: 0
+      references_constraints: ["C-04"]
+      priority: critical
+
+    - id: AC-06
+      description: "--interval 1s sets poll interval to 1 second"
+      inputs:
+        flag: "--interval 1s"
+      expected_output:
+        poll_interval: "1s"
+      references_constraints: ["C-05"]
+      priority: high
+
+    - id: AC-07
+      description: "A FAIL run does not stop the watch loop — subsequent file changes still trigger re-runs"
+      references_constraints: ["C-07"]
+      priority: critical
+
+  depends_on:
+    - spec_id: spec-sync
+      version_range: "^1.0.0"
+      relationship: requires
+
+  changelog:
+    - version: "1.0.0"
+      date: "2026-04-14"
+      author: "specter-team"
+      type: initial
+      description: "Initial spec for the specter watch filesystem watcher"

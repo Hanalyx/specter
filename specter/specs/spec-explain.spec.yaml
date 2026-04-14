@@ -1,0 +1,152 @@
+spec:
+  id: spec-explain
+  version: "1.0.0"
+  status: draft
+  tier: 2
+
+  context:
+    system: Specter toolchain
+    feature: AC coverage explainer
+    description: >
+      An interactive diagnostic command that tells developers exactly how to annotate
+      a test for an uncovered acceptance criterion. Bridges the gap between a failing
+      coverage check and the code change that fixes it. Part of the authoring loop:
+      draft → check → explain → annotate → recheck.
+    related_specs:
+      - "spec-coverage"
+      - "spec-parse"
+
+  objective:
+    summary: >
+      Given a spec ID and optional AC ID, show coverage status and ready-to-paste
+      annotation examples so a developer can cover an uncovered AC in one step.
+    scope:
+      includes:
+        - "Look up a spec by ID from parsed specs"
+        - "Show all ACs with COVERED/UNCOVERED status when no AC ID given"
+        - "Show annotation examples in language(s) detected from test files"
+        - "Show which test files cover a specific AC"
+        - "Show which test files were scanned"
+        - "Exit 1 if spec ID not found"
+      excludes:
+        - "Writing or modifying any files"
+        - "Running the full sync pipeline"
+        - "Interactive prompts"
+
+  constraints:
+    - id: C-01
+      description: "MUST accept argument in form <spec-id>:<ac-id> to show details for one AC"
+      type: technical
+      enforcement: error
+
+    - id: C-02
+      description: "MUST accept <spec-id> alone and list all ACs with COVERED/UNCOVERED status"
+      type: technical
+      enforcement: error
+
+    - id: C-03
+      description: "MUST show ready-to-paste annotation examples for uncovered ACs in language(s) detected from test file extensions"
+      type: technical
+      enforcement: error
+
+    - id: C-04
+      description: "MUST show the count and list of test files scanned when producing explain output"
+      type: technical
+      enforcement: error
+
+    - id: C-05
+      description: "MUST show which file(s) cover an AC when the AC is already covered"
+      type: technical
+      enforcement: error
+
+    - id: C-06
+      description: "MUST NOT write or modify any files — read-only diagnostic"
+      type: technical
+      enforcement: error
+
+    - id: C-07
+      description: "MUST exit 1 with a clear error if the given spec ID is not found"
+      type: technical
+      enforcement: error
+
+    - id: C-08
+      description: "MUST detect annotation language from test file extensions: .go → Go comment, .py → Python comment, .ts/.tsx/.js/.jsx → JS comment; default to Go/generic if no test files found"
+      type: technical
+      enforcement: error
+
+  acceptance_criteria:
+    - id: AC-01
+      description: "`specter explain my-spec` lists all ACs with COVERED or UNCOVERED label"
+      inputs:
+        spec_id: "my-spec"
+        ac_ids: ["AC-01", "AC-02"]
+        covered: ["AC-01"]
+      expected_output:
+        ac_01_label: "COVERED"
+        ac_02_label: "UNCOVERED"
+      references_constraints: ["C-02"]
+      priority: critical
+
+    - id: AC-02
+      description: "`specter explain my-spec:AC-02` shows annotation example for uncovered AC"
+      inputs:
+        spec_id: "my-spec"
+        ac_id: "AC-02"
+        covered: false
+      expected_output:
+        contains_annotation_example: true
+        contains_spec_annotation: "// @spec my-spec"
+        contains_ac_annotation: "// @ac AC-02"
+      references_constraints: ["C-01", "C-03"]
+      priority: critical
+
+    - id: AC-03
+      description: "When test files include .py files, Python-style annotation example is shown"
+      inputs:
+        test_files: ["test_user.py"]
+        ac_id: "AC-01"
+      expected_output:
+        contains_python_syntax: "# @spec"
+      references_constraints: ["C-08"]
+      priority: high
+
+    - id: AC-04
+      description: "Covered AC shows which file(s) cover it, not an annotation example"
+      inputs:
+        ac_id: "AC-01"
+        covered_in: "user_test.go"
+      expected_output:
+        shows_covered_file: true
+        does_not_show_annotation_example: true
+      references_constraints: ["C-05"]
+      priority: high
+
+    - id: AC-05
+      description: "Unknown spec ID exits 1 with 'spec not found' message"
+      inputs:
+        spec_id: "does-not-exist"
+      expected_output:
+        exit_code: 1
+        error_contains: "not found"
+      references_constraints: ["C-07"]
+      priority: critical
+
+    - id: AC-06
+      description: "Output includes count of test files scanned"
+      references_constraints: ["C-04"]
+      priority: high
+
+  depends_on:
+    - spec_id: spec-coverage
+      version_range: "^1.0.0"
+      relationship: requires
+    - spec_id: spec-parse
+      version_range: "^1.0.0"
+      relationship: requires
+
+  changelog:
+    - version: "1.0.0"
+      date: "2026-04-14"
+      author: "specter-team"
+      type: initial
+      description: "Initial spec for the specter explain AC coverage explainer"

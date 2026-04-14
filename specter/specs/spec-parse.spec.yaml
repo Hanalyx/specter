@@ -1,6 +1,6 @@
 spec:
   id: spec-parse
-  version: "1.0.0"
+  version: "1.1.0"
   status: approved
   tier: 1
 
@@ -74,6 +74,11 @@ spec:
 
     - id: C-08
       description: "MUST NOT depend on any CLI framework or I/O — pure function from string/buffer to SpecAST|ParseError[]"
+      type: technical
+      enforcement: error
+
+    - id: C-09
+      description: "MUST produce human-readable error messages that name the invalid field and describe the fix, not raw JSON Schema paths or validator internals"
       type: technical
       enforcement: error
 
@@ -182,7 +187,39 @@ spec:
       references_constraints: ["C-01"]
       priority: medium
 
+    - id: AC-11
+      description: "Invalid constraint ID 'c1' returns a message mentioning the C-NN pattern, not a raw JSON Schema path"
+      inputs:
+        file: "fixtures/invalid/bad-constraint-id.spec.yaml"
+      expected_output:
+        message_contains: "C-NN"
+      references_constraints: ["C-09"]
+      priority: high
+
+    - id: AC-12
+      description: "Missing required field 'id' returns a message explaining what to add, not 'missing property'"
+      inputs:
+        file: "fixtures/invalid/missing-id.spec.yaml"
+      expected_output:
+        message_contains: "kebab-case"
+      references_constraints: ["C-09"]
+      priority: high
+
+    - id: AC-13
+      description: "Unknown field returns a message naming the field and suggesting it be removed"
+      inputs:
+        file: "fixtures/invalid/extra-field.spec.yaml"
+      expected_output:
+        message_does_not_contain: "additionalProperties"
+      references_constraints: ["C-09"]
+      priority: high
+
   changelog:
+    - version: "1.1.0"
+      date: "2026-04-14"
+      author: "specter-team"
+      type: minor
+      description: "Add C-09/AC-11-13: human-readable parse error messages"
     - version: "1.0.0"
       date: "2026-03-28"
       author: "specter-team"

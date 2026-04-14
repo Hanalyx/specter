@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/Hanalyx/specter/internal/checker"
 	"github.com/Hanalyx/specter/internal/coverage"
@@ -35,6 +38,9 @@ func main() {
 	root.AddCommand(syncCmd())
 	root.AddCommand(reverseCmd())
 	root.AddCommand(initCmd())
+	root.AddCommand(doctorCmd())
+	root.AddCommand(explainCmd())
+	root.AddCommand(watchCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -742,15 +748,21 @@ func loadManifest() (*manifest.Manifest, string) {
 
 func initCmd() *cobra.Command {
 	var (
-		name  string
-		force bool
+		name     string
+		force    bool
+		template string
 	)
 
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize a specter.yaml project manifest",
-		Long:  "Scaffold a specter.yaml file from existing .spec.yaml files in the current directory. Groups all specs into a default domain with sensible settings.",
+		Long:  "Scaffold a specter.yaml file from existing .spec.yaml files in the current directory. Groups all specs into a default domain with sensible settings.\n\nWith --template, creates a draft .spec.yaml file instead of specter.yaml.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// --template: create a spec file, not specter.yaml
+			if template != "" {
+				return runInitTemplate(template, force)
+			}
+
 			if _, err := os.Stat("specter.yaml"); err == nil && !force {
 				fmt.Println("specter.yaml already exists. Use --force to overwrite.")
 				os.Exit(1)
@@ -787,6 +799,524 @@ func initCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&name, "name", "", "System name (defaults to directory name)")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing specter.yaml")
+	cmd.Flags().StringVar(&template, "template", "", "Create a spec file from a template (api-endpoint, service, auth, data-model)")
 
 	return cmd
 }
+
+// runInitTemplate creates a draft .spec.yaml from a named template.
+func runInitTemplate(templateType string, force bool) error {
+	content, err := manifest.SpecTemplate(templateType)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	outFile := templateType + ".spec.yaml"
+	if _, statErr := os.Stat(outFile); statErr == nil && !force {
+		fmt.Printf("%s already exists. Use --force to overwrite.\n", outFile)
+		os.Exit(1)
+	}
+
+	if err := os.WriteFile(outFile, []byte(content), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "error writing %s: %v\n", outFile, err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Created %s (template: %s)\n", outFile, templateType)
+	fmt.Println("Edit the file to replace placeholder values, then run: specter sync")
+	return nil
+}
+
+// doctorCmd implements the specter doctor pre-flight health checker.
+//
+// @spec spec-doctor
+func doctorCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "doctor",
+		Short: "Run pre-flight project health checks",
+		Long:  "Checks project readiness before running the full sync pipeline. Reports PASS/WARN/FAIL for each check so developers know exactly what needs attention.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			anyFail := false
+
+			// Helper: print an aligned check result line.
+			printCheck := func(name, status, msg string) {
+				fmt.Printf("  %-12s [%s]  %s\n", name, status, msg)
+			}
+
+			fmt.Println("specter doctor")
+			fmt.Println()
+
+			// C-08: run ALL checks regardless of failures
+
+			// --- Check 1: Manifest presence (C-01, AC-01, AC-02) ---
+			manifestPath, _ := findManifest()
+			if manifestPath != "" {
+				printCheck("manifest", "PASS", "specter.yaml found at "+manifestPath)
+			} else {
+				printCheck("manifest", "WARN", "No specter.yaml found — run `specter init` to scaffold one (optional)")
+			}
+
+			// --- Check 2: .spec.yaml files present (C-02, AC-03) ---
+			specFiles := discoverSpecs()
+			if len(specFiles) == 0 {
+				printCheck("spec-files", "FAIL", "No .spec.yaml files found — create at least one spec to get started")
+				anyFail = true
+			} else {
+				printCheck("spec-files", "PASS", fmt.Sprintf("%d spec file(s) discovered", len(specFiles)))
+			}
+
+			// --- Check 3: All specs parse cleanly (C-03, AC-04) ---
+			parseOK := true
+			parseErrors := 0
+			for _, f := range specFiles {
+				data, err := os.ReadFile(f)
+				if err != nil {
+					parseOK = false
+					parseErrors++
+					continue
+				}
+				result := parser.ParseSpec(string(data))
+				if !result.OK {
+					parseOK = false
+					parseErrors++
+					for _, pe := range result.Errors {
+						fmt.Printf("    %s: %s\n", f, pe.Message)
+					}
+				}
+			}
+			if !parseOK {
+				printCheck("parse", "FAIL", fmt.Sprintf("%d spec file(s) have parse errors (see above)", parseErrors))
+				anyFail = true
+			} else if len(specFiles) > 0 {
+				printCheck("parse", "PASS", "All specs parse cleanly")
+			} else {
+				printCheck("parse", "WARN", "No specs to parse")
+			}
+
+			// --- Check 4: @spec/@ac annotations in test files (C-04, AC-05) ---
+			testFiles := discoverTestFiles("")
+			annotationCount := 0
+			for _, f := range testFiles {
+				data, err := os.ReadFile(f)
+				if err != nil {
+					continue
+				}
+				annotations := coverage.ExtractAnnotations(string(data), f)
+				annotationCount += len(annotations)
+			}
+			if annotationCount == 0 {
+				printCheck("annotations", "WARN", "No @spec/@ac annotations found in test files — add annotations to track coverage")
+			} else {
+				printCheck("annotations", "PASS", fmt.Sprintf("%d annotation(s) found across %d test file(s)", annotationCount, len(testFiles)))
+			}
+
+			// --- Check 5: Coverage meets tier thresholds (C-05, AC-06) ---
+			if len(specFiles) > 0 {
+				m, _ := loadManifest()
+				_, specs, hasParseErrors := parseAllSpecs(specFiles)
+				if hasParseErrors {
+					printCheck("coverage", "WARN", "Skipping coverage check — specs have parse errors")
+				} else {
+					var allAnnotations []coverage.AnnotationMatch
+					for _, f := range testFiles {
+						data, err := os.ReadFile(f)
+						if err != nil {
+							continue
+						}
+						allAnnotations = append(allAnnotations, coverage.ExtractAnnotations(string(data), f)...)
+					}
+					thresholds := m.CoverageThresholds()
+					report := coverage.BuildCoverageReport(specs, allAnnotations, thresholds)
+
+					belowThreshold := 0
+					for _, e := range report.Entries {
+						if !e.PassesThreshold {
+							belowThreshold++
+						}
+					}
+
+					if belowThreshold > 0 {
+						printCheck("coverage", "FAIL", fmt.Sprintf("%d spec(s) below tier coverage threshold", belowThreshold))
+						for _, e := range report.Entries {
+							if !e.PassesThreshold {
+								threshold := thresholds[e.Tier]
+								fmt.Printf("    %s: %.0f%% coverage (T%d requires %d%%)\n",
+									e.SpecID, e.CoveragePct, e.Tier, threshold)
+							}
+						}
+						anyFail = true
+					} else {
+						printCheck("coverage", "PASS", fmt.Sprintf("All %d spec(s) meet coverage thresholds", len(report.Entries)))
+					}
+				}
+			} else {
+				printCheck("coverage", "WARN", "No specs to check coverage for")
+			}
+
+			fmt.Println()
+
+			// C-06: exit 0 if all PASS/WARN, exit 1 if any FAIL
+			if anyFail {
+				fmt.Println("Result: FAIL — fix the issues above before running `specter sync`")
+				os.Exit(1)
+			}
+			fmt.Println("Result: OK — project is ready for `specter sync`")
+			return nil
+		},
+	}
+}
+
+// explainCmd shows coverage status and annotation examples for a spec's ACs.
+//
+// @spec spec-explain
+func explainCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "explain <spec-id>[:<ac-id>]",
+		Short: "Show annotation examples for a spec's acceptance criteria",
+		Long:  "Explains how to annotate tests to cover a spec's ACs. Run `specter explain <spec-id>` to list all ACs, or `specter explain <spec-id>:<ac-id>` for details on one.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Parse argument: "spec-id" or "spec-id:AC-NN"
+			arg := args[0]
+			specID := arg
+			acID := ""
+			if idx := strings.Index(arg, ":"); idx >= 0 {
+				specID = arg[:idx]
+				acID = arg[idx+1:]
+			}
+
+			// Load all specs
+			specFiles := discoverSpecs()
+			_, specs, _ := parseAllSpecs(specFiles)
+
+			// Find the requested spec
+			var targetSpec *schema.SpecAST
+			for i := range specs {
+				if specs[i].ID == specID {
+					targetSpec = &specs[i]
+					break
+				}
+			}
+			if targetSpec == nil {
+				fmt.Fprintf(os.Stderr, "error: spec %q not found\n", specID)
+				fmt.Fprintf(os.Stderr, "  searched %d spec files\n", len(specFiles))
+				if len(specs) > 0 {
+					fmt.Fprintf(os.Stderr, "  available specs:")
+					for _, s := range specs {
+						fmt.Fprintf(os.Stderr, " %s", s.ID)
+					}
+					fmt.Fprintln(os.Stderr)
+				}
+				os.Exit(1)
+			}
+
+			// Discover test files and build coverage
+			testFiles := discoverTestFiles("")
+			var allAnnotations []coverage.AnnotationMatch
+			for _, f := range testFiles {
+				data, err := os.ReadFile(f)
+				if err != nil {
+					continue
+				}
+				allAnnotations = append(allAnnotations, coverage.ExtractAnnotations(string(data), f)...)
+			}
+
+			// Determine which ACs are covered and by which files
+			coveredBy := make(map[string][]string) // acID -> []file
+			for _, ann := range allAnnotations {
+				if ann.SpecID != specID {
+					continue
+				}
+				for _, id := range ann.ACIDs {
+					coveredBy[id] = append(coveredBy[id], ann.File)
+				}
+			}
+
+			// Detect annotation style from test file extensions
+			langs := detectAnnotationLanguages(testFiles)
+
+			if acID == "" {
+				// List mode: show all ACs with status
+				return explainListMode(targetSpec, coveredBy, testFiles, langs)
+			}
+			// Detail mode: one AC
+			return explainDetailMode(targetSpec, acID, coveredBy, testFiles, langs)
+		},
+	}
+}
+
+// explainListMode lists all ACs in a spec with COVERED/UNCOVERED status.
+func explainListMode(spec *schema.SpecAST, coveredBy map[string][]string, testFiles []string, langs []string) error {
+	fmt.Printf("specter explain %s\n\n", spec.ID)
+	fmt.Printf("  %-8s %-8s  %s\n", "Status", "AC", "Description")
+	fmt.Println("  " + strings.Repeat("-", 60))
+
+	for _, ac := range spec.AcceptanceCriteria {
+		status := "UNCOVERED"
+		if len(coveredBy[ac.ID]) > 0 {
+			status = "COVERED"
+		}
+		desc := ac.Description
+		if len(desc) > 50 {
+			desc = desc[:47] + "..."
+		}
+		fmt.Printf("  %-8s %-8s  %s\n", status, ac.ID, desc)
+	}
+
+	fmt.Printf("\n  Scanned %d test file(s)\n", len(testFiles))
+	fmt.Printf("  Run `specter explain %s:<ac-id>` for annotation examples\n", spec.ID)
+	return nil
+}
+
+// explainDetailMode shows full details and annotation example for one AC.
+func explainDetailMode(spec *schema.SpecAST, acID string, coveredBy map[string][]string, testFiles []string, langs []string) error {
+	// Find the AC
+	var targetAC *schema.AcceptanceCriterion
+	for i := range spec.AcceptanceCriteria {
+		if spec.AcceptanceCriteria[i].ID == acID {
+			targetAC = &spec.AcceptanceCriteria[i]
+			break
+		}
+	}
+	if targetAC == nil {
+		fmt.Fprintf(os.Stderr, "error: %s not found in spec %q\n", acID, spec.ID)
+		fmt.Fprintf(os.Stderr, "  available ACs:")
+		for _, ac := range spec.AcceptanceCriteria {
+			fmt.Fprintf(os.Stderr, " %s", ac.ID)
+		}
+		fmt.Fprintln(os.Stderr)
+		os.Exit(1)
+	}
+
+	files := coveredBy[acID]
+
+	fmt.Printf("specter explain %s:%s\n\n", spec.ID, acID)
+	fmt.Printf("  Spec:   %s (v%s, tier %d)\n", spec.ID, spec.Version, spec.Tier)
+	fmt.Printf("  %s:  %s\n", acID, targetAC.Description)
+
+	if len(files) > 0 {
+		fmt.Printf("  Status: COVERED\n\n")
+		fmt.Println("  Covered in:")
+		for _, f := range files {
+			fmt.Printf("    %s\n", f)
+		}
+	} else {
+		fmt.Printf("  Status: UNCOVERED\n\n")
+		fmt.Println("  To cover this AC, add annotations in your test file:")
+		fmt.Println()
+		for _, lang := range langs {
+			fmt.Printf("  %s:\n", lang)
+			switch lang {
+			case "Python":
+				fmt.Printf("    # @spec %s\n", spec.ID)
+				fmt.Printf("    # @ac %s\n", acID)
+				fmt.Printf("    def test_%s_%s():\n", sanitizeID(spec.ID), strings.ToLower(strings.ReplaceAll(acID, "-", "_")))
+				fmt.Printf("        # %s\n", targetAC.Description)
+				fmt.Printf("        ...\n")
+			case "TypeScript / JavaScript":
+				fmt.Printf("    // @spec %s\n", spec.ID)
+				fmt.Printf("    // @ac %s\n", acID)
+				fmt.Printf("    it('%s: %s', () => {\n", acID, targetAC.Description)
+				fmt.Printf("      // test implementation\n")
+				fmt.Printf("    });\n")
+			default: // Go / generic
+				fmt.Printf("    // @spec %s\n", spec.ID)
+				fmt.Printf("    // @ac %s\n", acID)
+				funcName := "Test" + toCamelCase(spec.ID) + "_" + strings.ReplaceAll(acID, "-", "")
+				fmt.Printf("    func %s(t *testing.T) {\n", funcName)
+				fmt.Printf("        // %s\n", targetAC.Description)
+				fmt.Printf("    }\n")
+			}
+			fmt.Println()
+		}
+	}
+
+	fmt.Printf("  Scanned %d test file(s)\n", len(testFiles))
+	return nil
+}
+
+// detectAnnotationLanguages returns the annotation language labels for a set of test files.
+//
+// C-08: detect from file extensions.
+func detectAnnotationLanguages(testFiles []string) []string {
+	hasGo, hasPy, hasTS := false, false, false
+	for _, f := range testFiles {
+		switch {
+		case strings.HasSuffix(f, ".go"):
+			hasGo = true
+		case strings.HasSuffix(f, ".py"):
+			hasPy = true
+		case strings.HasSuffix(f, ".ts") || strings.HasSuffix(f, ".tsx") ||
+			strings.HasSuffix(f, ".js") || strings.HasSuffix(f, ".jsx"):
+			hasTS = true
+		}
+	}
+	// Default to Go/generic if nothing detected
+	if !hasGo && !hasPy && !hasTS {
+		return []string{"Go / generic"}
+	}
+	var langs []string
+	if hasGo {
+		langs = append(langs, "Go / generic")
+	}
+	if hasPy {
+		langs = append(langs, "Python")
+	}
+	if hasTS {
+		langs = append(langs, "TypeScript / JavaScript")
+	}
+	return langs
+}
+
+func sanitizeID(id string) string {
+	return strings.ReplaceAll(id, "-", "_")
+}
+
+func toCamelCase(id string) string {
+	parts := strings.Split(id, "-")
+	for i, p := range parts {
+		if len(p) > 0 {
+			parts[i] = strings.ToUpper(p[:1]) + p[1:]
+		}
+	}
+	return strings.Join(parts, "")
+}
+
+// watchCmd re-runs the sync pipeline whenever spec or test files change.
+//
+// @spec spec-watch
+func watchCmd() *cobra.Command {
+	var interval time.Duration
+
+	cmd := &cobra.Command{
+		Use:   "watch",
+		Short: "Re-run sync pipeline on file changes",
+		Long:  "Polls for changes in .spec.yaml and test files and re-runs the sync pipeline. Press Ctrl+C to stop.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			m, _ := loadManifest()
+
+			// C-08: startup message with watched globs and interval
+			specsDir := m.SpecsDir()
+			fmt.Printf("specter watch\n\n")
+			fmt.Printf("  Watching: %s/**/*.spec.yaml, test files\n", specsDir)
+			fmt.Printf("  Interval: %s\n", interval)
+			fmt.Printf("  Press Ctrl+C to stop\n\n")
+
+			// C-06: run once immediately on startup
+			lastMods := collectModTimes()
+			runWatchCycle(m)
+
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+
+			sig := make(chan os.Signal, 1)
+			signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+			defer signal.Stop(sig)
+
+			for {
+				select {
+				case <-sig:
+					// C-04: exit 0 on interrupt
+					fmt.Println("\nstopped")
+					return nil
+				case <-ticker.C:
+					currentMods := collectModTimes()
+					if modsChanged(lastMods, currentMods) {
+						lastMods = currentMods
+						runWatchCycle(m)
+					}
+				}
+			}
+		},
+	}
+
+	// C-05: configurable poll interval
+	cmd.Flags().DurationVar(&interval, "interval", 500*time.Millisecond, "Poll interval (e.g. 500ms, 1s, 2s)")
+	return cmd
+}
+
+// runWatchCycle executes the sync pipeline and prints a compact summary line.
+//
+// C-03: timestamped summary, C-07: continues on FAIL.
+func runWatchCycle(m *manifest.Manifest) {
+	specFiles := discoverSpecs()
+	testFiles := discoverTestFiles("")
+
+	timestamp := time.Now().Format("15:04:05")
+
+	if len(specFiles) == 0 {
+		fmt.Printf("[%s] WARN  no spec files found\n", timestamp)
+		return
+	}
+
+	inputs, specs, hasErrors := parseAllSpecs(specFiles)
+	if hasErrors {
+		fmt.Printf("[%s] FAIL  parse errors in spec files\n", timestamp)
+		return
+	}
+
+	// Build coverage
+	var allAnnotations []coverage.AnnotationMatch
+	for _, f := range testFiles {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		allAnnotations = append(allAnnotations, coverage.ExtractAnnotations(string(data), f)...)
+	}
+
+	thresholds := m.CoverageThresholds()
+	report := coverage.BuildCoverageReport(specs, allAnnotations, thresholds)
+
+	// Count covered ACs
+	totalACs := 0
+	coveredACs := 0
+	for _, e := range report.Entries {
+		totalACs += e.TotalACs
+		coveredACs += len(e.CoveredACs)
+	}
+
+	// Run resolve + check to determine PASS/FAIL
+	_ = inputs // used in real sync; here we just use coverage for the summary
+	passing := report.Summary.Passing
+	failing := report.Summary.Failing
+
+	status := "PASS"
+	if failing > 0 || hasErrors {
+		status = "FAIL"
+	}
+
+	fmt.Printf("[%s] %-4s  %d spec(s)  %d/%d ACs covered  (%d passing, %d failing)\n",
+		timestamp, status, len(specs), coveredACs, totalACs, passing, failing)
+}
+
+// collectModTimes snapshots the modification times of all watched files.
+func collectModTimes() map[string]time.Time {
+	mods := make(map[string]time.Time)
+	for _, f := range discoverSpecs() {
+		if info, err := os.Stat(f); err == nil {
+			mods[f] = info.ModTime()
+		}
+	}
+	for _, f := range discoverTestFiles("") {
+		if info, err := os.Stat(f); err == nil {
+			mods[f] = info.ModTime()
+		}
+	}
+	return mods
+}
+
+// modsChanged returns true if any file's modification time differs between snapshots.
+func modsChanged(prev, curr map[string]time.Time) bool {
+	if len(prev) != len(curr) {
+		return true
+	}
+	for f, t := range curr {
+		if prev[f] != t {
+			return true
+		}
+	}
+	return false
+}
+

@@ -119,3 +119,49 @@ func TestPythonAnnotations(t *testing.T) {
 		t.Errorf("expected 'user-auth', got %q", matches[0].SpecID)
 	}
 }
+
+// Regression: @spec inside a string literal must not hijack the current spec context.
+func TestAnnotationExtraction_StringLiteralNotHijacked(t *testing.T) {
+	// Simulate a test file where a Go string literal contains "// @spec other-spec".
+	// The annotation extractor must not switch context to "other-spec".
+	content := `// @spec my-spec
+// @ac AC-01
+func TestFoo(t *testing.T) {
+	content := "// @spec other-spec\n// @ac AC-02\n"
+	_ = content
+}
+// @ac AC-02
+func TestBar(t *testing.T) {}
+`
+	matches := ExtractAnnotations(content, "foo_test.go")
+
+	// Find the my-spec entry
+	var mySpec *AnnotationMatch
+	for i := range matches {
+		if matches[i].SpecID == "my-spec" {
+			mySpec = &matches[i]
+		}
+	}
+	if mySpec == nil {
+		t.Fatal("expected annotation for my-spec, got none")
+	}
+
+	// Both AC-01 and AC-02 should be under my-spec, not hijacked to other-spec
+	acSet := make(map[string]bool)
+	for _, id := range mySpec.ACIDs {
+		acSet[id] = true
+	}
+	if !acSet["AC-01"] {
+		t.Error("expected AC-01 under my-spec")
+	}
+	if !acSet["AC-02"] {
+		t.Error("expected AC-02 under my-spec (string literal must not hijack spec context)")
+	}
+
+	// other-spec must not appear in results
+	for _, m := range matches {
+		if m.SpecID == "other-spec" {
+			t.Error("other-spec from inside a string literal must not appear in results")
+		}
+	}
+}
