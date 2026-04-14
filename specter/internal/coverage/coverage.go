@@ -62,6 +62,16 @@ func ExtractAnnotations(fileContent, filePath string) []AnnotationMatch {
 	var currentSpecID string
 
 	for _, line := range lines {
+		// Only process annotations on real comment lines — not inside string literals
+		// or at the end of code lines (e.g. content := "// @spec foo" must not match).
+		trimmed := strings.TrimSpace(line)
+		isCommentLine := strings.HasPrefix(trimmed, "//") ||
+			strings.HasPrefix(trimmed, "#") ||
+			strings.HasPrefix(trimmed, "*")
+		if !isCommentLine {
+			continue
+		}
+
 		if m := specAnnotationRE.FindStringSubmatch(line); len(m) > 1 {
 			currentSpecID = m[1]
 			if matchMap[currentSpecID] == nil {
