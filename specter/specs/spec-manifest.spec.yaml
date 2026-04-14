@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "1.0.0"
+  version: "1.1.0"
   status: draft
   tier: 2
 
@@ -96,6 +96,16 @@ spec:
 
     - id: C-10
       description: "MUST NOT depend on any CLI framework — pure functions from YAML string to typed structures"
+      type: technical
+      enforcement: error
+
+    - id: C-11
+      description: "MUST parse settings.strict (bool): when true, all warning-severity check diagnostics are treated as errors"
+      type: technical
+      enforcement: error
+
+    - id: C-12
+      description: "MUST parse settings.warn_on_draft (bool): when true, specter check emits a warning for every spec with status: draft"
       type: technical
       enforcement: error
 
@@ -231,6 +241,24 @@ spec:
       references_constraints: ["C-10"]
       priority: high
 
+    - id: AC-15
+      description: "Manifest with settings.strict: true parses with Strict=true in Settings struct"
+      inputs:
+        yaml: "settings:\n  strict: true"
+      expected_output:
+        settings_strict: true
+      references_constraints: ["C-11"]
+      priority: high
+
+    - id: AC-16
+      description: "Manifest with settings.warn_on_draft: true parses with WarnOnDraft=true in Settings struct"
+      inputs:
+        yaml: "settings:\n  warn_on_draft: true"
+      expected_output:
+        settings_warn_on_draft: true
+      references_constraints: ["C-12"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -240,6 +268,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.1.0"
+      date: "2026-04-14"
+      author: "specter-team"
+      type: minor
+      description: "Add C-11/AC-15 settings.strict and C-12/AC-16 settings.warn_on_draft fields"
     - version: "1.0.0"
       date: "2026-04-03"
       author: "specter-team"

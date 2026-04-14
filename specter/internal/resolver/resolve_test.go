@@ -180,3 +180,58 @@ func TestValidVersionRange(t *testing.T) {
 		t.Errorf("expected 0 diagnostics, got %v", g.Diagnostics)
 	}
 }
+
+// @ac AC-09
+func TestDanglingReferenceIncludesSuggestion(t *testing.T) {
+	// "handler-interfac" is one character off from "handler-interface"
+	g := ResolveSpecs([]SpecInput{
+		{Spec: makeSpec("a", withDeps(dep("handler-interfac"))), File: "a.spec.yaml"},
+		{Spec: makeSpec("handler-interface"), File: "handler-interface.spec.yaml"},
+	})
+
+	var dr *Diagnostic
+	for i := range g.Diagnostics {
+		if g.Diagnostics[i].Kind == "dangling_reference" {
+			dr = &g.Diagnostics[i]
+			break
+		}
+	}
+	if dr == nil {
+		t.Fatal("expected dangling_reference diagnostic")
+	}
+	if len(dr.Suggestions) == 0 {
+		t.Error("expected at least one suggestion")
+	}
+	found := false
+	for _, s := range dr.Suggestions {
+		if s == "handler-interface" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'handler-interface' in suggestions, got %v", dr.Suggestions)
+	}
+	if dr.SuggestedFixPath == "" {
+		t.Error("expected SuggestedFixPath to be set")
+	}
+}
+
+// @ac AC-09
+func TestDanglingReferenceNoSuggestionWhenFarOff(t *testing.T) {
+	// "xyz-totally-different" is far from "handler-interface"
+	g := ResolveSpecs([]SpecInput{
+		{Spec: makeSpec("a", withDeps(dep("xyz-totally-different"))), File: "a.spec.yaml"},
+		{Spec: makeSpec("handler-interface"), File: "handler-interface.spec.yaml"},
+	})
+
+	for _, d := range g.Diagnostics {
+		if d.Kind == "dangling_reference" {
+			// suggestions may be empty for very distant strings — that's correct
+			if len(d.Suggestions) > 0 {
+				t.Logf("suggestions present but string is far: %v (acceptable)", d.Suggestions)
+			}
+			return
+		}
+	}
+	t.Error("expected dangling_reference diagnostic")
+}

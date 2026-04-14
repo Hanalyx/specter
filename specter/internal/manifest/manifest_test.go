@@ -309,3 +309,54 @@ func TestCoverageThresholds_PartialOverride(t *testing.T) {
 		t.Errorf("partial thresholds = %v, want {1:100, 2:90, 3:50}", thresholds)
 	}
 }
+
+// @ac AC-15
+func TestParseManifest_SettingsStrict(t *testing.T) {
+	content := `
+system:
+  name: test-app
+settings:
+  strict: true
+`
+	m, err := ParseManifest(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !m.Settings.Strict {
+		t.Error("expected Settings.Strict=true, got false")
+	}
+}
+
+// @ac AC-16
+func TestParseManifest_SettingsWarnOnDraft(t *testing.T) {
+	content := `
+system:
+  name: test-app
+settings:
+  warn_on_draft: true
+`
+	m, err := ParseManifest(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !m.Settings.WarnOnDraft {
+		t.Error("expected Settings.WarnOnDraft=true, got false")
+	}
+}
+
+func TestParseManifest_SettingsDefaultsFalse(t *testing.T) {
+	content := `
+system:
+  name: test-app
+`
+	m, err := ParseManifest(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.Settings.Strict {
+		t.Error("expected Settings.Strict=false by default")
+	}
+	if m.Settings.WarnOnDraft {
+		t.Error("expected Settings.WarnOnDraft=false by default")
+	}
+}

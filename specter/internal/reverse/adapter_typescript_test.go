@@ -101,6 +101,40 @@ describe('UserService', () => {
 	}
 }
 
+// @ac AC-15
+func TestTypeScriptAdapter_ExtractAssertions_EmbeddedQuotes(t *testing.T) {
+	content := `import { it, describe } from 'vitest';
+
+describe("user's profile", () => {
+  it("user's token is valid", () => {});
+  it('reject "admin" role for guests', () => {});
+  it("handles \"quoted\" field names", () => {});
+});
+`
+	assertions := tsAdapter.ExtractAssertions("auth.test.ts", content)
+	if len(assertions) != 3 {
+		t.Fatalf("expected 3 assertions, got %d", len(assertions))
+	}
+
+	cases := []struct {
+		want string
+	}{
+		{"user's token is valid"},
+		{`reject "admin" role for guests`},
+		{`handles \"quoted\" field names`}, // raw JS source; backslash escape not unescaped
+	}
+	for i, c := range cases {
+		if assertions[i].Description != c.want {
+			t.Errorf("assertion[%d] description = %q, want %q", i, assertions[i].Description, c.want)
+		}
+	}
+
+	// describe block with apostrophe should also be captured correctly
+	if assertions[0].TestName != "user's profile > user's token is valid" {
+		t.Errorf("test name = %q, want %q", assertions[0].TestName, "user's profile > user's token is valid")
+	}
+}
+
 func TestTypeScriptAdapter_ExtractRoutes_Express(t *testing.T) {
 	content := `import express from 'express';
 

@@ -170,3 +170,81 @@ func TestMultiSpecPipeline(t *testing.T) {
 		t.Errorf("expected pass, got fail at %s", result.StoppedAt)
 	}
 }
+
+// @ac AC-06
+func TestOnlyPhase_Coverage_ContinuesDespiteResolveError(t *testing.T) {
+	// Spec with a dangling reference — resolve will fail
+	specWithDanglingRef := validSpecYAML("a", 2, "nonexistent-spec")
+
+	result := RunSync(SyncInput{
+		SpecFiles: []FileContent{{Path: "a.yaml", Content: specWithDanglingRef}},
+		TestFiles: []FileContent{{Path: "a.test.ts", Content: testFileContent("a", "AC-01")}},
+		OnlyPhase: "coverage",
+	})
+
+	// All four phases should have been attempted
+	phaseNames := make(map[string]bool)
+	for _, p := range result.Phases {
+		phaseNames[p.Phase] = true
+	}
+	for _, required := range []string{"parse", "resolve", "check", "coverage"} {
+		if !phaseNames[required] {
+			t.Errorf("expected phase %q to be recorded, got phases: %v", required, result.Phases)
+		}
+	}
+
+	// resolve failed but we continued — coverage is what determines Passed
+	resolvePhase := ""
+	for _, p := range result.Phases {
+		if p.Phase == "resolve" {
+			if p.Passed {
+				resolvePhase = "passed"
+			} else {
+				resolvePhase = "failed"
+			}
+		}
+	}
+	if resolvePhase != "failed" {
+		t.Errorf("expected resolve to fail, got %q", resolvePhase)
+	}
+}
+
+// @ac AC-07
+func TestOnlyPhase_Check_ContinuesDespiteParseError(t *testing.T) {
+	result := RunSync(SyncInput{
+		SpecFiles: []FileContent{
+			{Path: "valid.yaml", Content: validSpecYAML("valid", 2, "")},
+			{Path: "bad.yaml", Content: "not: valid: yaml: at: all"},
+		},
+		TestFiles: nil,
+		OnlyPhase: "check",
+	})
+
+	// check phase should be reached (may pass with 0 diagnostics on the valid spec)
+	phaseNames := make(map[string]bool)
+	for _, p := range result.Phases {
+		phaseNames[p.Phase] = true
+	}
+	if !phaseNames["check"] {
+		t.Errorf("expected check phase to be reached, got phases: %v", result.Phases)
+	}
+	// pipeline should NOT have stopped at parse
+	if result.StoppedAt == "parse" {
+		t.Error("expected pipeline not to stop at parse in --only check mode")
+	}
+}
+
+func TestOnlyPhase_Parse_StopsAfterParse(t *testing.T) {
+	result := RunSync(SyncInput{
+		SpecFiles: []FileContent{{Path: "a.yaml", Content: validSpecYAML("a", 2, "")}},
+		TestFiles: []FileContent{{Path: "a.test.ts", Content: testFileContent("a", "AC-01")}},
+		OnlyPhase: "parse",
+	})
+
+	if len(result.Phases) != 1 || result.Phases[0].Phase != "parse" {
+		t.Errorf("expected only parse phase, got %v", result.Phases)
+	}
+	if !result.Passed {
+		t.Error("expected pass for --only parse with valid spec")
+	}
+}

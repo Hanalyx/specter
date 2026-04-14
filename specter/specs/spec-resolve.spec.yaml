@@ -1,6 +1,6 @@
 spec:
   id: spec-resolve
-  version: "1.0.0"
+  version: "1.1.0"
   status: approved
   tier: 1
 
@@ -34,11 +34,13 @@ spec:
         - "Detect dangling references (depends_on non-existent spec)"
         - "Detect semver range mismatches"
         - "Output: SpecGraph + diagnostics list"
+        - "DOT graph output (--dot)"
+        - "Mermaid graph output (--mermaid, renders in GitHub PRs)"
+        - "Dangling-reference suggestions: Levenshtein closest match + suggested fix path"
       excludes:
         - "Semantic conflict detection (that is spec-check)"
         - "Transitive dependency flattening"
         - "Lock file generation"
-        - "Graph visualization (future feature)"
 
   constraints:
     - id: C-01
@@ -81,6 +83,16 @@ spec:
       type: technical
       enforcement: error
 
+    - id: C-09
+      description: "MUST support --mermaid output flag that renders the dependency graph in Mermaid flowchart syntax (graph BT) for native GitHub PR rendering"
+      type: technical
+      enforcement: warning
+
+    - id: C-10
+      description: "MUST enrich dangling_reference diagnostics with: list of existing spec IDs, Levenshtein-distance closest match(es), and a suggested fix file path"
+      type: technical
+      enforcement: error
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -111,7 +123,7 @@ spec:
       priority: critical
 
     - id: AC-03
-      description: "Spec depending on non-existent ID produces DanglingReference diagnostic"
+      description: "Spec depending on non-existent ID produces DanglingReference diagnostic with missing_dep set"
       inputs:
         specs: ["a.spec.yaml (depends on nonexistent)"]
       expected_output:
@@ -119,7 +131,7 @@ spec:
         kind: "dangling_reference"
         spec_id: "a"
         missing_dep: "nonexistent"
-      references_constraints: ["C-05"]
+      references_constraints: ["C-05", "C-10"]
       priority: critical
 
     - id: AC-04
@@ -169,7 +181,35 @@ spec:
       references_constraints: ["C-07"]
       priority: high
 
+    - id: AC-08
+      description: "resolve --mermaid outputs a valid Mermaid flowchart with graph BT, node definitions, and labeled edges"
+      inputs:
+        specs: ["a.spec.yaml (depends on b@^1.0.0)", "b.spec.yaml (v1.0.0)"]
+        flag: "--mermaid"
+      expected_output:
+        starts_with: "graph BT"
+        contains_node_a: true
+        contains_edge_with_label: "^1.0.0"
+      references_constraints: ["C-09"]
+      priority: high
+
+    - id: AC-09
+      description: "Dangling reference with close existing spec ID includes suggestion in diagnostic"
+      inputs:
+        specs: ["a.spec.yaml (depends on handler-interfac)", "handler-interface.spec.yaml"]
+      expected_output:
+        diagnostic_kind: "dangling_reference"
+        suggestions_non_empty: true
+        suggestion_includes: "handler-interface"
+      references_constraints: ["C-10"]
+      priority: high
+
   changelog:
+    - version: "1.1.0"
+      date: "2026-04-14"
+      author: "specter-team"
+      type: minor
+      description: "Add C-09/AC-08 --mermaid output, C-10/AC-09 dangling-reference suggestions with Levenshtein matching"
     - version: "1.0.0"
       date: "2026-03-28"
       author: "specter-team"

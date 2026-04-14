@@ -1,6 +1,6 @@
 spec:
   id: spec-check
-  version: "1.0.0"
+  version: "1.1.0"
   status: approved
   tier: 1
 
@@ -67,6 +67,16 @@ spec:
 
     - id: C-06
       description: "MUST NOT depend on any CLI framework — pure function from SpecGraph to Diagnostic[]"
+      type: technical
+      enforcement: error
+
+    - id: C-07
+      description: "MUST support strict mode (CheckOptions.Strict=true) that upgrades all warning-severity diagnostics to error severity"
+      type: technical
+      enforcement: error
+
+    - id: C-08
+      description: "MUST support warn_on_draft mode (CheckOptions.WarnOnDraft=true) that emits a warning diagnostic for every spec with status: draft"
       type: technical
       enforcement: error
 
@@ -143,7 +153,34 @@ spec:
       references_constraints: ["C-05", "C-06"]
       priority: critical
 
+    - id: AC-07
+      description: "CheckOptions.Strict=true upgrades all warning-severity orphan diagnostics to error"
+      inputs:
+        spec: "tier 2 spec (orphans are normally warnings)"
+        opts: "CheckOptions{Strict: true}"
+      expected_output:
+        orphan_severity: "error"
+        summary_errors_gt_zero: true
+      references_constraints: ["C-07"]
+      priority: high
+
+    - id: AC-08
+      description: "CheckOptions.WarnOnDraft=true emits draft_spec warning for specs with status: draft"
+      inputs:
+        spec: "spec with status: draft"
+        opts: "CheckOptions{WarnOnDraft: true}"
+      expected_output:
+        diagnostic_kind: "draft_spec"
+        severity: "warning"
+      references_constraints: ["C-08"]
+      priority: high
+
   changelog:
+    - version: "1.1.0"
+      date: "2026-04-14"
+      author: "specter-team"
+      type: minor
+      description: "Add C-07/AC-07 strict mode (warnings-as-errors) and C-08/AC-08 warn_on_draft mode"
     - version: "1.0.0"
       date: "2026-03-28"
       author: "specter-team"
