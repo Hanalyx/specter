@@ -1,6 +1,6 @@
 spec:
   id: spec-sync
-  version: "1.0.0"
+  version: "1.1.0"
   status: approved
   tier: 2
 
@@ -41,7 +41,7 @@ spec:
       enforcement: error
 
     - id: C-02
-      description: "MUST stop at the first phase that has errors (no point checking if parse fails)"
+      description: "MUST stop at the first phase that has errors (no point checking if parse fails) — unless --only <phase> is specified, in which case prerequisite phases run without halting"
       type: technical
       enforcement: error
 
@@ -52,6 +52,11 @@ spec:
 
     - id: C-04
       description: "MUST report results from all completed phases"
+      type: technical
+      enforcement: error
+
+    - id: C-05
+      description: "MUST support --only <phase> flag that runs prerequisite phases silently (without halting on their failures) then runs the target phase; exit code is based solely on the target phase result"
       type: technical
       enforcement: error
 
@@ -95,7 +100,34 @@ spec:
       references_constraints: ["C-03", "C-04"]
       priority: high
 
+    - id: AC-06
+      description: "--only coverage runs all four phases but does not halt on parse/resolve/check failures; exit code reflects coverage phase only"
+      inputs:
+        specs: ["spec with dangling reference (resolve fails)", "coverage annotation present"]
+        flag: "--only coverage"
+      expected_output:
+        phases_run: ["parse", "resolve", "check", "coverage"]
+        exit_based_on: "coverage"
+      references_constraints: ["C-05"]
+      priority: high
+
+    - id: AC-07
+      description: "--only check runs parse and resolve as prerequisites without halting, then runs check; exit code reflects check phase only"
+      inputs:
+        specs: ["spec with parse error (parse fails)", "valid spec"]
+        flag: "--only check"
+      expected_output:
+        phases_run_includes: ["parse", "resolve", "check"]
+        exit_based_on: "check"
+      references_constraints: ["C-05"]
+      priority: high
+
   changelog:
+    - version: "1.1.0"
+      date: "2026-04-14"
+      author: "specter-team"
+      type: minor
+      description: "Add C-05/AC-06/AC-07: --only <phase> flag for targeted phase execution without halting on prerequisites"
     - version: "1.0.0"
       date: "2026-03-28"
       author: "specter-team"

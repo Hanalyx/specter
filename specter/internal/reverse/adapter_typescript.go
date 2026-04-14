@@ -406,10 +406,11 @@ func (a *TypeScriptAdapter) extractPatternConstraints(path, content string) []Ex
 // --- Assertion Extraction (Jest/Vitest) ---
 
 var (
-	describeBlockDQ = regexp.MustCompile(`describe\(\s*"([^"]+)"`)
-	describeBlockSQ = regexp.MustCompile(`describe\(\s*'([^']+)'`)
-	itTestDQ        = regexp.MustCompile("(?:it|test)\\(\\s*\"([^\"]+)\"")
-	itTestSQ        = regexp.MustCompile(`(?:it|test)\(\s*'([^']+)'`)
+	// C-11: patterns handle escaped quotes via (?:[^"\\]|\\.)*
+	describeBlockDQ = regexp.MustCompile(`describe\(\s*"((?:[^"\\]|\\.)*)"`)
+	describeBlockSQ = regexp.MustCompile(`describe\(\s*'((?:[^'\\]|\\.)*)'`)
+	itTestDQ        = regexp.MustCompile(`(?:it|test)\(\s*"((?:[^"\\]|\\.)*)"`)
+	itTestSQ        = regexp.MustCompile(`(?:it|test)\(\s*'((?:[^'\\]|\\.)*)'`)
 )
 
 func (a *TypeScriptAdapter) ExtractAssertions(path, content string) []ExtractedAssertion {

@@ -14,15 +14,17 @@ import (
 
 // Diagnostic represents an issue found during resolution.
 type Diagnostic struct {
-	Kind          string   `json:"kind"`
-	Severity      string   `json:"severity"`
-	Message       string   `json:"message"`
-	SpecID        string   `json:"spec_id,omitempty"`
-	MissingDep    string   `json:"missing_dep,omitempty"`
-	RequiredRange string   `json:"required_range,omitempty"`
-	ActualVersion string   `json:"actual_version,omitempty"`
-	CyclePath     []string `json:"cycle_path,omitempty"`
-	Files         []string `json:"files,omitempty"`
+	Kind             string   `json:"kind"`
+	Severity         string   `json:"severity"`
+	Message          string   `json:"message"`
+	SpecID           string   `json:"spec_id,omitempty"`
+	MissingDep       string   `json:"missing_dep,omitempty"`
+	RequiredRange    string   `json:"required_range,omitempty"`
+	ActualVersion    string   `json:"actual_version,omitempty"`
+	CyclePath        []string `json:"cycle_path,omitempty"`
+	Files            []string `json:"files,omitempty"`
+	Suggestions      []string `json:"suggestions,omitempty"`       // C-10: closest existing spec IDs
+	SuggestedFixPath string   `json:"suggested_fix_path,omitempty"` // C-10: likely file path to create
 }
 
 // SpecNode holds a parsed spec and its file path.
@@ -82,6 +84,12 @@ func ResolveSpecs(inputs []SpecInput) *SpecGraph {
 		graph.Nodes[id] = &SpecNode{Spec: inputs[i].Spec, File: inputs[i].File}
 	}
 
+	// Collect all known spec IDs for suggestion matching (C-10)
+	allIDs := make([]string, 0, len(graph.Nodes))
+	for id := range graph.Nodes {
+		allIDs = append(allIDs, id)
+	}
+
 	// Step 2: Build edges, detect dangling refs and version mismatches
 	adjacency := make(map[string][]string) // from -> [to]
 	for id, node := range graph.Nodes {
@@ -91,13 +99,17 @@ func ResolveSpecs(inputs []SpecInput) *SpecGraph {
 			// C-05: Dangling reference (AC-03)
 			target, exists := graph.Nodes[targetID]
 			if !exists {
-				graph.Diagnostics = append(graph.Diagnostics, Diagnostic{
-					Kind:       "dangling_reference",
-					Severity:   "error",
-					Message:    fmt.Sprintf("Spec %q depends on %q which does not exist", id, targetID),
-					SpecID:     id,
-					MissingDep: targetID,
-				})
+				suggestions := closestMatches(targetID, allIDs, 3)
+				d := Diagnostic{
+					Kind:             "dangling_reference",
+					Severity:         "error",
+					Message:          fmt.Sprintf("Spec %q depends on %q which does not exist", id, targetID),
+					SpecID:           id,
+					MissingDep:       targetID,
+					Suggestions:      suggestions,
+					SuggestedFixPath: inferSpecFilePath(targetID),
+				}
+				graph.Diagnostics = append(graph.Diagnostics, d)
 				continue
 			}
 

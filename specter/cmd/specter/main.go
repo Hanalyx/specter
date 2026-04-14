@@ -175,7 +175,7 @@ func parseCmd() *cobra.Command {
 }
 
 func resolveCmd() *cobra.Command {
-	var jsonOutput, dotOutput bool
+	var jsonOutput, dotOutput, mermaidOutput bool
 	cmd := &cobra.Command{
 		Use:   "resolve",
 		Short: "Build and validate the spec dependency graph",
@@ -215,6 +215,19 @@ func resolveCmd() *cobra.Command {
 					fmt.Printf("  %q -> %q%s;\n", e.From, e.To, label)
 				}
 				fmt.Println("}")
+			} else if mermaidOutput {
+				// C-09: Mermaid flowchart output (renders natively in GitHub PRs)
+				fmt.Println("graph BT")
+				for id, node := range graph.Nodes {
+					fmt.Printf("    %s[\"%s@%s\"]\n", id, id, node.Spec.Version)
+				}
+				for _, e := range graph.Edges {
+					if e.VersionRange != "" {
+						fmt.Printf("    %s -->|\"%s\"| %s\n", e.From, e.VersionRange, e.To)
+					} else {
+						fmt.Printf("    %s --> %s\n", e.From, e.To)
+					}
+				}
 			} else {
 				fmt.Printf("Spec Graph: %d specs, %d dependencies\n\n", len(graph.Nodes), len(graph.Edges))
 				if len(graph.TopologicalOrder) > 0 {
@@ -242,6 +255,15 @@ func resolveCmd() *cobra.Command {
 			} else {
 				for _, d := range graph.Diagnostics {
 					fmt.Fprintf(os.Stderr, "error [%s] %s\n", d.Kind, d.Message)
+					// C-10: dangling-reference suggestions
+					if d.Kind == "dangling_reference" {
+						if len(d.Suggestions) > 0 {
+							fmt.Fprintf(os.Stderr, "  did you mean: %s\n", strings.Join(d.Suggestions, ", "))
+						}
+						if d.SuggestedFixPath != "" {
+							fmt.Fprintf(os.Stderr, "  fix: create %s with `id: %s`\n", d.SuggestedFixPath, d.MissingDep)
+						}
+					}
 				}
 				os.Exit(1)
 			}
@@ -250,12 +272,14 @@ func resolveCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
 	cmd.Flags().BoolVar(&dotOutput, "dot", false, "Output graph in DOT format")
+	cmd.Flags().BoolVar(&mermaidOutput, "mermaid", false, "Output graph in Mermaid format (renders in GitHub PRs)")
 	return cmd
 }
 
 func checkCmd() *cobra.Command {
 	var jsonOutput bool
 	var tierOverride int
+	var strict bool
 	cmd := &cobra.Command{
 		Use:   "check",
 		Short: "Run type-checking rules across the spec graph",
@@ -273,7 +297,11 @@ func checkCmd() *cobra.Command {
 				}
 			}
 
-			opts := &checker.CheckOptions{}
+			m, _ := loadManifest()
+			opts := &checker.CheckOptions{
+				Strict:      strict || m.Settings.Strict,
+				WarnOnDraft: m.Settings.WarnOnDraft,
+			}
 			if tierOverride > 0 {
 				opts.TierOverride = tierOverride
 			}
@@ -316,6 +344,7 @@ func checkCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
 	cmd.Flags().IntVar(&tierOverride, "tier", 0, "Override tier enforcement level")
+	cmd.Flags().BoolVar(&strict, "strict", false, "Treat warnings as errors (also set via settings.strict in specter.yaml)")
 	return cmd
 }
 
@@ -391,10 +420,18 @@ func coverageCmd() *cobra.Command {
 func syncCmd() *cobra.Command {
 	var jsonOutput bool
 	var testsGlob string
+	var onlyPhase string
+	var strict bool
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Run full validation pipeline (parse + resolve + check + coverage)",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			validPhases := map[string]bool{"parse": true, "resolve": true, "check": true, "coverage": true}
+			if onlyPhase != "" && !validPhases[onlyPhase] {
+				fmt.Fprintf(os.Stderr, "error: --only must be one of: parse, resolve, check, coverage\n")
+				os.Exit(1)
+			}
+
 			specFiles := discoverSpecs()
 			if len(specFiles) == 0 {
 				fmt.Println("No .spec.yaml files found.")
@@ -413,9 +450,17 @@ func syncCmd() *cobra.Command {
 				testContents = append(testContents, specsync.FileContent{Path: f, Content: string(data)})
 			}
 
+			m, _ := loadManifest()
+			checkOpts := &checker.CheckOptions{
+				Strict:      strict || m.Settings.Strict,
+				WarnOnDraft: m.Settings.WarnOnDraft,
+			}
+
 			result := specsync.RunSync(specsync.SyncInput{
-				SpecFiles: specContents,
-				TestFiles: testContents,
+				SpecFiles:  specContents,
+				TestFiles:  testContents,
+				CheckOpts:  checkOpts,
+				OnlyPhase:  onlyPhase,
 			})
 
 			if jsonOutput {
@@ -454,6 +499,8 @@ func syncCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
 	cmd.Flags().StringVar(&testsGlob, "tests", "", "Glob pattern for test files")
+	cmd.Flags().StringVar(&onlyPhase, "only", "", "Run only this phase (parse|resolve|check|coverage); prerequisites run without halting")
+	cmd.Flags().BoolVar(&strict, "strict", false, "Treat warnings as errors (also set via settings.strict in specter.yaml)")
 	return cmd
 }
 

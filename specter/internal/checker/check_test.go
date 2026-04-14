@@ -174,3 +174,68 @@ func TestNoOrphansWhenAllReferenced(t *testing.T) {
 		}
 	}
 }
+
+// @ac AC-07
+func TestStrictModeUpgradesWarningsToErrors(t *testing.T) {
+	// Tier 2 orphan is normally a warning
+	spec := makeSpec("mid", 2)
+	spec.Constraints = []schema.Constraint{
+		{ID: "C-01", Description: "referenced"},
+		{ID: "C-02", Description: "orphan"},
+	}
+	spec.AcceptanceCriteria = []schema.AcceptanceCriterion{
+		{ID: "AC-01", Description: "test", ReferencesConstraints: []string{"C-01"}},
+	}
+
+	g := makeGraph(map[string]*resolver.SpecNode{"mid": {Spec: spec, File: "mid.yaml"}}, nil)
+
+	// Without strict: warning
+	r := CheckSpecs(g, nil)
+	for _, d := range r.Diagnostics {
+		if d.Kind == "orphan_constraint" && d.Severity != "warning" {
+			t.Errorf("expected warning without strict, got %q", d.Severity)
+		}
+	}
+	if r.Summary.Errors > 0 {
+		t.Error("expected no errors without strict mode")
+	}
+
+	// With strict: error
+	rs := CheckSpecs(g, &CheckOptions{Strict: true})
+	for _, d := range rs.Diagnostics {
+		if d.Kind == "orphan_constraint" && d.Severity != "error" {
+			t.Errorf("expected error with strict=true, got %q", d.Severity)
+		}
+	}
+	if rs.Summary.Errors == 0 {
+		t.Error("expected errors > 0 in strict mode")
+	}
+}
+
+// @ac AC-08
+func TestWarnOnDraftEmitsDraftSpecDiagnostic(t *testing.T) {
+	spec := makeSpec("draft-spec", 2)
+	spec.Status = "draft"
+
+	g := makeGraph(map[string]*resolver.SpecNode{"draft-spec": {Spec: spec, File: "d.yaml"}}, nil)
+
+	// Without warn_on_draft: no draft diagnostic
+	r := CheckSpecs(g, nil)
+	for _, d := range r.Diagnostics {
+		if d.Kind == "draft_spec" {
+			t.Error("unexpected draft_spec diagnostic without WarnOnDraft")
+		}
+	}
+
+	// With warn_on_draft: warning emitted
+	rw := CheckSpecs(g, &CheckOptions{WarnOnDraft: true})
+	found := false
+	for _, d := range rw.Diagnostics {
+		if d.Kind == "draft_spec" && d.SpecID == "draft-spec" && d.Severity == "warning" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected draft_spec warning diagnostic with WarnOnDraft=true")
+	}
+}

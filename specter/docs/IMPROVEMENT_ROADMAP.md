@@ -4,8 +4,8 @@
 
 **Design principle:** Make it easy for developers to use. If Specter does its job well, developers will love it.
 
-**Date:** 2026-04-03
-**Based on:** Real-world testing against 12 open-source repos (5,434 files, 0 crashes, 27,012 assertions extracted)
+**Date:** 2026-04-14
+**Based on:** Real-world testing against 12 open-source repos (5,434 files, 0 crashes, 27,012 assertions extracted) + Kensa team review (2026-04-14)
 
 ---
 
@@ -16,7 +16,7 @@ parse → resolve → check → coverage → sync
   ✅       ✅        ✅       ✅        ✅
 ```
 
-All 5 tools work. Dogfooding passes (6 specs, 85 tests). But they've only been validated against Specter's own specs. No external developer has gone through the full write-spec → run-sync → iterate loop. We don't actually know if the pipeline feels good to use.
+All 5 tools work. Dogfooding passes (7 specs, 85+ tests). The core engine has been validated against 12 real-world repos and one demanding external team (Kensa). No architectural gaps — remaining work is UX, CI integration, and authoring-loop friction.
 
 ---
 
@@ -26,25 +26,27 @@ All 5 tools work. Dogfooding passes (6 specs, 85 tests). But they've only been v
 
 The pipeline works, but is it ready for a developer who just installed Specter and is writing their first spec?
 
-| Gap | Why it matters |
-|-----|---------------|
-| No `specter init` command | Developer downloads Specter, types `specter`... now what? There's no scaffolding. They have to read docs and write YAML from scratch. |
-| Error messages are technical | Parse errors show JSON Schema paths like `spec.constraints[0].id`. A developer needs "Constraint ID 'c01' is invalid — must match pattern C-01, C-02, etc." |
-| No spec templates | Every spec starts from zero. A `specter init --template api-endpoint` would give them a starting point. |
-| `specter sync` only runs locally | No GitHub Action. The developer has to wire CI themselves. A `hanalyx/specter-sync-action` would make CI integration one line. |
-| Coverage thresholds are hardcoded | T1=100%, T2=80%, T3=50%. No way to configure per-project. A team might want T2=90%. |
+| Gap | Why it matters | Status |
+|-----|---------------|--------|
+| ~~No `specter init` command~~ | ~~Developer downloads Specter, types `specter`... now what?~~ | ✅ v0.3.0 |
+| Error messages are technical | Parse errors show JSON Schema paths like `spec.constraints[0].id`. A developer needs "Constraint ID 'c01' is invalid — must match pattern C-01, C-02, etc." | Open |
+| Dangling-reference messages lack suggestions | `error: "handler-interface" does not exist` — no hint of what does exist or what to do | Open |
+| No spec templates | Every spec starts from zero. A `specter init --template api-endpoint` would give them a starting point. | Open |
+| `specter sync` only runs locally | No GitHub Action. The developer has to wire CI themselves. A `hanalyx/specter-sync-action` would make CI integration one line. | Open |
+| Coverage thresholds are hardcoded | T1=100%, T2=80%, T3=50%. No way to configure per-project. A team might want T2=90%. | Open |
+| `tier` vs `tier_overrides` conflict is silent | When a spec declares `tier: 1` and `specter.yaml` assigns a different tier via `tier_overrides`, no warning is emitted and precedence is undocumented | Open |
 
 ### Track 2: Fix What's Broken (P0/P1)
 
 These are bugs that undermine trust. A developer tries Specter, it rejects valid output or silently drops data, and they walk away.
 
-| Bug | Impact | Fix effort |
-|-----|--------|------------|
-| `validation.rule` enum too narrow | 18 rejections across 4 repos — Specter rejects its own output | Small — map unknown rules to `"custom"` in core engine |
-| Missing `.spec.tsx`/`.spec.jsx` in IsTestFile | 713 assertions silently lost in one repo | Trivial — add 2 strings |
-| Test description truncation on embedded quotes | Garbled AC descriptions | Small — fix regex |
-| Python false positive constraints from comments | `# isort MUST be provided` — nonsensical output | Small — skip comment lines |
-| Spec ID collision on generic filenames | 54 specs all named `index` in one repo | Medium — incorporate parent dir |
+| Bug | Impact | Fix effort | Status |
+|-----|--------|------------|--------|
+| ~~`validation.rule` enum too narrow~~ | ~~18 rejections across 4 repos — Specter rejects its own output~~ | Small | ✅ v0.2.2 |
+| ~~Missing `.spec.tsx`/`.spec.jsx` in IsTestFile~~ | ~~713 assertions silently lost in one repo~~ | Trivial | ✅ v0.2.2 |
+| ~~Python false positive constraints from comments~~ | ~~`# isort MUST be provided` — nonsensical output~~ | Small | ✅ v0.2.2 |
+| ~~Spec ID collision on generic filenames~~ | ~~54 specs all named `index` in one repo~~ | Medium | ✅ v0.2.2 |
+| Test description truncation on embedded quotes | Garbled AC descriptions | Small | Open |
 
 ### Track 3: Developer Experience (the love factor)
 
@@ -62,41 +64,94 @@ This is what turns "useful tool" into "tool developers love."
 
 ## Recommended Priority Order
 
-### Phase 1 — Trust (v0.2.2)
+### Phase 1 — Trust (v0.2.2) ✅ COMPLETE
 
 Fix P0/P1 bugs. Specter must never reject its own valid output. This is table stakes.
 
-- Map unknown `validation.rule` values to `"custom"` in core engine
-- Add `.spec.tsx`, `.spec.jsx` to TypeScript adapter IsTestFile
+- ✅ Map unknown `validation.rule` values to `"custom"` in core engine
+- ✅ Add `.spec.tsx`, `.spec.jsx` to TypeScript adapter IsTestFile
+- ✅ Fix Python adapter false positive constraints from comments
+- ✅ Fix spec ID collision for generic filenames (route.ts, main.go, index.ts)
 - Fix test description regex to handle embedded quotes
-- Fix Python adapter false positive constraints from comments
-- Fix spec ID collision for generic filenames (route.ts, main.go, index.ts)
 
-### Phase 2 — First-Run Experience (v0.3.0)
+### Phase 2 — First-Run Experience (v0.3.x)
 
-A developer should go from install to their first passing `specter sync` in under 5 minutes.
+A developer should go from install to their first passing `specter sync` in under 5 minutes. Also: correctness fixes that surface during real-world authoring.
 
-- `specter init` — scaffold a first spec with guided prompts
-- Spec templates (api-endpoint, service, auth, data-model)
-- Human-readable error messages (not JSON Schema paths)
+- ✅ `specter init` — scaffold a first spec from the manifest
+- Spec templates (`api-endpoint`, `service`, `auth`, `data-model`)
 - `specter doctor` — pre-flight check for project readiness
+- **Human-readable error messages** — replace JSON Schema paths with developer-facing language; specifically:
+  - Dangling-reference errors must include: existing spec IDs, Levenshtein-distance closest match, and a suggested file path + `id:` fix. Example:
+    ```
+    error [dangling_reference] Spec "engine-transaction" depends on "handler-interface" which does not exist
+      searched: specs/**/*.spec.yaml
+      existing specs: handler-file-permissions, engine-transaction
+      did you mean: handler-file-permissions?
+      fix: create specs/handler/interface.spec.yaml with `id: handler-interface`
+    ```
+  - Orphan constraint and unmapped AC errors must link to the annotation guide
+- **`tier` vs `tier_overrides` conflict warning** — document that spec-level `tier` wins; emit a diagnostic when the two disagree:
+  ```
+  warn [tier_conflict] specs/engine/transaction.spec.yaml declares tier: 1
+                      but specter.yaml tier_overrides assigns tier: 2 to specs/engine/
+                      using tier: 1 (spec-level wins)
+  ```
 
-### Phase 3 — CI Integration (v0.3.x)
+### Phase 3 — Authoring Loop & CI Integration (v0.4.0)
 
-The mission becomes infrastructure — specs enforced on every PR, not just locally.
+The authoring loop (draft → check → fix → recheck) is where developers spend most of their time. This phase makes that loop fast, informative, and CI-enforced.
 
-- `hanalyx/specter-sync-action` GitHub Action — one-line CI setup
-- Configurable coverage thresholds per project (`.specter.yml`)
-- PR comment integration — show spec coverage diff in PRs
+**Authoring loop:**
 
-### Phase 4 — Editor Experience (v0.4.0)
+- **`specter explain <spec-id>:<ac-id>`** — active diagnostic command for uncovered ACs. Shows what annotation pattern coverage looked for, which files were scanned, and a ready-to-paste example annotation. Example:
+  ```
+  $ specter explain engine-transaction:AC-07
+  AC-07 is uncovered. Specter searched:
+    tests/**/*_test.go with annotation pattern:
+      // AC-07: ...   (Go comment)
+      t.Run("AC-07/...", ...)  (subtest name)
 
-The "love" feature. Real-time validation as developers write specs.
+    0 files matched. Suggested test location:
+      tests/engine/transaction_test.go
 
-- VS Code extension for `.spec.yaml` files
-- Syntax highlighting, schema validation, autocomplete
-- Inline diagnostics (orphan constraints, missing ACs)
-- Go-to-definition for `depends_on` references
+    Example annotation:
+      // AC-07: Concurrent Run calls against the same host serialize.
+      func TestTransaction_AC07_PerHostSerialization(t *testing.T) { ... }
+  ```
+- **`specter watch`** — re-invoke the sync pipeline on filesystem change, 200–500ms loop. Same semantics as `tsc --watch`. Makes the draft → check → fix cycle interactive rather than manual.
+- **`specter diff <spec>@<ref1> <spec>@<ref2>`** — semantic diff between two git revisions of a spec. Shows added/removed/changed ACs, constraints, and dependency version pins. More useful than YAML textual diff for PR review and release notes. Example:
+  ```
+  $ specter diff specs/engine/transaction.spec.yaml@HEAD~5 specs/engine/transaction.spec.yaml
+  spec engine-transaction 0.1.0 → 0.2.0
+    +constraint C-08 (security, error): "Host mutex must be released on panic"
+    +ac AC-12: "Host mutex is released when Run panics"
+    ~ac AC-02 priority: high → critical
+    -ac AC-09: removed (superseded by evidence-envelope spec)
+    ~depends_on handler-interface: any → ^1.0.0
+  ```
+- **`resolve --mermaid`** — Mermaid diagram output alongside existing `--dot`. Renders natively in GitHub PRs where reviewers actually look at graphs.
+- **`specter sync --only <phase>`** — run a single pipeline phase without halting on prior-phase failures. Useful when you want to see all coverage gaps even with unresolved dangling references.
+
+**CI integration:**
+
+- **`specter check --strict`** — treat `enforcement: warning` diagnostics as errors; exit non-zero. Eliminates per-project CI shell gymnastics to re-exit on warnings.
+- **`settings.strict: true`** — project-level equivalent of `--strict` in `specter.yaml`, so the policy is set once and applied everywhere.
+- **`settings.warn_on_draft: true`** — emit a warning (or error under `--strict`) for any spec with `status: draft` encountered during sync. Prevents accidentally shipping unapproved specs in a release branch.
+- **Pass-rate-aware coverage for Tier 1** — coverage currently counts an AC as covered if the annotation exists, regardless of whether the test passes. For Tier 1 specs a failing test is worse than no test. Implementation: adopt the `.specter-results.json` convention (language-agnostic; test infrastructure writes pass/fail results, coverage reads them). Tier 1 AC coverage requires both annotation presence and a passing result entry.
+- **Configurable coverage thresholds** — per-project in `specter.yaml` (e.g. `thresholds.tier1: 100`, `thresholds.tier2: 90`). Per-spec override in the spec file for specs that need stricter or looser policy than the project default.
+- **`hanalyx/specter-sync-action`** — GitHub Action for one-line CI setup. Runs the full sync pipeline and posts a coverage diff comment on PRs.
+- **PR comment integration** — show spec coverage diff in PR comments (AC added/removed, coverage delta by tier).
+
+### Phase 4 — Editor Experience & Schema Evolution (v0.5.0)
+
+The "love" feature: real-time validation as developers write specs. Plus tooling for breaking schema changes.
+
+- **VS Code extension** for `.spec.yaml` files
+  - Syntax highlighting, schema validation, autocomplete
+  - Inline diagnostics (orphan constraints, missing ACs)
+  - Go-to-definition for `depends_on` references
+- **`specter migrate v1→v2 specs/`** — scaffolded migration when `spec-schema.json` bumps a major version. Rewrites existing spec files to the new format and reports fields that require manual intervention. Necessary for adoption at scale — teams with hundreds of specs cannot migrate by hand.
 
 ---
 
@@ -120,6 +175,14 @@ Tested against 12 open-source repos on 2026-04-03:
 | calcom/cal.com | TS/Next.js | 871 | 477 | 1,320 | 9 |
 | **TOTAL** | | **5,434** | **1,822** | **27,012** | **18** |
 
-**Key finding:** Zero crashes across 5,434 files. Core engine is solid. All 18 validation failures trace to the same root cause (validation.rule enum too narrow).
+**Key finding:** Zero crashes across 5,434 files. Core engine is solid. All 18 validation failures trace to the same root cause (validation.rule enum too narrow — fixed in v0.2.2).
 
+### Kensa Team Review (2026-04-14)
 
+External validation from the Kensa engineering team, who drove the full pipeline against a real spec graph with intentional dangling references and unmapped ACs. Key findings:
+
+**What works:** C-NN / AC-NN cross-referencing, tier system with per-path overrides, status lifecycle, reverse with multi-language adapters (specifically: reverse-compiling from both Python and Go implementations to detect drift during a language migration), `resolve --dot` for design-review artifacts, strict schema rejection.
+
+**What Kensa confirmed is architecturally correct:** "Seven improvements above are UX and CI-integration refinements, not architectural gaps."
+
+**Kensa's 7 feedback items** are the direct source for the Phase 2 and Phase 3 additions above (dangling-ref suggestions, tier conflict warning, `specter explain`, `specter watch`, `specter diff`, `--strict`/`warn_on_draft`, pass-rate-aware coverage). All seven have been incorporated.

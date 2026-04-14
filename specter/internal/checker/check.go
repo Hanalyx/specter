@@ -40,6 +40,8 @@ type CheckSummary struct {
 type CheckOptions struct {
 	TierOverride     int
 	PreviousVersions map[string]*schema.SpecAST
+	Strict           bool // C-07: upgrade all warning/info diagnostics to error
+	WarnOnDraft      bool // C-08: emit warning for specs with status: draft
 }
 
 // Tier-based severity for orphan constraints.
@@ -70,6 +72,20 @@ func CheckSpecs(graph *resolver.SpecGraph, opts *CheckOptions) *CheckResult {
 	}
 
 	var diagnostics []CheckDiagnostic
+
+	// Rule 0: Draft spec warning (AC-08)
+	if opts.WarnOnDraft {
+		for _, node := range graph.Nodes {
+			if node.Spec.Status == "draft" {
+				diagnostics = append(diagnostics, CheckDiagnostic{
+					Kind:     "draft_spec",
+					Severity: "warning",
+					Message:  fmt.Sprintf("Spec %q has status: draft — approve or remove before shipping", node.Spec.ID),
+					SpecID:   node.Spec.ID,
+				})
+			}
+		}
+	}
 
 	// Rule 1: Orphan constraints (AC-01, AC-02, AC-06)
 	for _, node := range graph.Nodes {
@@ -108,6 +124,15 @@ func CheckSpecs(graph *resolver.SpecGraph, opts *CheckOptions) *CheckResult {
 					ChangeType: change.Classification,
 					Details:    change.Field,
 				})
+			}
+		}
+	}
+
+	// C-07: strict mode — upgrade warnings and info to errors
+	if opts.Strict {
+		for i := range diagnostics {
+			if diagnostics[i].Severity == "warning" || diagnostics[i].Severity == "info" {
+				diagnostics[i].Severity = "error"
 			}
 		}
 	}

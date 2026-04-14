@@ -33,9 +33,11 @@ type DomainConfig struct {
 
 // Settings holds project-level configuration.
 type Settings struct {
-	SpecsDir string         `yaml:"specs_dir,omitempty" json:"specs_dir,omitempty"`
-	Coverage CoverageConfig `yaml:"coverage,omitempty" json:"coverage,omitempty"`
-	Exclude  []string       `yaml:"exclude,omitempty" json:"exclude,omitempty"`
+	SpecsDir    string         `yaml:"specs_dir,omitempty" json:"specs_dir,omitempty"`
+	Coverage    CoverageConfig `yaml:"coverage,omitempty" json:"coverage,omitempty"`
+	Exclude     []string       `yaml:"exclude,omitempty" json:"exclude,omitempty"`
+	Strict      bool           `yaml:"strict,omitempty" json:"strict,omitempty"`       // C-11: treat warnings as errors
+	WarnOnDraft bool           `yaml:"warn_on_draft,omitempty" json:"warn_on_draft,omitempty"` // C-12: warn on draft specs
 }
 
 // CoverageConfig defines per-tier coverage thresholds.

@@ -1,6 +1,6 @@
 spec:
   id: spec-reverse
-  version: "1.0.0"
+  version: "1.1.0"
   status: draft
   tier: 2
 
@@ -100,6 +100,11 @@ spec:
 
     - id: C-10
       description: "MUST generate auto-numbered constraint IDs (C-01, C-02) and AC IDs (AC-01, AC-02) with no gaps"
+      type: technical
+      enforcement: error
+
+    - id: C-11
+      description: "MUST correctly extract test descriptions containing escaped quotes (e.g., it(\"user's token is valid\") or it('reject \"admin\" role'))"
       type: technical
       enforcement: error
 
@@ -253,12 +258,26 @@ spec:
       references_constraints: ["C-08"]
       priority: high
 
+    - id: AC-15
+      description: "Jest/Vitest test descriptions with escaped or embedded quotes are extracted correctly"
+      inputs:
+        test_file: "auth.test.ts with it(\"user's token is valid\") and it('reject \\\"admin\\\" role')"
+      expected_output:
+        ac_descriptions: ["user's token is valid", "reject \"admin\" role"]
+      references_constraints: ["C-11"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
       relationship: requires
 
   changelog:
+    - version: "1.1.0"
+      date: "2026-04-14"
+      author: "specter-team"
+      type: minor
+      description: "Add C-11/AC-15: correct extraction of test descriptions with embedded or escaped quotes"
     - version: "1.0.0"
       date: "2026-04-02"
       author: "specter-team"

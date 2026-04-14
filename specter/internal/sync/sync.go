@@ -36,7 +36,9 @@ type SyncResult struct {
 type SyncInput struct {
 	SpecFiles  []FileContent // [filepath, content]
 	TestFiles  []FileContent
-	Thresholds map[int]int // optional coverage thresholds by tier; nil uses defaults
+	Thresholds map[int]int            // optional coverage thresholds by tier; nil uses defaults
+	CheckOpts  *checker.CheckOptions  // optional check options (strict, warn_on_draft)
+	OnlyPhase  string                 // C-05: if set, run prerequisites without halting then run this phase
 }
 
 type FileContent struct {
@@ -47,11 +49,18 @@ type FileContent struct {
 // RunSync executes the full pipeline.
 //
 // C-01: Runs all four phases in order.
-// C-02: Stops at first phase with errors.
-// C-03: Returns pass only if all pass.
+// C-02: Stops at first phase with errors (unless OnlyPhase is set).
+// C-03: Returns pass only if all pass (or only target phase in OnlyPhase mode).
 // C-04: Reports results from all completed phases.
+// C-05: OnlyPhase runs prerequisites without halting; exit code is target phase only.
 func RunSync(input SyncInput) *SyncResult {
 	result := &SyncResult{}
+	onlyPhase := input.OnlyPhase
+
+	// haltOnFail: in normal mode always halt; in --only mode only halt at the target phase.
+	haltOnFail := func(phase string) bool {
+		return onlyPhase == "" || phase == onlyPhase
+	}
 
 	// Phase 1: Parse
 	var inputs []resolver.SpecInput
@@ -73,42 +82,56 @@ func RunSync(input SyncInput) *SyncResult {
 			Phase: "parse", Passed: false,
 			Message: fmt.Sprintf("%d file(s) failed to parse", parseFailCount),
 		})
-		result.StoppedAt = "parse"
-		return result
+		if haltOnFail("parse") {
+			result.StoppedAt = "parse"
+			return result
+		}
+	} else {
+		result.Phases = append(result.Phases, PhaseResult{
+			Phase: "parse", Passed: true,
+			Message: fmt.Sprintf("%d spec(s) parsed successfully", len(inputs)),
+		})
 	}
 
-	result.Phases = append(result.Phases, PhaseResult{
-		Phase: "parse", Passed: true,
-		Message: fmt.Sprintf("%d spec(s) parsed successfully", len(inputs)),
-	})
+	if onlyPhase == "parse" {
+		result.Passed = parseFailCount == 0
+		return result
+	}
 
 	// Phase 2: Resolve
 	graph := resolver.ResolveSpecs(inputs)
 	result.Graph = graph
 
-	errorCount := 0
+	resolveErrorCount := 0
 	for _, d := range graph.Diagnostics {
 		if d.Severity == "error" {
-			errorCount++
+			resolveErrorCount++
 		}
 	}
 
-	if errorCount > 0 {
+	if resolveErrorCount > 0 {
 		result.Phases = append(result.Phases, PhaseResult{
 			Phase: "resolve", Passed: false,
-			Message: fmt.Sprintf("%d dependency error(s)", errorCount),
+			Message: fmt.Sprintf("%d dependency error(s)", resolveErrorCount),
 		})
-		result.StoppedAt = "resolve"
+		if haltOnFail("resolve") {
+			result.StoppedAt = "resolve"
+			return result
+		}
+	} else {
+		result.Phases = append(result.Phases, PhaseResult{
+			Phase: "resolve", Passed: true,
+			Message: fmt.Sprintf("%d specs, %d dependencies resolved", len(graph.Nodes), len(graph.Edges)),
+		})
+	}
+
+	if onlyPhase == "resolve" {
+		result.Passed = resolveErrorCount == 0
 		return result
 	}
 
-	result.Phases = append(result.Phases, PhaseResult{
-		Phase: "resolve", Passed: true,
-		Message: fmt.Sprintf("%d specs, %d dependencies resolved", len(graph.Nodes), len(graph.Edges)),
-	})
-
 	// Phase 3: Check
-	checkResult := checker.CheckSpecs(graph, nil)
+	checkResult := checker.CheckSpecs(graph, input.CheckOpts)
 	result.CheckResult = checkResult
 
 	if checkResult.Summary.Errors > 0 {
@@ -116,14 +139,21 @@ func RunSync(input SyncInput) *SyncResult {
 			Phase: "check", Passed: false,
 			Message: fmt.Sprintf("%d error(s), %d warning(s)", checkResult.Summary.Errors, checkResult.Summary.Warnings),
 		})
-		result.StoppedAt = "check"
-		return result
+		if haltOnFail("check") {
+			result.StoppedAt = "check"
+			return result
+		}
+	} else {
+		result.Phases = append(result.Phases, PhaseResult{
+			Phase: "check", Passed: true,
+			Message: fmt.Sprintf("%d warning(s), %d info", checkResult.Summary.Warnings, checkResult.Summary.Info),
+		})
 	}
 
-	result.Phases = append(result.Phases, PhaseResult{
-		Phase: "check", Passed: true,
-		Message: fmt.Sprintf("%d warning(s), %d info", checkResult.Summary.Warnings, checkResult.Summary.Info),
-	})
+	if onlyPhase == "check" {
+		result.Passed = checkResult.Summary.Errors == 0
+		return result
+	}
 
 	// Phase 4: Coverage
 	var allAnnotations []coverage.AnnotationMatch
