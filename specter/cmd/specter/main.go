@@ -35,6 +35,7 @@ func main() {
 	root.AddCommand(syncCmd())
 	root.AddCommand(reverseCmd())
 	root.AddCommand(initCmd())
+	root.AddCommand(doctorCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -742,15 +743,21 @@ func loadManifest() (*manifest.Manifest, string) {
 
 func initCmd() *cobra.Command {
 	var (
-		name  string
-		force bool
+		name     string
+		force    bool
+		template string
 	)
 
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize a specter.yaml project manifest",
-		Long:  "Scaffold a specter.yaml file from existing .spec.yaml files in the current directory. Groups all specs into a default domain with sensible settings.",
+		Long:  "Scaffold a specter.yaml file from existing .spec.yaml files in the current directory. Groups all specs into a default domain with sensible settings.\n\nWith --template, creates a draft .spec.yaml file instead of specter.yaml.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// --template: create a spec file, not specter.yaml
+			if template != "" {
+				return runInitTemplate(template, force)
+			}
+
 			if _, err := os.Stat("specter.yaml"); err == nil && !force {
 				fmt.Println("specter.yaml already exists. Use --force to overwrite.")
 				os.Exit(1)
@@ -787,6 +794,170 @@ func initCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&name, "name", "", "System name (defaults to directory name)")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing specter.yaml")
+	cmd.Flags().StringVar(&template, "template", "", "Create a spec file from a template (api-endpoint, service, auth, data-model)")
 
 	return cmd
+}
+
+// runInitTemplate creates a draft .spec.yaml from a named template.
+func runInitTemplate(templateType string, force bool) error {
+	content, err := manifest.SpecTemplate(templateType)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	outFile := templateType + ".spec.yaml"
+	if _, statErr := os.Stat(outFile); statErr == nil && !force {
+		fmt.Printf("%s already exists. Use --force to overwrite.\n", outFile)
+		os.Exit(1)
+	}
+
+	if err := os.WriteFile(outFile, []byte(content), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "error writing %s: %v\n", outFile, err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Created %s (template: %s)\n", outFile, templateType)
+	fmt.Println("Edit the file to replace placeholder values, then run: specter sync")
+	return nil
+}
+
+// doctorCmd implements the specter doctor pre-flight health checker.
+//
+// @spec spec-doctor
+func doctorCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "doctor",
+		Short: "Run pre-flight project health checks",
+		Long:  "Checks project readiness before running the full sync pipeline. Reports PASS/WARN/FAIL for each check so developers know exactly what needs attention.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			anyFail := false
+
+			// Helper: print an aligned check result line.
+			printCheck := func(name, status, msg string) {
+				fmt.Printf("  %-12s [%s]  %s\n", name, status, msg)
+			}
+
+			fmt.Println("specter doctor")
+			fmt.Println()
+
+			// C-08: run ALL checks regardless of failures
+
+			// --- Check 1: Manifest presence (C-01, AC-01, AC-02) ---
+			manifestPath, _ := findManifest()
+			if manifestPath != "" {
+				printCheck("manifest", "PASS", "specter.yaml found at "+manifestPath)
+			} else {
+				printCheck("manifest", "WARN", "No specter.yaml found — run `specter init` to scaffold one (optional)")
+			}
+
+			// --- Check 2: .spec.yaml files present (C-02, AC-03) ---
+			specFiles := discoverSpecs()
+			if len(specFiles) == 0 {
+				printCheck("spec-files", "FAIL", "No .spec.yaml files found — create at least one spec to get started")
+				anyFail = true
+			} else {
+				printCheck("spec-files", "PASS", fmt.Sprintf("%d spec file(s) discovered", len(specFiles)))
+			}
+
+			// --- Check 3: All specs parse cleanly (C-03, AC-04) ---
+			parseOK := true
+			parseErrors := 0
+			for _, f := range specFiles {
+				data, err := os.ReadFile(f)
+				if err != nil {
+					parseOK = false
+					parseErrors++
+					continue
+				}
+				result := parser.ParseSpec(string(data))
+				if !result.OK {
+					parseOK = false
+					parseErrors++
+					for _, pe := range result.Errors {
+						fmt.Printf("    %s: %s\n", f, pe.Message)
+					}
+				}
+			}
+			if !parseOK {
+				printCheck("parse", "FAIL", fmt.Sprintf("%d spec file(s) have parse errors (see above)", parseErrors))
+				anyFail = true
+			} else if len(specFiles) > 0 {
+				printCheck("parse", "PASS", "All specs parse cleanly")
+			} else {
+				printCheck("parse", "WARN", "No specs to parse")
+			}
+
+			// --- Check 4: @spec/@ac annotations in test files (C-04, AC-05) ---
+			testFiles := discoverTestFiles("")
+			annotationCount := 0
+			for _, f := range testFiles {
+				data, err := os.ReadFile(f)
+				if err != nil {
+					continue
+				}
+				annotations := coverage.ExtractAnnotations(string(data), f)
+				annotationCount += len(annotations)
+			}
+			if annotationCount == 0 {
+				printCheck("annotations", "WARN", "No @spec/@ac annotations found in test files — add annotations to track coverage")
+			} else {
+				printCheck("annotations", "PASS", fmt.Sprintf("%d annotation(s) found across %d test file(s)", annotationCount, len(testFiles)))
+			}
+
+			// --- Check 5: Coverage meets tier thresholds (C-05, AC-06) ---
+			if len(specFiles) > 0 {
+				m, _ := loadManifest()
+				_, specs, hasParseErrors := parseAllSpecs(specFiles)
+				if hasParseErrors {
+					printCheck("coverage", "WARN", "Skipping coverage check — specs have parse errors")
+				} else {
+					var allAnnotations []coverage.AnnotationMatch
+					for _, f := range testFiles {
+						data, err := os.ReadFile(f)
+						if err != nil {
+							continue
+						}
+						allAnnotations = append(allAnnotations, coverage.ExtractAnnotations(string(data), f)...)
+					}
+					thresholds := m.CoverageThresholds()
+					report := coverage.BuildCoverageReport(specs, allAnnotations, thresholds)
+
+					belowThreshold := 0
+					for _, e := range report.Entries {
+						if !e.PassesThreshold {
+							belowThreshold++
+						}
+					}
+
+					if belowThreshold > 0 {
+						printCheck("coverage", "FAIL", fmt.Sprintf("%d spec(s) below tier coverage threshold", belowThreshold))
+						for _, e := range report.Entries {
+							if !e.PassesThreshold {
+								threshold := thresholds[e.Tier]
+								fmt.Printf("    %s: %.0f%% coverage (T%d requires %d%%)\n",
+									e.SpecID, e.CoveragePct, e.Tier, threshold)
+							}
+						}
+						anyFail = true
+					} else {
+						printCheck("coverage", "PASS", fmt.Sprintf("All %d spec(s) meet coverage thresholds", len(report.Entries)))
+					}
+				}
+			} else {
+				printCheck("coverage", "WARN", "No specs to check coverage for")
+			}
+
+			fmt.Println()
+
+			// C-06: exit 0 if all PASS/WARN, exit 1 if any FAIL
+			if anyFail {
+				fmt.Println("Result: FAIL — fix the issues above before running `specter sync`")
+				os.Exit(1)
+			}
+			fmt.Println("Result: OK — project is ready for `specter sync`")
+			return nil
+		},
+	}
 }

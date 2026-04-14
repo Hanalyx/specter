@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Hanalyx/specter/internal/coverage"
+	"github.com/Hanalyx/specter/internal/parser"
 	"github.com/Hanalyx/specter/internal/schema"
 )
 
@@ -358,5 +359,73 @@ system:
 	}
 	if m.Settings.WarnOnDraft {
 		t.Error("expected Settings.WarnOnDraft=false by default")
+	}
+}
+
+// @ac AC-17
+func TestSpecTemplate_APIEndpoint(t *testing.T) {
+	tmpl, err := SpecTemplate("api-endpoint")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	result := parser.ParseSpec(tmpl)
+	if !result.OK {
+		t.Fatalf("api-endpoint template failed ParseSpec: %v", result.Errors)
+	}
+	if result.Value.Status != "draft" {
+		t.Errorf("expected status=draft, got %q", result.Value.Status)
+	}
+}
+
+func TestSpecTemplate_Service(t *testing.T) {
+	tmpl, err := SpecTemplate("service")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	result := parser.ParseSpec(tmpl)
+	if !result.OK {
+		t.Fatalf("service template failed ParseSpec: %v", result.Errors)
+	}
+	if result.Value.Status != "draft" {
+		t.Errorf("expected status=draft, got %q", result.Value.Status)
+	}
+}
+
+func TestSpecTemplate_Auth(t *testing.T) {
+	tmpl, err := SpecTemplate("auth")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	result := parser.ParseSpec(tmpl)
+	if !result.OK {
+		t.Fatalf("auth template failed ParseSpec: %v", result.Errors)
+	}
+	if result.Value.Status != "draft" {
+		t.Errorf("expected status=draft, got %q", result.Value.Status)
+	}
+	if result.Value.Tier != 1 {
+		t.Errorf("expected auth template tier=1 (critical), got %d", result.Value.Tier)
+	}
+}
+
+func TestSpecTemplate_DataModel(t *testing.T) {
+	tmpl, err := SpecTemplate("data-model")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	result := parser.ParseSpec(tmpl)
+	if !result.OK {
+		t.Fatalf("data-model template failed ParseSpec: %v", result.Errors)
+	}
+	if result.Value.Status != "draft" {
+		t.Errorf("expected status=draft, got %q", result.Value.Status)
+	}
+}
+
+// @ac AC-18
+func TestSpecTemplate_UnknownType(t *testing.T) {
+	_, err := SpecTemplate("nonexistent")
+	if err == nil {
+		t.Error("expected error for unknown template type, got nil")
 	}
 }

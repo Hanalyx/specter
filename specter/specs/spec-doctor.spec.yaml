@@ -1,0 +1,171 @@
+spec:
+  id: spec-doctor
+  version: "1.0.0"
+  status: draft
+  tier: 2
+
+  context:
+    system: Specter toolchain
+    feature: Project health checker
+    description: >
+      A pre-flight diagnostic command that checks project readiness before
+      running the full sync pipeline. Reports PASS/WARN/FAIL for each check
+      so developers understand exactly what needs attention. Designed for
+      first-run experience and ongoing project hygiene.
+    related_specs:
+      - "spec-parse"
+      - "spec-sync"
+      - "spec-coverage"
+      - "spec-manifest"
+
+  objective:
+    summary: >
+      Run a series of project health checks and report their status as
+      PASS, WARN, or FAIL. Exit non-zero if any check fails. Exit zero
+      if all checks pass or warn.
+    scope:
+      includes:
+        - "Check for specter.yaml manifest presence"
+        - "Check for .spec.yaml files in the project"
+        - "Check that all discovered specs parse cleanly"
+        - "Check for @spec/@ac annotations in test files"
+        - "Check that coverage meets tier thresholds"
+        - "Per-check PASS/WARN/FAIL status with actionable message"
+        - "Exit code 0 = all PASS or WARN; exit code 1 = any FAIL"
+      excludes:
+        - "Writing or modifying any files"
+        - "Running sync pipeline end-to-end"
+        - "Network requests or external service checks"
+
+  constraints:
+    - id: C-01
+      description: "MUST check for specter.yaml manifest presence and report WARN (not FAIL) if absent — manifest is optional"
+      type: technical
+      enforcement: error
+
+    - id: C-02
+      description: "MUST check for .spec.yaml files and report FAIL if none are found"
+      type: technical
+      enforcement: error
+
+    - id: C-03
+      description: "MUST check that all discovered specs parse cleanly and report FAIL if any have errors"
+      type: technical
+      enforcement: error
+
+    - id: C-04
+      description: "MUST check for @spec/@ac annotations in test files and report WARN (not FAIL) if none are found"
+      type: technical
+      enforcement: error
+
+    - id: C-05
+      description: "MUST check coverage against tier thresholds and report FAIL if any spec is below threshold"
+      type: technical
+      enforcement: error
+
+    - id: C-06
+      description: "MUST exit 0 if all checks are PASS or WARN; MUST exit 1 if any check is FAIL"
+      type: technical
+      enforcement: error
+
+    - id: C-07
+      description: "MUST NOT write or modify any files — read-only diagnostic tool"
+      type: technical
+      enforcement: error
+
+    - id: C-08
+      description: "MUST report all checks regardless of failures — no short-circuit on first FAIL"
+      type: technical
+      enforcement: error
+
+  acceptance_criteria:
+    - id: AC-01
+      description: "Project with specter.yaml reports manifest check as PASS"
+      inputs:
+        project: "directory containing specter.yaml"
+      expected_output:
+        manifest_status: "PASS"
+      references_constraints: ["C-01"]
+      priority: high
+
+    - id: AC-02
+      description: "Project without specter.yaml reports manifest check as WARN, not FAIL"
+      inputs:
+        project: "directory without specter.yaml"
+      expected_output:
+        manifest_status: "WARN"
+        exit_code: 0
+      references_constraints: ["C-01", "C-06"]
+      priority: critical
+
+    - id: AC-03
+      description: "Project with zero .spec.yaml files reports spec-files check as FAIL"
+      inputs:
+        project: "empty directory"
+      expected_output:
+        spec_files_status: "FAIL"
+        exit_code: 1
+      references_constraints: ["C-02", "C-06"]
+      priority: critical
+
+    - id: AC-04
+      description: "Project with a spec that has parse errors reports parse check as FAIL"
+      inputs:
+        project: "directory with an invalid .spec.yaml"
+      expected_output:
+        parse_status: "FAIL"
+        exit_code: 1
+      references_constraints: ["C-03", "C-06"]
+      priority: critical
+
+    - id: AC-05
+      description: "Project with no @spec/@ac annotations reports annotations check as WARN, not FAIL"
+      inputs:
+        project: "directory with specs but no annotated test files"
+      expected_output:
+        annotations_status: "WARN"
+        exit_code: 0
+      references_constraints: ["C-04", "C-06"]
+      priority: high
+
+    - id: AC-06
+      description: "Project with a spec below its tier coverage threshold reports coverage check as FAIL"
+      inputs:
+        project: "Tier 1 spec with 0% coverage"
+      expected_output:
+        coverage_status: "FAIL"
+        exit_code: 1
+      references_constraints: ["C-05", "C-06"]
+      priority: critical
+
+    - id: AC-07
+      description: "All checks are always reported even when an earlier check fails"
+      inputs:
+        project: "project with parse errors and zero coverage"
+      expected_output:
+        all_five_checks_reported: true
+      references_constraints: ["C-08"]
+      priority: high
+
+    - id: AC-08
+      description: "doctor produces no file writes — project directory is unchanged after running"
+      references_constraints: ["C-07"]
+      priority: high
+
+  depends_on:
+    - spec_id: spec-parse
+      version_range: "^1.0.0"
+      relationship: requires
+    - spec_id: spec-coverage
+      version_range: "^1.0.0"
+      relationship: requires
+    - spec_id: spec-manifest
+      version_range: "^1.0.0"
+      relationship: requires
+
+  changelog:
+    - version: "1.0.0"
+      date: "2026-04-14"
+      author: "specter-team"
+      type: initial
+      description: "Initial spec for the specter doctor pre-flight health checker"

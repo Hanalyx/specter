@@ -138,7 +138,7 @@ func flattenValidationErrors(ve *jsonschema.ValidationError) []ParseError {
 		errors = append(errors, ParseError{
 			Path:    path,
 			Type:    errType,
-			Message: ve.Error(),
+			Message: humanizeError(errType, path, ve.Error()), // C-09: human-readable messages
 		})
 	}
 

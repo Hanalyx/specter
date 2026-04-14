@@ -4,6 +4,7 @@ package parser
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -207,6 +208,63 @@ func TestParseBadACID(t *testing.T) {
 	if !found {
 		t.Errorf("expected 'pattern' error for AC ID, got: %v", result.Errors)
 	}
+}
+
+// @ac AC-11
+func TestParseHumanReadable_ConstraintID(t *testing.T) {
+	yaml := readFixture(t, "invalid/bad-constraint-id.spec.yaml")
+	result := ParseSpec(yaml)
+
+	if result.OK {
+		t.Fatal("expected failure, got OK")
+	}
+	for _, e := range result.Errors {
+		if e.Type == "pattern" {
+			if !strings.Contains(e.Message, "C-NN") {
+				t.Errorf("expected message to mention C-NN pattern, got: %q", e.Message)
+			}
+			return
+		}
+	}
+	t.Errorf("no pattern error found: %v", result.Errors)
+}
+
+// @ac AC-12
+func TestParseHumanReadable_MissingID(t *testing.T) {
+	yaml := readFixture(t, "invalid/missing-id.spec.yaml")
+	result := ParseSpec(yaml)
+
+	if result.OK {
+		t.Fatal("expected failure, got OK")
+	}
+	for _, e := range result.Errors {
+		if e.Type == "required" {
+			if !strings.Contains(e.Message, "kebab-case") {
+				t.Errorf("expected message to mention kebab-case, got: %q", e.Message)
+			}
+			return
+		}
+	}
+	t.Errorf("no required error found: %v", result.Errors)
+}
+
+// @ac AC-13
+func TestParseHumanReadable_ExtraField(t *testing.T) {
+	yaml := readFixture(t, "invalid/extra-field.spec.yaml")
+	result := ParseSpec(yaml)
+
+	if result.OK {
+		t.Fatal("expected failure, got OK")
+	}
+	for _, e := range result.Errors {
+		if e.Type == "additionalProperties" {
+			if strings.Contains(e.Message, "additionalProperties") {
+				t.Errorf("message should not expose raw 'additionalProperties', got: %q", e.Message)
+			}
+			return
+		}
+	}
+	t.Errorf("no additionalProperties error found: %v", result.Errors)
 }
 
 func TestParsePureFunction(t *testing.T) {
