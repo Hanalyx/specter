@@ -53,19 +53,28 @@ func discoverSpecs(patterns ...string) []string {
 	if len(patterns) > 0 && patterns[0] != "" {
 		return patterns
 	}
+	// Load manifest to honour settings.exclude — BUG-002 fix.
+	m, _ := loadManifest()
+	excludeNames := make(map[string]bool)
+	for _, e := range m.ExcludePatterns() {
+		excludeNames[e] = true
+	}
+
 	var files []string
 	_ = filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
-		if info.IsDir() && (info.Name() == "node_modules" || info.Name() == "dist" || info.Name() == ".git") {
-			return filepath.SkipDir
-		}
-		if info.IsDir() && strings.HasPrefix(path, filepath.Join("tests", "fixtures")) {
-			return filepath.SkipDir
-		}
-		if info.IsDir() && strings.HasPrefix(path, filepath.Join("testdata")) {
-			return filepath.SkipDir
+		if info.IsDir() {
+			// Skip by directory name (e.g. ".claude", "node_modules")
+			if excludeNames[info.Name()] {
+				return filepath.SkipDir
+			}
+			// Skip by path prefix for entries like "tests/fixtures", "testdata"
+			if strings.HasPrefix(path, filepath.Join("tests", "fixtures")) ||
+				strings.HasPrefix(path, "testdata") {
+				return filepath.SkipDir
+			}
 		}
 		if strings.HasSuffix(path, ".spec.yaml") {
 			files = append(files, path)

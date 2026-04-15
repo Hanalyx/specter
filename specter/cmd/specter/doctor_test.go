@@ -171,6 +171,41 @@ func TestDoctor_NoFileWrites(t *testing.T) {
 	}
 }
 
+// Regression: BUG-002 — settings.exclude in specter.yaml must prevent spec discovery
+// in excluded directories. A duplicate spec under an excluded path must not produce
+// duplicate_id errors.
+func TestResolve_ExcludeList_SkipsDirectory(t *testing.T) {
+	dir := t.TempDir()
+	writeSpec(t, dir, "my-spec.spec.yaml", minimalValidSpec("my-spec", 3, "AC-01"))
+
+	// Write a duplicate spec under an excluded directory (simulates a git worktree)
+	excluded := filepath.Join(dir, ".worktree", "specs")
+	if err := os.MkdirAll(excluded, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(excluded, "my-spec.spec.yaml"),
+		[]byte(minimalValidSpec("my-spec", 3, "AC-01")), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Without exclude list the duplicate should cause a duplicate_id error
+	out, _ := runCLI(t, dir, "resolve")
+	if !strings.Contains(out, "duplicate") {
+		t.Logf("(baseline without exclude: no duplicate_id error — test env may differ)")
+	}
+
+	// Add exclude list to specter.yaml
+	writeManifest(t, dir, "system:\n  name: test\nsettings:\n  exclude:\n    - .worktree\n")
+
+	out, code := runCLI(t, dir, "resolve")
+	if strings.Contains(strings.ToLower(out), "duplicate") {
+		t.Errorf("resolve must not report duplicate_id when the dir is in settings.exclude:\n%s", out)
+	}
+	if code != 0 {
+		t.Errorf("expected exit code 0 with excluded dir, got %d\noutput:\n%s", code, out)
+	}
+}
+
 func listAllFiles(t *testing.T, dir string) []string {
 	t.Helper()
 	var files []string

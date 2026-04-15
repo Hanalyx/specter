@@ -14,7 +14,8 @@ import (
 
 // C-01, C-02: Recognize @spec and @ac in //, #, and * (JSDoc) comments
 var specAnnotationRE = regexp.MustCompile(`(?://|#|\*)\s*@spec\s+([\w-]+)`)
-var acAnnotationRE = regexp.MustCompile(`(?://|#|\*)\s*@ac\s+(AC-\d{2,})`)
+var acTagRE = regexp.MustCompile(`(?://|#|\*)\s*@ac\s+(.+)`)
+var acIDRE = regexp.MustCompile(`AC-\d{2,}`)
 
 // AnnotationMatch represents annotations found in a test file.
 type AnnotationMatch struct {
@@ -79,8 +80,10 @@ func ExtractAnnotations(fileContent, filePath string) []AnnotationMatch {
 			}
 		}
 
-		if m := acAnnotationRE.FindStringSubmatch(line); len(m) > 1 && currentSpecID != "" {
-			matchMap[currentSpecID][m[1]] = true
+		if m := acTagRE.FindStringSubmatch(line); len(m) > 1 && currentSpecID != "" {
+			for _, acID := range acIDRE.FindAllString(m[1], -1) {
+				matchMap[currentSpecID][acID] = true
+			}
 		}
 	}
 

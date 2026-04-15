@@ -120,6 +120,25 @@ func TestPythonAnnotations(t *testing.T) {
 	}
 }
 
+// Regression: BUG-001 — multiple AC IDs on a single @ac line must all be registered.
+func TestAnnotationExtraction_MultiACOnOneLine(t *testing.T) {
+	content := "// @spec deadman-timer\n// @ac AC-02 AC-03 AC-04\n"
+	matches := ExtractAnnotations(content, "timer_test.go")
+
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 match, got %d", len(matches))
+	}
+	acSet := make(map[string]bool)
+	for _, id := range matches[0].ACIDs {
+		acSet[id] = true
+	}
+	for _, want := range []string{"AC-02", "AC-03", "AC-04"} {
+		if !acSet[want] {
+			t.Errorf("expected %s to be covered from single-line @ac annotation, but it was not", want)
+		}
+	}
+}
+
 // Regression: @spec inside a string literal must not hijack the current spec context.
 func TestAnnotationExtraction_StringLiteralNotHijacked(t *testing.T) {
 	// Simulate a test file where a Go string literal contains "// @spec other-spec".
