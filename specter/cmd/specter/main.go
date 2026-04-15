@@ -360,7 +360,7 @@ func checkCmd() *cobra.Command {
 				fmt.Printf("%s [%s] %s%s: %s\n", prefix, d.Kind, d.SpecID, cid, d.Message)
 			}
 
-			fmt.Printf("\n%d error(s), %d warning(s), %d info\n", result.Summary.Errors, result.Summary.Warnings, result.Summary.Info)
+			fmt.Printf("\n%d error(s), %d warning(s), %d info\n", result.Summary.Errors, result.Summary.Warnings+len(tierConflicts), result.Summary.Info)
 
 			if result.Summary.Errors > 0 {
 				os.Exit(1)
