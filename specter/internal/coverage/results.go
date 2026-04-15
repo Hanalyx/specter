@@ -30,8 +30,9 @@ func ParseResultsFile(data []byte) (*ResultsFile, error) {
 	return &rf, nil
 }
 
-// passed returns true if the given spec+AC has a passing result entry.
-// Returns false if the entry is absent (missing entry = not passed).
+// passed returns true if the given spec+AC has a passing result entry,
+// or if no entry exists (absent means "not recorded yet", not "failed").
+// Only an explicit passed:false entry demotes an annotated AC.
 func (rf *ResultsFile) passed(specID, acID string) bool {
 	if rf == nil {
 		return true // no results file = no restriction
@@ -41,5 +42,5 @@ func (rf *ResultsFile) passed(specID, acID string) bool {
 			return r.Passed
 		}
 	}
-	return false // absent = not passed
+	return true // absent from results file = annotation alone counts
 }

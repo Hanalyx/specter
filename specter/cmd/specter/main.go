@@ -1471,6 +1471,25 @@ func readSpecAtRef(arg string) (*schema.SpecAST, error) {
 }
 
 // gitShow runs `git show <ref>:<path>` and returns the output.
+// The path is resolved to be repo-root-relative so git show works
+// regardless of the working directory within the repo.
 func gitShow(ref, path string) ([]byte, error) {
-	return exec.Command("git", "show", ref+":"+path).Output()
+	// Get the repo root
+	rootBytes, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return nil, fmt.Errorf("not a git repository: %w", err)
+	}
+	root := strings.TrimSpace(string(rootBytes))
+
+	// Resolve path to absolute, then make it relative to root
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	relPath, err := filepath.Rel(root, absPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return exec.Command("git", "show", ref+":"+relPath).Output()
 }
