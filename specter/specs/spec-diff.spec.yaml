@@ -1,0 +1,113 @@
+spec:
+  id: spec-diff
+  version: "1.0.0"
+  status: draft
+  tier: 2
+  context:
+    system: Specter toolchain
+    feature: Semantic spec diff between git revisions
+    description: >
+      Compares two git revisions of a spec file and produces a human-readable
+      semantic diff showing added/removed/changed ACs, constraints, and dependency
+      version pins. More useful than a YAML textual diff for PR review.
+    assumptions:
+      - "Requires a git repository"
+      - "File paths are specified as path@ref or plain path (reads from disk)"
+  objective:
+    summary: >
+      Given two revisions of a spec, show the semantic delta: ACs added/removed/
+      changed, constraints added/removed/changed, dependency version changes,
+      and version bump classification (breaking/additive/patch).
+    scope:
+      includes:
+        - "Parse spec from git ref via git show <ref>:<path>"
+        - "Compare acceptance_criteria (added, removed, description changed)"
+        - "Compare constraints (added, removed, description changed)"
+        - "Compare depends_on version_range changes"
+        - "Classify overall change as breaking/additive/patch"
+        - "Plain-text output with +/~/- prefix per item"
+      excludes:
+        - "Three-way merge"
+        - "Diffing non-spec files"
+        - "Interactive diff UI"
+  constraints:
+    - id: C-01
+      description: "MUST parse the argument format <path>@<ref> — everything before the last @ is the path, everything after is the git ref"
+      type: technical
+      enforcement: error
+    - id: C-02
+      description: "MUST read spec content from git via git show <ref>:<path>; if no @ref, read from disk"
+      type: technical
+      enforcement: error
+    - id: C-03
+      description: "MUST report added ACs with + prefix, removed with - prefix, changed description with ~ prefix"
+      type: technical
+      enforcement: error
+    - id: C-04
+      description: "MUST report added constraints with + prefix, removed with - prefix"
+      type: technical
+      enforcement: error
+    - id: C-05
+      description: "MUST report depends_on version_range changes as ~ depends_on <spec-id>: <old> → <new>"
+      type: technical
+      enforcement: error
+    - id: C-06
+      description: "MUST classify the overall change as breaking (removed AC/constraint or priority upgrade), additive (new AC/constraint), or patch (description-only change)"
+      type: technical
+      enforcement: error
+    - id: C-07
+      description: "MUST exit non-zero and print a clear error when the git command fails or the path is not in a git repo"
+      type: technical
+      enforcement: error
+    - id: C-08
+      description: "MUST implement DiffSpecs as a pure function in internal/diff — no I/O, no subprocess calls"
+      type: technical
+      enforcement: error
+  acceptance_criteria:
+    - id: AC-01
+      description: "path@HEAD~1 is parsed as path=the-path ref=HEAD~1"
+      references_constraints: ["C-01"]
+      priority: critical
+    - id: AC-02
+      description: "AC added between revisions appears as +AC-03: <description>"
+      references_constraints: ["C-03"]
+      priority: critical
+    - id: AC-03
+      description: "AC removed between revisions appears as -AC-02: <description>"
+      references_constraints: ["C-03"]
+      priority: critical
+    - id: AC-04
+      description: "Constraint added appears as +C-05: <description>"
+      references_constraints: ["C-04"]
+      priority: high
+    - id: AC-05
+      description: "depends_on version_range changed appears as ~depends_on auth: any → ^1.0.0"
+      references_constraints: ["C-05"]
+      priority: high
+    - id: AC-06
+      description: "Removing an AC is classified as breaking"
+      references_constraints: ["C-06"]
+      priority: high
+    - id: AC-07
+      description: "Adding an AC is classified as additive"
+      references_constraints: ["C-06"]
+      priority: high
+    - id: AC-08
+      description: "Only description changes (no add/remove) is classified as patch"
+      references_constraints: ["C-06"]
+      priority: medium
+    - id: AC-09
+      description: "git show failure prints 'error: git show failed: <stderr>' and exits 1"
+      references_constraints: ["C-07"]
+      priority: high
+    - id: AC-10
+      description: "DiffSpecs(v1, v2) with two identical SpecASTs returns empty diff"
+      references_constraints: ["C-08"]
+      priority: high
+
+  changelog:
+    - version: "1.0.0"
+      date: "2026-04-14"
+      author: "specter-team"
+      type: initial
+      description: "Initial spec for the specter diff command"

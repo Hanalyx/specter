@@ -14,6 +14,7 @@ type SpecAST struct {
 	Version            string              `yaml:"version" json:"version"`
 	Status             string              `yaml:"status" json:"status"`
 	Tier               int                 `yaml:"tier" json:"tier"`
+	CoverageThreshold  int                 `yaml:"coverage_threshold,omitempty" json:"coverage_threshold,omitempty"`
 	Context            SpecContext          `yaml:"context" json:"context"`
 	Objective          SpecObjective        `yaml:"objective" json:"objective"`
 	Constraints        []Constraint         `yaml:"constraints" json:"constraints"`

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/Hanalyx/specter/internal/checker"
 	"github.com/Hanalyx/specter/internal/coverage"
+	specdiff "github.com/Hanalyx/specter/internal/diff"
 	"github.com/Hanalyx/specter/internal/manifest"
 	"github.com/Hanalyx/specter/internal/parser"
 	"github.com/Hanalyx/specter/internal/resolver"
@@ -41,6 +43,7 @@ func main() {
 	root.AddCommand(doctorCmd())
 	root.AddCommand(explainCmd())
 	root.AddCommand(watchCmd())
+	root.AddCommand(diffCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -323,6 +326,10 @@ func checkCmd() *cobra.Command {
 
 			result := checker.CheckSpecs(graph, opts)
 
+			// Tier conflict warnings (C-14)
+			_, specs, _ := parseAllSpecs(files)
+			tierConflicts := manifest.CheckTierConflicts(specs, m)
+
 			if jsonOutput {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
@@ -330,7 +337,11 @@ func checkCmd() *cobra.Command {
 				return nil
 			}
 
-			if len(result.Diagnostics) == 0 {
+			for _, tc := range tierConflicts {
+				fmt.Printf("warn [tier_conflict] %s\n", tc.Message)
+			}
+
+			if len(result.Diagnostics) == 0 && len(tierConflicts) == 0 {
 				fmt.Printf("All %d specs passed structural checks.\n", len(graph.Nodes))
 				return nil
 			}
@@ -386,7 +397,12 @@ func coverageCmd() *cobra.Command {
 				allAnnotations = append(allAnnotations, coverage.ExtractAnnotations(string(data), f)...)
 			}
 
-			report := coverage.BuildCoverageReport(specs, allAnnotations, checker.CoverageThresholdByTier)
+			m, _ := loadManifest()
+			var results *coverage.ResultsFile
+			if data, err := os.ReadFile(".specter-results.json"); err == nil {
+				results, _ = coverage.ParseResultsFile(data)
+			}
+			report := coverage.BuildCoverageReportWithResults(specs, allAnnotations, m.CoverageThresholds(), results)
 
 			if jsonOutput {
 				enc := json.NewEncoder(os.Stdout)
@@ -420,6 +436,19 @@ func coverageCmd() *cobra.Command {
 
 			fmt.Printf("\n%d specs: %d passing, %d failing\n",
 				report.Summary.TotalSpecs, report.Summary.Passing, report.Summary.Failing)
+
+			// Dependency coverage warnings
+			var edges []coverage.DepEdge
+			if inputs, _, _ := parseAllSpecs(files); len(inputs) > 0 {
+				graph := resolver.ResolveSpecs(inputs)
+				for _, e := range graph.Edges {
+					edges = append(edges, coverage.DepEdge{From: e.From, To: e.To})
+				}
+			}
+			for _, w := range coverage.CheckDependencyCoverage(edges, report) {
+				fmt.Printf("warn [dependency_coverage] %s\n", w.Message)
+				fmt.Printf("  run: specter explain %s:%s\n", w.DependsOn, w.UncoveredACs[0])
+			}
 
 			if report.Summary.Failing > 0 {
 				os.Exit(1)
@@ -471,11 +500,18 @@ func syncCmd() *cobra.Command {
 				WarnOnDraft: m.Settings.WarnOnDraft,
 			}
 
+			var results *coverage.ResultsFile
+			if data, err := os.ReadFile(".specter-results.json"); err == nil {
+				results, _ = coverage.ParseResultsFile(data)
+			}
+
 			result := specsync.RunSync(specsync.SyncInput{
 				SpecFiles:  specContents,
 				TestFiles:  testContents,
+				Thresholds: m.CoverageThresholds(),
 				CheckOpts:  checkOpts,
 				OnlyPhase:  onlyPhase,
+				Results:    results,
 			})
 
 			if jsonOutput {
@@ -500,6 +536,12 @@ func syncCmd() *cobra.Command {
 					status = "FAIL"
 				}
 				fmt.Printf("  %s %s: %s\n", status, p.Phase, p.Message)
+			}
+			fmt.Println()
+
+			for _, w := range result.DepCoverageWarnings {
+				fmt.Printf("  warn [dependency_coverage] %s\n", w.Message)
+				fmt.Printf("       run: specter explain %s:%s\n", w.DependsOn, w.UncoveredACs[0])
 			}
 			fmt.Println()
 
@@ -1329,3 +1371,106 @@ func modsChanged(prev, curr map[string]time.Time) bool {
 	return false
 }
 
+
+// @spec spec-diff
+func diffCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "diff <path>[@<ref>] <path>[@<ref>]",
+		Short: "Show semantic diff of a spec between two git revisions",
+		Long: `Compare two versions of a spec and show a human-readable semantic diff.
+
+Each argument is either:
+  path            — read from disk
+  path@ref        — read from git (e.g. specs/foo.spec.yaml@HEAD~1)
+
+Example:
+  specter diff specs/engine.spec.yaml@HEAD~5 specs/engine.spec.yaml`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			v1, err := readSpecAtRef(args[0])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error reading %s: %v\n", args[0], err)
+				os.Exit(1)
+			}
+			v2, err := readSpecAtRef(args[1])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error reading %s: %v\n", args[1], err)
+				os.Exit(1)
+			}
+
+			d := specdiff.DiffSpecs(*v1, *v2)
+
+			if d.Class == specdiff.ChangeUnchanged {
+				fmt.Printf("spec %s %s → %s: no changes\n", d.SpecID, d.OldVersion, d.NewVersion)
+				return nil
+			}
+
+			fmt.Printf("spec %s %s → %s [%s]\n", d.SpecID, d.OldVersion, d.NewVersion, d.Class)
+			fmt.Println()
+
+			for _, c := range d.ACChanges {
+				switch c.Kind {
+				case "added":
+					fmt.Printf("  +%s: %s\n", c.ID, c.Description)
+				case "removed":
+					fmt.Printf("  -%s: %s\n", c.ID, c.Description)
+				case "changed":
+					fmt.Printf("  ~%s: %s → %s\n", c.ID, c.OldDesc, c.Description)
+				}
+			}
+			for _, c := range d.ConstraintChanges {
+				switch c.Kind {
+				case "added":
+					fmt.Printf("  +%s: %s\n", c.ID, c.Description)
+				case "removed":
+					fmt.Printf("  -%s: %s\n", c.ID, c.Description)
+				case "changed":
+					fmt.Printf("  ~%s: %s → %s\n", c.ID, c.OldDesc, c.Description)
+				}
+			}
+			for _, dc := range d.DepChanges {
+				fmt.Printf("  ~depends_on %s: %s → %s\n", dc.SpecID, dc.OldRange, dc.NewRange)
+			}
+			return nil
+		},
+	}
+}
+
+// readSpecAtRef reads and parses a spec from disk or from a git ref.
+// The argument format is path[@ref]. If no @ref, reads from disk.
+func readSpecAtRef(arg string) (*schema.SpecAST, error) {
+	// Split on the last '@' to get path and ref
+	path, ref := arg, ""
+	if idx := strings.LastIndex(arg, "@"); idx > 0 {
+		path, ref = arg[:idx], arg[idx+1:]
+	}
+
+	var content []byte
+	if ref == "" {
+		// Read from disk
+		var err error
+		content, err = os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// Read from git: git show <ref>:<path>
+		// Normalize path to be repo-relative
+		out, err := gitShow(ref, path)
+		if err != nil {
+			return nil, fmt.Errorf("git show failed: %w", err)
+		}
+		content = out
+	}
+
+	pr := parser.ParseSpec(string(content))
+	if !pr.OK {
+		return nil, fmt.Errorf("parse failed: %v", pr.Errors)
+	}
+	return pr.Value, nil
+}
+
+// gitShow runs `git show <ref>:<path>` and returns the output.
+func gitShow(ref, path string) ([]byte, error) {
+	return exec.Command("git", "show", ref+":"+path).Output()
+}
