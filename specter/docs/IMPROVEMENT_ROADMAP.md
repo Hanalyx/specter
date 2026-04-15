@@ -142,6 +142,13 @@ The authoring loop (draft → check → fix → recheck) is where developers spe
 - **Configurable coverage thresholds** — per-project in `specter.yaml` (e.g. `thresholds.tier1: 100`, `thresholds.tier2: 90`). Per-spec override in the spec file for specs that need stricter or looser policy than the project default.
 - **`hanalyx/specter-sync-action`** — GitHub Action for one-line CI setup. Runs the full sync pipeline and posts a coverage diff comment on PRs.
 - **PR comment integration** — show spec coverage diff in PR comments (AC added/removed, coverage delta by tier).
+- **Dependency coverage warning** — when spec A `depends_on` spec B, warn if spec B has uncovered ACs at or above spec A's tier threshold. A joint resolver+coverage check: you cannot fully trust a dependency you haven't verified. Example:
+  ```
+  warn [dependency_coverage] engine-transaction depends on handler-interface (requires)
+    handler-interface has 2 uncovered Tier 1 ACs: AC-03, AC-07
+    engine-transaction is Tier 1 — all dependencies must meet the same coverage bar
+    run: specter explain handler-interface:AC-03
+  ```
 
 ### Phase 4 — Editor Experience & Schema Evolution (v0.5.0)
 
