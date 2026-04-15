@@ -145,9 +145,20 @@ func BuildCoverageReportWithResults(specs []schema.SpecAST, annotations []Annota
 	report := &CoverageReport{}
 
 	for _, spec := range specs {
-		allACIDs := make([]string, len(spec.AcceptanceCriteria))
-		for i, ac := range spec.AcceptanceCriteria {
-			allACIDs[i] = ac.ID
+		// Build a set of AC IDs that are marked gap: true — these are intentionally
+		// not covered and are excluded from coverage calculations.
+		gapACs := make(map[string]bool)
+		for _, ac := range spec.AcceptanceCriteria {
+			if ac.Gap {
+				gapACs[ac.ID] = true
+			}
+		}
+
+		var allACIDs []string
+		for _, ac := range spec.AcceptanceCriteria {
+			if !ac.Gap {
+				allACIDs = append(allACIDs, ac.ID)
+			}
 		}
 
 		ann := annotBySpec[spec.ID]
@@ -193,6 +204,10 @@ func BuildCoverageReportWithResults(specs []schema.SpecAST, annotations []Annota
 			}
 		}
 
+		// A spec with no trackable ACs (all marked gap: true) is exempt from
+		// threshold enforcement — there is nothing to cover.
+		passesThreshold := totalACs == 0 || coveragePct >= float64(threshold)
+
 		entry := SpecCoverageEntry{
 			SpecID:          spec.ID,
 			Tier:            spec.Tier,
@@ -201,7 +216,7 @@ func BuildCoverageReportWithResults(specs []schema.SpecAST, annotations []Annota
 			UncoveredACs:    uncoveredACs,
 			CoveragePct:     coveragePct,
 			Threshold:       threshold,
-			PassesThreshold: coveragePct >= float64(threshold),
+			PassesThreshold: passesThreshold,
 			TestFiles:       testFiles,
 		}
 		report.Entries = append(report.Entries, entry)

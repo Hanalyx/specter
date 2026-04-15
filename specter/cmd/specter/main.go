@@ -20,6 +20,7 @@ import (
 	"github.com/Hanalyx/specter/internal/reverse"
 	"github.com/Hanalyx/specter/internal/schema"
 	specsync "github.com/Hanalyx/specter/internal/sync"
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 )
 
@@ -56,15 +57,16 @@ func discoverSpecs(patterns ...string) []string {
 	if len(patterns) > 0 && patterns[0] != "" {
 		return patterns
 	}
-	// Load manifest to honour settings.exclude — BUG-002 fix.
+	// Load manifest to honour settings.exclude and specs_dir.
 	m, _ := loadManifest()
 	excludeNames := make(map[string]bool)
 	for _, e := range m.ExcludePatterns() {
 		excludeNames[e] = true
 	}
+	root := m.SpecsDir()
 
 	var files []string
-	_ = filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -88,10 +90,17 @@ func discoverSpecs(patterns ...string) []string {
 }
 
 func discoverTestFiles(glob string) []string {
-	if glob == "" {
-		glob = "**/*.test.{ts,js,py}"
+	// If an explicit glob is provided, use filepath.Glob to resolve it directly.
+	if glob != "" {
+		matches, err := filepath.Glob(glob)
+		if err == nil && len(matches) > 0 {
+			return matches
+		}
+		// Glob matched nothing or errored — fall through to default walk so the
+		// caller gets a useful result rather than silent empty output.
 	}
-	// Simple recursive walk for test files
+
+	// Default: walk the repo for all recognised test file suffixes.
 	var files []string
 	exts := []string{".test.ts", ".test.js", ".test.py", "_test.go", "_test.py"}
 	_ = filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
@@ -309,10 +318,18 @@ func checkCmd() *cobra.Command {
 			}
 
 			graph := resolver.ResolveSpecs(inputs)
+			resolverErrors := 0
 			for _, d := range graph.Diagnostics {
 				if d.Severity == "error" {
 					fmt.Fprintf(os.Stderr, "error [%s] %s\n", d.Kind, d.Message)
+					resolverErrors++
+				} else if d.Severity == "warning" {
+					fmt.Fprintf(os.Stderr, "warn [%s] %s\n", d.Kind, d.Message)
 				}
+			}
+			if resolverErrors > 0 {
+				fmt.Fprintf(os.Stderr, "\n%d resolver error(s) — fix dependency issues before running check\n", resolverErrors)
+				os.Exit(1)
 			}
 
 			m, _ := loadManifest()
@@ -672,7 +689,7 @@ func reverseCmd() *cobra.Command {
 				&reverse.GoAdapter{},
 			}
 
-			date := "2026-04-02"
+			date := time.Now().Format("2006-01-02")
 
 			input := reverse.ReverseInput{
 				Files:       files,
@@ -740,9 +757,14 @@ func reverseCmd() *cobra.Command {
 				}
 			}
 
+			gapCount := result.Summary.GapsDetected
 			fmt.Printf("\nSummary: %d spec(s) generated, %d constraint(s), %d assertion(s), %d gap(s)\n",
 				result.Summary.SpecsGenerated, result.Summary.ConstraintsFound,
-				result.Summary.AssertionsFound, result.Summary.GapsDetected)
+				result.Summary.AssertionsFound, gapCount)
+			if gapCount > 0 {
+				fmt.Printf("\nDRAFT: %d AC(s) require manual review — specter reverse can extract structure but not intent.\n", gapCount)
+				fmt.Printf("       Review each gap: true AC and fill in description, inputs, and expected_output.\n")
+			}
 
 			return nil
 		},
@@ -1238,56 +1260,85 @@ func toCamelCase(id string) string {
 //
 // @spec spec-watch
 func watchCmd() *cobra.Command {
-	var interval time.Duration
-
 	cmd := &cobra.Command{
 		Use:   "watch",
 		Short: "Re-run sync pipeline on file changes",
-		Long:  "Polls for changes in .spec.yaml and test files and re-runs the sync pipeline. Press Ctrl+C to stop.",
+		Long:  "Watches .spec.yaml and test files for changes and re-runs the full sync pipeline. Press Ctrl+C to stop.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			m, _ := loadManifest()
 
-			// C-08: startup message with watched globs and interval
 			specsDir := m.SpecsDir()
 			fmt.Printf("specter watch\n\n")
-			fmt.Printf("  Watching: %s/**/*.spec.yaml, test files\n", specsDir)
-			fmt.Printf("  Interval: %s\n", interval)
+			fmt.Printf("  Watching: %s, test files\n", specsDir)
 			fmt.Printf("  Press Ctrl+C to stop\n\n")
 
-			// C-06: run once immediately on startup
-			lastMods := collectModTimes()
-			runWatchCycle(m)
+			watcher, err := fsnotify.NewWatcher()
+			if err != nil {
+				return fmt.Errorf("failed to start file watcher: %w", err)
+			}
+			defer watcher.Close()
 
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
+			// Watch the specs directory and current directory (for test files).
+			for _, dir := range []string{specsDir, "."} {
+				_ = filepath.Walk(dir, func(path string, info os.FileInfo, walkErr error) error {
+					if walkErr != nil || !info.IsDir() {
+						return nil
+					}
+					if info.Name() == "node_modules" || info.Name() == ".git" || info.Name() == "dist" {
+						return filepath.SkipDir
+					}
+					_ = watcher.Add(path)
+					return nil
+				})
+			}
 
 			sig := make(chan os.Signal, 1)
 			signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 			defer signal.Stop(sig)
 
+			// C-06: run once immediately on startup
+			runWatchCycle(m)
+
+			// Debounce: coalesce rapid successive events into one cycle.
+			var debounce <-chan time.Time
+
 			for {
 				select {
 				case <-sig:
-					// C-04: exit 0 on interrupt
 					fmt.Println("\nstopped")
 					return nil
-				case <-ticker.C:
-					currentMods := collectModTimes()
-					if modsChanged(lastMods, currentMods) {
-						lastMods = currentMods
-						runWatchCycle(m)
+				case event, ok := <-watcher.Events:
+					if !ok {
+						return nil
 					}
+					name := event.Name
+					isSpec := strings.HasSuffix(name, ".spec.yaml")
+					isTest := false
+					for _, ext := range []string{".test.ts", ".test.js", ".test.py", "_test.go", "_test.py"} {
+						if strings.HasSuffix(name, ext) {
+							isTest = true
+							break
+						}
+					}
+					if isSpec || isTest {
+						debounce = time.After(150 * time.Millisecond)
+					}
+				case err, ok := <-watcher.Errors:
+					if !ok {
+						return nil
+					}
+					fmt.Fprintf(os.Stderr, "watch error: %v\n", err)
+				case <-debounce:
+					debounce = nil
+					runWatchCycle(m)
 				}
 			}
 		},
 	}
-
-	// C-05: configurable poll interval
-	cmd.Flags().DurationVar(&interval, "interval", 500*time.Millisecond, "Poll interval (e.g. 500ms, 1s, 2s)")
 	return cmd
 }
 
-// runWatchCycle executes the sync pipeline and prints a compact summary line.
+// runWatchCycle executes the full sync pipeline and prints a compact summary line.
 //
 // C-03: timestamped summary, C-07: continues on FAIL.
 func runWatchCycle(m *manifest.Manifest) {
@@ -1303,11 +1354,36 @@ func runWatchCycle(m *manifest.Manifest) {
 
 	inputs, specs, hasErrors := parseAllSpecs(specFiles)
 	if hasErrors {
-		fmt.Printf("[%s] FAIL  parse errors in spec files\n", timestamp)
+		fmt.Printf("[%s] FAIL  parse\n", timestamp)
 		return
 	}
 
-	// Build coverage
+	// Resolve — detect cycles, dangling refs, version mismatches
+	graph := resolver.ResolveSpecs(inputs)
+	resolverFail := false
+	for _, d := range graph.Diagnostics {
+		if d.Severity == "error" {
+			resolverFail = true
+			break
+		}
+	}
+	if resolverFail {
+		fmt.Printf("[%s] FAIL  resolve  (%d issue(s))\n", timestamp, len(graph.Diagnostics))
+		return
+	}
+
+	// Check — structural rules
+	opts := &checker.CheckOptions{
+		Strict:      m.Settings.Strict,
+		WarnOnDraft: m.Settings.WarnOnDraft,
+	}
+	checkResult := checker.CheckSpecs(graph, opts)
+	if checkResult.Summary.Errors > 0 {
+		fmt.Printf("[%s] FAIL  check  (%d error(s))\n", timestamp, checkResult.Summary.Errors)
+		return
+	}
+
+	// Coverage
 	var allAnnotations []coverage.AnnotationMatch
 	for _, f := range testFiles {
 		data, err := os.ReadFile(f)
@@ -1320,7 +1396,6 @@ func runWatchCycle(m *manifest.Manifest) {
 	thresholds := m.CoverageThresholds()
 	report := coverage.BuildCoverageReport(specs, allAnnotations, thresholds)
 
-	// Count covered ACs
 	totalACs := 0
 	coveredACs := 0
 	for _, e := range report.Entries {
@@ -1328,13 +1403,11 @@ func runWatchCycle(m *manifest.Manifest) {
 		coveredACs += len(e.CoveredACs)
 	}
 
-	// Run resolve + check to determine PASS/FAIL
-	_ = inputs // used in real sync; here we just use coverage for the summary
 	passing := report.Summary.Passing
 	failing := report.Summary.Failing
 
 	status := "PASS"
-	if failing > 0 || hasErrors {
+	if failing > 0 {
 		status = "FAIL"
 	}
 

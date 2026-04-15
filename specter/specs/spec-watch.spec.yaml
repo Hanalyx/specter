@@ -1,6 +1,6 @@
 spec:
   id: spec-watch
-  version: "1.0.0"
+  version: "1.1.0"
   status: draft
   tier: 2
 
@@ -10,38 +10,38 @@ spec:
     description: >
       Makes the draft→check→fix authoring loop interactive by re-running the full
       sync pipeline whenever a .spec.yaml or test file changes. Same semantics as
-      `tsc --watch` for TypeScript. Implemented with polling — no external
-      dependencies. Terminates cleanly on Ctrl+C / SIGTERM.
+      `tsc --watch` for TypeScript. Uses fsnotify for reliable event-based watching
+      (inotify on Linux, FSEvents on macOS). Terminates cleanly on Ctrl+C / SIGTERM.
     related_specs:
       - "spec-sync"
 
   objective:
     summary: >
-      Poll for .spec.yaml and test file changes, re-run the sync pipeline on any
-      change, and display a compact timestamped summary per run. Exit cleanly on
-      interrupt.
+      Watch .spec.yaml and test files for filesystem events, re-run the full sync
+      pipeline on any detected change (with 150ms debounce), and display a compact
+      timestamped summary per run. Exit cleanly on interrupt.
     scope:
       includes:
-        - "Poll for changes in .spec.yaml and test files"
-        - "Re-run full sync pipeline on detected change"
+        - "Event-based watching via fsnotify (inotify/FSEvents/kqueue)"
+        - "Re-run full sync pipeline (parse + resolve + check + coverage) on detected change"
         - "Timestamped compact summary per run (PASS/FAIL + AC count)"
-        - "Configurable poll interval via --interval flag (default 500ms)"
+        - "150ms debounce to coalesce rapid successive writes"
         - "Graceful exit on Ctrl+C / SIGTERM with exit code 0"
-        - "Initial run on startup before first poll tick"
+        - "Initial run on startup before first event"
       excludes:
-        - "inotify / fsnotify (no external dependencies)"
         - "Writing or modifying spec files"
         - "Network requests"
         - "Interactive TUI"
+        - "--interval polling flag (replaced by fsnotify)"
 
   constraints:
     - id: C-01
-      description: "MUST re-run the sync pipeline whenever a .spec.yaml or test file modification time changes"
+      description: "MUST re-run the sync pipeline whenever a .spec.yaml or test file is created, modified, or renamed"
       type: technical
       enforcement: error
 
     - id: C-02
-      description: "MUST implement change detection via polling with no external dependencies beyond the Go standard library"
+      description: "MUST use fsnotify for event-based change detection; polling is not acceptable"
       type: technical
       enforcement: error
 
@@ -56,42 +56,42 @@ spec:
       enforcement: error
 
     - id: C-05
-      description: "MUST accept --interval flag (duration string, e.g. 500ms, 1s) to override the default 500ms poll interval"
+      description: "MUST debounce rapid successive events with a 150ms window to avoid redundant pipeline runs"
       type: technical
       enforcement: error
 
     - id: C-06
-      description: "MUST run the sync pipeline once immediately on startup before the first poll tick"
+      description: "MUST run the sync pipeline once immediately on startup before the first event"
       type: technical
       enforcement: error
 
     - id: C-07
-      description: "MUST continue polling even if a run produces FAIL — watch mode is for the authoring loop, not CI enforcement"
+      description: "MUST continue watching even if a run produces FAIL — watch mode is for the authoring loop, not CI enforcement"
       type: technical
       enforcement: error
 
     - id: C-08
-      description: "MUST print a startup message listing watched file globs and the poll interval"
+      description: "MUST print a startup message listing the watched directory and that Ctrl+C stops the watcher"
       type: technical
       enforcement: error
 
   acceptance_criteria:
     - id: AC-01
-      description: "On startup, watch prints the watched globs and interval, then runs sync immediately"
+      description: "On startup, watch prints the watched directory and runs sync immediately"
       expected_output:
         startup_message: true
-        initial_run_before_first_tick: true
+        initial_run_before_first_event: true
       references_constraints: ["C-06", "C-08"]
       priority: critical
 
     - id: AC-02
-      description: "Modifying a .spec.yaml file triggers a re-run within one poll interval"
-      references_constraints: ["C-01"]
+      description: "Modifying a .spec.yaml file triggers a re-run within 500ms"
+      references_constraints: ["C-01", "C-05"]
       priority: critical
 
     - id: AC-03
-      description: "Modifying a test file triggers a re-run within one poll interval"
-      references_constraints: ["C-01"]
+      description: "Modifying a test file triggers a re-run within 500ms"
+      references_constraints: ["C-01", "C-05"]
       priority: high
 
     - id: AC-04
@@ -109,11 +109,7 @@ spec:
       priority: critical
 
     - id: AC-06
-      description: "--interval 1s sets poll interval to 1 second"
-      inputs:
-        flag: "--interval 1s"
-      expected_output:
-        poll_interval: "1s"
+      description: "Rapid successive writes within 150ms produce exactly one pipeline run, not multiple"
       references_constraints: ["C-05"]
       priority: high
 
@@ -128,6 +124,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.1.0"
+      date: "2026-04-15"
+      author: "specter-team"
+      type: minor
+      description: "Replace polling with fsnotify event-based watching; update C-02, C-05, AC-02, AC-03, AC-06"
     - version: "1.0.0"
       date: "2026-04-14"
       author: "specter-team"
