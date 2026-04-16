@@ -1,0 +1,45 @@
+#!/bin/sh
+# commit-msg hook: enforces Conventional Commits 1.0.0.
+# Install with: make install-hooks
+#
+# @spec spec-commits
+
+COMMIT_MSG_FILE="$1"
+COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
+
+# Strip comment lines and get the subject (first non-empty line).
+SUBJECT=$(echo "$COMMIT_MSG" | grep -v '^#' | sed '/^$/d' | head -1)
+
+# C-04: exempt merge commits and automated reverts.
+case "$SUBJECT" in
+  Merge\ *|Revert\ \"*) exit 0 ;;
+esac
+
+# C-01: validate type[(scope)][!]: description
+TYPES="feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert"
+PATTERN="^($TYPES)(\([^)]+\))?(!)?: .+"
+
+if ! echo "$SUBJECT" | grep -qE "$PATTERN"; then
+  printf "\nspecter commit-msg: message does not follow Conventional Commits 1.0.0\n\n"
+  printf "  Got: %s\n\n" "$SUBJECT"
+  printf "  Format:  <type>[(<scope>)][!]: <description>\n"
+  printf "  Types:   feat, fix, docs, style, refactor, perf, test,\n"
+  printf "           build, ci, chore, revert\n\n"
+  printf "  Examples:\n"
+  printf "    feat: add specter lint command\n"
+  printf "    fix(coverage): resolve false positive in traceability matrix\n"
+  printf "    feat!: rename @ac annotation (breaking change)\n"
+  printf "    ci(release): pin goreleaser to v2\n\n"
+  printf "  See: https://www.conventionalcommits.org/en/v1.0.0/\n\n"
+  exit 1
+fi
+
+# C-03: subject line must not exceed 100 characters.
+SUBJECT_LEN=$(printf '%s' "$SUBJECT" | wc -c)
+if [ "$SUBJECT_LEN" -gt 100 ]; then
+  printf "\nspecter commit-msg: subject line too long (%d chars, max 100)\n\n" "$SUBJECT_LEN"
+  printf "  Got: %s\n\n" "$SUBJECT"
+  exit 1
+fi
+
+exit 0

@@ -41,11 +41,13 @@ vulncheck:
 
 check: lint test build
 
-# Install the pre-commit hook into the local git repo
+# Install git hooks (pre-commit + commit-msg) into the local repo
 install-hooks:
 	cp scripts/pre-commit ../.git/hooks/pre-commit
 	chmod +x ../.git/hooks/pre-commit
-	@echo "pre-commit hook installed"
+	cp scripts/commit-msg ../.git/hooks/commit-msg
+	chmod +x ../.git/hooks/commit-msg
+	@echo "pre-commit and commit-msg hooks installed"
 
 # Sync VERSION into the VS Code extension's package.json
 version-sync:

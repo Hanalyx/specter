@@ -1,5 +1,5 @@
 #!/bin/sh
-# Pre-commit hook: formatting and vet checks on staged Go files.
+# pre-commit hook: formatting and vet checks on staged Go files.
 # Install with: make install-hooks
 
 set -e
@@ -10,8 +10,24 @@ if [ -z "$STAGED_GO" ]; then
   exit 0
 fi
 
-# gofmt check
-UNFORMATTED=$(echo "$STAGED_GO" | xargs gofmt -l 2>/dev/null)
+# Determine the specter module root (the directory containing go.mod).
+# When this hook runs, CWD is the repo root, and go.mod is in specter/.
+HOOK_DIR=$(dirname "$0")
+MODULE_ROOT=$(cd "$HOOK_DIR/../specter" 2>/dev/null && pwd) || MODULE_ROOT=""
+
+if [ -z "$MODULE_ROOT" ]; then
+  exit 0
+fi
+
+# Strip the "specter/" prefix so paths are relative to the module root.
+MODULE_RELATIVE=$(echo "$STAGED_GO" | sed 's|^specter/||' | grep '\.go$' || true)
+
+if [ -z "$MODULE_RELATIVE" ]; then
+  exit 0
+fi
+
+# gofmt check — run from module root so paths resolve correctly.
+UNFORMATTED=$(cd "$MODULE_ROOT" && echo "$MODULE_RELATIVE" | xargs gofmt -l 2>/dev/null)
 if [ -n "$UNFORMATTED" ]; then
   echo "specter pre-commit: these files need gofmt:"
   echo "$UNFORMATTED"
@@ -19,8 +35,8 @@ if [ -n "$UNFORMATTED" ]; then
   exit 1
 fi
 
-# go vet on changed packages
-PKGS=$(echo "$STAGED_GO" | xargs -I{} dirname {} | sort -u | sed 's|^|github.com/Hanalyx/specter/|')
-go vet $PKGS 2>&1 || exit 1
+# go vet on changed packages (derive import paths from relative dirs).
+PKGS=$(echo "$MODULE_RELATIVE" | xargs -I{} dirname {} | sort -u | sed 's|^|github.com/Hanalyx/specter/|')
+(cd "$MODULE_ROOT" && go vet $PKGS 2>&1) || exit 1
 
 exit 0
