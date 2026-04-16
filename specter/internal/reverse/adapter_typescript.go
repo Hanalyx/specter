@@ -101,10 +101,6 @@ var (
 	zodOptionalRE  = regexp.MustCompile(`\.optional\(\)`)
 	zodBooleanRE   = regexp.MustCompile(`z\.boolean\(\)`)
 	zodArrayRE     = regexp.MustCompile(`z\.array\(`)
-	zodRefineRE    = regexp.MustCompile(`\.refine\(`)
-	zodTransformRE = regexp.MustCompile(`\.transform\(`)
-	zodDefaultRE   = regexp.MustCompile(`\.default\(`)
-
 	// TypeScript enums: enum Role { ADMIN = "ADMIN", USER = "USER" }
 	tsEnumRE = regexp.MustCompile(`enum\s+(\w+)\s*\{([^}]+)\}`)
 	// TypeScript union types: type Status = "active" | "inactive" | "pending"
@@ -115,7 +111,6 @@ var (
 	// Prisma model fields: name String @unique @db.VarChar(255)
 	prismaFieldRE   = regexp.MustCompile(`^\s+(\w+)\s+(String|Int|Float|Boolean|DateTime|Json|BigInt|Decimal|Bytes)(\?)?(.*)$`)
 	prismaUniqueRE  = regexp.MustCompile(`@unique`)
-	prismaDefaultRE = regexp.MustCompile(`@default\(([^)]+)\)`)
 	prismaVarCharRE = regexp.MustCompile(`@db\.VarChar\((\d+)\)`)
 	prismaRelRE     = regexp.MustCompile(`@relation`)
 
@@ -123,8 +118,6 @@ var (
 	roleCheckRE = regexp.MustCompile(`(?:role|user\.role|session\.user\.role)\s*(?:===?|!==?)\s*['"](\w+)['"]`)
 	// Status checks: if (status === "active") or status !== "deleted"
 	statusCheckRE = regexp.MustCompile(`(?:\.status|status)\s*(?:===?|!==?)\s*['"](\w+)['"]`)
-	// HTTP status returns: return.*(?:Response|NextResponse).*status.*(\d{3})
-	httpStatusRE = regexp.MustCompile(`(?:status|statusCode)\s*[:=]\s*(\d{3})`)
 )
 
 func (a *TypeScriptAdapter) ExtractConstraints(path, content string) []ExtractedConstraint {
@@ -335,7 +328,7 @@ func (a *TypeScriptAdapter) extractPatternConstraints(path, content string) []Ex
 	lines := strings.Split(content, "\n")
 
 	// Collect unique role and status values
-	roles := make(map[string]int)  // value -> first line
+	roles := make(map[string]int) // value -> first line
 	statuses := make(map[string]int)
 
 	for i, line := range lines {

@@ -27,25 +27,15 @@ func TestWatch_StartupMessageAndInitialRun(t *testing.T) {
 	dir := t.TempDir()
 	writeSpec(t, dir, "my-spec.spec.yaml", minimalValidSpec("my-spec", 3, "AC-01"))
 
-	// Run watch with a very long interval and kill it quickly via timeout.
-	// We use the subprocess approach but with a short context timeout.
-	done := make(chan struct{ out string; code int }, 1)
-	go func() {
-		out, code := runCLI(t, dir, "watch", "--interval", "99h")
-		done <- struct{ out string; code int }{out, code}
-	}()
+	_, lines := startWatch(t, dir)
 
-	// Give it 2 seconds to start up and print its initial output, then check.
-	select {
-	case result := <-done:
-		// Process exited on its own (error case)
-		if !strings.Contains(result.out, "specter watch") {
-			t.Errorf("expected 'specter watch' header, got:\n%s", result.out)
-		}
-	case <-time.After(2 * time.Second):
-		// Expected: watch is still running. We can't easily read partial output
-		// from a still-running subprocess in this pattern. Skip the content check.
-		t.Log("watch is running (as expected); startup test passed structurally")
+	// Startup header must appear
+	if !waitForLine(lines, "specter watch", 3*time.Second) {
+		t.Error("expected 'specter watch' header in startup output")
+	}
+	// Initial run must happen before any file changes
+	if !waitForLine(lines, "]", 3*time.Second) {
+		t.Error("expected initial run output (timestamp line) within 3s")
 	}
 }
 
@@ -90,27 +80,46 @@ func TestWatch_RunCycle_OutputFormat(t *testing.T) {
 }
 
 // @ac AC-06
-func TestWatch_IntervalFlag(t *testing.T) {
+func TestWatch_Debounce_RapidWritesProduceOneRun(t *testing.T) {
+	// AC-06: rapid successive writes within 150ms must produce exactly one run.
 	dir := t.TempDir()
 	writeSpec(t, dir, "my-spec.spec.yaml", minimalValidSpec("my-spec", 3, "AC-01"))
 
-	// We test the flag is accepted without error by running briefly
-	// (if the flag was invalid, the subprocess would exit 1 immediately)
-	done := make(chan int, 1)
-	go func() {
-		_, code := runCLI(t, dir, "watch", "--interval", "1s")
-		done <- code
-	}()
+	_, lines := startWatch(t, dir)
 
-	// If the subprocess exits quickly with non-0, the flag was rejected
-	select {
-	case code := <-done:
-		if code != 0 {
-			t.Errorf("watch --interval 1s exited with code %d (flag parsing failed)", code)
+	// Wait for the initial run
+	if !waitForLine(lines, "]", 5*time.Second) {
+		t.Fatal("watch did not produce initial run within 5s")
+	}
+
+	// Fire three rapid writes inside the debounce window
+	specsDir := filepath.Join(dir, "specs")
+	for i := 0; i < 3; i++ {
+		content := minimalValidSpec("my-spec", 3, "AC-01")
+		_ = os.WriteFile(filepath.Join(specsDir, "my-spec.spec.yaml"), []byte(content), 0644)
+		time.Sleep(30 * time.Millisecond) // well within 150ms window
+	}
+
+	// Collect run lines for 600ms — should see at most 2 (one for the debounced
+	// burst, possibly one more if timing is tight). Must NOT see 3.
+	runLines := 0
+	deadline := time.After(600 * time.Millisecond)
+	for {
+		select {
+		case line, ok := <-lines:
+			if !ok {
+				goto done
+			}
+			if strings.Contains(line, "]") && (strings.Contains(line, "PASS") || strings.Contains(line, "FAIL")) {
+				runLines++
+			}
+		case <-deadline:
+			goto done
 		}
-	case <-time.After(500 * time.Millisecond):
-		// Still running after 500ms — flag was accepted, watch is polling normally
-		// This is the expected path
+	}
+done:
+	if runLines >= 3 {
+		t.Errorf("expected debounced to ≤2 runs for 3 rapid writes, got %d", runLines)
 	}
 }
 
@@ -157,7 +166,7 @@ func TestWatch_FailRunContinuesLoop(t *testing.T) {
 // that receives output lines as they are printed.
 func startWatch(t *testing.T, dir string, extraArgs ...string) (*exec.Cmd, <-chan string) {
 	t.Helper()
-	args := append([]string{"watch", "--interval", "100ms"}, extraArgs...)
+	args := append([]string{"watch"}, extraArgs...)
 	cmd := exec.Command(os.Args[0], args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "SPECTER_TEST=1")
@@ -412,15 +421,5 @@ func TestToCamelCase(t *testing.T) {
 func TestSanitizeID(t *testing.T) {
 	if got := sanitizeID("my-spec"); got != "my_spec" {
 		t.Errorf("sanitizeID = %q, want %q", got, "my_spec")
-	}
-}
-
-// writeSpecInDir writes a spec file at dir/<name> (not in a subdir)
-// for tests that need a flat spec layout.
-func writeSpecInDir(t *testing.T, dir, name, content string) {
-	t.Helper()
-	p := filepath.Join(dir, name)
-	if err := os.WriteFile(p, []byte(content), 0644); err != nil {
-		t.Fatalf("write spec: %v", err)
 	}
 }

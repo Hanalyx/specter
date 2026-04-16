@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" width="28" height="28">
+  <!--
+    Specter activity bar icon — "Sp" lettermark.
+    Transparent background; fill uses currentColor so VS Code can apply
+    its theme foreground color (white on dark theme, dark on light theme).
+    Based on the official Specter "Sp" serif logotype.
+  -->
+  <text
+    x="1"
+    y="22"
+    font-family="Georgia, 'Times New Roman', serif"
+    font-size="21"
+    font-weight="bold"
+    fill="currentColor"
+  >Sp</text>
+</svg>

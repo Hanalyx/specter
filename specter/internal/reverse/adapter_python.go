@@ -83,14 +83,14 @@ func (a *PythonAdapter) ExtractRoutes(path, content string) []ExtractedRoute {
 // --- Constraint Extraction ---
 
 var (
-	pydanticFieldRE    = regexp.MustCompile(`(\w+)\s*:\s*\w+\s*=\s*Field\(([^)]+)\)`)
-	fieldMinLengthRE   = regexp.MustCompile(`min_length\s*=\s*(\d+)`)
-	fieldMaxLengthRE   = regexp.MustCompile(`max_length\s*=\s*(\d+)`)
-	fieldGeRE          = regexp.MustCompile(`ge\s*=\s*(\d+)`)
-	fieldLeRE          = regexp.MustCompile(`le\s*=\s*(\d+)`)
-	fieldRegexRE       = regexp.MustCompile(`regex\s*=\s*['"]([^'"]+)['"]`)
-	requiredFieldRE    = regexp.MustCompile(`(\w+)\s*:\s*(\w+)\s*$`)
-	sqlaNullableRE     = regexp.MustCompile(`(\w+)\s*=\s*Column\(.*nullable\s*=\s*False`)
+	pydanticFieldRE  = regexp.MustCompile(`(\w+)\s*:\s*\w+\s*=\s*Field\(([^)]+)\)`)
+	fieldMinLengthRE = regexp.MustCompile(`min_length\s*=\s*(\d+)`)
+	fieldMaxLengthRE = regexp.MustCompile(`max_length\s*=\s*(\d+)`)
+	fieldGeRE        = regexp.MustCompile(`ge\s*=\s*(\d+)`)
+	fieldLeRE        = regexp.MustCompile(`le\s*=\s*(\d+)`)
+	fieldRegexRE     = regexp.MustCompile(`regex\s*=\s*['"]([^'"]+)['"]`)
+	requiredFieldRE  = regexp.MustCompile(`(\w+)\s*:\s*(\w+)\s*$`)
+	sqlaNullableRE   = regexp.MustCompile(`(\w+)\s*=\s*Column\(.*nullable\s*=\s*False`)
 )
 
 func (a *PythonAdapter) ExtractConstraints(path, content string) []ExtractedConstraint {

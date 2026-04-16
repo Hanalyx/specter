@@ -1,0 +1,59 @@
+name: 'Specter Sync'
+description: 'Run the Specter spec validation pipeline in CI'
+author: 'Hanalyx'
+
+inputs:
+  version:
+    description: 'Specter version to use (e.g. 0.4.1). Required — pin your version.'
+    required: true
+  args:
+    description: 'Arguments to pass to specter (default: sync)'
+    required: false
+    default: 'sync'
+
+runs:
+  using: composite
+  steps:
+    - name: Detect OS and architecture
+      id: platform
+      shell: bash
+      run: |
+        OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
+        case "${{ runner.arch }}" in
+          X64)   ARCH="amd64" ;;
+          ARM64) ARCH="arm64" ;;
+          *)     echo "Unsupported architecture: ${{ runner.arch }}"; exit 1 ;;
+        esac
+        echo "os=${OS}" >> $GITHUB_OUTPUT
+        echo "arch=${ARCH}" >> $GITHUB_OUTPUT
+
+    - name: Cache specter binary
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.specter/bin
+        key: specter-${{ runner.os }}-${{ inputs.version }}
+
+    - name: Download specter binary
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        VERSION="${{ inputs.version }}"
+        OS="${{ steps.platform.outputs.os }}"
+        ARCH="${{ steps.platform.outputs.arch }}"
+        FILENAME="specter_${VERSION}_${OS}_${ARCH}.tar.gz"
+        URL="https://github.com/Hanalyx/specter/releases/download/v${VERSION}/${FILENAME}"
+
+        mkdir -p ~/.specter/bin
+        echo "Downloading specter ${VERSION} for ${OS}/${ARCH}..."
+        curl -fsSL "${URL}" | tar -xz -C ~/.specter/bin specter
+
+    - name: Make binary executable and add to PATH
+      shell: bash
+      run: |
+        chmod +x ~/.specter/bin/specter
+        echo "$HOME/.specter/bin" >> $GITHUB_PATH
+
+    - name: Run specter
+      shell: bash
+      run: specter ${{ inputs.args }}

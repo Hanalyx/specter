@@ -429,3 +429,65 @@ func TestSpecTemplate_UnknownType(t *testing.T) {
 		t.Error("expected error for unknown template type, got nil")
 	}
 }
+
+// @spec spec-manifest
+// @ac AC-19
+func TestTierOverrides_Parsing(t *testing.T) {
+	yaml := `
+system:
+  name: test
+settings:
+  tier_overrides:
+    payment-intent: 1
+    auth-login: 3
+`
+	m, err := ParseManifest(yaml)
+	if err != nil {
+		t.Fatalf("ParseManifest error: %v", err)
+	}
+	if m.Settings.TierOverrides["payment-intent"] != 1 {
+		t.Errorf("expected tier_overrides[payment-intent]=1, got %d", m.Settings.TierOverrides["payment-intent"])
+	}
+	if m.Settings.TierOverrides["auth-login"] != 3 {
+		t.Errorf("expected tier_overrides[auth-login]=3, got %d", m.Settings.TierOverrides["auth-login"])
+	}
+}
+
+// @ac AC-20
+func TestCheckTierConflicts_EmitsWarning(t *testing.T) {
+	m, _ := ParseManifest(`system:
+  name: test
+settings:
+  tier_overrides:
+    payment-intent: 1
+`)
+	specs := []schema.SpecAST{
+		{ID: "payment-intent", Tier: 2},
+		{ID: "auth-login", Tier: 1}, // not in overrides — no warning
+	}
+	warnings := CheckTierConflicts(specs, m)
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 tier_conflict warning, got %d", len(warnings))
+	}
+	if warnings[0].SpecID != "payment-intent" {
+		t.Errorf("expected warning for payment-intent, got %q", warnings[0].SpecID)
+	}
+	if warnings[0].SpecTier != 2 || warnings[0].OverrideTier != 1 {
+		t.Errorf("expected spec tier 2, override 1; got %d, %d", warnings[0].SpecTier, warnings[0].OverrideTier)
+	}
+}
+
+// @ac AC-20
+func TestCheckTierConflicts_NoConflictWhenSpecTierZero(t *testing.T) {
+	m, _ := ParseManifest(`system:
+  name: test
+settings:
+  tier_overrides:
+    my-spec: 2
+`)
+	specs := []schema.SpecAST{{ID: "my-spec", Tier: 0}}
+	warnings := CheckTierConflicts(specs, m)
+	if len(warnings) != 0 {
+		t.Errorf("expected no conflict when spec has no declared tier, got %d warnings", len(warnings))
+	}
+}

@@ -1,0 +1,83 @@
+spec:
+  id: spec-ci-action
+  version: "1.0.0"
+  status: draft
+  tier: 3
+  context:
+    system: Specter toolchain
+    feature: GitHub Actions composite action for CI integration
+    description: >
+      A composite GitHub Action that downloads a pinned version of the specter
+      binary and runs it. Eliminates the need for each project to manually
+      download and wire specter in CI.
+    assumptions:
+      - "Runner is linux or macos (Windows not supported in initial version)"
+      - "GitHub Releases hosts specter binaries"
+  objective:
+    summary: >
+      Provide a one-line GitHub Actions integration: `uses: hanalyx/specter-sync-action@v1`
+      that downloads specter, runs the pipeline, and exits non-zero on failure.
+    scope:
+      includes:
+        - "Composite action with version and args inputs"
+        - "Binary download from GitHub Releases"
+        - "Binary caching keyed on OS + version"
+        - "Linux and macOS support"
+      excludes:
+        - "Windows support (initial version)"
+        - "Publishing to GitHub Marketplace"
+        - "Automatic version resolution (latest)"
+  constraints:
+    - id: C-01
+      description: "MUST accept version (required) and args (optional, default: sync) inputs"
+      type: technical
+      enforcement: error
+    - id: C-02
+      description: "MUST download specter binary from GitHub Releases using the provided version"
+      type: technical
+      enforcement: error
+    - id: C-03
+      description: "MUST cache the binary keyed on runner.os + version to avoid redundant downloads"
+      type: technical
+      enforcement: error
+    - id: C-04
+      description: "MUST support linux/amd64, linux/arm64, darwin/amd64, darwin/arm64"
+      type: technical
+      enforcement: error
+    - id: C-05
+      description: "MUST exit non-zero if specter exits non-zero"
+      type: technical
+      enforcement: error
+  acceptance_criteria:
+    - id: AC-01
+      description: "action.yml has version (required, no default) and args (optional, default: sync) inputs"
+      references_constraints: ["C-01"]
+      priority: critical
+      gap: true
+    - id: AC-02
+      description: "Download URL is constructed as: .../releases/download/v{version}/specter_{version}_{os}_{arch}.tar.gz"
+      references_constraints: ["C-02"]
+      priority: critical
+      gap: true
+    - id: AC-03
+      description: "actions/cache step is present with key: specter-{runner.os}-{inputs.version}"
+      references_constraints: ["C-03"]
+      priority: high
+      gap: true
+    - id: AC-04
+      description: "Architecture is detected from runner.arch and mapped: X64→amd64, ARM64→arm64"
+      references_constraints: ["C-04"]
+      priority: high
+      gap: true
+    - id: AC-05
+      description: "specter command invocation uses ${{ inputs.args }} and inherits CI exit code"
+      references_constraints: ["C-05"]
+      priority: critical
+      gap: true
+
+  changelog:
+    - version: "1.0.0"
+      date: "2026-04-14"
+      author: "specter-team"
+      type: initial
+      description: "Initial spec for the GitHub Actions composite action"

@@ -25,11 +25,28 @@ jobs:
           go-version-file: specter/go.mod
           cache-dependency-path: specter/go.sum
 
+      - name: Format check
+        run: |
+          unformatted=$(gofmt -l $(find . -name "*.go" | grep -v vendor))
+          if [ -n "$unformatted" ]; then
+            echo "Files need gofmt: $unformatted"
+            exit 1
+          fi
+
       - name: Vet
         run: go vet ./...
 
+      - name: Lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.64.8
+          working-directory: specter
+
       - name: Test
         run: go test ./...
+
+      - name: Test (race detector)
+        run: go test -race ./...
 
       - name: Build
         run: go build -o bin/specter ./cmd/specter/
@@ -39,3 +56,5 @@ jobs:
           bin/specter parse specs/*.spec.yaml
           bin/specter resolve
           bin/specter check
+          bin/specter coverage
+          bin/specter sync

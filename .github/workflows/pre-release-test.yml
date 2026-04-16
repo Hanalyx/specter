@@ -27,11 +27,37 @@ jobs:
           go-version-file: specter/go.mod
           cache-dependency-path: specter/go.sum
 
+      - name: Format check
+        run: |
+          unformatted=$(gofmt -l $(find . -name "*.go" | grep -v vendor))
+          if [ -n "$unformatted" ]; then
+            echo "Files need gofmt: $unformatted"
+            exit 1
+          fi
+
       - name: Vet
         run: go vet ./...
 
+      - name: Lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.64.8
+          working-directory: specter
+
       - name: Test
         run: go test ./...
+
+      - name: Test (race detector)
+        run: go test -race ./...
+
+      - name: Vulnerability scan
+        # govulncheck@latest requires go1.25+. Install go1.25.9 for this step
+        # only — the rest of the workflow uses the version from go.mod (1.22.2).
+        run: |
+          go install golang.org/dl/go1.25.9@latest
+          ~/go/bin/go1.25.9 download
+          ~/go/bin/go1.25.9 install golang.org/x/vuln/cmd/govulncheck@latest
+          ~/go/bin/go1.25.9 run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
       - name: Build
         run: go build -o bin/specter ./cmd/specter/
@@ -67,6 +93,12 @@ jobs:
 
       - name: Run structural checks
         run: bin/specter check
+
+      - name: Coverage thresholds
+        run: bin/specter coverage
+
+      - name: Full sync gate
+        run: bin/specter sync
 
   # --- Tier 3: Real-World Validation ---
   tier3-realworld:

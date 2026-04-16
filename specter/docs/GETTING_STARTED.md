@@ -8,57 +8,39 @@ The problem Specter solves is simple: specs drift. A developer writes a constrai
 
 Specter's core philosophy: **"Discipline can drift. Infrastructure cannot."** Rather than relying on reviewers to catch structural problems in specs, Specter catches them automatically, in CI, every time.
 
-## Prerequisites
-
-- **Go 1.22 or later** -- Specter is built in Go and distributed as a single binary.
-
-Verify your setup:
-
-```bash
-go version   # Should print go1.22.x or higher
-```
-
 ## Installation
 
-### From source (current method)
-
-Clone the repository and build:
+**Binary (Linux amd64):**
 
 ```bash
-git clone <repository-url>
+curl -Lo specter.tar.gz https://github.com/Hanalyx/specter/releases/latest/download/specter_Linux_x86_64.tar.gz
+tar xzf specter.tar.gz
+sudo mv specter /usr/local/bin/
+specter --version
+```
+
+**DEB package:**
+
+```bash
+curl -Lo specter.deb https://github.com/Hanalyx/specter/releases/latest/download/specter_amd64.deb
+sudo dpkg -i specter.deb
+```
+
+**Build from source** (requires Go 1.22+):
+
+```bash
+git clone https://github.com/Hanalyx/specter.git
 cd specter
 make build
-```
-
-This produces a binary at `bin/specter`. You can also build directly with Go:
-
-```bash
-go build -o bin/specter ./cmd/specter/
-```
-
-After building, you can run Specter directly:
-
-```bash
-bin/specter parse specs/
-```
-
-Or install it to your `$GOPATH/bin` for global access:
-
-```bash
-go install github.com/Hanalyx/specter/cmd/specter@latest
-specter parse specs/
+sudo mv bin/specter /usr/local/bin/
+specter --version
 ```
 
 ### Verify installation
 
 ```bash
 specter --version
-# 0.1.0
-
 specter --help
-# Usage: specter [options] [command]
-#
-# A type system for specs. Validates, links, and type-checks .spec.yaml files.
 ```
 
 ## Your First Spec
@@ -443,7 +425,7 @@ my-project/
 
 ### Linking tests to specs
 
-Specter's coverage tool (coming in a future release) scans test files for annotations that trace back to specs:
+Specter scans test files for `@spec` and `@ac` annotations that trace back to specs. These plain comments work in any language:
 
 ```typescript
 // @spec user-registration
@@ -468,6 +450,18 @@ def test_invalid_email_returns_400():
     ...
 ```
 
+Go tests:
+
+```go
+// @spec user-registration
+// @ac AC-01
+func TestValidRegistration_Returns201(t *testing.T) {
+    // ...
+}
+```
+
+Run `specter coverage` to see which ACs are covered, which are missing, and whether all tiers meet their thresholds. Run `specter explain user-registration` to get annotation examples for any uncovered AC.
+
 ### Organizing larger projects
 
 For projects with many specs, group them into subdirectories by domain:
@@ -487,8 +481,45 @@ specs/
 
 Specter discovers `.spec.yaml` files recursively, so subdirectories work without any configuration.
 
+## Running the Full Pipeline
+
+Once you have specs written and tests annotated, run the full pipeline:
+
+```bash
+specter sync
+```
+
+This runs parse → resolve → check → coverage in sequence. Add it to CI:
+
+```yaml
+# GitHub Actions
+- name: Validate specs
+  run: specter sync
+```
+
+## Project Health Check
+
+Before running the full pipeline on a new project, run:
+
+```bash
+specter doctor
+```
+
+This checks that your manifest exists, specs are discoverable and parse cleanly, tests have annotations, and coverage thresholds are met. Each check reports `PASS`, `WARN`, or `FAIL`.
+
+## Adopting on an Existing Codebase
+
+If you have existing code and want to generate draft specs from it:
+
+```bash
+specter reverse src/ --output specs/
+```
+
+Specter analyzes TypeScript, Python, and Go source files and generates `.spec.yaml` drafts. The generated specs are a starting point — review and complete any gaps marked as `DRAFT`.
+
 ## Next Steps
 
-- **[Spec Schema Reference](../internal/parser/spec-schema.json)** -- The canonical JSON Schema that defines every field, type, and constraint. This is the source of truth.
-- **[Specter's own specs](../specs/)** -- Specter dogfoods its own format. Read `spec-parse.spec.yaml` for a real-world example of a production spec.
-- **CLI Commands** -- Beyond `parse`, Specter includes `resolve` (dependency graph), `check` (type-checking), and `coverage` (traceability matrix). Run `specter --help` for the full list.
+- **[Spec Schema Reference](SPEC_SCHEMA_REFERENCE.md)** -- Every field, type, and constraint in the `.spec.yaml` format.
+- **[CLI Reference](CLI_REFERENCE.md)** -- All commands and flags.
+- **[Specter's own specs](../specs/)** -- Real-world production specs from Specter's own codebase.
+- **[FAQ](FAQ.md)** -- Common questions about SDD and Specter.

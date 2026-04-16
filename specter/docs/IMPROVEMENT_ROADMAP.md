@@ -142,16 +142,60 @@ The authoring loop (draft → check → fix → recheck) is where developers spe
 - **Configurable coverage thresholds** — per-project in `specter.yaml` (e.g. `thresholds.tier1: 100`, `thresholds.tier2: 90`). Per-spec override in the spec file for specs that need stricter or looser policy than the project default.
 - **`hanalyx/specter-sync-action`** — GitHub Action for one-line CI setup. Runs the full sync pipeline and posts a coverage diff comment on PRs.
 - **PR comment integration** — show spec coverage diff in PR comments (AC added/removed, coverage delta by tier).
+- **Glob patterns in `settings.exclude`** — the exclude list currently matches by directory name only (e.g. `- .claude` skips the `.claude/` tree). Extend to support glob patterns so teams can write `- .claude/**` or `- **/worktrees` to express finer-grained exclusions without enumerating every root-level directory.
+- **Dependency coverage warning** — when spec A `depends_on` spec B, warn if spec B has uncovered ACs at or above spec A's tier threshold. A joint resolver+coverage check: you cannot fully trust a dependency you haven't verified. Example:
+  ```
+  warn [dependency_coverage] engine-transaction depends on handler-interface (requires)
+    handler-interface has 2 uncovered Tier 1 ACs: AC-03, AC-07
+    engine-transaction is Tier 1 — all dependencies must meet the same coverage bar
+    run: specter explain handler-interface:AC-03
+  ```
 
 ### Phase 4 — Editor Experience & Schema Evolution (v0.5.0)
 
 The "love" feature: real-time validation as developers write specs. Plus tooling for breaking schema changes.
 
-- **VS Code extension** for `.spec.yaml` files
-  - Syntax highlighting, schema validation, autocomplete
-  - Inline diagnostics (orphan constraints, missing ACs)
-  - Go-to-definition for `depends_on` references
+- **VS Code extension** for `.spec.yaml` files (spec: `spec-vscode`)
+  - Binary discovery and auto-download from GitHub Releases
+  - On-save diagnostics (parse + check + coverage), on-type parse-only with 400ms debounce
+  - Coverage gutter decorations on spec files (per-AC) and test files (per-function)
+  - Annotation autocomplete (`@spec`, `@ac`) and hover context in test files
+  - Go-to-definition for `depends_on` and `references_constraints`
+  - Specter sidebar tree view: spec → AC → test files
+  - Status bar: spec count, coverage %, failing count
+  - Human-readable Insight WebviewPanel with per-spec health cards
+  - Intent drift detection: surfaces when a spec AC changed since annotation was last committed
+  - Annotation quick-fix CodeAction for unannotated test functions
+  - "Copy spec context for AI" command (markdown prompt preamble, zero network calls)
+  - AC suggestion heuristic via tf-idf (offline, no LM call)
+  - Frictionless onboarding walkthrough for projects with no specs
+  - File decoration provider: tier badges and coverage health in Explorer
 - **`specter migrate v1→v2 specs/`** — scaffolded migration when `spec-schema.json` bumps a major version. Rewrites existing spec files to the new format and reports fields that require manual intervention. Necessary for adoption at scale — teams with hundreds of specs cannot migrate by hand.
+
+### Phase 5 — AI Loop Enforcement (v0.6.0)
+
+Closes the spec → test → implement → eval loop for AI coding assistants. The CI gate (`specter sync`) already enforces annotated tests must exist. This phase makes the loop proactive rather than reactive.
+
+- **`specter context`** — generates AI-tool-specific instruction files from current specs, enforcing that the AI reads and respects the spec before generating code:
+  - `specter context --format claude` → updates/creates `CLAUDE.md` with current spec summaries, AC list, and tier constraints. Structured so Claude Code reads it as an authoritative contract.
+  - `specter context --format cursor` → writes `.cursor/rules` with spec constraints formatted as Cursor rule blocks
+  - `specter context --format copilot` → writes `.github/copilot-instructions.md` with spec context
+  - `specter context --format all` → generates all supported formats in one pass
+  - `specter context --spec <id>` → scopes output to a single spec (for focused AI sessions)
+  - Output includes: tier, objective, constraints (C-NN list), ACs with descriptions, current coverage status, uncovered ACs highlighted
+  - Idempotent: re-running updates the context section without clobbering manual additions
+  - `specter sync --update-context` flag regenerates context files as part of the sync pipeline
+
+- **Pre-push hook integration** — `specter hook install` writes a git pre-push hook that:
+  - Blocks pushes where implementation files changed but no corresponding `@spec`/`@ac` annotation was added or updated in the diff
+  - Reports which specs are affected and which ACs have no test annotation in the changeset
+  - Bypass with `git push --no-verify` (documented, discouraged)
+
+- **`.specter-results.json` test runner adapters** — first-party adapters that write pass/fail results automatically:
+  - Go: `go test -json | specter results ingest`
+  - pytest: `pytest --specter` plugin
+  - Jest: `jest-specter` reporter
+  - This closes the Tier 1 pass-rate loop end-to-end without manual results file maintenance
 
 ---
 

@@ -6,6 +6,7 @@
 package coverage
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -14,7 +15,8 @@ import (
 
 // C-01, C-02: Recognize @spec and @ac in //, #, and * (JSDoc) comments
 var specAnnotationRE = regexp.MustCompile(`(?://|#|\*)\s*@spec\s+([\w-]+)`)
-var acAnnotationRE = regexp.MustCompile(`(?://|#|\*)\s*@ac\s+(AC-\d{2,})`)
+var acTagRE = regexp.MustCompile(`(?://|#|\*)\s*@ac\s+(.+)`)
+var acIDRE = regexp.MustCompile(`AC-\d{2,}`)
 
 // AnnotationMatch represents annotations found in a test file.
 type AnnotationMatch struct {
@@ -79,8 +81,10 @@ func ExtractAnnotations(fileContent, filePath string) []AnnotationMatch {
 			}
 		}
 
-		if m := acAnnotationRE.FindStringSubmatch(line); len(m) > 1 && currentSpecID != "" {
-			matchMap[currentSpecID][m[1]] = true
+		if m := acTagRE.FindStringSubmatch(line); len(m) > 1 && currentSpecID != "" {
+			for _, acID := range acIDRE.FindAllString(m[1], -1) {
+				matchMap[currentSpecID][acID] = true
+			}
 		}
 	}
 
@@ -106,6 +110,15 @@ func ExtractAnnotations(fileContent, filePath string) []AnnotationMatch {
 // C-04: Flags specs below tier threshold.
 // C-05: Pure function.
 func BuildCoverageReport(specs []schema.SpecAST, annotations []AnnotationMatch, thresholds map[int]int) *CoverageReport {
+	return BuildCoverageReportWithResults(specs, annotations, thresholds, nil)
+}
+
+// BuildCoverageReportWithResults is like BuildCoverageReport but additionally
+// enforces pass-rate-aware coverage for Tier 1 specs:
+// a Tier 1 AC is covered only if the annotation exists AND the result entry passed.
+//
+// C-07: Pass-rate-aware coverage for Tier 1
+func BuildCoverageReportWithResults(specs []schema.SpecAST, annotations []AnnotationMatch, thresholds map[int]int, results *ResultsFile) *CoverageReport {
 	// Group annotations by spec ID
 	annotBySpec := make(map[string]struct {
 		acIDs map[string]bool
@@ -132,15 +145,35 @@ func BuildCoverageReport(specs []schema.SpecAST, annotations []AnnotationMatch, 
 	report := &CoverageReport{}
 
 	for _, spec := range specs {
-		allACIDs := make([]string, len(spec.AcceptanceCriteria))
-		for i, ac := range spec.AcceptanceCriteria {
-			allACIDs[i] = ac.ID
+		// Build a set of AC IDs that are marked gap: true — these are intentionally
+		// not covered and are excluded from coverage calculations.
+		gapACs := make(map[string]bool)
+		for _, ac := range spec.AcceptanceCriteria {
+			if ac.Gap {
+				gapACs[ac.ID] = true
+			}
+		}
+
+		var allACIDs []string
+		for _, ac := range spec.AcceptanceCriteria {
+			if !ac.Gap {
+				allACIDs = append(allACIDs, ac.ID)
+			}
 		}
 
 		ann := annotBySpec[spec.ID]
 		var coveredACs, uncoveredACs []string
 		for _, id := range allACIDs {
-			if ann.acIDs != nil && ann.acIDs[id] {
+			annotationExists := ann.acIDs != nil && ann.acIDs[id]
+			var isCovered bool
+			if spec.Tier == 1 {
+				// C-07: Tier 1 requires annotation AND passing result
+				isCovered = annotationExists && results.passed(spec.ID, id)
+			} else {
+				// Tier 2/3: annotation alone is sufficient
+				isCovered = annotationExists
+			}
+			if isCovered {
 				coveredACs = append(coveredACs, id)
 			} else {
 				uncoveredACs = append(uncoveredACs, id)
@@ -155,9 +188,13 @@ func BuildCoverageReport(specs []schema.SpecAST, annotations []AnnotationMatch, 
 			coveragePct = float64(int(coveragePct*10)) / 10
 		}
 
+		// C-06: Per-spec threshold override
 		threshold := thresholds[spec.Tier]
 		if threshold == 0 {
 			threshold = 80
+		}
+		if spec.CoverageThreshold > 0 {
+			threshold = spec.CoverageThreshold
 		}
 
 		var testFiles []string
@@ -167,6 +204,10 @@ func BuildCoverageReport(specs []schema.SpecAST, annotations []AnnotationMatch, 
 			}
 		}
 
+		// A spec with no trackable ACs (all marked gap: true) is exempt from
+		// threshold enforcement — there is nothing to cover.
+		passesThreshold := totalACs == 0 || coveragePct >= float64(threshold)
+
 		entry := SpecCoverageEntry{
 			SpecID:          spec.ID,
 			Tier:            spec.Tier,
@@ -175,7 +216,7 @@ func BuildCoverageReport(specs []schema.SpecAST, annotations []AnnotationMatch, 
 			UncoveredACs:    uncoveredACs,
 			CoveragePct:     coveragePct,
 			Threshold:       threshold,
-			PassesThreshold: coveragePct >= float64(threshold),
+			PassesThreshold: passesThreshold,
 			TestFiles:       testFiles,
 		}
 		report.Entries = append(report.Entries, entry)
@@ -198,4 +239,52 @@ func BuildCoverageReport(specs []schema.SpecAST, annotations []AnnotationMatch, 
 
 	report.Summary.TotalSpecs = len(specs)
 	return report
+}
+
+// DependencyCoverageWarning is emitted when a spec's dependency has uncovered ACs.
+type DependencyCoverageWarning struct {
+	Kind         string   // "dependency_coverage"
+	Severity     string   // "warning"
+	SpecID       string   // the spec that has the failing dependency
+	DependsOn    string   // the dependency spec ID
+	UncoveredACs []string // uncovered ACs in the dependency
+	Message      string
+}
+
+// DepEdge represents a directed dependency edge (From depends on To).
+type DepEdge struct {
+	From string
+	To   string
+}
+
+// CheckDependencyCoverage checks whether any spec's dependencies have uncovered ACs.
+// It takes edges as simple From/To pairs to avoid importing the resolver package.
+//
+// C-08: dependency_coverage warnings
+func CheckDependencyCoverage(edges []DepEdge, report *CoverageReport) []DependencyCoverageWarning {
+	// Build lookup map from specID -> coverage entry
+	coverageByID := make(map[string]*SpecCoverageEntry)
+	for i := range report.Entries {
+		coverageByID[report.Entries[i].SpecID] = &report.Entries[i]
+	}
+
+	var warnings []DependencyCoverageWarning
+	for _, edge := range edges {
+		dep, ok := coverageByID[edge.To]
+		if !ok || dep.PassesThreshold {
+			continue
+		}
+		warnings = append(warnings, DependencyCoverageWarning{
+			Kind:         "dependency_coverage",
+			Severity:     "warning",
+			SpecID:       edge.From,
+			DependsOn:    edge.To,
+			UncoveredACs: dep.UncoveredACs,
+			Message: fmt.Sprintf(
+				"spec %q depends on %q which has %d uncovered AC(s): %s",
+				edge.From, edge.To, len(dep.UncoveredACs), strings.Join(dep.UncoveredACs, ", "),
+			),
+		})
+	}
+	return warnings
 }

@@ -37,9 +37,9 @@ func (e ParseError) Error() string {
 
 // ParseResult holds the outcome of parsing a spec.
 type ParseResult struct {
-	OK     bool           `json:"ok"`
+	OK     bool            `json:"ok"`
 	Value  *schema.SpecAST `json:"value,omitempty"`
-	Errors []ParseError   `json:"errors,omitempty"`
+	Errors []ParseError    `json:"errors,omitempty"`
 }
 
 var compiledSchema *jsonschema.Schema
@@ -77,7 +77,19 @@ func init() {
 // C-06: YAML anchors resolved by yaml.v3.
 // C-07: Collects all validation errors.
 // C-08: Pure function.
+// maxSpecBytes caps input size before YAML parsing to prevent anchor-expansion
+// DoS ("billion laughs") when Specter runs in CI on externally-sourced spec files.
+const maxSpecBytes = 1 << 20 // 1 MB
+
 func ParseSpec(yamlContent string) ParseResult {
+	if len(yamlContent) > maxSpecBytes {
+		return ParseResult{Errors: []ParseError{{
+			Path:    "",
+			Type:    "file_too_large",
+			Message: fmt.Sprintf("spec file exceeds %d byte limit (%d bytes)", maxSpecBytes, len(yamlContent)),
+		}}}
+	}
+
 	// Step 1: Parse YAML (C-05, C-06)
 	var raw interface{}
 	if err := yaml.Unmarshal([]byte(yamlContent), &raw); err != nil {

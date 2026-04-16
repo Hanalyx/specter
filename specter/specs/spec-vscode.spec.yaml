@@ -1,0 +1,310 @@
+spec:
+  id: spec-vscode
+  version: "1.0.0"
+  status: draft
+  tier: 2
+
+  context:
+    system: Specter toolchain
+    feature: VS Code extension for spec-driven development
+    description: >
+      A VS Code extension that makes Specter a first-class citizen in the editor.
+      The core tension it resolves: AI agents naturally consume Specter's
+      machine-readable output; human developers need a richer, more contextual
+      representation of the same information. The extension serves both — it is
+      the human collaborator's window into AI-native specification infrastructure.
+
+      Architecture: TypeScript extension (~800 lines), thin wrapper over the specter
+      CLI JSON API. No LSP process. Per-workspace SpecterClient instances. On-save
+      full diagnostics, on-type parse-only feedback, transparent binary auto-download.
+
+    assumptions:
+      - "The specter CLI is the source of truth — extension logic never reimplements pipeline rules"
+      - "All AI features degrade gracefully when no LM API is available"
+      - "The extension activates only in workspaces containing specter.yaml or *.spec.yaml"
+      - "TypeScript is the implementation language; no bundled Go binary"
+      - ".spec.yaml files remain valid YAML — no custom language ID required"
+    dependencies:
+      - "vscode engine ^1.85.0"
+      - "fsnotify (via specter binary)"
+      - "github.com/fsnotify/fsnotify (already in specter binary)"
+    related_specs:
+      - "spec-parse"
+      - "spec-coverage"
+      - "spec-check"
+      - "spec-diff"
+      - "spec-sync"
+      - "spec-explain"
+
+  objective:
+    summary: >
+      Provide inline coverage indicators, spec diagnostics, annotation assistance,
+      intent drift detection, and an AI context bridge directly in the editor —
+      making the spec-to-test-to-AI feedback loop visible and actionable without
+      leaving VS Code.
+    scope:
+      includes:
+        - "Specter binary discovery and auto-download from GitHub Releases"
+        - "On-save diagnostics for .spec.yaml files (parse + check)"
+        - "On-type parse-only feedback with 400ms debounce"
+        - "Coverage gutter decorations on both spec and test files"
+        - "Hover providers: constraint linkage, AC description, spec context"
+        - "Annotation completions (@spec, @ac) in test files"
+        - "Go-to-definition for depends_on.spec_id and references_constraints"
+        - "Tree view panel: specs → ACs → test files"
+        - "Status bar item: spec count, coverage %, failing count"
+        - "Human-readable insight WebviewPanel with per-spec health cards"
+        - "Intent drift detection: surfaces when a spec AC changed since annotation was added"
+        - "Annotation quick-fix: CodeAction to insert @spec/@ac above unannotated test functions"
+        - "Copy spec context for AI command (clipboard-formatted prompt preamble)"
+        - "AC suggestion heuristic (tf-idf against spec corpus, no LM call)"
+        - "Frictionless onboarding walkthrough for projects with no specs"
+        - "File decoration provider: tier badges and coverage health in Explorer"
+      excludes:
+        - "LSP server (deferred — TypeScript extension API is sufficient for v1)"
+        - "JetBrains / Neovim support (separate effort)"
+        - "Publishing to Open VSX (v2)"
+        - "Multi-agent spec locking (requires coordination layer)"
+        - "Coverage trend sparklines (v2 — needs persistent result storage)"
+        - "AI confidence scoring (v2 — needs calibration data)"
+        - "Human vs AI authorship indicators (v2 — git blame heuristics fragile)"
+
+  constraints:
+    - id: C-01
+      description: "MUST discover the specter binary in this resolution order: workspace setting specter.binaryPath → PATH → ~/.specter/bin/specter → auto-download from GitHub Releases. MUST verify SHA256 checksum on auto-download."
+      type: technical
+      enforcement: error
+
+    - id: C-02
+      description: "MUST activate only on workspaceContains:**/specter.yaml or workspaceContains:**/*.spec.yaml — MUST NOT activate on every YAML file"
+      type: technical
+      enforcement: error
+
+    - id: C-03
+      description: "MUST use document selector {language: 'yaml', pattern: '**/*.spec.yaml'} — MUST NOT register a new language ID, preserving existing YAML tooling"
+      type: technical
+      enforcement: error
+
+    - id: C-04
+      description: "MUST run specter parse --json on type (debounced 400ms) and specter check --json + specter coverage --json on save. MUST serialize invocations per-workspace — never two concurrent specter processes against the same manifest."
+      type: technical
+      enforcement: error
+
+    - id: C-05
+      description: "MUST replace (not append) diagnostics atomically on each run. MUST delete diagnostics on file rename or delete. MUST maintain one DiagnosticCollection per workspace folder."
+      type: technical
+      enforcement: error
+
+    - id: C-06
+      description: "MUST discover specter.yaml by walking up from the open file's directory. MUST maintain one SpecterClient per workspace folder for multi-root workspace support."
+      type: technical
+      enforcement: error
+
+    - id: C-07
+      description: "MUST render coverage status on each AC line in spec files: green (covered), red (uncovered), grey dash (gap: true). MUST render gutter icons on test functions annotated with @spec/@ac."
+      type: business
+      enforcement: error
+
+    - id: C-08
+      description: "MUST provide CompletionItemProvider for // @spec and // @ac in test files, ranked by directory proximity and filename token match against spec IDs."
+      type: business
+      enforcement: error
+
+    - id: C-09
+      description: "MUST provide DefinitionProvider: depends_on[].spec_id → target .spec.yaml file; references_constraints[] → constraint line within current spec."
+      type: business
+      enforcement: error
+
+    - id: C-10
+      description: "MUST provide a TreeDataProvider panel (Specter sidebar) with hierarchy: spec file → AC nodes (with coverage icon) → test files. MUST provide a status bar item showing spec count, coverage %, and failing count. Status bar MUST use statusBarItem.warningBackground when any T1/T2 spec fails threshold."
+      type: business
+      enforcement: error
+
+    - id: C-11
+      description: "MUST provide a WebviewPanel (Specter Insights) rendering per-spec health cards in human language: sentence summary of what needs to be done, AC list with descriptions (not just IDs), constraint callout for uncovered ACs, last-change context from specter diff output."
+      type: business
+      enforcement: error
+
+    - id: C-12
+      description: "MUST detect intent drift: when a @ac annotation references an AC whose spec file has changed since the annotation was last git-committed, surface a distinct gutter icon with a hover showing the AC description at both the baseline commit and HEAD, classified as breaking/additive/patch via specter diff."
+      type: business
+      enforcement: error
+
+    - id: C-13
+      description: "MUST provide a CodeActionsProvider for unannotated test functions (DiagnosticSeverity.Information, not Warning). Quick fix inserts // @spec <best-guess> + // @ac AC- snippet with tab stop."
+      type: business
+      enforcement: error
+
+    - id: C-14
+      description: "MUST provide a 'Copy spec context for AI' command that formats the current spec's ACs and constraints as a markdown prompt preamble and copies to clipboard. MUST work with zero network calls."
+      type: business
+      enforcement: error
+
+    - id: C-15
+      description: "MUST provide a frictionless onboarding walkthrough (vscode Walkthrough contribution) for workspaces with no .spec.yaml files. MUST NOT show the walkthrough if specs already exist."
+      type: business
+      enforcement: warning
+
+    - id: C-16
+      description: "MUST provide HoverProvider for constraint IDs in spec files showing: constraint text, which ACs reference it, and whether those ACs are covered. MUST warn prominently if no AC references the constraint."
+      type: business
+      enforcement: error
+
+    - id: C-17
+      description: "MUST provide FileDecorationProvider for .spec.yaml nodes in the Explorer showing tier badge (T1/T2/T3) and coverage health color. MUST use VS Code ThemeIcon identifiers where available, custom SVG only for tier badges."
+      type: business
+      enforcement: warning
+
+    - id: C-18
+      description: "On-save diagnostic target: under 800ms for parse + check on a single file in repos under 500 specs. Coverage may complete asynchronously in a second pass. MUST use AbortController to cancel in-flight processes on deactivation."
+      type: technical
+      enforcement: error
+
+    - id: C-19
+      description: "MUST use non-modal notifications. Status bar update only for transient errors. showInformationMessage (non-modal, rate-limited 1/spec/60s) for T2/T3 threshold drops. showWarningMessage for breaking spec changes. showErrorMessage modal only for binary-not-found at startup."
+      type: business
+      enforcement: error
+
+    - id: C-20
+      description: "MUST provide AC suggestion heuristic using tf-idf scoring against the loaded spec corpus. Suggestions surface as CodeLens above unannotated test functions. MUST NOT require an LM API call or network access for this feature."
+      type: technical
+      enforcement: warning
+
+  acceptance_criteria:
+    - id: AC-01
+      description: "Extension activates in a workspace containing specter.yaml; does NOT activate in a workspace with only generic YAML files"
+      references_constraints: ["C-02"]
+      priority: critical
+
+    - id: AC-02
+      description: "specter.binaryPath workspace setting overrides PATH lookup; if neither resolves, extension auto-downloads from GitHub Releases with SHA256 verification and shows progress notification"
+      references_constraints: ["C-01"]
+      priority: critical
+
+    - id: AC-03
+      description: "Typing in a .spec.yaml file triggers specter parse --json after 400ms debounce; errors appear in the Problems panel within 800ms of stopping typing"
+      references_constraints: ["C-03", "C-04", "C-18"]
+      priority: critical
+
+    - id: AC-04
+      description: "Saving a .spec.yaml file triggers specter check --json and specter coverage --json; diagnostics are replaced atomically (no duplicates or stale entries)"
+      references_constraints: ["C-04", "C-05"]
+      priority: critical
+
+    - id: AC-05
+      description: "Each AC line in a spec file shows a gutter icon: green circle (covered), red circle (uncovered), grey dash (gap: true). End-of-line text decoration shows test count for covered ACs."
+      references_constraints: ["C-07"]
+      priority: critical
+
+    - id: AC-06
+      description: "Hovering over a constraint ID (e.g., C-01) in a spec file shows: constraint description, which ACs reference it, and coverage status of those ACs. If no AC references it, hover card says 'No AC references this constraint.'"
+      references_constraints: ["C-16"]
+      priority: high
+
+    - id: AC-07
+      description: "Typing // @spec in a test file triggers completions showing spec IDs ranked by directory proximity; selecting a completion inserts the spec ID"
+      references_constraints: ["C-08"]
+      priority: critical
+
+    - id: AC-08
+      description: "Typing // @ac in a test file triggers completions showing AC IDs and descriptions from the spec referenced by the nearest @spec annotation above"
+      references_constraints: ["C-08"]
+      priority: critical
+
+    - id: AC-09
+      description: "Hovering over @ac AC-01 in a test file shows the full AC description, whether it is currently covered, and which other test files also cover it"
+      references_constraints: ["C-08"]
+      priority: high
+
+    - id: AC-10
+      description: "Go-to-definition on a spec_id in depends_on navigates to the target .spec.yaml file; Go-to-definition on a constraint ID in references_constraints jumps to that constraint's line in the current spec"
+      references_constraints: ["C-09"]
+      priority: high
+
+    - id: AC-11
+      description: "Specter sidebar tree view shows: spec files as root nodes, AC children with green/red/grey icons and test count, test file leaves. Clicking a tree node opens the corresponding file at the correct line."
+      references_constraints: ["C-10"]
+      priority: high
+
+    - id: AC-12
+      description: "Status bar item shows 'Specter: N specs · X% · F failing'. Background is statusBarItem.warningBackground when any T1/T2 spec fails threshold. Clicking the item opens the Specter sidebar."
+      references_constraints: ["C-10"]
+      priority: high
+
+    - id: AC-13
+      description: "Specter Insights panel (opened from the status bar or tree view) shows a health card per failing spec with: sentence summary ('spec-payment has 3 uncovered ACs. Tier 1 requires 100%.'), AC list with full descriptions, constraint callout for uncovered ACs, and last-change context."
+      references_constraints: ["C-11"]
+      priority: high
+
+    - id: AC-14
+      description: "When a test file is opened and a @ac annotation references an AC whose spec has changed since the annotation was last committed, a 'spec drifted' gutter icon appears. Hovering shows the AC description at baseline and HEAD, classified as breaking/additive/patch."
+      references_constraints: ["C-12"]
+      priority: high
+
+    - id: AC-15
+      description: "A test function with no @spec annotation shows a DiagnosticSeverity.Information diagnostic. The associated quick fix inserts '// @spec <best-guess>' and '// @ac AC-' with a tab stop above the function."
+      references_constraints: ["C-13"]
+      priority: high
+
+    - id: AC-16
+      description: "'Copy spec context for AI' command formats the current spec's tier, objective, constraints, and AC list as a markdown ## Spec Contract block and copies to clipboard. Works with no network access."
+      references_constraints: ["C-14"]
+      priority: critical
+
+    - id: AC-17
+      description: "In a workspace with no .spec.yaml files, a VS Code walkthrough appears with steps: discover specs → run specter reverse → annotate first test → run specter sync. Walkthrough does NOT appear if specs already exist."
+      references_constraints: ["C-15"]
+      priority: medium
+
+    - id: AC-18
+      description: "A T1/T2 spec dropping below threshold after a test file save triggers a non-modal showInformationMessage. Same spec fires at most once per 60 seconds. T3 threshold drops produce only a status bar update, no toast."
+      references_constraints: ["C-19"]
+      priority: high
+
+    - id: AC-19
+      description: "A breaking spec change detected via specter diff after a .spec.yaml save triggers a non-modal showWarningMessage with 'View Diff' and 'Dismiss' actions. Binary-not-found at startup triggers a modal showErrorMessage."
+      references_constraints: ["C-19"]
+      priority: high
+
+    - id: AC-20
+      description: ".spec.yaml files in the Explorer panel show a tier badge (T1/T2/T3) and a coverage health color decoration without opening the Specter sidebar"
+      references_constraints: ["C-17"]
+      priority: medium
+
+    - id: AC-21
+      description: "CodeLens above unannotated test functions shows top-2 AC suggestions ranked by tf-idf against the spec corpus. Suggestions are computed offline with no LM API call. Clicking a suggestion inserts the annotation."
+      references_constraints: ["C-20"]
+      priority: medium
+
+    - id: AC-22
+      description: "Multi-root workspace: each workspace folder has its own SpecterClient, DiagnosticCollection, and manifest. Diagnostics from folder A do not appear in folder B."
+      references_constraints: ["C-06"]
+      priority: high
+
+  depends_on:
+    - spec_id: spec-parse
+      version_range: "^1.1.0"
+      relationship: requires
+    - spec_id: spec-check
+      version_range: "^1.1.0"
+      relationship: requires
+    - spec_id: spec-coverage
+      version_range: "^1.3.0"
+      relationship: requires
+    - spec_id: spec-diff
+      version_range: "^1.0.0"
+      relationship: requires
+    - spec_id: spec-explain
+      version_range: "^1.0.0"
+      relationship: requires
+
+  changelog:
+    - version: "1.0.0"
+      date: "2026-04-15"
+      author: "specter-team"
+      type: initial
+      description: >
+        Initial spec for the Specter VS Code extension. Architecture: TypeScript
+        thin wrapper over specter CLI JSON API. 22 ACs covering binary discovery,
+        diagnostics, coverage decorations, annotation assistance, intent drift
+        detection, AI context bridge, insight panel, and frictionless onboarding.

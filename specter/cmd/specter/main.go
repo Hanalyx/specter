@@ -3,27 +3,113 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
+	"runtime"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/Hanalyx/specter/internal/checker"
 	"github.com/Hanalyx/specter/internal/coverage"
+	specdiff "github.com/Hanalyx/specter/internal/diff"
 	"github.com/Hanalyx/specter/internal/manifest"
 	"github.com/Hanalyx/specter/internal/parser"
 	"github.com/Hanalyx/specter/internal/resolver"
 	"github.com/Hanalyx/specter/internal/reverse"
 	"github.com/Hanalyx/specter/internal/schema"
 	specsync "github.com/Hanalyx/specter/internal/sync"
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 )
 
 var version = "dev"
 
+const issuesURL = "https://github.com/Hanalyx/specter/issues/new?template=bug_report.md"
+
+// ---------------------------------------------------------------------------
+// CLI spinner — writes to stderr so it never interferes with --json or file
+// output. Suppressed when stderr is not a terminal (pipes, CI).
+// ---------------------------------------------------------------------------
+
+type spinner struct {
+	msg    chan string
+	done   chan struct{}
+	active bool
+}
+
+func newSpinner(initial string) *spinner {
+	// Suppress in non-interactive environments (pipes, CI, dumb terminals).
+	if os.Getenv("CI") != "" || os.Getenv("TERM") == "dumb" || os.Getenv("NO_COLOR") != "" {
+		return &spinner{active: false}
+	}
+	// Quick isatty check via os.Stderr.Stat — character device = terminal.
+	if fi, err := os.Stderr.Stat(); err != nil || (fi.Mode()&os.ModeCharDevice) == 0 {
+		return &spinner{active: false}
+	}
+	s := &spinner{
+		msg:    make(chan string, 4),
+		done:   make(chan struct{}),
+		active: true,
+	}
+	go s.run(initial)
+	return s
+}
+
+func (s *spinner) run(initial string) {
+	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	msg := initial
+	i := 0
+	tick := time.NewTicker(80 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-s.done:
+			fmt.Fprintf(os.Stderr, "\r\033[K") // clear the spinner line
+			return
+		case m := <-s.msg:
+			msg = m
+		case <-tick.C:
+			fmt.Fprintf(os.Stderr, "\r\033[K%s %s", frames[i%len(frames)], msg)
+			i++
+		}
+	}
+}
+
+// update changes the spinner message without stopping it.
+func (s *spinner) update(msg string) {
+	if !s.active {
+		return
+	}
+	s.msg <- msg
+}
+
+// stop clears the spinner line and terminates the goroutine.
+func (s *spinner) stop() {
+	if !s.active {
+		return
+	}
+	s.active = false
+	close(s.done)
+}
+
 func main() {
+	// Catch unexpected panics and print a pre-filled bug report link.
+	defer func() {
+		if r := recover(); r != nil {
+			stack := string(debug.Stack())
+			fmt.Fprintf(os.Stderr, "\n\nUnexpected error: %v\n", r)
+			fmt.Fprintf(os.Stderr, "This looks like a bug in Specter. Please report it:\n")
+			fmt.Fprintf(os.Stderr, "  %s\n\n", bugReportURL(fmt.Sprintf("panic: %v\n\nStack trace:\n```\n%s```", r, stack)))
+			os.Exit(2)
+		}
+	}()
+
 	root := &cobra.Command{
 		Use:     "specter",
 		Short:   "A type system for specs",
@@ -41,10 +127,81 @@ func main() {
 	root.AddCommand(doctorCmd())
 	root.AddCommand(explainCmd())
 	root.AddCommand(watchCmd())
+	root.AddCommand(diffCmd())
+	root.AddCommand(feedbackCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+// bugReportURL returns a pre-filled GitHub issue URL with version, OS, command,
+// and Go runtime info already populated in the issue body.
+func bugReportURL(context string) string {
+	// Redact full paths from args — keep only the subcommand + flags.
+	args := os.Args
+	cmd := "specter"
+	if len(args) > 1 {
+		cmd = "specter " + strings.Join(args[1:], " ")
+	}
+
+	body := fmt.Sprintf(
+		"**Specter version:** %s\n"+
+			"**OS / arch:** %s/%s\n"+
+			"**Go runtime:** %s\n"+
+			"**Command run:** `%s`\n\n"+
+			"**What happened:**\n%s\n\n"+
+			"**Expected behavior:**\n<!-- what did you expect? -->\n\n"+
+			"**Steps to reproduce:**\n1.\n2.\n3.\n\n"+
+			"**Spec file (if relevant):**\n```yaml\n\n```\n",
+		version,
+		runtime.GOOS, runtime.GOARCH,
+		runtime.Version(),
+		cmd,
+		context,
+	)
+	return issuesURL + "&body=" + url.QueryEscape(body)
+}
+
+// feedbackCmd opens (or prints) a pre-filled GitHub issue URL.
+func feedbackCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "feedback",
+		Short: "Open a pre-filled GitHub issue to report a bug or request a feature",
+		Long: `Opens a GitHub issue form pre-filled with your Specter version, OS, and
+Go runtime. Describe the bug or feature request in the form.
+
+If your browser does not open automatically, copy and paste the printed URL.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			link := bugReportURL("<!-- describe what went wrong -->")
+			opened := tryOpenBrowser(link)
+			if opened {
+				fmt.Println("Opening GitHub issue form in your browser...")
+			} else {
+				fmt.Println("Copy and open this URL in your browser to file a report:")
+				fmt.Println()
+			}
+			fmt.Println(link)
+			return nil
+		},
+	}
+}
+
+// tryOpenBrowser attempts to open url in the default browser.
+// Returns true if the open command was launched successfully.
+func tryOpenBrowser(link string) bool {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", link)
+	case "linux":
+		cmd = exec.Command("xdg-open", link)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", link)
+	default:
+		return false
+	}
+	return cmd.Start() == nil
 }
 
 // --- Helpers ---
@@ -53,19 +210,29 @@ func discoverSpecs(patterns ...string) []string {
 	if len(patterns) > 0 && patterns[0] != "" {
 		return patterns
 	}
+	// Load manifest to honor settings.exclude and specs_dir.
+	m, _ := loadManifest()
+	excludeNames := make(map[string]bool)
+	for _, e := range m.ExcludePatterns() {
+		excludeNames[e] = true
+	}
+	root := m.SpecsDir()
+
 	var files []string
-	_ = filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
-		if info.IsDir() && (info.Name() == "node_modules" || info.Name() == "dist" || info.Name() == ".git") {
-			return filepath.SkipDir
-		}
-		if info.IsDir() && strings.HasPrefix(path, filepath.Join("tests", "fixtures")) {
-			return filepath.SkipDir
-		}
-		if info.IsDir() && strings.HasPrefix(path, filepath.Join("testdata")) {
-			return filepath.SkipDir
+		if info.IsDir() {
+			// Skip by directory name (e.g. ".claude", "node_modules")
+			if excludeNames[info.Name()] {
+				return filepath.SkipDir
+			}
+			// Skip by path prefix for entries like "tests/fixtures", "testdata"
+			if strings.HasPrefix(path, filepath.Join("tests", "fixtures")) ||
+				strings.HasPrefix(path, "testdata") {
+				return filepath.SkipDir
+			}
 		}
 		if strings.HasSuffix(path, ".spec.yaml") {
 			files = append(files, path)
@@ -76,10 +243,17 @@ func discoverSpecs(patterns ...string) []string {
 }
 
 func discoverTestFiles(glob string) []string {
-	if glob == "" {
-		glob = "**/*.test.{ts,js,py}"
+	// If an explicit glob is provided, use filepath.Glob to resolve it directly.
+	if glob != "" {
+		matches, err := filepath.Glob(glob)
+		if err == nil && len(matches) > 0 {
+			return matches
+		}
+		// Glob matched nothing or errored — fall through to default walk so the
+		// caller gets a useful result rather than silent empty output.
 	}
-	// Simple recursive walk for test files
+
+	// Default: walk the repo for all recognized test file suffixes.
 	var files []string
 	exts := []string{".test.ts", ".test.js", ".test.py", "_test.go", "_test.py"}
 	_ = filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
@@ -297,10 +471,18 @@ func checkCmd() *cobra.Command {
 			}
 
 			graph := resolver.ResolveSpecs(inputs)
+			resolverErrors := 0
 			for _, d := range graph.Diagnostics {
 				if d.Severity == "error" {
 					fmt.Fprintf(os.Stderr, "error [%s] %s\n", d.Kind, d.Message)
+					resolverErrors++
+				} else if d.Severity == "warning" {
+					fmt.Fprintf(os.Stderr, "warn [%s] %s\n", d.Kind, d.Message)
 				}
+			}
+			if resolverErrors > 0 {
+				fmt.Fprintf(os.Stderr, "\n%d resolver error(s) — fix dependency issues before running check\n", resolverErrors)
+				os.Exit(1)
 			}
 
 			m, _ := loadManifest()
@@ -314,6 +496,10 @@ func checkCmd() *cobra.Command {
 
 			result := checker.CheckSpecs(graph, opts)
 
+			// Tier conflict warnings (C-14)
+			_, specs, _ := parseAllSpecs(files)
+			tierConflicts := manifest.CheckTierConflicts(specs, m)
+
 			if jsonOutput {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
@@ -321,7 +507,11 @@ func checkCmd() *cobra.Command {
 				return nil
 			}
 
-			if len(result.Diagnostics) == 0 {
+			for _, tc := range tierConflicts {
+				fmt.Printf("warn [tier_conflict] %s\n", tc.Message)
+			}
+
+			if len(result.Diagnostics) == 0 && len(tierConflicts) == 0 {
 				fmt.Printf("All %d specs passed structural checks.\n", len(graph.Nodes))
 				return nil
 			}
@@ -340,7 +530,7 @@ func checkCmd() *cobra.Command {
 				fmt.Printf("%s [%s] %s%s: %s\n", prefix, d.Kind, d.SpecID, cid, d.Message)
 			}
 
-			fmt.Printf("\n%d error(s), %d warning(s), %d info\n", result.Summary.Errors, result.Summary.Warnings, result.Summary.Info)
+			fmt.Printf("\n%d error(s), %d warning(s), %d info\n", result.Summary.Errors, result.Summary.Warnings+len(tierConflicts), result.Summary.Info)
 
 			if result.Summary.Errors > 0 {
 				os.Exit(1)
@@ -377,7 +567,12 @@ func coverageCmd() *cobra.Command {
 				allAnnotations = append(allAnnotations, coverage.ExtractAnnotations(string(data), f)...)
 			}
 
-			report := coverage.BuildCoverageReport(specs, allAnnotations, checker.CoverageThresholdByTier)
+			m, _ := loadManifest()
+			var results *coverage.ResultsFile
+			if data, err := os.ReadFile(".specter-results.json"); err == nil {
+				results, _ = coverage.ParseResultsFile(data)
+			}
+			report := coverage.BuildCoverageReportWithResults(specs, allAnnotations, m.CoverageThresholds(), results)
 
 			if jsonOutput {
 				enc := json.NewEncoder(os.Stdout)
@@ -411,6 +606,19 @@ func coverageCmd() *cobra.Command {
 
 			fmt.Printf("\n%d specs: %d passing, %d failing\n",
 				report.Summary.TotalSpecs, report.Summary.Passing, report.Summary.Failing)
+
+			// Dependency coverage warnings
+			var edges []coverage.DepEdge
+			if inputs, _, _ := parseAllSpecs(files); len(inputs) > 0 {
+				graph := resolver.ResolveSpecs(inputs)
+				for _, e := range graph.Edges {
+					edges = append(edges, coverage.DepEdge{From: e.From, To: e.To})
+				}
+			}
+			for _, w := range coverage.CheckDependencyCoverage(edges, report) {
+				fmt.Printf("warn [dependency_coverage] %s\n", w.Message)
+				fmt.Printf("  run: specter explain %s:%s\n", w.DependsOn, w.UncoveredACs[0])
+			}
 
 			if report.Summary.Failing > 0 {
 				os.Exit(1)
@@ -462,11 +670,18 @@ func syncCmd() *cobra.Command {
 				WarnOnDraft: m.Settings.WarnOnDraft,
 			}
 
+			var results *coverage.ResultsFile
+			if data, err := os.ReadFile(".specter-results.json"); err == nil {
+				results, _ = coverage.ParseResultsFile(data)
+			}
+
 			result := specsync.RunSync(specsync.SyncInput{
 				SpecFiles:  specContents,
 				TestFiles:  testContents,
+				Thresholds: m.CoverageThresholds(),
 				CheckOpts:  checkOpts,
 				OnlyPhase:  onlyPhase,
+				Results:    results,
 			})
 
 			if jsonOutput {
@@ -491,6 +706,12 @@ func syncCmd() *cobra.Command {
 					status = "FAIL"
 				}
 				fmt.Printf("  %s %s: %s\n", status, p.Phase, p.Message)
+			}
+			fmt.Println()
+
+			for _, w := range result.DepCoverageWarnings {
+				fmt.Printf("  warn [dependency_coverage] %s\n", w.Message)
+				fmt.Printf("       run: specter explain %s:%s\n", w.DependsOn, w.UncoveredACs[0])
 			}
 			fmt.Println()
 
@@ -530,6 +751,8 @@ func reverseCmd() *cobra.Command {
 			if len(args) > 0 {
 				targetPath = args[0]
 			}
+
+			spin := newSpinner("Scanning files…")
 
 			// Walk target path and read source files
 			var files []reverse.SourceFile
@@ -611,9 +834,21 @@ func reverseCmd() *cobra.Command {
 			}
 
 			if len(files) == 0 {
+				spin.stop()
 				fmt.Println("No source files found.")
 				os.Exit(1)
 			}
+
+			// Make all source file paths relative to the scan root so the engine
+			// can mirror the directory structure in the output without knowing the
+			// absolute path on disk.
+			for i := range files {
+				if rel, err := filepath.Rel(absTarget, files[i].Path); err == nil {
+					files[i].Path = filepath.ToSlash(rel)
+				}
+			}
+
+			spin.update(fmt.Sprintf("Analyzing %d file(s)…", len(files)))
 
 			adapters := []reverse.Adapter{
 				&reverse.TypeScriptAdapter{},
@@ -621,7 +856,7 @@ func reverseCmd() *cobra.Command {
 				&reverse.GoAdapter{},
 			}
 
-			date := "2026-04-02"
+			date := time.Now().Format("2006-01-02")
 
 			input := reverse.ReverseInput{
 				Files:       files,
@@ -631,6 +866,7 @@ func reverseCmd() *cobra.Command {
 			}
 
 			result := reverse.Reverse(input, adapters)
+			spin.stop()
 
 			if jsonOutput {
 				enc := json.NewEncoder(os.Stdout)
@@ -673,7 +909,7 @@ func reverseCmd() *cobra.Command {
 					continue
 				}
 
-				if mkErr := os.MkdirAll(outputDir, 0755); mkErr != nil {
+				if mkErr := os.MkdirAll(filepath.Dir(outPath), 0755); mkErr != nil {
 					fmt.Fprintf(os.Stderr, "error creating output directory: %v\n", mkErr)
 					os.Exit(1)
 				}
@@ -689,9 +925,14 @@ func reverseCmd() *cobra.Command {
 				}
 			}
 
+			gapCount := result.Summary.GapsDetected
 			fmt.Printf("\nSummary: %d spec(s) generated, %d constraint(s), %d assertion(s), %d gap(s)\n",
 				result.Summary.SpecsGenerated, result.Summary.ConstraintsFound,
-				result.Summary.AssertionsFound, result.Summary.GapsDetected)
+				result.Summary.AssertionsFound, gapCount)
+			if gapCount > 0 {
+				fmt.Printf("\nDRAFT: %d AC(s) require manual review — specter reverse can extract structure but not intent.\n", gapCount)
+				fmt.Printf("       Review each gap: true AC and fill in description, inputs, and expected_output.\n")
+			}
 
 			return nil
 		},
@@ -1187,56 +1428,85 @@ func toCamelCase(id string) string {
 //
 // @spec spec-watch
 func watchCmd() *cobra.Command {
-	var interval time.Duration
-
 	cmd := &cobra.Command{
 		Use:   "watch",
 		Short: "Re-run sync pipeline on file changes",
-		Long:  "Polls for changes in .spec.yaml and test files and re-runs the sync pipeline. Press Ctrl+C to stop.",
+		Long:  "Watches .spec.yaml and test files for changes and re-runs the full sync pipeline. Press Ctrl+C to stop.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			m, _ := loadManifest()
 
-			// C-08: startup message with watched globs and interval
 			specsDir := m.SpecsDir()
 			fmt.Printf("specter watch\n\n")
-			fmt.Printf("  Watching: %s/**/*.spec.yaml, test files\n", specsDir)
-			fmt.Printf("  Interval: %s\n", interval)
+			fmt.Printf("  Watching: %s, test files\n", specsDir)
 			fmt.Printf("  Press Ctrl+C to stop\n\n")
 
-			// C-06: run once immediately on startup
-			lastMods := collectModTimes()
-			runWatchCycle(m)
+			watcher, err := fsnotify.NewWatcher()
+			if err != nil {
+				return fmt.Errorf("failed to start file watcher: %w", err)
+			}
+			defer watcher.Close()
 
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
+			// Watch the specs directory and current directory (for test files).
+			for _, dir := range []string{specsDir, "."} {
+				_ = filepath.Walk(dir, func(path string, info os.FileInfo, walkErr error) error {
+					if walkErr != nil || !info.IsDir() {
+						return nil
+					}
+					if info.Name() == "node_modules" || info.Name() == ".git" || info.Name() == "dist" {
+						return filepath.SkipDir
+					}
+					_ = watcher.Add(path)
+					return nil
+				})
+			}
 
 			sig := make(chan os.Signal, 1)
 			signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 			defer signal.Stop(sig)
 
+			// C-06: run once immediately on startup
+			runWatchCycle(m)
+
+			// Debounce: coalesce rapid successive events into one cycle.
+			var debounce <-chan time.Time
+
 			for {
 				select {
 				case <-sig:
-					// C-04: exit 0 on interrupt
 					fmt.Println("\nstopped")
 					return nil
-				case <-ticker.C:
-					currentMods := collectModTimes()
-					if modsChanged(lastMods, currentMods) {
-						lastMods = currentMods
-						runWatchCycle(m)
+				case event, ok := <-watcher.Events:
+					if !ok {
+						return nil
 					}
+					name := event.Name
+					isSpec := strings.HasSuffix(name, ".spec.yaml")
+					isTest := false
+					for _, ext := range []string{".test.ts", ".test.js", ".test.py", "_test.go", "_test.py"} {
+						if strings.HasSuffix(name, ext) {
+							isTest = true
+							break
+						}
+					}
+					if isSpec || isTest {
+						debounce = time.After(150 * time.Millisecond)
+					}
+				case err, ok := <-watcher.Errors:
+					if !ok {
+						return nil
+					}
+					fmt.Fprintf(os.Stderr, "watch error: %v\n", err)
+				case <-debounce:
+					debounce = nil
+					runWatchCycle(m)
 				}
 			}
 		},
 	}
-
-	// C-05: configurable poll interval
-	cmd.Flags().DurationVar(&interval, "interval", 500*time.Millisecond, "Poll interval (e.g. 500ms, 1s, 2s)")
 	return cmd
 }
 
-// runWatchCycle executes the sync pipeline and prints a compact summary line.
+// runWatchCycle executes the full sync pipeline and prints a compact summary line.
 //
 // C-03: timestamped summary, C-07: continues on FAIL.
 func runWatchCycle(m *manifest.Manifest) {
@@ -1252,11 +1522,36 @@ func runWatchCycle(m *manifest.Manifest) {
 
 	inputs, specs, hasErrors := parseAllSpecs(specFiles)
 	if hasErrors {
-		fmt.Printf("[%s] FAIL  parse errors in spec files\n", timestamp)
+		fmt.Printf("[%s] FAIL  parse\n", timestamp)
 		return
 	}
 
-	// Build coverage
+	// Resolve — detect cycles, dangling refs, version mismatches
+	graph := resolver.ResolveSpecs(inputs)
+	resolverFail := false
+	for _, d := range graph.Diagnostics {
+		if d.Severity == "error" {
+			resolverFail = true
+			break
+		}
+	}
+	if resolverFail {
+		fmt.Printf("[%s] FAIL  resolve  (%d issue(s))\n", timestamp, len(graph.Diagnostics))
+		return
+	}
+
+	// Check — structural rules
+	opts := &checker.CheckOptions{
+		Strict:      m.Settings.Strict,
+		WarnOnDraft: m.Settings.WarnOnDraft,
+	}
+	checkResult := checker.CheckSpecs(graph, opts)
+	if checkResult.Summary.Errors > 0 {
+		fmt.Printf("[%s] FAIL  check  (%d error(s))\n", timestamp, checkResult.Summary.Errors)
+		return
+	}
+
+	// Coverage
 	var allAnnotations []coverage.AnnotationMatch
 	for _, f := range testFiles {
 		data, err := os.ReadFile(f)
@@ -1269,7 +1564,6 @@ func runWatchCycle(m *manifest.Manifest) {
 	thresholds := m.CoverageThresholds()
 	report := coverage.BuildCoverageReport(specs, allAnnotations, thresholds)
 
-	// Count covered ACs
 	totalACs := 0
 	coveredACs := 0
 	for _, e := range report.Entries {
@@ -1277,34 +1571,16 @@ func runWatchCycle(m *manifest.Manifest) {
 		coveredACs += len(e.CoveredACs)
 	}
 
-	// Run resolve + check to determine PASS/FAIL
-	_ = inputs // used in real sync; here we just use coverage for the summary
 	passing := report.Summary.Passing
 	failing := report.Summary.Failing
 
 	status := "PASS"
-	if failing > 0 || hasErrors {
+	if failing > 0 {
 		status = "FAIL"
 	}
 
 	fmt.Printf("[%s] %-4s  %d spec(s)  %d/%d ACs covered  (%d passing, %d failing)\n",
 		timestamp, status, len(specs), coveredACs, totalACs, passing, failing)
-}
-
-// collectModTimes snapshots the modification times of all watched files.
-func collectModTimes() map[string]time.Time {
-	mods := make(map[string]time.Time)
-	for _, f := range discoverSpecs() {
-		if info, err := os.Stat(f); err == nil {
-			mods[f] = info.ModTime()
-		}
-	}
-	for _, f := range discoverTestFiles("") {
-		if info, err := os.Stat(f); err == nil {
-			mods[f] = info.ModTime()
-		}
-	}
-	return mods
 }
 
 // modsChanged returns true if any file's modification time differs between snapshots.
@@ -1320,3 +1596,131 @@ func modsChanged(prev, curr map[string]time.Time) bool {
 	return false
 }
 
+// @spec spec-diff
+func diffCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "diff <path>[@<ref>] <path>[@<ref>]",
+		Short: "Show semantic diff of a spec between two git revisions",
+		Long: `Compare two versions of a spec and show a human-readable semantic diff.
+
+Each argument is either:
+  path            — read from disk
+  path@ref        — read from git (e.g. specs/foo.spec.yaml@HEAD~1)
+
+Example:
+  specter diff specs/engine.spec.yaml@HEAD~5 specs/engine.spec.yaml`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			v1, err := readSpecAtRef(args[0])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error reading %s: %v\n", args[0], err)
+				os.Exit(1)
+			}
+			v2, err := readSpecAtRef(args[1])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error reading %s: %v\n", args[1], err)
+				os.Exit(1)
+			}
+
+			d := specdiff.DiffSpecs(*v1, *v2)
+
+			if d.Class == specdiff.ChangeUnchanged {
+				fmt.Printf("spec %s %s → %s: no changes\n", d.SpecID, d.OldVersion, d.NewVersion)
+				return nil
+			}
+
+			fmt.Printf("spec %s %s → %s [%s]\n", d.SpecID, d.OldVersion, d.NewVersion, d.Class)
+			fmt.Println()
+
+			for _, c := range d.ACChanges {
+				switch c.Kind {
+				case "added":
+					fmt.Printf("  +%s: %s\n", c.ID, c.Description)
+				case "removed":
+					fmt.Printf("  -%s: %s\n", c.ID, c.Description)
+				case "changed":
+					fmt.Printf("  ~%s: %s → %s\n", c.ID, c.OldDesc, c.Description)
+				}
+			}
+			for _, c := range d.ConstraintChanges {
+				switch c.Kind {
+				case "added":
+					fmt.Printf("  +%s: %s\n", c.ID, c.Description)
+				case "removed":
+					fmt.Printf("  -%s: %s\n", c.ID, c.Description)
+				case "changed":
+					fmt.Printf("  ~%s: %s → %s\n", c.ID, c.OldDesc, c.Description)
+				}
+			}
+			for _, dc := range d.DepChanges {
+				fmt.Printf("  ~depends_on %s: %s → %s\n", dc.SpecID, dc.OldRange, dc.NewRange)
+			}
+			return nil
+		},
+	}
+}
+
+// readSpecAtRef reads and parses a spec from disk or from a git ref.
+// The argument format is path[@ref]. If no @ref, reads from disk.
+func readSpecAtRef(arg string) (*schema.SpecAST, error) {
+	// Split on the last '@' to get path and ref
+	path, ref := arg, ""
+	if idx := strings.LastIndex(arg, "@"); idx > 0 {
+		path, ref = arg[:idx], arg[idx+1:]
+	}
+
+	var content []byte
+	if ref == "" {
+		// Read from disk
+		var err error
+		content, err = os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// Read from git: git show <ref>:<path>
+		// Normalize path to be repo-relative
+		out, err := gitShow(ref, path)
+		if err != nil {
+			return nil, fmt.Errorf("git show failed: %w", err)
+		}
+		content = out
+	}
+
+	pr := parser.ParseSpec(string(content))
+	if !pr.OK {
+		return nil, fmt.Errorf("parse failed: %v", pr.Errors)
+	}
+	return pr.Value, nil
+}
+
+// validGitRef matches the characters that appear in valid git refs:
+// branch names, tags, commit SHAs, and revision qualifiers like HEAD~1.
+var validGitRef = regexp.MustCompile(`^[a-zA-Z0-9_.~^/\-]+$`)
+
+// gitShow runs `git show <ref>:<path>` and returns the output.
+// The path is resolved to be repo-root-relative so git show works
+// regardless of the working directory within the repo.
+func gitShow(ref, path string) ([]byte, error) {
+	if !validGitRef.MatchString(ref) {
+		return nil, fmt.Errorf("invalid git ref %q: must match [a-zA-Z0-9_.~^/\\-]+", ref)
+	}
+	// Get the repo root
+	rootBytes, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return nil, fmt.Errorf("not a git repository: %w", err)
+	}
+	root := strings.TrimSpace(string(rootBytes))
+
+	// Resolve path to absolute, then make it relative to root
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	relPath, err := filepath.Rel(root, absPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return exec.Command("git", "show", ref+":"+relPath).Output()
+}

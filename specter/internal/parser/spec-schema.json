@@ -39,6 +39,13 @@
           "description": "Risk tier. 1 = Security/Money (strictest). 2 = Core Business Logic. 3 = Utility/Internal."
         },
 
+        "coverage_threshold": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Per-spec coverage threshold override (0-100). Overrides the tier-based default for this spec only."
+        },
+
         "context": {
           "type": "object",
           "required": ["system"],

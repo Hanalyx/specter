@@ -80,6 +80,44 @@ type User struct {
 	}
 }
 
+// @ac AC-16
+func TestReverse_FileNameMirrorsSourceDirectory(t *testing.T) {
+	files := []SourceFile{
+		{
+			Path: "auth/login.go",
+			Content: `package auth
+type LoginRequest struct {
+	Username string ` + "`validate:\"required\"`" + `
+}
+`,
+		},
+		{
+			Path: "payments/stripe.go",
+			Content: `package payments
+type ChargeRequest struct {
+	Amount int ` + "`validate:\"required,min=1\"`" + `
+}
+`,
+		},
+	}
+	result := Reverse(ReverseInput{Files: files, Date: "2026-04-16"}, []Adapter{&GoAdapter{}, &TypeScriptAdapter{}, &PythonAdapter{}})
+	if len(result.Specs) == 0 {
+		t.Fatal("no specs generated")
+	}
+	for _, gs := range result.Specs {
+		dir := gs.FileName[:len(gs.FileName)-len("/"+gs.Spec.ID+".spec.yaml")]
+		if dir == gs.FileName {
+			// FileName has no subdir separator at all
+			t.Errorf("spec %q: FileName %q has no subdirectory — expected mirrored path like auth/login.spec.yaml", gs.Spec.ID, gs.FileName)
+			continue
+		}
+		// dir must not be empty for files that live in a subdirectory
+		if dir == "" || dir == "." {
+			t.Errorf("spec %q: FileName %q subdir is empty, want non-empty mirrored directory", gs.Spec.ID, gs.FileName)
+		}
+	}
+}
+
 // @ac AC-13
 func TestReverse_ConstraintAndACIDsAreSequential(t *testing.T) {
 	files := makeGoFiles(

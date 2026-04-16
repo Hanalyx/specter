@@ -72,13 +72,13 @@ A mature SDD workflow uses both: Specter validates specs before implementation, 
 
 Start small and work outward:
 
-1. **Identify critical paths.** Pick the 3-5 most important features -- the ones where bugs are expensive. Write specs for those first.
-2. **Use `specter init` to scaffold.** Generate a `.spec.yaml` template and fill in the context, objective, and constraints based on your existing knowledge of the feature.
-3. **Annotate existing tests.** Add `@spec` and `@ac` annotations to tests that already cover the specified behavior. Run `specter coverage` to see where gaps remain.
-4. **Integrate into CI.** Once you have specs for critical paths, add `specter parse` and `specter check` to your CI pipeline to prevent regressions.
+1. **Generate draft specs from existing code.** Run `specter reverse src/ --output specs/` to extract draft specs from TypeScript, Python, or Go source files. Specter analyzes validation schemas, test assertions, and function signatures to produce `.spec.yaml` drafts.
+2. **Review and complete the drafts.** The reverse compiler extracts structure but not intent. Review each generated spec, complete any ACs marked as gaps, and add missing constraints.
+3. **Annotate existing tests.** Add `@spec` and `@ac` annotations to tests that cover the specified behavior. Run `specter coverage` to see where gaps remain.
+4. **Integrate into CI.** Add `specter sync` to your CI pipeline. It exits 0 only when all Tier 1/2 specs meet their coverage thresholds.
 5. **Expand incrementally.** Add specs for new features as they are built. Over time, spec coverage grows organically.
 
-A reverse compiler (M6) is planned that will extract draft specs from existing code. It will target **TypeScript first** (Express and Fastify frameworks), analyzing source files structurally and producing `.spec.yaml` files that capture the current behavior as a starting point for refinement.
+Use `specter doctor` to check project health at any time. It runs all pre-flight checks and tells you exactly what needs attention before running the full pipeline.
 
 ---
 
@@ -150,22 +150,21 @@ Specter enforces the ID format during parsing. `c1` or `ac-1` will be rejected; 
 
 ## How do I integrate Specter with CI?
 
-CI integration is planned for M5 (`spec-sync`). The intended workflow:
-
-1. Run `specter parse` to validate all spec files are well-formed.
-2. Run `specter resolve` to verify the dependency graph has no cycles or dangling references.
-3. Run `specter check` to detect orphan constraints and structural conflicts.
-4. Run `specter coverage --tests "**/*.test.ts"` to enforce tier-based coverage thresholds.
-
-Today, you can add `specter parse` to your CI pipeline as a validation step:
+Use `specter sync` as your CI gate. It runs the full pipeline (parse → resolve → check → coverage) in sequence and exits non-zero on any failure:
 
 ```yaml
-# GitHub Actions example
+# GitHub Actions
 - name: Validate specs
-  run: specter parse
+  run: specter sync
 ```
 
-The exit code is `0` on success and `1` on failure, so it integrates with any CI system that checks exit codes.
+`specter sync` exits `0` only when:
+- All spec files parse without schema errors
+- The dependency graph has no cycles or broken references
+- No Tier 1/2 specs have orphan constraints (by default; configurable with `--strict`)
+- All Tier 1 specs have 100% AC coverage, all Tier 2 specs have 80%, all Tier 3 specs have 50%
+
+The exit code is `0` on success and `1` on failure, so it integrates with any CI system that checks exit codes. You can also run individual pipeline stages (`specter parse`, `specter resolve`, `specter check`, `specter coverage`) for more granular control.
 
 ---
 
@@ -180,7 +179,7 @@ For test coverage (`specter coverage`), annotation scanning supports:
 - `//` comments (JavaScript, TypeScript, Go, Rust, Java, C#, etc.)
 - `#` comments (Python, Ruby, Shell, YAML, etc.)
 
-The reverse compiler (M6) will target **TypeScript first** (Express and Fastify frameworks), with Python and other languages planned for later phases.
+The reverse compiler (`specter reverse`) supports TypeScript, Python, and Go. It auto-detects the language from file extensions, or you can specify it with `--adapter typescript|python|go`.
 
 ---
 

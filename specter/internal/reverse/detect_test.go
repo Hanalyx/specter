@@ -18,8 +18,8 @@ func (m *mockAdapter) Detect(path, content string) bool {
 	}
 	return false
 }
-func (m *mockAdapter) IsTestFile(path string) bool                             { return false }
-func (m *mockAdapter) ExtractRoutes(path, content string) []ExtractedRoute     { return nil }
+func (m *mockAdapter) IsTestFile(path string) bool                         { return false }
+func (m *mockAdapter) ExtractRoutes(path, content string) []ExtractedRoute { return nil }
 func (m *mockAdapter) ExtractConstraints(path, content string) []ExtractedConstraint {
 	return nil
 }

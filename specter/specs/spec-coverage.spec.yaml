@@ -1,6 +1,6 @@
 spec:
   id: spec-coverage
-  version: "1.0.0"
+  version: "1.3.0"
   status: approved
   tier: 2
 
@@ -60,6 +60,21 @@ spec:
 
     - id: C-05
       description: "MUST NOT depend on any CLI framework — pure function from SpecAST[] + file paths to CoverageReport"
+      type: technical
+      enforcement: error
+
+    - id: C-06
+      description: "MUST support per-spec coverage_threshold override: when a spec declares coverage_threshold: N (0–100), that value overrides the tier-based threshold for that spec only"
+      type: technical
+      enforcement: error
+
+    - id: C-07
+      description: "MUST support pass-rate-aware coverage for Tier 1: when .specter-results.json is present, a Tier 1 AC is only counted as covered if the annotation exists AND the result entry has passed: true"
+      type: technical
+      enforcement: error
+
+    - id: C-08
+      description: "MUST emit dependency_coverage warnings when spec A depends_on spec B and spec B has uncovered ACs that fall below spec B's effective coverage threshold"
       type: technical
       enforcement: error
 
@@ -125,7 +140,27 @@ spec:
       references_constraints: ["C-01", "C-02", "C-05"]
       priority: medium
 
+    - id: AC-06
+      description: "Per-spec coverage_threshold: 75 overrides tier threshold — a Tier 1 spec with coverage_threshold: 75 passes at 80% (not the default 100%)"
+      references_constraints: ["C-06"]
+      priority: high
+
+    - id: AC-07
+      description: "Tier 1 spec with annotation but failed .specter-results.json entry is NOT counted as covered"
+      references_constraints: ["C-07"]
+      priority: high
+
+    - id: AC-08
+      description: "spec A depends_on spec B; spec B has uncovered ACs; CheckDependencyCoverage emits dependency_coverage warning for spec A"
+      references_constraints: ["C-08"]
+      priority: high
+
   changelog:
+    - version: "1.3.0"
+      date: "2026-04-14"
+      author: "specter-team"
+      type: minor
+      description: "Add C-06/AC-06 per-spec coverage_threshold override, C-07/AC-07 pass-rate-aware coverage for Tier 1, C-08/AC-08 dependency_coverage warnings"
     - version: "1.0.0"
       date: "2026-03-28"
       author: "specter-team"

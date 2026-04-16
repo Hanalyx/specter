@@ -23,7 +23,7 @@ type Diagnostic struct {
 	ActualVersion    string   `json:"actual_version,omitempty"`
 	CyclePath        []string `json:"cycle_path,omitempty"`
 	Files            []string `json:"files,omitempty"`
-	Suggestions      []string `json:"suggestions,omitempty"`       // C-10: closest existing spec IDs
+	Suggestions      []string `json:"suggestions,omitempty"`        // C-10: closest existing spec IDs
 	SuggestedFixPath string   `json:"suggested_fix_path,omitempty"` // C-10: likely file path to create
 }
 

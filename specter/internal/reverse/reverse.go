@@ -161,23 +161,17 @@ func Reverse(input ReverseInput, adapters []Adapter) *ReverseResult {
 		return result
 	}
 
-	// Extract from all files
-	var allConstraints []ExtractedConstraint
-	var allAssertions []ExtractedAssertion
-	var allRoutes []ExtractedRoute
-	var allImports []ExtractedImport
-
+	// Count totals for the summary (per-group extraction happens in assembleSpec).
+	var totalConstraints, totalAssertions int
 	for _, f := range sourceFiles {
-		allConstraints = append(allConstraints, adapter.ExtractConstraints(f.Path, f.Content)...)
-		allRoutes = append(allRoutes, adapter.ExtractRoutes(f.Path, f.Content)...)
-		allImports = append(allImports, adapter.ExtractImports(f.Path, f.Content)...)
+		totalConstraints += len(adapter.ExtractConstraints(f.Path, f.Content))
 	}
 	for _, f := range testFiles {
-		allAssertions = append(allAssertions, adapter.ExtractAssertions(f.Path, f.Content)...)
+		totalAssertions += len(adapter.ExtractAssertions(f.Path, f.Content))
 	}
 
-	result.Summary.ConstraintsFound = len(allConstraints)
-	result.Summary.AssertionsFound = len(allAssertions)
+	result.Summary.ConstraintsFound = totalConstraints
+	result.Summary.AssertionsFound = totalAssertions
 
 	// Group files
 	groups := groupFiles(input.GroupBy, sourceFiles, testFiles)
@@ -228,7 +222,7 @@ func Reverse(input ReverseInput, adapters []Adapter) *ReverseResult {
 			continue
 		}
 
-		fileName := spec.ID + ".spec.yaml"
+		fileName := specFileName(groupKey, input.GroupBy, spec.ID)
 		gs := GeneratedSpec{
 			Spec:     *spec,
 			YAML:     yamlStr,
@@ -486,6 +480,38 @@ func assembleSpec(groupKey string, group *fileGroup, adapter Adapter, systemName
 	}
 
 	return spec
+}
+
+// specFileName returns the relative output path for a generated spec, mirroring
+// the source directory structure relative to the scan root.
+//
+// For file grouping, groupKey is the source file path (e.g. "auth/login.ts"):
+//
+//	"auth/login.ts"      → "auth/login.spec.yaml"
+//	"login.ts"           → "login.spec.yaml"
+//
+// For directory grouping, groupKey is the directory path (e.g. "auth"):
+//
+//	"auth"               → "auth/auth.spec.yaml"
+//	"src/auth"           → "src/auth/auth.spec.yaml"
+//	"."                  → "root.spec.yaml"
+//
+// @spec spec-reverse
+// @ac AC-16
+func specFileName(groupKey, groupBy, specID string) string {
+	if groupBy == "directory" {
+		clean := filepath.ToSlash(filepath.Clean(groupKey))
+		if clean == "." || clean == "" {
+			return specID + ".spec.yaml"
+		}
+		return clean + "/" + specID + ".spec.yaml"
+	}
+	// file grouping: use the parent directory of the source file
+	dir := filepath.ToSlash(filepath.Dir(groupKey))
+	if dir == "." || dir == "" {
+		return specID + ".spec.yaml"
+	}
+	return dir + "/" + specID + ".spec.yaml"
 }
 
 func buildConstraintDescription(c ExtractedConstraint) string {

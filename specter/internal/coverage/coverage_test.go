@@ -120,6 +120,83 @@ func TestPythonAnnotations(t *testing.T) {
 	}
 }
 
+// Regression: BUG-001 — multiple AC IDs on a single @ac line must all be registered.
+func TestAnnotationExtraction_MultiACOnOneLine(t *testing.T) {
+	content := "// @spec deadman-timer\n// @ac AC-02 AC-03 AC-04\n"
+	matches := ExtractAnnotations(content, "timer_test.go")
+
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 match, got %d", len(matches))
+	}
+	acSet := make(map[string]bool)
+	for _, id := range matches[0].ACIDs {
+		acSet[id] = true
+	}
+	for _, want := range []string{"AC-02", "AC-03", "AC-04"} {
+		if !acSet[want] {
+			t.Errorf("expected %s to be covered from single-line @ac annotation, but it was not", want)
+		}
+	}
+}
+
+// @ac AC-06
+func TestPerSpecCoverageThreshold_OverridesTierDefault(t *testing.T) {
+	// Tier 1 spec (default threshold 100%) with coverage_threshold: 75
+	// 4 of 5 ACs covered = 80%. Should PASS because 80 >= 75.
+	spec := makeSpec("payment", 1, "AC-01", "AC-02", "AC-03", "AC-04", "AC-05")
+	spec.CoverageThreshold = 75
+	specs := []schema.SpecAST{spec}
+	anns := []AnnotationMatch{
+		{File: "t.go", SpecID: "payment", ACIDs: []string{"AC-01", "AC-02", "AC-03", "AC-04"}},
+	}
+	report := BuildCoverageReport(specs, anns, checker.CoverageThresholdByTier)
+	e := report.Entries[0]
+	if e.Threshold != 75 {
+		t.Errorf("expected threshold 75 (per-spec override), got %d", e.Threshold)
+	}
+	if !e.PassesThreshold {
+		t.Errorf("expected to pass at 80%% with threshold 75")
+	}
+}
+
+// @ac AC-07
+func TestPassRateAwareCoverage_FailedResultNotCounted(t *testing.T) {
+	// Tier 1 spec: annotation exists but result entry says passed: false
+	spec := makeSpec("engine", 1, "AC-01")
+	anns := []AnnotationMatch{
+		{File: "t.go", SpecID: "engine", ACIDs: []string{"AC-01"}},
+	}
+	results := &ResultsFile{
+		Results: []ResultEntry{{SpecID: "engine", ACID: "AC-01", Passed: false}},
+	}
+	report := BuildCoverageReportWithResults([]schema.SpecAST{spec}, anns, checker.CoverageThresholdByTier, results)
+	e := report.Entries[0]
+	if e.CoveragePct != 0 {
+		t.Errorf("expected 0%% coverage when result failed, got %.1f%%", e.CoveragePct)
+	}
+}
+
+// @ac AC-08
+func TestCheckDependencyCoverage_EmitsWarning(t *testing.T) {
+	// spec A depends on spec B; spec B is below threshold
+	specA := makeSpec("spec-a", 1, "AC-01")
+	specB := makeSpec("spec-b", 1, "AC-01")
+	specs := []schema.SpecAST{specA, specB}
+	// Only spec A has annotations; spec B has none
+	anns := []AnnotationMatch{
+		{File: "t.go", SpecID: "spec-a", ACIDs: []string{"AC-01"}},
+	}
+	report := BuildCoverageReport(specs, anns, checker.CoverageThresholdByTier)
+	edges := []DepEdge{{From: "spec-a", To: "spec-b"}}
+	warnings := CheckDependencyCoverage(edges, report)
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 dependency_coverage warning, got %d", len(warnings))
+	}
+	if warnings[0].DependsOn != "spec-b" {
+		t.Errorf("expected warning about spec-b, got %q", warnings[0].DependsOn)
+	}
+}
+
 // Regression: @spec inside a string literal must not hijack the current spec context.
 func TestAnnotationExtraction_StringLiteralNotHijacked(t *testing.T) {
 	// Simulate a test file where a Go string literal contains "// @spec other-spec".
