@@ -1,0 +1,160 @@
+{
+  "name": "specter-vscode",
+  "displayName": "Specter SDD",
+  "description": "Spec-Driven Development tooling for VS Code — inline coverage, diagnostics, annotation assistance, and intent drift detection.",
+  "version": "0.5.0",
+  "publisher": "Hanalyx",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Linters",
+    "Testing",
+    "Other"
+  ],
+  "icon": "images/specter-icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Hanalyx/specter"
+  },
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "workspaceContains:**/specter.yaml",
+    "workspaceContains:**/*.spec.yaml"
+  ],
+  "contributes": {
+    "configuration": {
+      "title": "Specter",
+      "properties": {
+        "specter.binaryPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the specter binary. If empty, Specter will search PATH then ~/.specter/bin/specter, then auto-download."
+        },
+        "specter.autoDownload": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically download the specter binary if not found."
+        },
+        "specter.version": {
+          "type": "string",
+          "default": "latest",
+          "description": "Specter binary version to auto-download (e.g. '0.5.0' or 'latest')."
+        },
+        "specter.showInsightsOnFailure": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically open the Specter Insights panel when a spec fails threshold."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "specter.openInsights",
+        "title": "Specter: Open Insights Panel",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "specter.copySpecContext",
+        "title": "Specter: Copy Spec Context for AI",
+        "icon": "$(clippy)"
+      },
+      {
+        "command": "specter.runSync",
+        "title": "Specter: Run Sync",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "specter.revealInTree",
+        "title": "Specter: Reveal in Tree View"
+      }
+    ],
+    "views": {
+      "specter-sidebar": [
+        {
+          "id": "specterCoverage",
+          "name": "Coverage",
+          "icon": "$(graph)",
+          "contextualTitle": "Specter"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "specter-sidebar",
+          "title": "Specter",
+          "icon": "$(graph)"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "specter.runSync",
+          "when": "view == specterCoverage",
+          "group": "navigation"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "specter.copySpecContext",
+          "when": "resourceExtname == .yaml",
+          "group": "specter"
+        }
+      ]
+    },
+    "walkthroughs": [
+      {
+        "id": "specter.gettingStarted",
+        "title": "Get Started with Specter",
+        "description": "Set up spec-driven development in your project.",
+        "steps": [
+          {
+            "id": "discover",
+            "title": "Discover your specs",
+            "description": "Run `specter reverse` to generate draft specs from your existing code.\n[Run specter reverse](command:specter.runReverse)",
+            "media": {
+              "markdown": "walkthrough/step1.md"
+            },
+            "completionEvents": ["onCommand:specter.runReverse"]
+          },
+          {
+            "id": "annotate",
+            "title": "Annotate your first test",
+            "description": "Add `// @spec <id>` and `// @ac AC-01` above a test function. Completions are available.",
+            "media": {
+              "markdown": "walkthrough/step2.md"
+            }
+          },
+          {
+            "id": "sync",
+            "title": "Run specter sync",
+            "description": "Run the full pipeline and see your coverage in the sidebar.\n[Run specter sync](command:specter.runSync)",
+            "media": {
+              "markdown": "walkthrough/step3.md"
+            },
+            "completionEvents": ["onCommand:specter.runSync"]
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -watch -p tsconfig.json",
+    "test": "jest",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.85.0",
+    "jest": "^29.5.0",
+    "ts-jest": "^29.1.0",
+    "typescript": "^5.0.0"
+  }
+}

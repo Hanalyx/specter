@@ -1,37 +1,112 @@
 # Specter
 
-**A type system for specs.** Validates, links, and type-checks `.spec.yaml` files.
+**A type system for specs.** Validates, links, and type-checks `.spec.yaml` files the way `tsc` validates `.ts` files.
+
+Specs without validation are just documents. They can contradict each other, reference dependencies that don't exist, have constraints that no test ever covers, and silently rot as code evolves. Specter treats specs as typed artifacts in a dependency graph, subject to the same static analysis you apply to code.
+
+```
+$ specter sync
+
+  PASS  parse     5 spec(s) parsed — no schema violations
+  PASS  resolve   5 specs, 8 dependencies — no cycles or broken refs
+  PASS  check     0 errors, 0 orphan constraints
+  PASS  coverage  5 spec(s) meet coverage thresholds
+
+All checks passed.
+```
+
+---
 
 ## Install
 
-```bash
-# From source
-go build -o bin/specter ./cmd/specter/
+**Binary (Linux amd64):**
 
-# Or use Make
-make build
+```bash
+curl -Lo specter.tar.gz https://github.com/Hanalyx/specter/releases/latest/download/specter_Linux_x86_64.tar.gz
+tar xzf specter.tar.gz
+sudo mv specter /usr/local/bin/
+specter --version
 ```
 
-Produces a single binary with zero runtime dependencies.
-
-## Usage
+**DEB package:**
 
 ```bash
-# Validate specs against the canonical schema
-specter parse specs/*.spec.yaml
+curl -Lo specter.deb https://github.com/Hanalyx/specter/releases/latest/download/specter_amd64.deb
+sudo dpkg -i specter.deb
+```
 
-# Build and validate the dependency graph
+**Build from source:**
+
+```bash
+git clone https://github.com/Hanalyx/specter.git
+cd specter
+make build
+./bin/specter --version
+```
+
+---
+
+## The Pipeline
+
+Specter runs five stages in sequence. Each stage catches a different class of problem:
+
+```
+.spec.yaml files
+      │
+   [parse]      Schema validation — missing fields, invalid IDs, wrong types
+      │
+  [resolve]     Dependency graph — cycles, dangling refs, version mismatches
+      │
+   [check]      Structural analysis — orphan constraints, spec conflicts
+      │
+  [coverage]    Traceability — ACs without tests, below-threshold tiers
+      │
+   [sync]       CI gate — runs all four, exits non-zero on any failure
+```
+
+### What each stage catches
+
+**`specter parse`** — Catches malformed specs before anything else runs. Missing required fields, IDs that don't match the allowed pattern, invalid enum values, wrong types. Like a compiler catching syntax errors.
+
+```bash
+specter parse specs/auth.spec.yaml
+
+# ERROR: spec-auth.spec.yaml [required] missing required field: 'acceptance_criteria'
+# ERROR: spec-auth.spec.yaml [pattern]  constraint ID 'constraint-1' does not match C-NN format
+```
+
+**`specter resolve`** — Builds the dependency graph across all specs and validates it. Catches circular dependencies and references to specs that don't exist.
+
+```bash
 specter resolve
 
-# Run structural checks (orphan constraints, conflicts, breaking changes)
+# ERROR: circular dependency: spec-a → spec-b → spec-a
+# ERROR: spec-auth depends on spec-session@^1.0.0 but spec-session is not found
+```
+
+**`specter check`** — Finds structural problems within and between specs. An orphan constraint — one that no acceptance criterion references — is a constraint that can never be tested. A tier conflict catches when a Tier 1 spec depends on a Tier 3 spec.
+
+```bash
 specter check
 
-# Generate spec-to-test traceability matrix
+# WARN: spec-auth [orphan_constraint] C-04 is not referenced by any AC
+# ERROR: spec-payments [tier_conflict] Tier 1 spec depends on Tier 3 spec-util
+```
+
+**`specter coverage`** — Reads `@spec` and `@ac` annotations from your test files and produces a traceability matrix. Enforces tier-based coverage thresholds.
+
+```bash
 specter coverage
 
-# Run the full pipeline (parse + resolve + check + coverage)
-specter sync
+# Spec ID          Tier  ACs  Covered  Coverage  Status
+# ─────────────────────────────────────────────────────
+# spec-auth        T1    6    4        67%       FAIL  ← below 100% threshold
+# spec-payments    T2    5    5        100%      PASS
 ```
+
+**`specter sync`** — Runs all four stages and exits 0 only when everything passes. Put this in CI.
+
+---
 
 ## Write a Spec
 
@@ -44,24 +119,107 @@ spec:
 
   context:
     system: Auth service
+    description: >
+      Handles new user account creation. Email is the primary identifier.
+      Passwords are hashed with bcrypt before storage — never stored in plaintext.
 
   objective:
-    summary: Register a new user with email and password.
+    summary: >
+      Register a new user with email and password.
+      Return a session token on success.
+    scope:
+      excludes:
+        - "Social login (OAuth) — separate spec"
+        - "Email verification — handled post-registration"
 
   constraints:
     - id: C-01
-      description: "email MUST be a valid RFC 5322 address"
+      description: "Email MUST be a valid RFC 5322 address"
+      type: technical
+      enforcement: error
     - id: C-02
-      description: "password MUST be at least 8 characters"
+      description: "Password MUST be at least 12 characters"
+      type: security
+      enforcement: error
+    - id: C-03
+      description: "Passwords MUST be hashed with bcrypt, cost factor ≥ 12"
+      type: security
+      enforcement: error
 
   acceptance_criteria:
     - id: AC-01
-      description: "Returns 201 with JWT on success"
-      references_constraints: ["C-01", "C-02"]
+      description: "Returns 201 with session token when registration succeeds"
+      references_constraints: ["C-01", "C-02", "C-03"]
     - id: AC-02
-      description: "Returns 400 when email is invalid"
+      description: "Returns 422 when email format is invalid"
+      references_constraints: ["C-01"]
+    - id: AC-03
+      description: "Returns 422 when password is shorter than 12 characters"
+      references_constraints: ["C-02"]
+    - id: AC-04
+      description: "Returns 409 when email is already registered"
       references_constraints: ["C-01"]
 ```
+
+Validate it:
+
+```bash
+specter parse user-registration.spec.yaml
+# PASS user-registration.spec.yaml — user-registration@1.0.0
+```
+
+---
+
+## Annotate Tests
+
+Link test functions to acceptance criteria with two comment lines. Specter reads these annotations to build the traceability matrix.
+
+```go
+// @spec user-registration
+// @ac AC-01
+func TestRegistration_ValidEmailAndPassword_Returns201(t *testing.T) {
+    // ...
+}
+
+// @spec user-registration
+// @ac AC-02
+func TestRegistration_InvalidEmail_Returns422(t *testing.T) {
+    // ...
+}
+```
+
+Works in any language — the annotations are plain comments.
+
+---
+
+## Tier-Based Enforcement
+
+Coverage thresholds scale with risk:
+
+| Tier | Examples | Coverage required |
+|---|---|---|
+| **T1** — Security / Money | Auth, payments, encryption | 100% |
+| **T2** — Business logic | Booking flow, pricing rules | 80% |
+| **T3** — Utility | Formatters, helpers | 50% |
+
+A Tier 1 spec below threshold is a CI failure. A Tier 3 spec below threshold is a warning.
+
+---
+
+## The Type System Analogy
+
+Specs map to programming type concepts one-for-one:
+
+| Type system | Specter equivalent |
+|---|---|
+| Type definition | Constraint — defines what's allowed |
+| Function signature | Acceptance criterion — input → expected output |
+| Import statement | `depends_on` — formal contract between specs |
+| Type error | Spec conflict — caught before code runs |
+| Unused variable | Orphan constraint — no AC references it |
+| Missing null check | Coverage gap — an AC with no test |
+
+---
 
 ## Project Structure
 
@@ -69,45 +227,63 @@ spec:
 specter/
   cmd/specter/       CLI entry point (Cobra)
   internal/
-    parser/          M1: YAML -> validated SpecAST
+    parser/          M1: YAML → validated SpecAST
     resolver/        M2: Dependency graph, cycle detection
     checker/         M3: Orphan constraints, structural conflicts
     coverage/        M4: Spec-to-test traceability matrix
     sync/            M5: CI pipeline orchestrator
-    schema/          Canonical types + JSON Schema
+    reverse/         M6: Reverse-compile specs from existing code
+    schema/          Canonical types + embedded JSON Schema
   specs/             Specter's own specs (dogfooding)
   testdata/          Test fixtures
   docs/              User documentation
 ```
 
+---
+
 ## Development
 
 ```bash
-make check      # go vet + go test + go build
+make check      # go vet + go test + go build — the CI gate
 make dogfood    # run specter against its own specs
 make build-all  # cross-compile for linux/darwin/windows
 ```
 
-## Documentation
+Every package in `internal/` is a pure function — no I/O, no CLI dependencies.
 
-- [Getting Started](docs/GETTING_STARTED.md)
-- [Spec Schema Reference](docs/SPEC_SCHEMA_REFERENCE.md)
-- [CLI Reference](docs/CLI_REFERENCE.md)
-- [FAQ](docs/FAQ.md)
+---
 
 ## Dogfooding
 
-Specter validates its own 5 specs, resolves its own dependency graph, and checks for orphan constraints. The tool proves itself by existing.
+Specter validates its own specs. The tool has 5 specs covering its own pipeline, 33 acceptance criteria, and 37 annotated tests. Every feature was specified before it was implemented.
 
 ```
-$ specter sync
+$ specter coverage
 
-Specter Sync
+Spec ID          Tier  ACs  Covered  Coverage  Status
+─────────────────────────────────────────────────────
+spec-check       T1    6    6        100%      PASS
+spec-coverage    T2    5    5        100%      PASS
+spec-parse       T1    10   10       100%      PASS
+spec-resolve     T1    7    7        100%      PASS
+spec-sync        T2    5    5        100%      PASS
 
-  PASS parse: 5 spec(s) parsed successfully
-  PASS resolve: 5 specs, 8 dependencies resolved
-  PASS check: 0 warning(s), 0 info
-  PASS coverage: 5 spec(s) meet coverage thresholds
-
-All checks passed.
+5 specs: 5 passing, 0 failing
 ```
+
+---
+
+## Documentation
+
+| | |
+|---|---|
+| [Getting Started](docs/GETTING_STARTED.md) | Write and validate your first spec |
+| [Spec Schema Reference](docs/SPEC_SCHEMA_REFERENCE.md) | Every field in the `.spec.yaml` format |
+| [CLI Reference](docs/CLI_REFERENCE.md) | All commands, flags, and exit codes |
+| [FAQ](docs/FAQ.md) | Common questions about SDD and Specter |
+
+---
+
+## License
+
+MIT

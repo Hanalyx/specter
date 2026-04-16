@@ -1,216 +1,105 @@
-# Specter
+# Spec-Driven Development
 
-**A type system for specs.** Validates, links, and type-checks `.spec.yaml` files the way `tsc` validates `.ts` files.
+> *"Specs are not a crutch for weak models. They are safety equipment for powerful ones."*
+> — Mastering Spec-Driven Development, Chapter 1
+
+AI coding tools generate code faster than any human can review it. The bottleneck is no longer writing code — it is knowing whether the code does what you actually intended. Natural language prompts are ambiguous. AI fills every gap silently, confidently, and often incorrectly. The code works. The intent drifted.
+
+**Spec-Driven Development (SDD)** is the answer: write a structured specification before the AI writes a line of code. The spec resolves ambiguity, captures constraints, and defines what done looks like. The AI becomes an executor of a contract, not an interpreter of a wish.
+
+This repository contains two things that work together:
+
+---
+
+## Specter — The Toolchain
+
+**Specter** validates, links, and type-checks `.spec.yaml` files the way `tsc` validates `.ts` files.
+
+Without Specter, a spec is just a document. With Specter, it is an enforced contract. Specter catches spec errors before code is generated, tracks which requirements are covered by tests, and blocks CI if your specs are broken or undertested.
 
 ```
 $ specter sync
 
-Specter Sync
-
-  PASS parse: 5 spec(s) parsed successfully
-  PASS resolve: 5 specs, 8 dependencies resolved
-  PASS check: 0 warning(s), 0 info
-  PASS coverage: 5 spec(s) meet coverage thresholds
+  PASS  parse     5 spec(s) parsed — no schema violations
+  PASS  resolve   5 specs, 8 dependencies — no cycles or broken refs
+  PASS  check     0 errors, 0 orphan constraints
+  PASS  coverage  5 spec(s) meet coverage thresholds
 
 All checks passed.
 ```
 
-## The Problem
+**→ [Get started with Specter](specter/README.md)**
 
-AI coding tools generate code from specifications. But nobody validates the specifications themselves. Specs are untyped YAML documents -- they can contradict each other, have orphaned constraints with no test coverage, reference dependencies that don't exist, and silently rot as code evolves.
+---
 
-**Specter treats specs as typed artifacts in a dependency graph, subject to static analysis.** It catches spec errors before code is ever generated.
+## Mastering SDD — The Book
 
-## What Specter Does
+**Mastering Spec-Driven Development** is a 17-chapter course that teaches the full discipline: why natural language fails, how to write specs that AI can execute reliably, how to enforce the spec→test→implement loop, and how to scale SDD across teams and agents.
 
-| Command | What It Catches |
-|---------|-----------------|
-| `specter parse` | Malformed specs, missing fields, invalid IDs, wrong types -- like a compiler catching syntax errors |
-| `specter resolve` | Circular dependencies, dangling references, version mismatches -- like a linker catching undefined symbols |
-| `specter check` | Orphan constraints (no AC references them), structural conflicts between specs -- like a type checker catching errors |
-| `specter coverage` | Specs without tests, ACs without coverage, below-threshold modules -- like code coverage but for specifications |
-| `specter sync` | Runs the full pipeline in CI. Blocks the merge if specs are broken. |
+The book is the methodology. Specter is the infrastructure that makes it non-optional.
+
+**→ [Read the book](sddbook/INDEX.md)**
+
+---
+
+## The Core Loop
+
+```
+Write spec  →  Validate spec  →  Generate code  →  Annotate tests  →  Enforce coverage
+     ↑                                                                        |
+     └────────────────── Refine spec when intent drifts ────────────────────┘
+```
+
+Every step in this loop has a Specter command behind it:
+
+| Step | Command | What it enforces |
+|---|---|---|
+| Validate spec | `specter parse` | Schema correctness, required fields, valid IDs |
+| Link specs | `specter resolve` | Dependencies, no cycles, version compatibility |
+| Check structure | `specter check` | Orphan constraints, structural conflicts |
+| Enforce coverage | `specter coverage` | Every AC has a test; tiers met |
+| Gate CI | `specter sync` | All of the above — exits non-zero on any failure |
+
+---
+
+## Why Structure Before Code
+
+The book documents three failure modes that appear again and again in AI-assisted development:
+
+**Ambiguity becomes decisions.** "Make a settings page" contains dozens of unanswered questions. The AI answers all of them — silently, based on training data, not your intent. A spec forces those decisions to be made by a human before the AI starts.
+
+**Code drifts from intent.** Tests pass. The feature ships. But the AI used a pattern you didn't want, skipped a constraint you cared about, or satisfied the letter of a requirement while violating its spirit. Without a spec, there is no reference to drift from. With a spec and Specter, drift is detectable.
+
+**Knowledge evaporates between sessions.** Every new AI session starts from zero. The constraints you hammered out last sprint, the architectural decisions you made last month — gone. A spec file is persistent memory that travels with the code and can be injected into any AI session as a contract.
+
+---
 
 ## Quick Start
 
-### Install
-
-**Download binary** from [GitHub Releases](https://github.com/Hanalyx/spec-dd/releases):
-
 ```bash
-# Linux (amd64)
-curl -Lo specter.tar.gz https://github.com/Hanalyx/spec-dd/releases/latest/download/specter_Linux_x86_64.tar.gz
-tar xzf specter.tar.gz
-sudo mv specter /usr/local/bin/
+# Install Specter
+curl -Lo specter.tar.gz https://github.com/Hanalyx/specter/releases/latest/download/specter_Linux_x86_64.tar.gz
+tar xzf specter.tar.gz && sudo mv specter /usr/local/bin/
 
-# Verify
-specter --version
-```
-
-**DEB package** (Debian/Ubuntu):
-
-```bash
-curl -Lo specter.deb https://github.com/Hanalyx/spec-dd/releases/latest/download/specter_amd64.deb
-sudo dpkg -i specter.deb
-```
-
-**Build from source:**
-
-```bash
-git clone https://github.com/Hanalyx/spec-dd.git
-cd spec-dd/specter
-make build
-bin/specter --version
-```
-
-### Use
-
-```bash
-# Validate your specs
-specter parse specs/*.spec.yaml
+# Validate your first spec
+specter parse my-feature.spec.yaml
 
 # Run the full pipeline
 specter sync
 ```
 
-See the [Getting Started guide](specter/docs/GETTING_STARTED.md) for a complete walkthrough.
+→ [Full installation guide and first spec walkthrough](specter/docs/GETTING_STARTED.md)
 
-## Write Your First Spec
+---
 
-```yaml
-spec:
-  id: user-registration
-  version: "1.0.0"
-  status: approved
-  tier: 1
+## VS Code Extension
 
-  context:
-    system: Auth service
-    description: Handles new user account creation
+The **Specter SDD** extension brings the SDD loop into the editor: live coverage decorations, spec diagnostics as you type, annotation completions, intent drift alerts, and a one-command AI context bridge.
 
-  objective:
-    summary: >
-      Register a new user with email and password.
-      Return a JWT token on success.
+→ [Install from the VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=Hanalyx.specter-vscode)
 
-  constraints:
-    - id: C-01
-      description: "email MUST be a valid RFC 5322 address"
-      type: technical
-      enforcement: error
-    - id: C-02
-      description: "password MUST be at least 8 characters"
-      type: security
-      enforcement: error
-
-  acceptance_criteria:
-    - id: AC-01
-      description: "Returns 201 with JWT when registration succeeds"
-      references_constraints: ["C-01", "C-02"]
-    - id: AC-02
-      description: "Returns 400 when email is invalid"
-      references_constraints: ["C-01"]
-    - id: AC-03
-      description: "Returns 400 when password is too short"
-      references_constraints: ["C-02"]
-    - id: AC-04
-      description: "Returns 409 when email already registered"
-      references_constraints: ["C-01"]
-```
-
-Then validate it:
-
-```bash
-specter parse user-registration.spec.yaml
-# PASS user-registration.spec.yaml -- user-registration@1.0.0
-```
-
-## How It Works
-
-Specter implements the **Spec-Driven Development (SDD)** methodology as infrastructure:
-
-```
-.spec.yaml files
-      |
-  [spec-parse]     Validate YAML against canonical JSON Schema
-      |
-  [spec-resolve]   Build dependency graph, detect cycles and broken refs
-      |
-  [spec-check]     Find orphan constraints, structural conflicts, breaking changes
-      |
-  [spec-coverage]  Map specs to tests, enforce tier-based coverage thresholds
-      |
-  [spec-sync]      Gate CI on all of the above
-```
-
-The core insight: **specs should work like a type system.** Constraints are type definitions. ACs are function signatures. `depends_on` is an import statement. An orphaned constraint is an unused variable. A missing AC is a missing null check.
-
-## The Spec Type System Analogy
-
-| Programming Concept | Spec Equivalent |
-|---|---|
-| Type definition | Constraint -- defines what's allowed |
-| Function signature | AC -- defines input to output |
-| Import statement | `depends_on` -- creates a contract between specs |
-| Type error | Spec conflict -- caught before tests run |
-| Unused variable | Orphan constraint -- no AC references it |
-| Missing null check | Spec gap -- a path with no AC coverage |
-
-## Tier-Based Enforcement
-
-Not all specs need the same rigor:
-
-| Tier | Risk Level | Examples | Coverage Target |
-|------|-----------|---------|-----------------|
-| **1** | Security / Money | Auth, payments, encryption | 100% |
-| **2** | Business Logic | Booking flow, pricing | 80% |
-| **3** | Utility | Helpers, formatters | 50% |
-
-Specter adjusts enforcement severity per tier. A Tier 1 orphan constraint is an error. A Tier 3 orphan is informational.
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Getting Started](specter/docs/GETTING_STARTED.md) | Write and validate your first spec in 5 minutes |
-| [Spec Schema Reference](specter/docs/SPEC_SCHEMA_REFERENCE.md) | Every field in the `.spec.yaml` format |
-| [CLI Reference](specter/docs/CLI_REFERENCE.md) | All commands, options, and exit codes |
-| [FAQ](specter/docs/FAQ.md) | Common questions about SDD and Specter |
-
-## Background: Spec-Driven Development
-
-Specter is the tooling implementation of the SDD methodology taught in [Mastering Spec-Driven Development](sddbook/README.md) -- a 17-chapter course covering the full lifecycle from writing specs to multi-agent orchestration.
-
-## Dogfooding
-
-Specter validates its own specs. The tool has 5 specs with 33 acceptance criteria, 37 tests, and passes its own structural checks. Every feature was specified before it was implemented.
-
-```
-$ specter coverage
-
-Spec ID                 Tier  ACs     Covered  Coverage  Status
------------------------------------------------------------------
-spec-check              T1    6       6        100%      PASS
-spec-coverage           T2    5       5        100%      PASS
-spec-parse              T1    10      10       100%      PASS
-spec-resolve            T1    7       7        100%      PASS
-spec-sync               T2    5       5        100%      PASS
-
-5 specs: 5 passing, 0 failing
-```
-
-## Tech Stack
-
-- Go (single binary, zero runtime dependencies, cross-compiles to all platforms)
-- santhosh-tekuri/jsonschema v6 (JSON Schema validation, draft 2020-12)
-- Masterminds/semver v3 (dependency version matching)
-- Cobra (CLI)
-- gopkg.in/yaml.v3 (YAML parsing)
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+---
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE)

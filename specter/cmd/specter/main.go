@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -1543,10 +1544,17 @@ func readSpecAtRef(arg string) (*schema.SpecAST, error) {
 	return pr.Value, nil
 }
 
+// validGitRef matches the characters that appear in valid git refs:
+// branch names, tags, commit SHAs, and revision qualifiers like HEAD~1.
+var validGitRef = regexp.MustCompile(`^[a-zA-Z0-9_.~^/\-]+$`)
+
 // gitShow runs `git show <ref>:<path>` and returns the output.
 // The path is resolved to be repo-root-relative so git show works
 // regardless of the working directory within the repo.
 func gitShow(ref, path string) ([]byte, error) {
+	if !validGitRef.MatchString(ref) {
+		return nil, fmt.Errorf("invalid git ref %q: must match [a-zA-Z0-9_.~^/\\-]+", ref)
+	}
 	// Get the repo root
 	rootBytes, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
 	if err != nil {
