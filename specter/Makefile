@@ -1,7 +1,7 @@
-.PHONY: build test test-race lint fmt fmt-check vulncheck check clean dogfood prerelease install-hooks
+.PHONY: build test test-race lint fmt fmt-check vulncheck check clean dogfood prerelease install-hooks version-sync
 
 BINARY := bin/specter
-VERSION := dev
+VERSION := $(shell cat VERSION 2>/dev/null || echo "dev")
 
 build:
 	go build -ldflags "-X main.version=$(VERSION)" -o $(BINARY) ./cmd/specter/
@@ -46,6 +46,12 @@ install-hooks:
 	cp scripts/pre-commit ../.git/hooks/pre-commit
 	chmod +x ../.git/hooks/pre-commit
 	@echo "pre-commit hook installed"
+
+# Sync VERSION into the VS Code extension's package.json
+version-sync:
+	@VER=$$(cat VERSION); \
+	node -e "const fs=require('fs'),p='vscode-extension/package.json',j=JSON.parse(fs.readFileSync(p));j.version='$$VER';fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n');" && \
+	echo "Synced version $$VER → vscode-extension/package.json"
 
 clean:
 	rm -rf bin/ specter-linux-* specter-darwin-* specter-windows-*
