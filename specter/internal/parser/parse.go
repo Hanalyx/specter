@@ -37,9 +37,9 @@ func (e ParseError) Error() string {
 
 // ParseResult holds the outcome of parsing a spec.
 type ParseResult struct {
-	OK     bool           `json:"ok"`
+	OK     bool            `json:"ok"`
 	Value  *schema.SpecAST `json:"value,omitempty"`
-	Errors []ParseError   `json:"errors,omitempty"`
+	Errors []ParseError    `json:"errors,omitempty"`
 }
 
 var compiledSchema *jsonschema.Schema

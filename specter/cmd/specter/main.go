@@ -27,6 +27,72 @@ import (
 
 var version = "dev"
 
+// ---------------------------------------------------------------------------
+// CLI spinner — writes to stderr so it never interferes with --json or file
+// output. Suppressed when stderr is not a terminal (pipes, CI).
+// ---------------------------------------------------------------------------
+
+type spinner struct {
+	msg    chan string
+	done   chan struct{}
+	active bool
+}
+
+func newSpinner(initial string) *spinner {
+	// Suppress in non-interactive environments (pipes, CI, dumb terminals).
+	if os.Getenv("CI") != "" || os.Getenv("TERM") == "dumb" || os.Getenv("NO_COLOR") != "" {
+		return &spinner{active: false}
+	}
+	// Quick isatty check via os.Stderr.Stat — character device = terminal.
+	if fi, err := os.Stderr.Stat(); err != nil || (fi.Mode()&os.ModeCharDevice) == 0 {
+		return &spinner{active: false}
+	}
+	s := &spinner{
+		msg:    make(chan string, 4),
+		done:   make(chan struct{}),
+		active: true,
+	}
+	go s.run(initial)
+	return s
+}
+
+func (s *spinner) run(initial string) {
+	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	msg := initial
+	i := 0
+	tick := time.NewTicker(80 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-s.done:
+			fmt.Fprintf(os.Stderr, "\r\033[K") // clear the spinner line
+			return
+		case m := <-s.msg:
+			msg = m
+		case <-tick.C:
+			fmt.Fprintf(os.Stderr, "\r\033[K%s %s", frames[i%len(frames)], msg)
+			i++
+		}
+	}
+}
+
+// update changes the spinner message without stopping it.
+func (s *spinner) update(msg string) {
+	if !s.active {
+		return
+	}
+	s.msg <- msg
+}
+
+// stop clears the spinner line and terminates the goroutine.
+func (s *spinner) stop() {
+	if !s.active {
+		return
+	}
+	s.active = false
+	close(s.done)
+}
+
 func main() {
 	root := &cobra.Command{
 		Use:     "specter",
@@ -58,7 +124,7 @@ func discoverSpecs(patterns ...string) []string {
 	if len(patterns) > 0 && patterns[0] != "" {
 		return patterns
 	}
-	// Load manifest to honour settings.exclude and specs_dir.
+	// Load manifest to honor settings.exclude and specs_dir.
 	m, _ := loadManifest()
 	excludeNames := make(map[string]bool)
 	for _, e := range m.ExcludePatterns() {
@@ -101,7 +167,7 @@ func discoverTestFiles(glob string) []string {
 		// caller gets a useful result rather than silent empty output.
 	}
 
-	// Default: walk the repo for all recognised test file suffixes.
+	// Default: walk the repo for all recognized test file suffixes.
 	var files []string
 	exts := []string{".test.ts", ".test.js", ".test.py", "_test.go", "_test.py"}
 	_ = filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
@@ -600,6 +666,8 @@ func reverseCmd() *cobra.Command {
 				targetPath = args[0]
 			}
 
+			spin := newSpinner("Scanning files…")
+
 			// Walk target path and read source files
 			var files []reverse.SourceFile
 			skipDirs := map[string]bool{
@@ -680,9 +748,21 @@ func reverseCmd() *cobra.Command {
 			}
 
 			if len(files) == 0 {
+				spin.stop()
 				fmt.Println("No source files found.")
 				os.Exit(1)
 			}
+
+			// Make all source file paths relative to the scan root so the engine
+			// can mirror the directory structure in the output without knowing the
+			// absolute path on disk.
+			for i := range files {
+				if rel, err := filepath.Rel(absTarget, files[i].Path); err == nil {
+					files[i].Path = filepath.ToSlash(rel)
+				}
+			}
+
+			spin.update(fmt.Sprintf("Analyzing %d file(s)…", len(files)))
 
 			adapters := []reverse.Adapter{
 				&reverse.TypeScriptAdapter{},
@@ -700,6 +780,7 @@ func reverseCmd() *cobra.Command {
 			}
 
 			result := reverse.Reverse(input, adapters)
+			spin.stop()
 
 			if jsonOutput {
 				enc := json.NewEncoder(os.Stdout)
@@ -742,7 +823,7 @@ func reverseCmd() *cobra.Command {
 					continue
 				}
 
-				if mkErr := os.MkdirAll(outputDir, 0755); mkErr != nil {
+				if mkErr := os.MkdirAll(filepath.Dir(outPath), 0755); mkErr != nil {
 					fmt.Fprintf(os.Stderr, "error creating output directory: %v\n", mkErr)
 					os.Exit(1)
 				}
@@ -1416,22 +1497,6 @@ func runWatchCycle(m *manifest.Manifest) {
 		timestamp, status, len(specs), coveredACs, totalACs, passing, failing)
 }
 
-// collectModTimes snapshots the modification times of all watched files.
-func collectModTimes() map[string]time.Time {
-	mods := make(map[string]time.Time)
-	for _, f := range discoverSpecs() {
-		if info, err := os.Stat(f); err == nil {
-			mods[f] = info.ModTime()
-		}
-	}
-	for _, f := range discoverTestFiles("") {
-		if info, err := os.Stat(f); err == nil {
-			mods[f] = info.ModTime()
-		}
-	}
-	return mods
-}
-
 // modsChanged returns true if any file's modification time differs between snapshots.
 func modsChanged(prev, curr map[string]time.Time) bool {
 	if len(prev) != len(curr) {
@@ -1444,7 +1509,6 @@ func modsChanged(prev, curr map[string]time.Time) bool {
 	}
 	return false
 }
-
 
 // @spec spec-diff
 func diffCmd() *cobra.Command {

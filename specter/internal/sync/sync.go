@@ -24,12 +24,12 @@ type PhaseResult struct {
 
 // SyncResult is the unified pipeline result.
 type SyncResult struct {
-	Passed              bool                             `json:"passed"`
-	Phases              []PhaseResult                   `json:"phases"`
-	StoppedAt           string                          `json:"stopped_at,omitempty"`
-	Graph               *resolver.SpecGraph             `json:"graph,omitempty"`
-	CheckResult         *checker.CheckResult            `json:"check_result,omitempty"`
-	CoverageReport      *coverage.CoverageReport        `json:"coverage_report,omitempty"`
+	Passed              bool                                 `json:"passed"`
+	Phases              []PhaseResult                        `json:"phases"`
+	StoppedAt           string                               `json:"stopped_at,omitempty"`
+	Graph               *resolver.SpecGraph                  `json:"graph,omitempty"`
+	CheckResult         *checker.CheckResult                 `json:"check_result,omitempty"`
+	CoverageReport      *coverage.CoverageReport             `json:"coverage_report,omitempty"`
 	DepCoverageWarnings []coverage.DependencyCoverageWarning `json:"dep_coverage_warnings,omitempty"`
 }
 
@@ -37,10 +37,10 @@ type SyncResult struct {
 type SyncInput struct {
 	SpecFiles  []FileContent // [filepath, content]
 	TestFiles  []FileContent
-	Thresholds map[int]int            // optional coverage thresholds by tier; nil uses defaults
-	CheckOpts  *checker.CheckOptions  // optional check options (strict, warn_on_draft)
-	OnlyPhase  string                 // C-05: if set, run prerequisites without halting then run this phase
-	Results    *coverage.ResultsFile  // optional: pass-rate-aware coverage for Tier 1
+	Thresholds map[int]int           // optional coverage thresholds by tier; nil uses defaults
+	CheckOpts  *checker.CheckOptions // optional check options (strict, warn_on_draft)
+	OnlyPhase  string                // C-05: if set, run prerequisites without halting then run this phase
+	Results    *coverage.ResultsFile // optional: pass-rate-aware coverage for Tier 1
 }
 
 type FileContent struct {

@@ -1,0 +1,16 @@
+{
+  "root": true,
+  "parser": "@typescript-eslint/parser",
+  "parserOptions": {
+    "ecmaVersion": 2020,
+    "sourceType": "module"
+  },
+  "plugins": ["@typescript-eslint"],
+  "rules": {
+    "@typescript-eslint/no-unused-vars": ["error", { "argsIgnorePattern": "^_" }],
+    "@typescript-eslint/no-explicit-any": "warn",
+    "no-console": "warn",
+    "eqeqeq": ["error", "always"]
+  },
+  "ignorePatterns": ["out/", "node_modules/", "**/__tests__/**"]
+}

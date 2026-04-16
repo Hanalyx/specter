@@ -6,6 +6,24 @@ In Spec-Driven Development, the specification is the source of truth — not the
 
 ---
 
+## Human Intent, AI Execution
+
+Specter's schema is deliberately detailed — constraints, acceptance criteria, tiers, provenance, coverage thresholds. Writing all of that by hand for every module would be impractical, and that was never the intention.
+
+The intended workflow is a collaboration between you and your AI coding assistant:
+
+1. **You provide intent** — a brief description of what a module should do, its key constraints, and any non-obvious judgement calls or trade-offs
+2. **The AI writes the spec** — translating your intent into a fully structured `.spec.yaml` file with constraints, ACs, and tier assignments
+3. **The AI writes the tests** — derived directly from the ACs in the spec
+4. **You review** — the spec and tests are the approval gate; you validate that the AI correctly captured your intent before any implementation begins
+5. **The AI implements** — with the spec as the contract and the tests as the verification
+
+Specter enforces the discipline at every step: the spec must exist before code, tests must trace to ACs, and coverage must meet the tier threshold before `specter sync` passes. It makes the process infrastructure, not a suggestion.
+
+**The core mission: guide your AI coding assistant through spec → test → implement → eval in the right order, every time, with your intent preserved throughout.**
+
+---
+
 ## The Problem This Solves
 
 When you work with AI coding tools, two things go wrong silently:
@@ -119,6 +137,7 @@ The annotations are plain comments — no build step, no framework, works in any
 ## Links
 
 - [Specter on GitHub](https://github.com/Hanalyx/specter)
+- [AI Prompts](https://github.com/Hanalyx/specter/blob/main/specter/docs/AI_PROMPTS.md) — ready-to-use prompts for every stage of the SDD loop
 - [Mastering Spec-Driven Development](https://github.com/Hanalyx/specter/tree/main/sddbook) — the methodology behind the tool
 - [CLI Reference](https://github.com/Hanalyx/specter/blob/main/specter/docs/CLI_REFERENCE.md)
 - [Report an issue](https://github.com/Hanalyx/specter/issues)

@@ -2,7 +2,6 @@
 
 import type {
   ACDecoration,
-  DecorationKind,
   SpecCoverageEntry,
   CoverageReport,
   SpecTreeNode,

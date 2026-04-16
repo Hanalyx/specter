@@ -2,13 +2,11 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import * as os from 'os';
 
 import { shouldActivate, resolveManifestPath, createClientKey } from './activation';
 import {
   resolveBinaryPath,
   buildDownloadUrl,
-  verifyChecksum,
   defaultCachePath,
 } from './binaryDiscovery';
 import { buildDiagnostics, DiagnosticReplacer, shouldRunCoverageForFile } from './diagnostics';
@@ -21,8 +19,6 @@ import {
   findNearestSpecAnnotation,
 } from './annotations';
 import {
-  buildACDecorations,
-  buildTreeNodes,
   formatStatusBar,
   classifyNotification,
   buildFileDecoration,
@@ -30,14 +26,10 @@ import {
 } from './coverage';
 import { buildConstraintHover, resolveDefinitionTarget } from './navigation';
 import { buildInsightCards, formatSpecContextForAI, shouldShowWalkthrough } from './insights';
-import { detectDrift, buildDriftHover } from './drift';
 import { SpecterClient } from './client';
 import type {
   SpecIndex,
-  SpecEntry,
   CoverageReport,
-  SpecCoverageEntry,
-  DriftBaseline,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -58,6 +50,11 @@ const rateLimiter = new NotificationRateLimiter({ windowMs: 60_000 });
 // ---------------------------------------------------------------------------
 
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
+  // Commands declared in package.json menus MUST be registered unconditionally.
+  // If they are registered inside the shouldActivate guard, clicking a toolbar
+  // button before the workspace passes that check produces "command not found".
+  registerCommands(ctx);
+
   const folders = vscode.workspace.workspaceFolders ?? [];
 
   // AC-01: check activation conditions
@@ -100,9 +97,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
   // Providers (registered once, they read per-folder state as needed)
   registerProviders(ctx);
-
-  // Commands
-  registerCommands(ctx);
 }
 
 export function deactivate(): void {
@@ -168,7 +162,7 @@ async function resolveBinary(ctx: vscode.ExtensionContext): Promise<string | nul
   const cfg = vscode.workspace.getConfiguration('specter');
   const workspaceSetting = cfg.get<string>('binaryPath') || null;
 
-  const { resolved, source } = resolveBinaryPath({
+  const { resolved } = resolveBinaryPath({
     workspaceSetting,
     which: name => {
       try {
@@ -201,7 +195,7 @@ async function resolveBinary(ctx: vscode.ExtensionContext): Promise<string | nul
   return downloadBinary(ctx);
 }
 
-async function downloadBinary(ctx: vscode.ExtensionContext): Promise<string | null> {
+async function downloadBinary(_ctx: vscode.ExtensionContext): Promise<string | null> {
   const cfg = vscode.workspace.getConfiguration('specter');
   const version = cfg.get<string>('version', 'latest');
 
@@ -218,8 +212,6 @@ async function downloadBinary(ctx: vscode.ExtensionContext): Promise<string | nu
       try {
         const https = require('https');
         const fs = require('fs');
-        const zlib = require('zlib');
-        const tarStream = require('tar-stream');
 
         const data: Buffer = await new Promise((resolve, reject) => {
           https.get(url, (res: any) => {
@@ -583,7 +575,7 @@ function registerDiagnosticHooks(ctx: vscode.ExtensionContext): void {
   // Clean up diagnostics on file rename / delete (AC-04)
   ctx.subscriptions.push(
     vscode.workspace.onDidRenameFiles(e => {
-      for (const { oldUri, newUri } of e.files) {
+      for (const { oldUri } of e.files) {
         const replacer = replacerForUri(oldUri);
         replacer?.replace(oldUri.fsPath, []);
       }
@@ -642,6 +634,12 @@ function registerCommands(ctx: vscode.ExtensionContext): void {
   // specter.runSync
   ctx.subscriptions.push(
     vscode.commands.registerCommand('specter.runSync', async () => {
+      if (clients.size === 0) {
+        vscode.window.showWarningMessage(
+          'Specter: no specter.yaml found in this workspace. Run `specter init` to get started.',
+        );
+        return;
+      }
       for (const [key, client] of clients) {
         await runCoverageForFolder(key, client);
       }

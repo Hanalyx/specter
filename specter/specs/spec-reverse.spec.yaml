@@ -1,6 +1,6 @@
 spec:
   id: spec-reverse
-  version: "1.1.0"
+  version: "1.2.0"
   status: draft
   tier: 2
 
@@ -105,6 +105,11 @@ spec:
 
     - id: C-11
       description: "MUST correctly extract test descriptions containing escaped quotes (e.g., it(\"user's token is valid\") or it('reject \"admin\" role'))"
+      type: technical
+      enforcement: error
+
+    - id: C-12
+      description: "MUST set FileName to a path that mirrors the source directory structure relative to the scan root — e.g. a source file at src/auth/login.ts produces FileName 'auth/login.spec.yaml', not 'login.spec.yaml'"
       type: technical
       enforcement: error
 
@@ -267,12 +272,27 @@ spec:
       references_constraints: ["C-11"]
       priority: high
 
+    - id: AC-16
+      description: "Source file in a subdirectory produces FileName with mirrored subdirectory path"
+      inputs:
+        source_file: "auth/login.ts (relative to scan root)"
+        group_by: "file"
+      expected_output:
+        file_name: "auth/login.spec.yaml"
+      references_constraints: ["C-12"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
       relationship: requires
 
   changelog:
+    - version: "1.2.0"
+      date: "2026-04-16"
+      author: "specter-team"
+      type: minor
+      description: "Add C-12/AC-16: FileName must mirror source directory structure to avoid flat-file sprawl"
     - version: "1.1.0"
       date: "2026-04-14"
       author: "specter-team"

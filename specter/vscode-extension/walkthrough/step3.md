@@ -16,3 +16,7 @@ This runs **parse → resolve → check → coverage** in sequence and exits non
 - **Problems panel** — parse and structural errors from `specter check` appear as you save
 
 > **CI integration:** Add `specter sync` to your CI pipeline. It exits 0 only when all Tier 1/2 specs meet their coverage thresholds.
+
+---
+
+**Not sure where to start?** Use the [AI prompts guide](https://github.com/Hanalyx/specter/blob/main/specter/docs/AI_PROMPTS.md) — six ready-to-paste prompts that take you from intent to a passing `specter sync`, one step at a time.

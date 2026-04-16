@@ -85,7 +85,7 @@
         {
           "id": "specter-sidebar",
           "title": "Specter",
-          "icon": "$(graph)"
+          "icon": "images/specter-activity-icon.svg"
         }
       ]
     },
@@ -118,7 +118,9 @@
             "media": {
               "markdown": "walkthrough/step1.md"
             },
-            "completionEvents": ["onCommand:specter.runReverse"]
+            "completionEvents": [
+              "onCommand:specter.runReverse"
+            ]
           },
           {
             "id": "annotate",
@@ -135,7 +137,9 @@
             "media": {
               "markdown": "walkthrough/step3.md"
             },
-            "completionEvents": ["onCommand:specter.runSync"]
+            "completionEvents": [
+              "onCommand:specter.runSync"
+            ]
           }
         ]
       }
@@ -144,15 +148,19 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "watch": "tsc -watch -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "jest",
     "lint": "eslint src --ext ts",
-    "package": "vsce package"
+    "package": "npx @vscode/vsce package"
   },
-  "dependencies": {},
   "devDependencies": {
     "@types/jest": "^29.5.0",
     "@types/node": "^18.0.0",
     "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.9.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint": "^8.57.0",
     "jest": "^29.5.0",
     "ts-jest": "^29.1.0",
     "typescript": "^5.0.0"

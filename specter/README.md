@@ -17,6 +17,24 @@ All checks passed.
 
 ---
 
+## Human Intent, AI Execution
+
+Specter's schema is deliberately detailed — constraints, acceptance criteria, tiers, provenance, coverage thresholds. Writing all of that by hand for every module would be impractical, and that was never the intention.
+
+The intended workflow is a collaboration between you and your AI coding assistant:
+
+1. **You provide intent** — a brief description of what a module should do, its key constraints, and any non-obvious judgement calls or trade-offs
+2. **The AI writes the spec** — translating your intent into a fully structured `.spec.yaml` file with constraints, ACs, and tier assignments
+3. **The AI writes the tests** — derived directly from the ACs in the spec
+4. **You review** — the spec and tests are the approval gate; you validate that the AI correctly captured your intent before any implementation begins
+5. **The AI implements** — with the spec as the contract and the tests as the verification
+
+Specter enforces the discipline at every step: the spec must exist before code, tests must trace to ACs, and coverage must meet the tier threshold before `specter sync` passes. It makes the process infrastructure, not a suggestion.
+
+**The core mission: guide your AI coding assistant through spec → test → implement → eval in the right order, every time, with your intent preserved throughout.**
+
+---
+
 ## Install
 
 **Binary (Linux amd64):**
@@ -278,6 +296,7 @@ spec-sync        T2    5    5        100%      PASS
 | | |
 |---|---|
 | [Getting Started](docs/GETTING_STARTED.md) | Write and validate your first spec |
+| [AI Prompts](docs/AI_PROMPTS.md) | Ready-to-use prompts for every stage of the SDD loop |
 | [Spec Schema Reference](docs/SPEC_SCHEMA_REFERENCE.md) | Every field in the `.spec.yaml` format |
 | [CLI Reference](docs/CLI_REFERENCE.md) | All commands, flags, and exit codes |
 | [FAQ](docs/FAQ.md) | Common questions about SDD and Specter |

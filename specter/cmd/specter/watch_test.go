@@ -423,13 +423,3 @@ func TestSanitizeID(t *testing.T) {
 		t.Errorf("sanitizeID = %q, want %q", got, "my_spec")
 	}
 }
-
-// writeSpecInDir writes a spec file at dir/<name> (not in a subdir)
-// for tests that need a flat spec layout.
-func writeSpecInDir(t *testing.T, dir, name, content string) {
-	t.Helper()
-	p := filepath.Join(dir, name)
-	if err := os.WriteFile(p, []byte(content), 0644); err != nil {
-		t.Fatalf("write spec: %v", err)
-	}
-}

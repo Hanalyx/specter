@@ -119,8 +119,8 @@ func (a *GoAdapter) ExtractConstraints(path, content string) []ExtractedConstrai
 // --- Assertion Extraction ---
 
 var (
-	testFuncRE  = regexp.MustCompile(`func\s+(Test\w+)\s*\(\s*t\s+\*testing\.T\s*\)`)
-	subTestRE   = regexp.MustCompile(`t\.Run\s*\(\s*"([^"]+)"`)
+	testFuncRE   = regexp.MustCompile(`func\s+(Test\w+)\s*\(\s*t\s+\*testing\.T\s*\)`)
+	subTestRE    = regexp.MustCompile(`t\.Run\s*\(\s*"([^"]+)"`)
 	tableDriveRE = regexp.MustCompile(`\{\s*name:\s*"([^"]+)"`)
 )
 
@@ -253,9 +253,7 @@ func isErrorDescription(desc string) bool {
 
 func testNameToDescription(name string) string {
 	// Strip "Test" prefix
-	if strings.HasPrefix(name, "Test") {
-		name = name[4:]
-	}
+	name = strings.TrimPrefix(name, "Test")
 	// Insert spaces before capitals
 	var result strings.Builder
 	for i, r := range name {

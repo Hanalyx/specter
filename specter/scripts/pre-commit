@@ -1,0 +1,26 @@
+#!/bin/sh
+# Pre-commit hook: formatting and vet checks on staged Go files.
+# Install with: make install-hooks
+
+set -e
+
+STAGED_GO=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
+
+if [ -z "$STAGED_GO" ]; then
+  exit 0
+fi
+
+# gofmt check
+UNFORMATTED=$(echo "$STAGED_GO" | xargs gofmt -l 2>/dev/null)
+if [ -n "$UNFORMATTED" ]; then
+  echo "specter pre-commit: these files need gofmt:"
+  echo "$UNFORMATTED"
+  echo "Run: make fmt"
+  exit 1
+fi
+
+# go vet on changed packages
+PKGS=$(echo "$STAGED_GO" | xargs -I{} dirname {} | sort -u | sed 's|^|github.com/Hanalyx/specter/|')
+go vet $PKGS 2>&1 || exit 1
+
+exit 0

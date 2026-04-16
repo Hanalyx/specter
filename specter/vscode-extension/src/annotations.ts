@@ -1,6 +1,5 @@
 // @spec spec-vscode
 
-import * as path from 'path';
 import type {
   SpecIndex,
   CompletionItem,

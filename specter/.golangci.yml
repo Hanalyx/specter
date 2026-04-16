@@ -1,0 +1,31 @@
+linters:
+  enable:
+    - errcheck      # unchecked error return values
+    - staticcheck   # comprehensive static analysis (replaces gosimple, unused, stylecheck)
+    - ineffassign   # assignments whose value is never used
+    - misspell      # common spelling mistakes in comments and strings
+    - govet         # reports suspicious constructs (superset of go vet)
+
+linters-settings:
+  errcheck:
+      # These patterns are intentionally unchecked throughout the codebase
+      # (e.g. best-effort stderr writes, deferred closes where error is irrelevant).
+      exclude-functions:
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (os.File).Close
+        - (*os.File).Close
+
+  misspell:
+    locale: US
+
+issues:
+  # Show all issues, don't cap at 3 per linter
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+  exclude-rules:
+    # Test files get more latitude — ignore unused parameters in table-driven tests
+    - path: "_test\\.go"
+      linters:
+        - ineffassign
