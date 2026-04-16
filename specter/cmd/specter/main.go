@@ -3,11 +3,14 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -26,6 +29,8 @@ import (
 )
 
 var version = "dev"
+
+const issuesURL = "https://github.com/Hanalyx/specter/issues/new?template=bug_report.md"
 
 // ---------------------------------------------------------------------------
 // CLI spinner — writes to stderr so it never interferes with --json or file
@@ -94,6 +99,17 @@ func (s *spinner) stop() {
 }
 
 func main() {
+	// Catch unexpected panics and print a pre-filled bug report link.
+	defer func() {
+		if r := recover(); r != nil {
+			stack := string(debug.Stack())
+			fmt.Fprintf(os.Stderr, "\n\nUnexpected error: %v\n", r)
+			fmt.Fprintf(os.Stderr, "This looks like a bug in Specter. Please report it:\n")
+			fmt.Fprintf(os.Stderr, "  %s\n\n", bugReportURL(fmt.Sprintf("panic: %v\n\nStack trace:\n```\n%s```", r, stack)))
+			os.Exit(2)
+		}
+	}()
+
 	root := &cobra.Command{
 		Use:     "specter",
 		Short:   "A type system for specs",
@@ -112,10 +128,80 @@ func main() {
 	root.AddCommand(explainCmd())
 	root.AddCommand(watchCmd())
 	root.AddCommand(diffCmd())
+	root.AddCommand(feedbackCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+// bugReportURL returns a pre-filled GitHub issue URL with version, OS, command,
+// and Go runtime info already populated in the issue body.
+func bugReportURL(context string) string {
+	// Redact full paths from args — keep only the subcommand + flags.
+	args := os.Args
+	cmd := "specter"
+	if len(args) > 1 {
+		cmd = "specter " + strings.Join(args[1:], " ")
+	}
+
+	body := fmt.Sprintf(
+		"**Specter version:** %s\n"+
+			"**OS / arch:** %s/%s\n"+
+			"**Go runtime:** %s\n"+
+			"**Command run:** `%s`\n\n"+
+			"**What happened:**\n%s\n\n"+
+			"**Expected behavior:**\n<!-- what did you expect? -->\n\n"+
+			"**Steps to reproduce:**\n1.\n2.\n3.\n\n"+
+			"**Spec file (if relevant):**\n```yaml\n\n```\n",
+		version,
+		runtime.GOOS, runtime.GOARCH,
+		runtime.Version(),
+		cmd,
+		context,
+	)
+	return issuesURL + "&body=" + url.QueryEscape(body)
+}
+
+// feedbackCmd opens (or prints) a pre-filled GitHub issue URL.
+func feedbackCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "feedback",
+		Short: "Open a pre-filled GitHub issue to report a bug or request a feature",
+		Long: `Opens a GitHub issue form pre-filled with your Specter version, OS, and
+Go runtime. Describe the bug or feature request in the form.
+
+If your browser does not open automatically, copy and paste the printed URL.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			link := bugReportURL("<!-- describe what went wrong -->")
+			opened := tryOpenBrowser(link)
+			if opened {
+				fmt.Println("Opening GitHub issue form in your browser...")
+			} else {
+				fmt.Println("Copy and open this URL in your browser to file a report:")
+				fmt.Println()
+			}
+			fmt.Println(link)
+			return nil
+		},
+	}
+}
+
+// tryOpenBrowser attempts to open url in the default browser.
+// Returns true if the open command was launched successfully.
+func tryOpenBrowser(link string) bool {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", link)
+	case "linux":
+		cmd = exec.Command("xdg-open", link)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", link)
+	default:
+		return false
+	}
+	return cmd.Start() == nil
 }
 
 // --- Helpers ---
