@@ -51,9 +51,13 @@ jobs:
         run: go test -race ./...
 
       - name: Vulnerability scan
+        # govulncheck@latest requires go1.25+. Install go1.25.9 for this step
+        # only — the rest of the workflow uses the version from go.mod (1.22.2).
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+          go install golang.org/dl/go1.25.9@latest
+          ~/go/bin/go1.25.9 download
+          ~/go/bin/go1.25.9 install golang.org/x/vuln/cmd/govulncheck@latest
+          ~/go/bin/go1.25.9 run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
       - name: Build
         run: go build -o bin/specter ./cmd/specter/
