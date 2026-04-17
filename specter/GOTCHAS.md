@@ -147,7 +147,23 @@ find src -name '*.ts' -newer out/extension.js
 
 ---
 
-## 13. VS Code extension and CLI versions must stay in lockstep
+## 13. `process.arch` ≠ `runner.arch` — case matters
+
+**Symptom:** VS Code extension downloads URL `.../specter_0.6.6_linux_x64.tar.gz` which 404s. The actual published asset is `..._linux_amd64.tar.gz`.
+
+**Cause:** The extension had one `normaliseArch` function serving two callers with different case conventions:
+- VS Code's `runner.arch` (GitHub Actions context) uses uppercase: `X64`, `ARM64`, `IA32`.
+- Node's `process.arch` (what the extension host actually passes) uses lowercase: `x64`, `arm64`, `ia32`.
+
+The switch was case-sensitive with only uppercase cases. Lowercase values fell through to default (`return arch.toLowerCase()`) and produced URLs with `x64` in the path — which goreleaser never emits (it uses `amd64`).
+
+**What's in place now:** `normaliseArch` lowercases its input before switching. Tests cover both uppercase and lowercase inputs.
+
+**Rule:** when writing a normaliser that straddles two case conventions, normalise case at the top of the function. Don't depend on callers feeding the "right" case.
+
+---
+
+## 14. VS Code extension and CLI versions must stay in lockstep
 
 **Symptom:** Extension v0.6.5 queries `api.github.com/.../releases/latest`, gets back e.g. v0.6.5, then tries to download `.../releases/download/v0.6.5/...`. If the GitHub release for that tag doesn't exist yet, you get 404 "Not Found" in the body (see #3).
 
