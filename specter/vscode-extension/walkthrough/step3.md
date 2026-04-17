@@ -1,22 +1,67 @@
-# Run specter sync
+# Annotate your tests and check coverage
 
-With specs written and tests annotated, run the full pipeline:
+## Add annotations to your tests
+
+Link test functions to specs with two comment lines — no library, no framework, any language:
+
+```typescript
+// @spec user-create
+// @ac AC-01
+test('valid email and password creates user and returns 201', async () => {
+  // ...
+});
+```
+
+```python
+# @spec user-create
+# @ac AC-01
+def test_valid_registration_returns_201(client):
+    # ...
+```
+
+```go
+// @spec user-create
+// @ac AC-01
+func TestCreateUser_ValidCredentials_Returns201(t *testing.T) {
+    // ...
+}
+```
+
+**Completions are automatic** — type `// @spec ` and Specter suggests IDs; type `// @ac ` and completions are scoped to the spec above.
+
+## Check your coverage
+
+```bash
+specter coverage
+```
+
+```
+user-create    T2    4 ACs    1 covered    25%    PASS
+```
+
+Each `@ac` annotation you add moves the percentage up. Tier 1 specs need 100%. Tier 2 specs need 80%.
+
+## Run the full pipeline
 
 ```bash
 specter sync
 ```
 
-This runs **parse → resolve → check → coverage** in sequence and exits non-zero if any Tier 1 or Tier 2 spec fails its coverage threshold. Use this as your CI gate.
+```
+PASS parse:    all specs valid
+PASS resolve:  no dependency issues
+PASS check:    0 errors
+PASS coverage: thresholds met
 
-**What you'll see in VS Code:**
+All checks passed.
+```
 
-- **Gutter icons** on each AC line in `.spec.yaml` files — green (covered), red (uncovered), grey dash (gap)
-- **Status bar** — `Specter: N specs · X% · F failing` — click to open the Insights panel
-- **Insights panel** — human-readable health cards for every failing spec with full AC descriptions and actionable next steps
-- **Problems panel** — parse and structural errors from `specter check` appear as you save
+**Add this to CI** — it exits non-zero if any Tier 1 or Tier 2 spec falls below its coverage threshold.
 
-> **CI integration:** Add `specter sync` to your CI pipeline. It exits 0 only when all Tier 1/2 specs meet their coverage thresholds.
+```yaml
+# GitHub Actions
+- name: Specter sync
+  run: specter sync
+```
 
----
-
-**Not sure where to start?** Use the [AI prompts guide](https://github.com/Hanalyx/specter/blob/main/specter/docs/AI_PROMPTS.md) — six ready-to-paste prompts that take you from intent to a passing `specter sync`, one step at a time.
+> **You're done.** The Coverage panel in the sidebar shows real-time status. Gutter icons turn green as you annotate. The status bar shows aggregate coverage at all times.

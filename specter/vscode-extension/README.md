@@ -8,10 +8,13 @@ In Spec-Driven Development, the specification is the source of truth — not the
 
 ## Get Started
 
-New to Specter? Install the CLI, run `specter reverse src/` to generate draft specs from your code, then `specter init` to activate this extension.
+New to Specter? The built-in walkthrough takes you from install to a passing pipeline — open it directly in VS Code:
 
-- **[QuickStart](https://github.com/Hanalyx/specter/blob/main/specter/docs/QUICKSTART.md)** — zero to working pipeline in 5 minutes
-- **[Getting Started](https://github.com/Hanalyx/specter/blob/main/specter/docs/GETTING_STARTED.md)** — full walkthrough from zero specs to 100% coverage, with AI prompts at every step
+**[Open QuickStart Walkthrough](command:workbench.action.openWalkthrough?%22Hanalyx.specter-vscode%23specter.gettingStarted%22)**
+
+Or use the full written guides:
+- **[QuickStart](https://github.com/Hanalyx/specter/blob/main/specter/docs/QUICKSTART.md)** — 5-minute path: install → specs → tests → CI
+- **[Getting Started](https://github.com/Hanalyx/specter/blob/main/specter/docs/GETTING_STARTED.md)** — full walkthrough with AI prompts at every step
 
 ---
 
