@@ -101,6 +101,17 @@ describe('buildDownloadUrl', () => {
     expect(buildDownloadUrl({ version: '0.5.0', os: 'linux', arch: 'X64' }).includes('amd64')).toBe(true);
     expect(buildDownloadUrl({ version: '0.5.0', os: 'linux', arch: 'ARM64' }).includes('arm64')).toBe(true);
   });
+
+  it('maps Node process.arch lowercase x64 → amd64 and arm64 → arm64', () => {
+    // Regression: pre-v0.6.7 the switch only matched uppercase VS Code
+    // runner.arch values, so Node's lowercase process.arch fell through to
+    // default and produced URLs like .../specter_0.6.6_linux_x64.tar.gz
+    // which 404 against goreleaser's .../specter_0.6.6_linux_amd64.tar.gz.
+    expect(buildDownloadUrl({ version: '0.5.0', os: 'linux', arch: 'x64' })).toContain('specter_0.5.0_linux_amd64.tar.gz');
+    expect(buildDownloadUrl({ version: '0.5.0', os: 'linux', arch: 'arm64' })).toContain('specter_0.5.0_linux_arm64.tar.gz');
+    expect(buildDownloadUrl({ version: '0.5.0', os: 'darwin', arch: 'x64' })).toContain('specter_0.5.0_darwin_amd64.tar.gz');
+    expect(buildDownloadUrl({ version: '0.5.0', os: 'darwin', arch: 'arm64' })).toContain('specter_0.5.0_darwin_arm64.tar.gz');
+  });
 });
 
 // @ac AC-23

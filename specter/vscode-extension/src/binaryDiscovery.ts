@@ -100,12 +100,19 @@ export function isBinaryFile(filePath: string): boolean {
 // AC-02: Download URL construction
 // ---------------------------------------------------------------------------
 
-/** Maps VS Code runner.arch values to Go GOARCH values. */
+/** Maps a runtime arch identifier to Go's GOARCH.
+ *
+ * Accepts both VS Code's `runner.arch` uppercase convention ("X64", "ARM64")
+ * and Node's `process.arch` lowercase convention ("x64", "arm64"). The
+ * extension calls this with `process.arch`, so the lowercase cases are the
+ * hot path; the uppercase cases exist for parity with the GitHub Actions
+ * composite action which uses runner.arch.
+ */
 function normaliseArch(arch: string): string {
-  switch (arch) {
-    case 'X64':   return 'amd64';
-    case 'ARM64': return 'arm64';
-    case 'IA32':  return '386';
+  switch (arch.toLowerCase()) {
+    case 'x64':   return 'amd64';
+    case 'arm64': return 'arm64';
+    case 'ia32':  return '386';
     default:      return arch.toLowerCase();
   }
 }
