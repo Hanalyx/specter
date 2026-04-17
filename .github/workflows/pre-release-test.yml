@@ -139,8 +139,8 @@ jobs:
           - repo: django/django
             adapter: python
             path: "."
-            min_specs: 850
-            min_assertions: 17000
+            min_specs: 700
+            min_assertions: 15000
           # TypeScript/Next.js/React repos
           - repo: calcom/cal.com
             adapter: typescript

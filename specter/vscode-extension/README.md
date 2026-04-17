@@ -6,6 +6,20 @@ In Spec-Driven Development, the specification is the source of truth — not the
 
 ---
 
+## Get Started
+
+New to Specter? Open the built-in walkthrough directly in VS Code:
+
+> `Ctrl+Shift+P` → **Welcome: Open Walkthrough** → **Get Started with Specter**
+
+It covers install, generating specs from your code, closing gaps with AI, annotating tests, and locking coverage into CI — all without leaving the editor.
+
+Prefer a written guide?
+- **[QuickStart](https://github.com/Hanalyx/specter/blob/main/specter/docs/QUICKSTART.md)** — 5-minute path: install → specs → tests → CI
+- **[Getting Started](https://github.com/Hanalyx/specter/blob/main/specter/docs/GETTING_STARTED.md)** — full walkthrough with AI prompts at every step
+
+---
+
 ## Human Intent, AI Execution
 
 Specter's schema is deliberately detailed — constraints, acceptance criteria, tiers, provenance, coverage thresholds. Writing all of that by hand for every module would be impractical, and that was never the intention.
@@ -136,8 +150,10 @@ The annotations are plain comments — no build step, no framework, works in any
 
 ## Links
 
-- [Specter on GitHub](https://github.com/Hanalyx/specter)
+- [QuickStart](https://github.com/Hanalyx/specter/blob/main/specter/docs/QUICKSTART.md) — zero to working pipeline in 5 minutes
+- [Getting Started](https://github.com/Hanalyx/specter/blob/main/specter/docs/GETTING_STARTED.md) — full walkthrough from zero specs to 100% coverage
 - [AI Prompts](https://github.com/Hanalyx/specter/blob/main/specter/docs/AI_PROMPTS.md) — ready-to-use prompts for every stage of the SDD loop
-- [Mastering Spec-Driven Development](https://github.com/Hanalyx/specter/tree/main/sddbook) — the methodology behind the tool
 - [CLI Reference](https://github.com/Hanalyx/specter/blob/main/specter/docs/CLI_REFERENCE.md)
+- [Specter on GitHub](https://github.com/Hanalyx/specter)
+- [Mastering Spec-Driven Development](https://github.com/Hanalyx/specter/tree/main/sddbook) — the methodology behind the tool
 - [Report an issue](https://github.com/Hanalyx/specter/issues)

@@ -1,0 +1,97 @@
+spec:
+  id: spec-commits
+  version: "1.0.0"
+  status: draft
+  tier: 3
+  context:
+    system: Specter toolchain
+    feature: Conventional Commits enforcement
+    description: >
+      Specter's commit history must be machine-readable to support automated
+      changelog generation, clear release notes, and unambiguous communication
+      about the nature of every change. Conventional Commits 1.0.0 is the
+      industry-standard format that satisfies these requirements.
+    assumptions:
+      - "git >= 2.9 is available (supports core.hooksPath)"
+      - "Merges to main use squash-merge so PR title becomes the commit message"
+  objective:
+    summary: >
+      Enforce the Conventional Commits 1.0.0 format on every commit via a
+      local commit-msg hook and a CI PR-title check, so the squash-merge
+      commit on main is always compliant.
+    scope:
+      includes:
+        - "commit-msg hook installed by make install-hooks"
+        - "CI step validating PR title on pull_request events"
+        - "Exemption for merge commits and automated revert commits"
+      excludes:
+        - "Automated changelog generation (future roadmap)"
+        - "Enforcement on commits already in history"
+  constraints:
+    - id: C-01
+      description: >
+        Every commit subject line MUST match:
+        <type>[(<scope>)][!]: <description>
+        where type is one of: feat, fix, docs, style, refactor, perf, test,
+        build, ci, chore, revert.
+      type: technical
+      enforcement: error
+    - id: C-02
+      description: >
+        Breaking changes MUST be indicated by ! after the type/scope
+        or by a BREAKING CHANGE: footer in the commit body.
+      type: technical
+      enforcement: error
+    - id: C-03
+      description: >
+        The description MUST be non-empty and the subject line MUST NOT
+        exceed 100 characters.
+      type: technical
+      enforcement: error
+    - id: C-04
+      description: >
+        Merge commits (subject starting with "Merge ") and automated revert
+        commits (subject starting with "Revert \"") MUST be exempt.
+      type: technical
+      enforcement: error
+    - id: C-05
+      description: >
+        The commit-msg hook MUST be installed by make install-hooks and MUST
+        reject non-compliant messages before the commit is recorded locally.
+      type: business
+      enforcement: error
+    - id: C-06
+      description: >
+        CI MUST validate the PR title on every pull_request event targeting
+        main so the squash-merge commit is always compliant.
+      type: business
+      enforcement: error
+  acceptance_criteria:
+    - id: AC-01
+      description: >
+        commit-msg hook rejects a plain message with no type prefix
+        (e.g. "update readme") with exit code 1 and a helpful error message.
+    - id: AC-02
+      description: >
+        commit-msg hook accepts a minimal valid commit: "feat: add thing".
+    - id: AC-03
+      description: >
+        commit-msg hook accepts a scoped commit: "fix(coverage): off-by-one".
+    - id: AC-04
+      description: >
+        commit-msg hook accepts a breaking change commit: "feat!: rename @ac".
+    - id: AC-05
+      description: >
+        commit-msg hook allows merge commits through without error.
+    - id: AC-06
+      description: >
+        commit-msg hook rejects an unrecognised type such as "update: foo".
+    - id: AC-07
+      description: >
+        commit-msg hook rejects a subject line longer than 100 characters.
+    - id: AC-08
+      description: >
+        CI step fails when the PR title does not follow Conventional Commits.
+    - id: AC-09
+      description: >
+        CI step passes when the PR title is a valid conventional commit.

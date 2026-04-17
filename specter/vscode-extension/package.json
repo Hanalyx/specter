@@ -68,6 +68,15 @@
       {
         "command": "specter.revealInTree",
         "title": "Specter: Reveal in Tree View"
+      },
+      {
+        "command": "specter.runReverse",
+        "title": "Specter: Run Reverse Compiler",
+        "icon": "$(database)"
+      },
+      {
+        "command": "specter.openQuickStart",
+        "title": "Specter: Open QuickStart"
       }
     ],
     "views": {
@@ -109,12 +118,12 @@
       {
         "id": "specter.gettingStarted",
         "title": "Get Started with Specter",
-        "description": "Set up spec-driven development in your project.",
+        "description": "Zero to a working spec pipeline in minutes.",
         "steps": [
           {
-            "id": "discover",
-            "title": "Discover your specs",
-            "description": "Run `specter reverse` to generate draft specs from your existing code.\n[Run specter reverse](command:specter.runReverse)",
+            "id": "bootstrap",
+            "title": "Bootstrap your specs",
+            "description": "Install the CLI, generate draft specs from your code, and initialize the workspace.\n[Run specter reverse](command:specter.runReverse)",
             "media": {
               "markdown": "walkthrough/step1.md"
             },
@@ -123,17 +132,17 @@
             ]
           },
           {
-            "id": "annotate",
-            "title": "Annotate your first test",
-            "description": "Add `// @spec <id>` and `// @ac AC-01` above a test function. Completions are available.",
+            "id": "gaps",
+            "title": "Close the gaps",
+            "description": "Use your AI assistant to fill in acceptance criteria and validate each spec.",
             "media": {
               "markdown": "walkthrough/step2.md"
             }
           },
           {
-            "id": "sync",
-            "title": "Run specter sync",
-            "description": "Run the full pipeline and see your coverage in the sidebar.\n[Run specter sync](command:specter.runSync)",
+            "id": "coverage",
+            "title": "Annotate tests and run the pipeline",
+            "description": "Add `@spec` and `@ac` annotations, check coverage, then lock it into CI.\n[Run specter sync](command:specter.runSync)",
             "media": {
               "markdown": "walkthrough/step3.md"
             },
