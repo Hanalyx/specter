@@ -2,7 +2,7 @@
   "name": "specter-vscode",
   "displayName": "Specter SDD",
   "description": "Spec-Driven Development tooling for VS Code — inline coverage, diagnostics, annotation assistance, and intent drift detection.",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "publisher": "Hanalyx",
   "license": "MIT",
   "engines": {
@@ -163,12 +163,13 @@
     ]
   },
   "scripts": {
+    "vscode:prepublish": "npm run build",
     "build": "tsc -p tsconfig.json",
     "watch": "tsc -watch -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "jest",
     "lint": "eslint src --ext ts",
-    "package": "npx @vscode/vsce package"
+    "package": "npm run build && npx @vscode/vsce package"
   },
   "devDependencies": {
     "@types/jest": "^29.5.0",
