@@ -136,8 +136,10 @@ The annotations are plain comments — no build step, no framework, works in any
 
 ## Links
 
-- [Specter on GitHub](https://github.com/Hanalyx/specter)
+- [QuickStart](https://github.com/Hanalyx/specter/blob/main/specter/docs/QUICKSTART.md) — zero to working pipeline in 5 minutes
+- [Getting Started](https://github.com/Hanalyx/specter/blob/main/specter/docs/GETTING_STARTED.md) — full walkthrough from zero specs to 100% coverage
 - [AI Prompts](https://github.com/Hanalyx/specter/blob/main/specter/docs/AI_PROMPTS.md) — ready-to-use prompts for every stage of the SDD loop
-- [Mastering Spec-Driven Development](https://github.com/Hanalyx/specter/tree/main/sddbook) — the methodology behind the tool
 - [CLI Reference](https://github.com/Hanalyx/specter/blob/main/specter/docs/CLI_REFERENCE.md)
+- [Specter on GitHub](https://github.com/Hanalyx/specter)
+- [Mastering Spec-Driven Development](https://github.com/Hanalyx/specter/tree/main/sddbook) — the methodology behind the tool
 - [Report an issue](https://github.com/Hanalyx/specter/issues)
