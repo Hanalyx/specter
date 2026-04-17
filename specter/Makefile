@@ -1,4 +1,4 @@
-.PHONY: build test test-race lint fmt fmt-check vulncheck check clean dogfood prerelease install-hooks version-sync
+.PHONY: build test test-race lint fmt fmt-check vulncheck check clean dogfood prerelease install-hooks version-sync publish-vscode
 
 BINARY := bin/specter
 VERSION := $(shell cat VERSION 2>/dev/null || echo "dev")
@@ -54,6 +54,17 @@ version-sync:
 	@VER=$$(cat VERSION); \
 	node -e "const fs=require('fs'),p='vscode-extension/package.json',j=JSON.parse(fs.readFileSync(p));j.version='$$VER';fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n');" && \
 	echo "Synced version $$VER → vscode-extension/package.json"
+
+# Publish VS Code extension to Marketplace
+# Usage: make publish-vscode PAT=<your-token>
+publish-vscode:
+	@if [ -z "$(PAT)" ]; then \
+		echo "Usage: make publish-vscode PAT=<your-personal-access-token>"; \
+		exit 1; \
+	fi
+	$(MAKE) version-sync
+	cd vscode-extension && npm run build
+	cd vscode-extension && npx vsce publish --pat $(PAT)
 
 clean:
 	rm -rf bin/ specter-linux-* specter-darwin-* specter-windows-*
