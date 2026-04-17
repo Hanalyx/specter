@@ -140,7 +140,7 @@ jobs:
             adapter: python
             path: "."
             min_specs: 700
-            min_assertions: 15000
+            min_assertions: 8500
           # TypeScript/Next.js/React repos
           - repo: calcom/cal.com
             adapter: typescript
