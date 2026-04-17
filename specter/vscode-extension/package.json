@@ -2,7 +2,7 @@
   "name": "specter-vscode",
   "displayName": "Specter SDD",
   "description": "Spec-Driven Development tooling for VS Code — inline coverage, diagnostics, annotation assistance, and intent drift detection.",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "publisher": "Hanalyx",
   "license": "MIT",
   "engines": {
@@ -122,8 +122,8 @@
         "steps": [
           {
             "id": "bootstrap",
-            "title": "Bootstrap your specs",
-            "description": "Install the CLI, generate draft specs from your code, and initialize the workspace.\n[Run specter reverse](command:specter.runReverse)",
+            "title": "Generate draft specs",
+            "description": "Generate draft specs from your code and initialize the workspace. The CLI downloads automatically.\n[Run specter reverse](command:specter.runReverse)",
             "media": {
               "markdown": "walkthrough/step1.md"
             },

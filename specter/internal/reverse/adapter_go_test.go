@@ -63,6 +63,7 @@ func TestCreateUser(t *testing.T) {
 	}
 }
 
+// @ac AC-02
 func TestGoAdapter_ExtractAssertions_TableDriven(t *testing.T) {
 	content := `package main
 
@@ -94,6 +95,7 @@ func TestValidateAge(t *testing.T) {
 	}
 }
 
+// @ac AC-01
 func TestGoAdapter_ExtractRoutes_HttpHandleFunc(t *testing.T) {
 	content := `package main
 
@@ -116,6 +118,7 @@ func main() {
 	}
 }
 
+// @ac AC-01
 func TestGoAdapter_ExtractRoutes_Gin(t *testing.T) {
 	content := `package main
 
@@ -137,6 +140,7 @@ func setupRoutes(r *gin.Engine) {
 	}
 }
 
+// @ac AC-01
 func TestGoAdapter_ExtractImports(t *testing.T) {
 	content := `package main
 
@@ -164,6 +168,7 @@ import (
 	}
 }
 
+// @ac AC-01
 func TestGoAdapter_InferSystemName(t *testing.T) {
 	files := []SourceFile{
 		{Path: "go.mod", Content: "module github.com/hanalyx/specter\n\ngo 1.22\n"},
@@ -175,6 +180,7 @@ func TestGoAdapter_InferSystemName(t *testing.T) {
 	}
 }
 
+// @ac AC-11
 func TestGoAdapter_Detect(t *testing.T) {
 	if !goAdapter.Detect("main.go", "") {
 		t.Error("expected Detect to return true for .go file")
@@ -184,6 +190,7 @@ func TestGoAdapter_Detect(t *testing.T) {
 	}
 }
 
+// @ac AC-11
 func TestGoAdapter_IsTestFile(t *testing.T) {
 	if !goAdapter.IsTestFile("handler_test.go") {
 		t.Error("expected IsTestFile true for _test.go")

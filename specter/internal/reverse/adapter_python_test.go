@@ -159,6 +159,7 @@ class TestUserAPI:
 	}
 }
 
+// @ac AC-05
 func TestPythonAdapter_ExtractRoutes_FastAPI(t *testing.T) {
 	content := `from fastapi import FastAPI
 
@@ -191,6 +192,7 @@ async def delete_user(user_id: int):
 	}
 }
 
+// @ac AC-05
 func TestPythonAdapter_ExtractRoutes_Flask(t *testing.T) {
 	content := `from flask import Flask
 
@@ -216,6 +218,7 @@ def create_item():
 	}
 }
 
+// @ac AC-05
 func TestPythonAdapter_ExtractRoutes_Django(t *testing.T) {
 	content := `from django.urls import path
 
@@ -236,6 +239,7 @@ urlpatterns = [
 	}
 }
 
+// @ac AC-05
 func TestPythonAdapter_ExtractImports(t *testing.T) {
 	content := `from fastapi import FastAPI
 from pydantic import BaseModel
@@ -260,6 +264,7 @@ from myapp.models import User
 	}
 }
 
+// @ac AC-05
 func TestPythonAdapter_InferSystemName(t *testing.T) {
 	files := []SourceFile{
 		{Path: "pyproject.toml", Content: `[project]
@@ -274,6 +279,7 @@ version = "0.1.0"
 	}
 }
 
+// @ac AC-05
 func TestPythonAdapter_InferSystemName_NoToml(t *testing.T) {
 	files := []SourceFile{
 		{Path: "main.py", Content: "from fastapi import FastAPI"},
@@ -284,6 +290,7 @@ func TestPythonAdapter_InferSystemName_NoToml(t *testing.T) {
 	}
 }
 
+// @ac AC-11
 func TestPythonAdapter_Detect(t *testing.T) {
 	if !pythonAdapter.Detect("main.py", "") {
 		t.Error("expected Detect to return true for .py file")
@@ -293,6 +300,7 @@ func TestPythonAdapter_Detect(t *testing.T) {
 	}
 }
 
+// @ac AC-11
 func TestPythonAdapter_IsTestFile(t *testing.T) {
 	tests := []struct {
 		path string

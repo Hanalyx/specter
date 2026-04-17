@@ -8,6 +8,12 @@ import {
   resolveBinaryPath,
   buildDownloadUrl,
   defaultCachePath,
+  resolveLatestVersion,
+  assetName,
+  httpsGet,
+  extractBinary,
+  verifyChecksum,
+  downloadChecksums,
 } from './binaryDiscovery';
 import { buildDiagnostics, DiagnosticReplacer, shouldRunCoverageForFile } from './diagnostics';
 import {
@@ -22,11 +28,15 @@ import {
   formatStatusBar,
   classifyNotification,
   buildFileDecoration,
+  buildACDecorations,
+  buildTreeNodes,
   NotificationRateLimiter,
 } from './coverage';
 import { buildConstraintHover, resolveDefinitionTarget } from './navigation';
 import { buildInsightCards, formatSpecContextForAI, shouldShowWalkthrough } from './insights';
+import { detectDrift, buildDriftHover } from './drift';
 import { SpecterClient } from './client';
+import * as crypto from 'crypto';
 import type {
   SpecIndex,
   CoverageReport,
@@ -44,6 +54,8 @@ let coverageReport: CoverageReport | null = null;
 let statusBarItem: vscode.StatusBarItem | null = null;
 let binaryPath: string | null = null;
 const rateLimiter = new NotificationRateLimiter({ windowMs: 60_000 });
+let treeProvider: SpecterTreeProvider | null = null;
+let driftDecorationType: vscode.TextEditorDecorationType | null = null;
 
 // ---------------------------------------------------------------------------
 // Activation
@@ -94,6 +106,21 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     for (const folder of e.added) await setupFolder(ctx, folder);
     for (const folder of e.removed) teardownFolder(folder);
   }, undefined, ctx.subscriptions);
+
+  // AC-11: Tree view sidebar
+  treeProvider = new SpecterTreeProvider();
+  vscode.window.registerTreeDataProvider('specterCoverage', treeProvider);
+
+  // AC-14: Drift decoration type
+  driftDecorationType = vscode.window.createTextEditorDecorationType({
+    gutterIconPath: new vscode.ThemeIcon('warning').id ? undefined : undefined,
+    overviewRulerColor: 'orange',
+    overviewRulerLane: vscode.OverviewRulerLane.Left,
+    after: {
+      contentText: ' ⚠ spec changed',
+      color: new vscode.ThemeColor('editorWarning.foreground'),
+    },
+  });
 
   // Providers (registered once, they read per-folder state as needed)
   registerProviders(ctx);
@@ -197,36 +224,53 @@ async function resolveBinary(ctx: vscode.ExtensionContext): Promise<string | nul
 
 async function downloadBinary(_ctx: vscode.ExtensionContext): Promise<string | null> {
   const cfg = vscode.workspace.getConfiguration('specter');
-  const version = cfg.get<string>('version', 'latest');
-
-  const targetPath = defaultCachePath();
-  const url = buildDownloadUrl({
-    version,
-    os: process.platform,
-    arch: process.arch,
-  });
+  const versionSetting = cfg.get<string>('version', 'latest');
 
   return vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: 'Downloading Specter binary…' },
-    async () => {
+    { location: vscode.ProgressLocation.Notification, title: 'Downloading Specter CLI…', cancellable: false },
+    async (progress) => {
       try {
-        const https = require('https');
-        const fs = require('fs');
+        // 1. Resolve version
+        progress.report({ message: 'resolving version…' });
+        const version = versionSetting === 'latest'
+          ? await resolveLatestVersion()
+          : versionSetting;
 
-        const data: Buffer = await new Promise((resolve, reject) => {
-          https.get(url, (res: any) => {
-            const chunks: Buffer[] = [];
-            res.on('data', (c: Buffer) => chunks.push(c));
-            res.on('end', () => resolve(Buffer.concat(chunks)));
-            res.on('error', reject);
-          }).on('error', reject);
-        });
+        // 2. Build download URL
+        const dlOpts = { version, os: process.platform, arch: process.arch };
+        const url = buildDownloadUrl(dlOpts);
+        const targetPath = defaultCachePath();
+        const archiveName = assetName(dlOpts);
+        const format: 'tar.gz' | 'zip' = process.platform === 'win32' ? 'zip' : 'tar.gz';
 
-        // Write and make executable
-        const dir = path.dirname(targetPath);
-        fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(targetPath, data);
-        fs.chmodSync(targetPath, 0o755);
+        // 3. Download archive
+        progress.report({ message: `downloading v${version}…` });
+        const archiveData = await httpsGet(url);
+
+        // 4. Verify SHA256
+        progress.report({ message: 'verifying checksum…' });
+        try {
+          const checksums = await downloadChecksums(version);
+          const expectedHash = checksums.get(archiveName);
+          if (expectedHash) {
+            const valid = await verifyChecksum(archiveData, expectedHash);
+            if (!valid) {
+              vscode.window.showErrorMessage(
+                'Specter download failed: SHA256 checksum mismatch. The binary may have been tampered with.',
+                { modal: true },
+              );
+              return null;
+            }
+          }
+        } catch {
+          // Checksum file not available — proceed without verification
+        }
+
+        // 5. Extract binary from archive
+        progress.report({ message: 'extracting binary…' });
+        await extractBinary(archiveData, format, targetPath);
+
+        vscode.window.showInformationMessage(`Specter CLI v${version} installed successfully.`);
         return targetPath;
       } catch (e) {
         vscode.window.showErrorMessage(`Failed to download Specter: ${e}`, { modal: true });
@@ -246,6 +290,7 @@ async function runCoverageForFolder(key: string, client: SpecterClient): Promise
     coverageReport = result as unknown as CoverageReport;
     updateSpecIndex(coverageReport);
     updateStatusBar(coverageReport);
+    treeProvider?.refresh();
   } catch { /* specter not yet configured — ignore */ }
 }
 
@@ -491,6 +536,46 @@ function registerProviders(ctx: vscode.ExtensionContext): void {
     }),
   );
 
+  // -- AC-05: Gutter icons on ACs in spec files via CodeLens
+  ctx.subscriptions.push(
+    vscode.languages.registerCodeLensProvider(specYamlSelector, {
+      provideCodeLenses(doc) {
+        if (!coverageReport) return [];
+        const specID = guessSpecIDFromFile(doc.uri.fsPath);
+        if (!specID) return [];
+
+        const entry = coverageReport.entries.find(e => e.specID === specID);
+        if (!entry) return [];
+
+        const decorations = buildACDecorations({
+          coveredACs: entry.coveredACs,
+          uncoveredACs: entry.uncoveredACs,
+          gapACs: [],
+        });
+
+        const lenses: vscode.CodeLens[] = [];
+        for (let i = 0; i < doc.lineCount; i++) {
+          const lineText = doc.lineAt(i).text;
+          const acMatch = lineText.match(/id:\s*(AC-\d+)/);
+          if (!acMatch) continue;
+          const acID = acMatch[1];
+          const dec = decorations.find(d => d.acID === acID);
+          if (!dec) continue;
+
+          const icon = dec.kind === 'covered' ? '$(check)'
+            : dec.kind === 'uncovered' ? '$(circle-slash)'
+            : '$(warning)';
+          const label = dec.endOfLineText ? `${icon} ${dec.endOfLineText}` : `${icon} ${dec.kind}`;
+          lenses.push(new vscode.CodeLens(new vscode.Range(i, 0, i, 0), {
+            title: label,
+            command: '',
+          }));
+        }
+        return lenses;
+      },
+    }),
+  );
+
   // -- Diagnostics on type/save (AC-03, AC-04)
   registerDiagnosticHooks(ctx);
 }
@@ -557,8 +642,9 @@ function registerDiagnosticHooks(ctx: vscode.ExtensionContext): void {
               else coverageReport.entries.push(newEntry);
             }
             updateStatusBar(coverageReport);
+            treeProvider?.refresh();
 
-            // Notification discipline (AC-18, AC-19)
+            // Notification discipline (AC-18)
             if (newEntry && !newEntry.passesThreshold) {
               const kind = classifyNotification({
                 tier: newEntry.tier,
@@ -568,7 +654,43 @@ function registerDiagnosticHooks(ctx: vscode.ExtensionContext): void {
             }
           }
         }
+
+        // AC-19: Breaking spec change notification via diff
+        if (doc.uri.fsPath.endsWith('.spec.yaml')) {
+          try {
+            const diffResult = await client.diff(doc.uri.fsPath, 'HEAD') as any;
+            if (diffResult?.changeClass) {
+              const notification = classifyNotification({ changeClass: diffResult.changeClass });
+              if (notification.kind === 'warning-toast') {
+                const choice = await vscode.window.showWarningMessage(
+                  `Breaking change detected in ${path.basename(doc.uri.fsPath)}`,
+                  ...(notification.actions ?? []),
+                );
+                if (choice === 'View Diff') {
+                  const terminal = vscode.window.createTerminal('Specter Diff');
+                  terminal.sendText(`specter diff ${doc.uri.fsPath}@HEAD ${doc.uri.fsPath}`);
+                  terminal.show();
+                }
+              }
+            }
+          } catch { /* diff not available — new file or not a git repo */ }
+        }
       } catch { /* ignore */ }
+    }),
+  );
+
+  // AC-14: Scan for drift when test files are opened or saved
+  ctx.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor(editor => {
+      if (editor) scanForDrift(editor.document).catch(() => {});
+    }),
+  );
+  // Also trigger drift scan after save (test file may reference a changed spec)
+  ctx.subscriptions.push(
+    vscode.workspace.onDidSaveTextDocument(doc => {
+      if (!doc.uri.fsPath.endsWith('.spec.yaml')) {
+        scanForDrift(doc).catch(() => {});
+      }
     }),
   );
 
@@ -765,6 +887,151 @@ ${cardHTML}
 </body>
 </html>`;
 }
+
+// ---------------------------------------------------------------------------
+// AC-11: Tree view provider
+// ---------------------------------------------------------------------------
+
+type TreeElement = { kind: 'spec'; specID: string; file: string; children: TreeElement[] }
+  | { kind: 'ac'; id: string; icon: 'covered' | 'uncovered' | 'gap'; children: TreeElement[] }
+  | { kind: 'testFile'; path: string };
+
+class SpecterTreeProvider implements vscode.TreeDataProvider<TreeElement> {
+  private _onDidChange = new vscode.EventEmitter<void>();
+  readonly onDidChangeTreeData = this._onDidChange.event;
+
+  refresh(): void { this._onDidChange.fire(); }
+
+  getTreeItem(el: TreeElement): vscode.TreeItem {
+    switch (el.kind) {
+      case 'spec': {
+        const item = new vscode.TreeItem(el.specID, vscode.TreeItemCollapsibleState.Collapsed);
+        item.contextValue = 'spec';
+        item.iconPath = new vscode.ThemeIcon('file-code');
+        return item;
+      }
+      case 'ac': {
+        const icon = el.icon === 'covered' ? 'pass' : el.icon === 'uncovered' ? 'error' : 'warning';
+        const item = new vscode.TreeItem(el.id, vscode.TreeItemCollapsibleState.Collapsed);
+        item.iconPath = new vscode.ThemeIcon(icon);
+        item.description = el.icon;
+        return item;
+      }
+      case 'testFile': {
+        const item = new vscode.TreeItem(path.basename(el.path), vscode.TreeItemCollapsibleState.None);
+        item.resourceUri = vscode.Uri.file(el.path);
+        item.command = { command: 'vscode.open', title: 'Open', arguments: [vscode.Uri.file(el.path)] };
+        item.iconPath = new vscode.ThemeIcon('file');
+        return item;
+      }
+    }
+  }
+
+  getChildren(el?: TreeElement): TreeElement[] {
+    if (!el) {
+      if (!coverageReport) return [];
+      const nodes = buildTreeNodes(coverageReport);
+      return nodes.map(n => ({
+        kind: 'spec' as const,
+        specID: n.specID,
+        file: n.file,
+        children: n.children.map(ac => ({
+          kind: 'ac' as const,
+          id: ac.id,
+          icon: ac.icon,
+          children: ac.children.map(tf => ({ kind: 'testFile' as const, path: tf.path })),
+        })),
+      }));
+    }
+    return el.kind === 'testFile' ? [] : el.children;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AC-14: Drift detection helpers
+// ---------------------------------------------------------------------------
+
+function hashContent(content: string): string {
+  return crypto.createHash('sha256').update(content).digest('hex');
+}
+
+async function scanForDrift(doc: vscode.TextDocument): Promise<void> {
+  if (!driftDecorationType) return;
+  const editor = vscode.window.visibleTextEditors.find(e => e.document === doc);
+  if (!editor) return;
+
+  const text = doc.getText();
+  const specRefMatch = text.match(/\/\/\s*@spec\s+([\w-]+)|#\s*@spec\s+([\w-]+)/);
+  if (!specRefMatch) {
+    editor.setDecorations(driftDecorationType, []);
+    return;
+  }
+  const specID = specRefMatch[1] || specRefMatch[2];
+
+  // Find the spec file
+  const specFiles = await vscode.workspace.findFiles(`**/${specID}.spec.yaml`, undefined, 1);
+  if (specFiles.length === 0) {
+    editor.setDecorations(driftDecorationType, []);
+    return;
+  }
+  const specFile = specFiles[0].fsPath;
+
+  // Current spec hash
+  const currentContent = (await vscode.workspace.fs.readFile(specFiles[0])).toString();
+  const currentHash = hashContent(currentContent);
+
+  // Baseline: spec at HEAD (committed version)
+  let baselineHash = currentHash; // default: no drift
+  try {
+    const { execFile } = require('child_process');
+    const baseContent: string = await new Promise((resolve, reject) => {
+      execFile('git', ['show', `HEAD:${path.relative(
+        vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '.', specFile,
+      )}`], { cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath },
+      (err: any, stdout: string) => err ? reject(err) : resolve(stdout));
+    });
+    baselineHash = hashContent(baseContent);
+  } catch {
+    // Not a git repo or file not tracked — no drift possible
+    editor.setDecorations(driftDecorationType, []);
+    return;
+  }
+
+  // Find @ac lines and check for drift
+  const decorations: vscode.DecorationOptions[] = [];
+  const acPattern = /\/\/\s*@ac\s+(AC-\d+)|#\s*@ac\s+(AC-\d+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = acPattern.exec(text)) !== null) {
+    const acID = match[1] || match[2];
+    const result = detectDrift(
+      { specID, acID, specFileHashAtAnnotation: baselineHash },
+      {
+        currentSpecFileHash: currentHash,
+        getDiff: () => null, // simplified: just detect hash change
+      },
+    );
+    if (result.hasDrift) {
+      const pos = doc.positionAt(match.index);
+      const line = doc.lineAt(pos.line);
+      const hover = buildDriftHover({
+        specID,
+        acID,
+        changeClass: result.changeClass,
+        baselineDescription: null,
+        headDescription: null,
+      });
+      decorations.push({
+        range: line.range,
+        hoverMessage: new vscode.MarkdownString(hover.contents ?? `Spec \`${specID}\` has changed since this annotation was committed.`),
+      });
+    }
+  }
+  editor.setDecorations(driftDecorationType, decorations);
+}
+
+// ---------------------------------------------------------------------------
+// Utility
+// ---------------------------------------------------------------------------
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
