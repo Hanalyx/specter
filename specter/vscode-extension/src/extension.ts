@@ -14,6 +14,7 @@ import {
   extractBinary,
   verifyChecksum,
   downloadChecksums,
+  isBinaryFile,
 } from './binaryDiscovery';
 import { buildDiagnostics, DiagnosticReplacer, shouldRunCoverageForFile } from './diagnostics';
 import {
@@ -236,18 +237,26 @@ async function resolveBinary(ctx: vscode.ExtensionContext): Promise<string | nul
     });
 
     if (source === 'cache') {
-      const cliVersion = getCachedBinaryVersion(resolved);
-      const extVersion = vscode.extensions.getExtension('Hanalyx.specter-vscode')?.packageJSON?.version as string | undefined;
-      if (cliVersion && extVersion && cliVersion !== extVersion) {
-        const autoDownload = cfg.get<boolean>('autoDownload', true);
-        if (autoDownload) {
-          const updated = await downloadBinary(ctx);
-          if (updated) return updated;
+      // Reject corrupt cached binaries (e.g. a "Not Found" text file from
+      // a failed download).  Delete the file and fall through to re-download.
+      if (!isBinaryFile(resolved)) {
+        try { require('fs').unlinkSync(resolved); } catch { /* ignore */ }
+        // Fall through to auto-download below
+      } else {
+        const cliVersion = getCachedBinaryVersion(resolved);
+        const extVersion = vscode.extensions.getExtension('Hanalyx.specter-vscode')?.packageJSON?.version as string | undefined;
+        if (cliVersion && extVersion && cliVersion !== extVersion) {
+          const autoDownload = cfg.get<boolean>('autoDownload', true);
+          if (autoDownload) {
+            const updated = await downloadBinary(ctx);
+            if (updated) return updated;
+          }
         }
-        // Fall through to the existing cached binary if download fails
+        return resolved;
       }
+    } else {
+      return resolved;
     }
-    return resolved;
   }
 
   // Auto-download

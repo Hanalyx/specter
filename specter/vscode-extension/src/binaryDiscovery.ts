@@ -60,12 +60,40 @@ export function resolveBinaryPath(opts: ResolveBinaryOptions): BinaryResolution 
   }
 
   // 3. Cache
-  if (opts.fs.exists(opts.cachePath)) {
+  if (opts.fs.exists(opts.cachePath) && opts.fs.isExecutable(opts.cachePath)) {
     return { resolved: opts.cachePath, source: 'cache' };
   }
 
   // 4. Needs download
   return { resolved: null, source: 'needs-download' };
+}
+
+/**
+ * Returns true if the file at `filePath` looks like a compiled binary
+ * (starts with ELF, Mach-O, or MZ magic bytes) rather than a text file.
+ * This catches corrupt downloads where an HTTP error page was saved as
+ * the binary (e.g. "Not Found").
+ */
+export function isBinaryFile(filePath: string): boolean {
+  try {
+    const fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.alloc(4);
+    fs.readSync(fd, buf, 0, 4, 0);
+    fs.closeSync(fd);
+
+    // ELF (Linux): 0x7f 'E' 'L' 'F'
+    if (buf[0] === 0x7f && buf[1] === 0x45 && buf[2] === 0x4c && buf[3] === 0x46) return true;
+    // Mach-O (macOS): 0xFEEDFACE, 0xFEEDFACF, 0xCFFAEDFE, 0xCEFAEDFE
+    if (buf[0] === 0xfe && buf[1] === 0xed && buf[2] === 0xfa) return true;
+    if (buf[0] === 0xcf && buf[1] === 0xfa && buf[2] === 0xed) return true;
+    if (buf[0] === 0xce && buf[1] === 0xfa && buf[2] === 0xed) return true;
+    // PE (Windows): 'M' 'Z'
+    if (buf[0] === 0x4d && buf[1] === 0x5a) return true;
+
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------
