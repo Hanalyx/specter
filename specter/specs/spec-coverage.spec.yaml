@@ -1,6 +1,6 @@
 spec:
   id: spec-coverage
-  version: "1.3.0"
+  version: "1.4.0"
   status: approved
   tier: 2
 
@@ -76,6 +76,11 @@ spec:
     - id: C-08
       description: "MUST emit dependency_coverage warnings when spec A depends_on spec B and spec B has uncovered ACs that fall below spec B's effective coverage threshold"
       type: technical
+      enforcement: error
+
+    - id: C-09
+      description: "MUST count every declared acceptance criterion in the denominator of the coverage percentage, including ACs marked gap: true. An AC marked gap: true with no matching @ac annotation counts as uncovered. Rationale: a spec whose ACs are all gaps has no captured intent and must fail coverage rather than silently pass."
+      type: business
       enforcement: error
 
   depends_on:
@@ -155,7 +160,25 @@ spec:
       references_constraints: ["C-08"]
       priority: high
 
+    - id: AC-09
+      description: "A Tier 3 spec with 3 ACs all marked gap: true and no @ac annotations reports total_acs=3, covered=0, coverage_pct=0, passes_threshold=false. A 100%-gap spec fails regardless of tier."
+      inputs:
+        spec: "tier 3, 3 ACs, all gap: true, no annotations"
+      expected_output:
+        total_acs: 3
+        covered_acs: []
+        uncovered_acs: ["AC-01", "AC-02", "AC-03"]
+        coverage_pct: 0
+        passes_threshold: false
+      references_constraints: ["C-09"]
+      priority: critical
+
   changelog:
+    - version: "1.4.0"
+      date: "2026-04-17"
+      author: "specter-team"
+      type: minor
+      description: "BEHAVIOR CHANGE: gap: true ACs now count as uncovered (C-09/AC-09). Prior 1.3.x silently exempted 100%-gap specs from threshold enforcement, letting unreviewed reverse-compiled specs pass sync."
     - version: "1.3.0"
       date: "2026-04-14"
       author: "specter-team"
