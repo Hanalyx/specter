@@ -141,7 +141,7 @@ spec:
         file: "fixtures/valid/minimal.spec.yaml"
       expected_output:
         type: "SpecAST"
-        optional_fields_absent: ["depends_on", "trust_level", "environment", "tags", "changelog", "generated_from"]
+        optional_fields_absent: ["depends_on", "environment", "tags", "changelog", "generated_from"]
       references_constraints: ["C-01", "C-04"]
       priority: high
 

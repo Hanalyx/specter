@@ -165,14 +165,17 @@ specter check [--json] [--tier <n>] [--strict]
 
 | Diagnostic | Severity by tier | Description |
 |------------|-----------------|-------------|
-| `orphan_constraint` | T1=error, T2=warning, T3=info | A constraint is not referenced by any acceptance criterion. |
+| `orphan_constraint` | T1=error, T2=warning, T3=info | A constraint is not referenced by any acceptance criterion. Individual constraints may override severity via `constraint.enforcement`. |
+| `structural_conflict` | error (override via `constraint.enforcement`) | An upstream constraint requires something that a downstream AC handles as absent. |
 | `tier_conflict` | warning | A higher-tier spec depends on a lower-tier spec (e.g., Tier 1 depends on Tier 3). |
+
+When a constraint has a `type` (e.g. `security`, `performance`), it appears in parentheses after the constraint ID so diagnostics can be grouped by category.
 
 **Example:**
 
 ```
 $ specter check
-warn [orphan_constraint] spec-auth C-04: C-04 is not referenced by any AC
+warn [orphan_constraint] spec-auth C-04 (security): C-04 is not referenced by any AC
 error [tier_conflict] spec-payments: Tier 1 spec depends on Tier 3 spec-util
 
 1 error(s), 1 warning(s), 0 info

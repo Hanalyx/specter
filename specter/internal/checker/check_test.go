@@ -212,6 +212,37 @@ func TestStrictModeUpgradesWarningsToErrors(t *testing.T) {
 	}
 }
 
+// @ac AC-02
+func TestConstraintEnforcementOverridesTierSeverity(t *testing.T) {
+	// Tier 3 orphan is normally info; constraint.enforcement=error should override.
+	spec := makeSpec("t3", 3)
+	spec.Constraints = []schema.Constraint{
+		{ID: "C-01", Description: "security rule", Type: "security", Enforcement: "error"},
+	}
+	spec.AcceptanceCriteria = []schema.AcceptanceCriterion{
+		{ID: "AC-01", Description: "something unrelated"},
+	}
+
+	g := makeGraph(map[string]*resolver.SpecNode{"t3": {Spec: spec, File: "t3.yaml"}}, nil)
+	result := CheckSpecs(g, nil)
+
+	var got *CheckDiagnostic
+	for i := range result.Diagnostics {
+		if result.Diagnostics[i].Kind == "orphan_constraint" {
+			got = &result.Diagnostics[i]
+		}
+	}
+	if got == nil {
+		t.Fatal("expected an orphan_constraint diagnostic")
+	}
+	if got.Severity != "error" {
+		t.Errorf("expected severity 'error' (from constraint.enforcement), got %q", got.Severity)
+	}
+	if got.ConstraintType != "security" {
+		t.Errorf("expected ConstraintType 'security', got %q", got.ConstraintType)
+	}
+}
+
 // @ac AC-08
 func TestWarnOnDraftEmitsDraftSpecDiagnostic(t *testing.T) {
 	spec := makeSpec("draft-spec", 2)

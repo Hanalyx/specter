@@ -25,7 +25,6 @@
 - [Versioning Rules](#versioning-rules)
 - [Tier Definitions](#tier-definitions)
 - [Status Lifecycle](#status-lifecycle)
-- [Trust Levels](#trust-levels)
 - [Worked Examples](#worked-examples)
 
 ---
@@ -85,7 +84,6 @@ These fields may be omitted entirely. When absent, Specter does not supply defau
 | Field | Type | Description |
 |---|---|---|
 | `depends_on` | `array` of [Dependency Reference](#dependency-reference-object) | Other specs this depends on. Creates edges in the dependency graph. |
-| `trust_level` | `string` — enum: `full_auto`, `auto_with_review`, `human_required` | AI autonomy level for implementation. See [Trust Levels](#trust-levels). |
 | `environment` | [Environment Object](#environment-object) | Required environment variables and deployment targets. |
 | `tags` | `array` of `string` | Free-form tags for categorization and filtering. |
 | `changelog` | `array` of [Changelog Entry](#changelog-entry-object) | Version history. Most recent entry first. |
@@ -161,8 +159,8 @@ A constraint is an **inviolable rule** -- a hard boundary on the solution space.
 |---|---|---|---|---|
 | `id` | **Yes** | `string` | Regex: `^C-\d{2,}$` (e.g., `C-01`, `C-02`, `C-10`) | Unique constraint ID within this spec. |
 | `description` | **Yes** | `string` | Should use RFC 2119 language (MUST, MUST NOT, SHOULD, MAY) | Human-readable constraint statement. |
-| `type` | No | `string` | Enum: `technical`, `security`, `performance`, `accessibility`, `business` | Category of constraint. |
-| `enforcement` | No | `string` | Enum: `error`, `warning`, `info`. Default: `error` | Severity when violated. |
+| `type` | No | `string` | Enum: `technical`, `security`, `performance`, `accessibility`, `business` | Category of constraint. Surfaces in `specter check` diagnostics so issues can be grouped by category. |
+| `enforcement` | No | `string` | Enum: `error`, `warning`, `info` | Overrides the tier-based default severity when Specter emits a diagnostic about this constraint (orphan, structural conflict). Omit to use the tier default (T1=error, T2=warning, T3=info for orphans). |
 | `validation` | No | [Constraint Validation](#constraint-validation-object) | Machine-readable validation rule | Enables deterministic checking by spec-check. |
 
 ```yaml
@@ -459,18 +457,6 @@ draft --> review --> approved --> deprecated --> removed
 
 ---
 
-## Trust Levels
-
-Controls how much AI autonomy is permitted when implementing this spec.
-
-| Trust Level | Meaning |
-|---|---|
-| `full_auto` | AI can implement without human review. Suitable for well-constrained, low-risk specs. |
-| `auto_with_review` | AI implements, but a human must review before merge. The default for most production specs. |
-| `human_required` | A human must be involved in implementation. For specs requiring judgment calls, legal review, or security-sensitive decisions. |
-
----
-
 ## Worked Examples
 
 ### Minimal Spec
@@ -509,7 +495,6 @@ spec:
   version: "1.0.0"
   status: approved
   tier: 1
-  trust_level: auto_with_review
 
   context:
     system: Specter toolchain

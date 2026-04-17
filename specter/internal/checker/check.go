@@ -15,13 +15,14 @@ import (
 
 // CheckDiagnostic represents an issue found during type-checking.
 type CheckDiagnostic struct {
-	Kind         string `json:"kind"`
-	Severity     string `json:"severity"`
-	Message      string `json:"message"`
-	SpecID       string `json:"spec_id"`
-	ConstraintID string `json:"constraint_id,omitempty"`
-	ChangeType   string `json:"change_type,omitempty"`
-	Details      string `json:"details,omitempty"`
+	Kind           string `json:"kind"`
+	Severity       string `json:"severity"`
+	Message        string `json:"message"`
+	SpecID         string `json:"spec_id"`
+	ConstraintID   string `json:"constraint_id,omitempty"`
+	ConstraintType string `json:"constraint_type,omitempty"`
+	ChangeType     string `json:"change_type,omitempty"`
+	Details        string `json:"details,omitempty"`
 }
 
 // CheckResult holds the outcome of all checks.
@@ -165,16 +166,23 @@ func checkOrphanConstraints(spec *schema.SpecAST) []CheckDiagnostic {
 
 	for _, c := range spec.Constraints {
 		if !referenced[c.ID] {
+			// Explicit constraint.enforcement overrides the tier-based default.
+			// This lets an author mark a single constraint as always-error (e.g. a
+			// security rule in a tier-3 spec) without raising the whole tier.
 			severity := orphanSeverityByTier[spec.Tier]
 			if severity == "" {
 				severity = "warning"
 			}
+			if c.Enforcement != "" {
+				severity = c.Enforcement
+			}
 			diagnostics = append(diagnostics, CheckDiagnostic{
-				Kind:         "orphan_constraint",
-				Severity:     severity,
-				Message:      fmt.Sprintf("Constraint %s in %q is not referenced by any acceptance criterion", c.ID, spec.ID),
-				SpecID:       spec.ID,
-				ConstraintID: c.ID,
+				Kind:           "orphan_constraint",
+				Severity:       severity,
+				Message:        fmt.Sprintf("Constraint %s in %q is not referenced by any acceptance criterion", c.ID, spec.ID),
+				SpecID:         spec.ID,
+				ConstraintID:   c.ID,
+				ConstraintType: c.Type,
 			})
 		}
 	}
@@ -224,13 +232,18 @@ func checkStructuralConflicts(graph *resolver.SpecGraph) []CheckDiagnostic {
 				}
 				for _, kw := range absenceKeywords {
 					if strings.Contains(acDesc, strings.ToLower(kw)) {
+						severity := "error"
+						if constraint.Enforcement != "" {
+							severity = constraint.Enforcement
+						}
 						diagnostics = append(diagnostics, CheckDiagnostic{
-							Kind:         "structural_conflict",
-							Severity:     "error",
-							Message:      fmt.Sprintf("Structural conflict: %q constraint %s requires %q but %q %s handles it as absent", upstream.Spec.ID, constraint.ID, subject, downstream.Spec.ID, ac.ID),
-							SpecID:       downstream.Spec.ID,
-							ConstraintID: constraint.ID,
-							Details:      fmt.Sprintf("Upstream: %s | Downstream AC: %s", desc, ac.Description),
+							Kind:           "structural_conflict",
+							Severity:       severity,
+							Message:        fmt.Sprintf("Structural conflict: %q constraint %s requires %q but %q %s handles it as absent", upstream.Spec.ID, constraint.ID, subject, downstream.Spec.ID, ac.ID),
+							SpecID:         downstream.Spec.ID,
+							ConstraintID:   constraint.ID,
+							ConstraintType: constraint.Type,
+							Details:        fmt.Sprintf("Upstream: %s | Downstream AC: %s", desc, ac.Description),
 						})
 						break
 					}
