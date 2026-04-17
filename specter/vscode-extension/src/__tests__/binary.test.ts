@@ -3,7 +3,10 @@
 // Tests for binary discovery and auto-download logic.
 // All functions under test are pure or injectable — no VS Code runtime required.
 
-import { resolveBinaryPath, verifyChecksum, buildDownloadUrl } from '../binaryDiscovery';
+import { resolveBinaryPath, verifyChecksum, buildDownloadUrl, isBinaryFile } from '../binaryDiscovery';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -97,6 +100,49 @@ describe('buildDownloadUrl', () => {
   it('maps VS Code runner.arch X64 → amd64 and ARM64 → arm64', () => {
     expect(buildDownloadUrl({ version: '0.5.0', os: 'linux', arch: 'X64' }).includes('amd64')).toBe(true);
     expect(buildDownloadUrl({ version: '0.5.0', os: 'linux', arch: 'ARM64' }).includes('arm64')).toBe(true);
+  });
+});
+
+// @ac AC-23
+describe('isBinaryFile', () => {
+  function writeTmp(contents: Buffer): string {
+    const p = path.join(os.tmpdir(), `specter-binary-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    fs.writeFileSync(p, contents);
+    return p;
+  }
+
+  it('returns true for a file starting with ELF magic bytes', () => {
+    const p = writeTmp(Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01]));
+    try {
+      expect(isBinaryFile(p)).toBe(true);
+    } finally {
+      fs.unlinkSync(p);
+    }
+  });
+
+  it('returns false for a file starting with text like "Not Found"', () => {
+    // Reproduces the failure mode where a corrupt download left an HTTP
+    // error body in place of the binary. The user would otherwise see
+    // "line 1: Not: command not found" when trying to execute it.
+    const p = writeTmp(Buffer.from('Not Found\n'));
+    try {
+      expect(isBinaryFile(p)).toBe(false);
+    } finally {
+      fs.unlinkSync(p);
+    }
+  });
+
+  it('returns false for an HTML error page', () => {
+    const p = writeTmp(Buffer.from('<!DOCTYPE html><html>error</html>'));
+    try {
+      expect(isBinaryFile(p)).toBe(false);
+    } finally {
+      fs.unlinkSync(p);
+    }
+  });
+
+  it('returns false for a missing file (no throw)', () => {
+    expect(isBinaryFile('/nonexistent/path/to/specter')).toBe(false);
   });
 });
 

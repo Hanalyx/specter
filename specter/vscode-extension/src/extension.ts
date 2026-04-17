@@ -57,6 +57,7 @@ let binaryPath: string | null = null;
 const rateLimiter = new NotificationRateLimiter({ windowMs: 60_000 });
 let treeProvider: SpecterTreeProvider | null = null;
 let driftDecorationType: vscode.TextEditorDecorationType | null = null;
+let outputChannel: vscode.OutputChannel | null = null;
 
 // ---------------------------------------------------------------------------
 // Activation
@@ -95,6 +96,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // `specter` directly without needing to configure their shell profile.
   const specterBinDir = path.dirname(defaultCachePath());
   ctx.environmentVariableCollection.prepend('PATH', specterBinDir + path.delimiter);
+
+  // Output channel for errors and logs.
+  outputChannel = vscode.window.createOutputChannel('Specter');
+  ctx.subscriptions.push(outputChannel);
 
   // Status bar (AC-12)
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
@@ -204,7 +209,7 @@ async function resolveBinary(ctx: vscode.ExtensionContext): Promise<string | nul
   const cfg = vscode.workspace.getConfiguration('specter');
   const workspaceSetting = cfg.get<string>('binaryPath') || null;
 
-  const { resolved } = resolveBinaryPath({
+  const { resolved, source } = resolveBinaryPath({
     workspaceSetting,
     which: name => {
       try {
@@ -222,39 +227,42 @@ async function resolveBinary(ctx: vscode.ExtensionContext): Promise<string | nul
     cachePath: defaultCachePath(),
   });
 
-  // If resolved from cache, check whether the cached binary version matches
-  // the extension version.  When the extension updates, it should pull a
-  // matching CLI so features stay in sync.
-  if (resolved) {
-    const { source } = resolveBinaryPath({
-      workspaceSetting,
-      which: () => null,   // skip PATH — we just need to know if it was cache
-      fs: {
-        exists: p => p === resolved,
-        isExecutable: () => true,
-      },
-      cachePath: defaultCachePath(),
-    });
+  const cachePath = defaultCachePath();
 
-    if (source === 'cache') {
-      // Reject corrupt cached binaries (e.g. a "Not Found" text file from
-      // a failed download).  Delete the file and fall through to re-download.
-      if (!isBinaryFile(resolved)) {
+  if (resolved) {
+    // Always validate the resolved binary — regardless of source. A corrupt
+    // file in ~/.specter/bin that also happens to be on the shell PATH would
+    // otherwise slip through as source='path' and every specter invocation
+    // would fail silently. See issue: https://github.com/Hanalyx/specter/issues
+    if (!isBinaryFile(resolved) || !getCachedBinaryVersion(resolved)) {
+      // If the corrupt file is the cache path we own, delete it and fall
+      // through to auto-download. Otherwise it's user-provided (workspace
+      // setting or something else on PATH) — don't touch it, just prompt.
+      if (resolved === cachePath) {
         try { require('fs').unlinkSync(resolved); } catch { /* ignore */ }
-        // Fall through to auto-download below
+        // fall through to auto-download
       } else {
-        const cliVersion = getCachedBinaryVersion(resolved);
-        const extVersion = vscode.extensions.getExtension('Hanalyx.specter-vscode')?.packageJSON?.version as string | undefined;
-        if (cliVersion && extVersion && cliVersion !== extVersion) {
-          const autoDownload = cfg.get<boolean>('autoDownload', true);
-          if (autoDownload) {
-            const updated = await downloadBinary(ctx);
-            if (updated) return updated;
-          }
+        const pick = await vscode.window.showErrorMessage(
+          `Specter binary at ${resolved} (via ${source}) is not a valid executable. ` +
+          `It may be a corrupt download or a stale file. Re-download to ${cachePath}?`,
+          'Re-download', 'Cancel',
+        );
+        if (pick === 'Re-download') {
+          return downloadBinary(ctx);
         }
-        return resolved;
+        return null;
       }
     } else {
+      // Valid binary. Auto-update if CLI version != extension version.
+      const cliVersion = getCachedBinaryVersion(resolved);
+      const extVersion = vscode.extensions.getExtension('Hanalyx.specter-vscode')?.packageJSON?.version as string | undefined;
+      if (cliVersion && extVersion && cliVersion !== extVersion) {
+        const autoDownload = cfg.get<boolean>('autoDownload', true);
+        if (autoDownload) {
+          const updated = await downloadBinary(ctx);
+          if (updated) return updated;
+        }
+      }
       return resolved;
     }
   }
@@ -353,7 +361,20 @@ async function runCoverageForFolder(key: string, client: SpecterClient): Promise
     updateSpecIndex(coverageReport);
     updateStatusBar(coverageReport);
     treeProvider?.refresh();
-  } catch { /* specter not yet configured — ignore */ }
+  } catch (e) {
+    // Don't hang on "loading…" forever. Surface the failure so the user can
+    // act — log details, flip the status bar to an error state that opens
+    // the output channel on click.
+    const msg = e instanceof Error ? e.message : String(e);
+    outputChannel?.appendLine(`[${new Date().toISOString()}] coverage run failed for ${key}:`);
+    outputChannel?.appendLine('  ' + msg);
+    if (statusBarItem) {
+      statusBarItem.text = '$(error) Specter: error';
+      statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+      statusBarItem.tooltip = 'Specter coverage failed. Click to view details.';
+      statusBarItem.command = 'specter.showOutput';
+    }
+  }
 }
 
 function updateSpecIndex(report: CoverageReport): void {
@@ -849,6 +870,31 @@ function registerCommands(ctx: vscode.ExtensionContext): void {
         await vscode.workspace.applyEdit(edit);
       },
     ),
+  );
+
+  // Show the Specter output channel. Bound to the status bar when coverage
+  // fails so a user stuck on "Specter: error" can click through to details.
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand('specter.showOutput', () => {
+      outputChannel?.show(true);
+    }),
+  );
+
+  // Force a fresh download of the Specter CLI — the explicit recovery path
+  // when the cached binary is broken. Deletes the cached file first so
+  // downloadBinary always writes a new copy, then re-runs activation wiring.
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand('specter.redownloadCli', async () => {
+      const cachePath = defaultCachePath();
+      try { require('fs').unlinkSync(cachePath); } catch { /* ignore */ }
+      const resolved = await downloadBinary(ctx);
+      if (!resolved) return;
+      binaryPath = resolved;
+      for (const folder of (vscode.workspace.workspaceFolders ?? [])) {
+        await setupFolder(ctx, folder);
+      }
+      vscode.window.showInformationMessage('Specter CLI re-downloaded.');
+    }),
   );
 }
 

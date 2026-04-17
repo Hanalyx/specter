@@ -176,12 +176,15 @@ interface HttpsGetOptions {
  * Downloads a URL as a Buffer, following up to 5 redirects.
  * Node's https.get does NOT follow redirects automatically.
  */
+const HTTPS_TIMEOUT_MS = 30_000;
+
 export function httpsGet(url: string, opts?: HttpsGetOptions, maxRedirects = 5): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const reqOpts: https.RequestOptions = {
       headers: opts?.headers ?? {},
+      timeout: HTTPS_TIMEOUT_MS,
     };
-    https.get(url, reqOpts, (res) => {
+    const req = https.get(url, reqOpts, (res) => {
       // Follow redirects
       if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         if (maxRedirects <= 0) {
@@ -201,7 +204,11 @@ export function httpsGet(url: string, opts?: HttpsGetOptions, maxRedirects = 5):
       res.on('data', (c: Buffer) => chunks.push(c));
       res.on('end', () => resolve(Buffer.concat(chunks)));
       res.on('error', reject);
-    }).on('error', reject);
+    });
+    req.on('error', reject);
+    req.on('timeout', () => {
+      req.destroy(new Error(`Timed out after ${HTTPS_TIMEOUT_MS}ms fetching ${url}`));
+    });
   });
 }
 

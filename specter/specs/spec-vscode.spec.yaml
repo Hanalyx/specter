@@ -71,7 +71,7 @@ spec:
 
   constraints:
     - id: C-01
-      description: "MUST discover the specter binary in this resolution order: workspace setting specter.binaryPath → PATH → ~/.specter/bin/specter → auto-download from GitHub Releases. MUST verify SHA256 checksum on auto-download."
+      description: "MUST discover the specter binary in this resolution order: workspace setting specter.binaryPath → PATH → ~/.specter/bin/specter → auto-download from GitHub Releases. MUST verify SHA256 checksum on auto-download. MUST validate the resolved binary (magic-byte check and `--version` probe) regardless of resolution source; a corrupt file on PATH must not slip through as a valid binary. MUST expose a `Specter: Re-download CLI` command and MUST surface CLI invocation failures via an output channel reachable from the status bar (never leave the UI stuck on an indefinite loading state)."
       type: technical
       enforcement: error
 
@@ -279,6 +279,16 @@ spec:
     - id: AC-22
       description: "Multi-root workspace: each workspace folder has its own SpecterClient, DiagnosticCollection, and manifest. Diagnostics from folder A do not appear in folder B."
       references_constraints: ["C-06"]
+      priority: high
+
+    - id: AC-23
+      description: "A corrupt text file at ~/.specter/bin/specter (e.g. an HTTP error body saved as the binary) with chmod +x is rejected as invalid regardless of how it was resolved (cache, PATH, workspaceSetting). isBinaryFile returns false for files that do not start with ELF/Mach-O/PE magic bytes."
+      references_constraints: ["C-01"]
+      priority: critical
+
+    - id: AC-24
+      description: "When specter coverage fails at runtime, the status bar exits the 'loading…' state and shows an error indicator. Clicking the indicator opens the Specter output channel with the failure details. A `Specter: Re-download CLI` command is available in the command palette to recover from a corrupt cached binary."
+      references_constraints: ["C-01"]
       priority: high
 
   depends_on:
