@@ -53,27 +53,22 @@ spec:
       description: "action.yml has version (required, no default) and args (optional, default: sync) inputs"
       references_constraints: ["C-01"]
       priority: critical
-      gap: true
     - id: AC-02
       description: "Download URL is constructed as: .../releases/download/v{version}/specter_{version}_{os}_{arch}.tar.gz"
       references_constraints: ["C-02"]
       priority: critical
-      gap: true
     - id: AC-03
       description: "actions/cache step is present with key: specter-{runner.os}-{inputs.version}"
       references_constraints: ["C-03"]
       priority: high
-      gap: true
     - id: AC-04
       description: "Architecture is detected from runner.arch and mapped: X64→amd64, ARM64→arm64"
       references_constraints: ["C-04"]
       priority: high
-      gap: true
     - id: AC-05
       description: "specter command invocation uses ${{ inputs.args }} and inherits CI exit code"
       references_constraints: ["C-05"]
       priority: critical
-      gap: true
 
   changelog:
     - version: "1.0.0"

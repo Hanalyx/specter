@@ -70,7 +70,7 @@ spec:
       priority: critical
     - id: AC-02
       description: "AC added between revisions appears as +AC-03: <description>"
-      references_constraints: ["C-03"]
+      references_constraints: ["C-02", "C-03"]
       priority: critical
     - id: AC-03
       description: "AC removed between revisions appears as -AC-02: <description>"

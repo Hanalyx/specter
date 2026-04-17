@@ -71,27 +71,36 @@ spec:
       description: >
         commit-msg hook rejects a plain message with no type prefix
         (e.g. "update readme") with exit code 1 and a helpful error message.
+      references_constraints: ["C-01", "C-03", "C-05"]
     - id: AC-02
       description: >
         commit-msg hook accepts a minimal valid commit: "feat: add thing".
+      references_constraints: ["C-01", "C-05"]
     - id: AC-03
       description: >
         commit-msg hook accepts a scoped commit: "fix(coverage): off-by-one".
+      references_constraints: ["C-01", "C-05"]
     - id: AC-04
       description: >
         commit-msg hook accepts a breaking change commit: "feat!: rename @ac".
+      references_constraints: ["C-01", "C-02", "C-05"]
     - id: AC-05
       description: >
         commit-msg hook allows merge commits through without error.
+      references_constraints: ["C-04", "C-05"]
     - id: AC-06
       description: >
         commit-msg hook rejects an unrecognised type such as "update: foo".
+      references_constraints: ["C-01", "C-05"]
     - id: AC-07
       description: >
         commit-msg hook rejects a subject line longer than 100 characters.
+      references_constraints: ["C-03", "C-05"]
     - id: AC-08
       description: >
         CI step fails when the PR title does not follow Conventional Commits.
+      references_constraints: ["C-01", "C-06"]
     - id: AC-09
       description: >
         CI step passes when the PR title is a valid conventional commit.
+      references_constraints: ["C-01", "C-06"]
