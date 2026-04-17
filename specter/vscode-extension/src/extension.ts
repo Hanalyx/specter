@@ -90,6 +90,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
   binaryPath = resolved;
 
+  // Add ~/.specter/bin to the integrated terminal PATH so users can type
+  // `specter` directly without needing to configure their shell profile.
+  const specterBinDir = path.dirname(defaultCachePath());
+  ctx.environmentVariableCollection.prepend('PATH', specterBinDir + path.delimiter);
+
   // Status bar (AC-12)
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   statusBarItem.command = 'specter.openInsights';
@@ -306,7 +311,19 @@ async function downloadBinary(_ctx: vscode.ExtensionContext): Promise<string | n
         progress.report({ message: 'extracting binary…' });
         await extractBinary(archiveData, format, targetPath);
 
-        vscode.window.showInformationMessage(`Specter CLI v${version} installed successfully.`);
+        // 6. Validate the extracted binary is actually executable
+        const installedVersion = getCachedBinaryVersion(targetPath);
+        if (!installedVersion) {
+          // Extraction produced a corrupt file — clean up and report
+          try { require('fs').unlinkSync(targetPath); } catch { /* ignore */ }
+          vscode.window.showErrorMessage(
+            'Specter download failed: extracted binary is not executable. Try again or install manually.',
+            { modal: true },
+          );
+          return null;
+        }
+
+        vscode.window.showInformationMessage(`Specter CLI v${installedVersion} installed successfully.`);
         return targetPath;
       } catch (e) {
         vscode.window.showErrorMessage(`Failed to download Specter: ${e}`, { modal: true });
