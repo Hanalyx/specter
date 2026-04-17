@@ -6,6 +6,15 @@ In Spec-Driven Development, the specification is the source of truth — not the
 
 ---
 
+## Get Started
+
+New to Specter? Install the CLI, run `specter reverse src/` to generate draft specs from your code, then `specter init` to activate this extension.
+
+- **[QuickStart](https://github.com/Hanalyx/specter/blob/main/specter/docs/QUICKSTART.md)** — zero to working pipeline in 5 minutes
+- **[Getting Started](https://github.com/Hanalyx/specter/blob/main/specter/docs/GETTING_STARTED.md)** — full walkthrough from zero specs to 100% coverage, with AI prompts at every step
+
+---
+
 ## Human Intent, AI Execution
 
 Specter's schema is deliberately detailed — constraints, acceptance criteria, tiers, provenance, coverage thresholds. Writing all of that by hand for every module would be impractical, and that was never the intention.
