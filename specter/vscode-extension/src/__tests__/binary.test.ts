@@ -47,7 +47,7 @@ describe('resolveBinaryPath', () => {
   });
 
   it('falls through to cache path when PATH lookup fails', () => {
-    const fs = { ...mockFs, exists: (p: string) => p === '/home/user/.specter/bin/specter' };
+    const fs = { ...mockFs, exists: (p: string) => p === '/home/user/.specter/bin/specter', isExecutable: () => true };
     const result = resolveBinaryPath({
       workspaceSetting: null,
       which: () => null,
