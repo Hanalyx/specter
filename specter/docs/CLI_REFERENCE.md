@@ -6,30 +6,7 @@ Specter is a spec compiler toolchain — "a type system for specs." It validates
 
 ## Installation
 
-**Binary (Linux amd64):**
-
-```bash
-curl -Lo specter.tar.gz https://github.com/Hanalyx/specter/releases/latest/download/specter_Linux_x86_64.tar.gz
-tar xzf specter.tar.gz
-sudo mv specter /usr/local/bin/
-specter --version
-```
-
-**DEB package:**
-
-```bash
-curl -Lo specter.deb https://github.com/Hanalyx/specter/releases/latest/download/specter_amd64.deb
-sudo dpkg -i specter.deb
-```
-
-**Build from source:**
-
-```bash
-git clone https://github.com/Hanalyx/specter.git
-cd specter
-make build
-./bin/specter --version
-```
+Install the VS Code extension for the smoothest path — it auto-downloads the CLI and sets PATH. For CLI-only installs (tar.gz, `.deb`, `.rpm`, Windows zip, or build from source), see the [Install section in the root README](../README.md#install). Asset naming pattern: `specter_<version>_<os>_<arch>.<ext>` with lowercase `linux`/`darwin`/`windows` and `amd64`/`arm64`.
 
 ---
 

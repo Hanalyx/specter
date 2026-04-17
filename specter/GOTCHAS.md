@@ -163,7 +163,28 @@ The switch was case-sensitive with only uppercase cases. Lowercase values fell t
 
 ---
 
-## 14. VS Code extension and CLI versions must stay in lockstep
+## 14. Release asset names do NOT match `uname` output
+
+**Symptom:** Docs (and old extension code) that used `$(uname -s)_$(uname -m)` or `specter_Linux_x86_64.tar.gz` hit 404. On install, users get a 9-byte `Not Found` response written to disk and chmodded +x.
+
+**Cause:** Four different arch/OS vocabularies coexist in this project:
+
+| Source | OS on Linux amd64 | Arch on Linux amd64 |
+|---|---|---|
+| `uname -s` / `uname -m` | `Linux` | `x86_64` |
+| Node `process.platform` / `process.arch` | `linux` | `x64` |
+| VS Code `runner.os` / `runner.arch` | `Linux` | `X64` |
+| **Go `GOOS` / `GOARCH` (asset names)** | **`linux`** | **`amd64`** |
+
+goreleaser uses `name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"` — Go's values — so every asset is `specter_<version>_<linux|darwin|windows>_<amd64|arm64>.<ext>`. None of the reporter conventions match directly; every install caller must translate.
+
+**What's in place now:** all install snippets in README.md, QUICKSTART.md, GETTING_STARTED.md translate `uname` → `GOOS`/`GOARCH` and resolve version via the GitHub API. The VS Code extension's `normaliseArch` lowercases its input so it handles both uppercase (runner.arch) and lowercase (process.arch). The composite GitHub Action in `.github/actions/specter-sync/action.yml` also does the translation.
+
+**Rule:** when writing any install-command example, never use `uname -m`, `uname -s`, `process.arch`, or `runner.arch` raw in the URL. Always translate. And never omit the version — there is no version-less alias (goreleaser could be configured to emit one but currently doesn't).
+
+---
+
+## 15. VS Code extension and CLI versions must stay in lockstep
 
 **Symptom:** Extension v0.6.5 queries `api.github.com/.../releases/latest`, gets back e.g. v0.6.5, then tries to download `.../releases/download/v0.6.5/...`. If the GitHub release for that tag doesn't exist yet, you get 404 "Not Found" in the body (see #3).
 

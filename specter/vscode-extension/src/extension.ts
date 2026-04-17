@@ -37,7 +37,7 @@ import { buildConstraintHover, resolveDefinitionTarget } from './navigation';
 import { buildInsightCards, formatSpecContextForAI, shouldShowWalkthrough } from './insights';
 import { detectDrift, buildDriftHover } from './drift';
 import { SpecterClient } from './client';
-import { detectShellConfig, isPathAlreadyPresent, formatAppendBlock } from './shellPath';
+import { detectShellConfig, isPathAlreadyPresent, formatAppendBlock, shouldPromptAddPath } from './shellPath';
 import * as crypto from 'crypto';
 import * as os from 'os';
 import type {
@@ -98,6 +98,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // `specter` directly without needing to configure their shell profile.
   const specterBinDir = path.dirname(defaultCachePath());
   ctx.environmentVariableCollection.prepend('PATH', specterBinDir + path.delimiter);
+
+  // One-time prompt for existing users (and anyone whose rc file doesn't
+  // include ~/.specter/bin): offer to run the shell-path command so the
+  // CLI works from external terminals. Non-blocking — fire and forget.
+  void maybePromptAddCliToShellPath(ctx, specterBinDir);
 
   // Output channel for errors and logs.
   outputChannel = vscode.window.createOutputChannel('Specter');
@@ -350,6 +355,52 @@ async function downloadBinary(_ctx: vscode.ExtensionContext): Promise<string | n
       }
     },
   );
+}
+
+// ---------------------------------------------------------------------------
+// External-terminal PATH prompt
+// ---------------------------------------------------------------------------
+
+const ADD_PATH_PROMPT_DISMISSED_KEY = 'specter.addPathPromptDismissed';
+
+/**
+ * Backwards-compat DX: users who installed the extension before v0.6.8 may
+ * have the CLI cached at `~/.specter/bin/specter` but not on their shell
+ * PATH. Every time they drop to a non-VS-Code terminal they have to type
+ * the full path. Prompt them (non-blocking) to run the shell-path command.
+ *
+ * Skips silently for: unknown shells, missing rc files (we don't create one
+ * on someone's behalf), rc files that already reference the bin dir, and
+ * users who've opted out via "Don't show again".
+ */
+async function maybePromptAddCliToShellPath(
+  ctx: vscode.ExtensionContext,
+  binDir: string,
+): Promise<void> {
+  const fs = require('fs');
+
+  const dismissed = ctx.globalState.get<boolean>(ADD_PATH_PROMPT_DISMISSED_KEY, false);
+  const shell = process.env.SHELL || '';
+  const cfg = detectShellConfig({ shell, platform: process.platform, home: os.homedir() }, binDir);
+  if (!cfg) return;
+
+  let rcContents: string | null = null;
+  try { rcContents = fs.readFileSync(cfg.rcFile, 'utf8'); } catch { /* missing file → null */ }
+
+  if (!shouldPromptAddPath(rcContents, binDir, dismissed)) return;
+
+  const pick = await vscode.window.showInformationMessage(
+    `Specter CLI is installed at ${binDir} but not on your shell PATH. ` +
+    `Run \`specter\` from external terminals by adding it to ${cfg.rcFile}.`,
+    'Add to PATH',
+    "Don't show again",
+  );
+
+  if (pick === 'Add to PATH') {
+    await vscode.commands.executeCommand('specter.addCliToShellPath');
+  } else if (pick === "Don't show again") {
+    await ctx.globalState.update(ADD_PATH_PROMPT_DISMISSED_KEY, true);
+  }
 }
 
 // ---------------------------------------------------------------------------

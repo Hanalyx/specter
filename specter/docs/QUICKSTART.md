@@ -6,21 +6,27 @@ Get from zero to a working spec pipeline in under 5 minutes.
 
 ## 1. Install
 
-**macOS / Linux:**
+**Fastest path — VS Code extension:** search `Specter SDD` in the Extensions panel, install, then run **Specter: Add CLI to Shell PATH** from the command palette once. The extension auto-downloads the CLI binary for your OS and architecture.
+
+**CLI-only, macOS / Linux:**
 ```bash
-curl -Lo specter.tar.gz https://github.com/Hanalyx/specter/releases/latest/download/specter_$(uname -s)_$(uname -m).tar.gz
-tar xzf specter.tar.gz && sudo mv specter /usr/local/bin/
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m); case "$ARCH" in x86_64) ARCH=amd64 ;; aarch64) ARCH=arm64 ;; esac
+VERSION=$(curl -sL https://api.github.com/repos/Hanalyx/specter/releases/latest | grep '"tag_name"' | head -n1 | cut -d'"' -f4 | sed 's/^v//')
+curl -LO "https://github.com/Hanalyx/specter/releases/download/v${VERSION}/specter_${VERSION}_${OS}_${ARCH}.tar.gz"
+tar xzf "specter_${VERSION}_${OS}_${ARCH}.tar.gz" && sudo mv specter /usr/local/bin/
 specter --version
 ```
 
-**Windows (PowerShell):**
+**CLI-only, Windows (PowerShell):**
 ```powershell
-Invoke-WebRequest -Uri https://github.com/Hanalyx/specter/releases/latest/download/specter_Windows_x86_64.zip -OutFile specter.zip
-Expand-Archive specter.zip; Move-Item specter\specter.exe C:\Windows\System32\
-specter --version
+$v = (Invoke-RestMethod https://api.github.com/repos/Hanalyx/specter/releases/latest).tag_name -replace '^v',''
+Invoke-WebRequest -Uri "https://github.com/Hanalyx/specter/releases/download/v${v}/specter_${v}_windows_amd64.zip" -OutFile specter.zip
+Expand-Archive specter.zip -DestinationPath "$env:USERPROFILE\.specter\bin"
+[Environment]::SetEnvironmentVariable("Path", "$env:Path;$env:USERPROFILE\.specter\bin", "User")
 ```
 
-**VS Code Extension:** search `Specter SDD` in the Extensions panel, then install.
+For `.deb`, `.rpm`, and other install methods see the [root README](../README.md#install).
 
 ---
 
@@ -59,14 +65,23 @@ Open any generated spec in VS Code. It will look like this:
 ```yaml
 spec:
   id: user-create
-  gap: true              # ← human review needed
+  version: "1.0.0"
+  status: draft
+  tier: 2
+  context:
+    system: User service
+  objective:
+    summary: "Create a new user account"
   constraints:
     - id: C-01
       description: "POST /users accepts email and password"
   acceptance_criteria:
     - id: AC-01
-      description: ""    # ← empty, needs your intent
+      description: ""        # ← empty, needs your intent
+      gap: true              # ← human review needed
 ```
+
+The `gap: true` flag lives on individual acceptance criteria that the reverse compiler extracted structurally but couldn't infer intent for. Until those gaps are filled, the AC counts as uncovered (`specter sync` will fail on it), which is what forces the triage.
 
 **Pass this prompt to your AI assistant:**
 
@@ -116,10 +131,12 @@ specter coverage
 ```
 
 ```
-user-create    T2    3 ACs    1 covered    33%    PASS
+Spec ID        Tier  ACs  Covered  Coverage  Status
+user-create    T2    3    1        33%       FAIL   ← below T2's 80% threshold
+  uncovered: AC-02, AC-03
 ```
 
-Each `@ac` annotation you add moves the percentage up.
+A tier-2 spec needs 80% coverage to pass; tier-1 needs 100%; tier-3 needs 50%. Each `@ac` annotation you add moves the percentage up. Once `user-create` hits 80%+, status flips to `PASS` and `specter sync` can succeed.
 
 ---
 

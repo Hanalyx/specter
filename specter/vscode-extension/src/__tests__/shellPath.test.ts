@@ -5,6 +5,7 @@ import {
   detectShellConfig,
   isPathAlreadyPresent,
   formatAppendBlock,
+  shouldPromptAddPath,
   SPECTER_MARKER,
 } from '../shellPath';
 
@@ -82,6 +83,33 @@ describe('isPathAlreadyPresent', () => {
     const block = formatAppendBlock(`export PATH="${BIN}:$PATH"`);
     const after = before + block;
     expect(isPathAlreadyPresent(after, BIN)).toBe(true);
+  });
+});
+
+// @ac AC-27
+describe('shouldPromptAddPath', () => {
+  it('returns false when user has opted out', () => {
+    expect(shouldPromptAddPath('', BIN, true)).toBe(false);
+    expect(shouldPromptAddPath(null, BIN, true)).toBe(false);
+  });
+
+  it('returns false when rc file does not exist (null contents)', () => {
+    // Don't auto-create config on a user's behalf without invitation.
+    expect(shouldPromptAddPath(null, BIN, false)).toBe(false);
+  });
+
+  it('returns false when rc file already references the bin dir', () => {
+    const contents = `export PATH="${BIN}:$PATH"\n`;
+    expect(shouldPromptAddPath(contents, BIN, false)).toBe(false);
+  });
+
+  it('returns true when rc file exists and does not reference the bin dir', () => {
+    const contents = `export PATH=/usr/local/bin:$PATH\n`;
+    expect(shouldPromptAddPath(contents, BIN, false)).toBe(true);
+  });
+
+  it('returns true when rc file exists and is empty', () => {
+    expect(shouldPromptAddPath('', BIN, false)).toBe(true);
   });
 });
 
