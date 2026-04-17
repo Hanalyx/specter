@@ -133,12 +133,6 @@
           "description": "Other specs this depends on. Creates edges in the dependency graph."
         },
 
-        "trust_level": {
-          "type": "string",
-          "enum": ["full_auto", "auto_with_review", "human_required"],
-          "description": "AI autonomy level. Maps to MODULE_05 CH03 trust spectrum."
-        },
-
         "environment": {
           "type": "object",
           "additionalProperties": false,
@@ -213,13 +207,12 @@
         "type": {
           "type": "string",
           "enum": ["technical", "security", "performance", "accessibility", "business"],
-          "description": "Category of constraint."
+          "description": "Category of constraint. Surfaces in spec-check diagnostics so issues can be grouped by category."
         },
         "enforcement": {
           "type": "string",
           "enum": ["error", "warning", "info"],
-          "default": "error",
-          "description": "Severity when violated."
+          "description": "Overrides the tier-based default severity when spec-check emits a diagnostic about this constraint. Omit to use the tier default."
         },
         "validation": {
           "$ref": "#/$defs/constraint_validation",

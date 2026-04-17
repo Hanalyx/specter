@@ -20,7 +20,6 @@ type SpecAST struct {
 	Constraints        []Constraint          `yaml:"constraints" json:"constraints"`
 	AcceptanceCriteria []AcceptanceCriterion `yaml:"acceptance_criteria" json:"acceptance_criteria"`
 	DependsOn          []DependencyRef       `yaml:"depends_on,omitempty" json:"depends_on,omitempty"`
-	TrustLevel         string                `yaml:"trust_level,omitempty" json:"trust_level,omitempty"`
 	Environment        *SpecEnvironment      `yaml:"environment,omitempty" json:"environment,omitempty"`
 	Tags               []string              `yaml:"tags,omitempty" json:"tags,omitempty"`
 	Changelog          []ChangelogEntry      `yaml:"changelog,omitempty" json:"changelog,omitempty"`

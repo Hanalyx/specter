@@ -84,7 +84,7 @@ spec:
       expected_output:
         ac_01_label: "COVERED"
         ac_02_label: "UNCOVERED"
-      references_constraints: ["C-02"]
+      references_constraints: ["C-02", "C-06"]
       priority: critical
 
     - id: AC-02

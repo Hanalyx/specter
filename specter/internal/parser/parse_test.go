@@ -132,9 +132,6 @@ func TestParseMinimalSpec(t *testing.T) {
 	if result.Value.DependsOn != nil {
 		t.Error("expected nil depends_on")
 	}
-	if result.Value.TrustLevel != "" {
-		t.Error("expected empty trust_level")
-	}
 	if result.Value.Tags != nil {
 		t.Error("expected nil tags")
 	}

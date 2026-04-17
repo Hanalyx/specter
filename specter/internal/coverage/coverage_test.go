@@ -107,6 +107,39 @@ func TestTier3At60Passes(t *testing.T) {
 	}
 }
 
+// @ac AC-09
+func TestGapACsCountAsUncovered(t *testing.T) {
+	// A spec where every AC is gap: true with no test annotations must fail
+	// its tier threshold — it has zero captured intent and cannot silently pass.
+	spec := schema.SpecAST{
+		ID: "draft-spec", Version: "1.0.0", Status: "draft", Tier: 3,
+		Context:     schema.SpecContext{System: "test"},
+		Objective:   schema.SpecObjective{Summary: "test"},
+		Constraints: []schema.Constraint{{ID: "C-01", Description: "test"}},
+		AcceptanceCriteria: []schema.AcceptanceCriterion{
+			{ID: "AC-01", Description: "reverse-extracted", Gap: true},
+			{ID: "AC-02", Description: "reverse-extracted", Gap: true},
+			{ID: "AC-03", Description: "reverse-extracted", Gap: true},
+		},
+	}
+
+	report := BuildCoverageReport([]schema.SpecAST{spec}, nil, checker.CoverageThresholdByTier)
+	e := report.Entries[0]
+
+	if e.TotalACs != 3 {
+		t.Errorf("expected 3 total ACs (gaps must count), got %d", e.TotalACs)
+	}
+	if len(e.UncoveredACs) != 3 {
+		t.Errorf("expected 3 uncovered ACs, got %d", len(e.UncoveredACs))
+	}
+	if e.CoveragePct != 0 {
+		t.Errorf("expected 0%% coverage, got %.1f%%", e.CoveragePct)
+	}
+	if e.PassesThreshold {
+		t.Error("expected 100 percent-gap spec to fail threshold (tier 3 needs 50 percent)")
+	}
+}
+
 // @ac AC-05
 func TestPythonAnnotations(t *testing.T) {
 	content := "# @spec user-auth\n# @ac AC-01\n"

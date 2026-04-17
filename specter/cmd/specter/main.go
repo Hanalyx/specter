@@ -547,7 +547,11 @@ func checkCmd() *cobra.Command {
 				if d.ConstraintID != "" {
 					cid = " " + d.ConstraintID
 				}
-				fmt.Printf("%s [%s] %s%s: %s\n", prefix, d.Kind, d.SpecID, cid, d.Message)
+				ctype := ""
+				if d.ConstraintType != "" {
+					ctype = " (" + d.ConstraintType + ")"
+				}
+				fmt.Printf("%s [%s] %s%s%s: %s\n", prefix, d.Kind, d.SpecID, cid, ctype, d.Message)
 			}
 
 			fmt.Printf("\n%d error(s), %d warning(s), %d info\n", result.Summary.Errors, result.Summary.Warnings+len(tierConflicts), result.Summary.Info)

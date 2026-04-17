@@ -49,12 +49,14 @@ func minimalValidSpec(id string, tier int, acIDs ...string) string {
 		acs += fmt.Sprintf(`
     - id: %s
       description: "Test acceptance criterion"
+      references_constraints: ["C-01"]
       priority: high`, acID)
 	}
 	if acs == "" {
 		acs = `
     - id: AC-01
       description: "Test acceptance criterion"
+      references_constraints: ["C-01"]
       priority: high`
 	}
 

@@ -86,12 +86,12 @@ spec:
 
     - id: AC-02
       description: "Modifying a .spec.yaml file triggers a re-run within 500ms"
-      references_constraints: ["C-01", "C-05"]
+      references_constraints: ["C-01", "C-02", "C-05"]
       priority: critical
 
     - id: AC-03
       description: "Modifying a test file triggers a re-run within 500ms"
-      references_constraints: ["C-01", "C-05"]
+      references_constraints: ["C-01", "C-02", "C-05"]
       priority: high
 
     - id: AC-04

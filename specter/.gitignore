@@ -4,6 +4,12 @@ specter-linux-*
 specter-darwin-*
 specter-windows-*
 
+# Stray binary from a bare `go build` at the package root.
+# Canonical build path is bin/specter (see Makefile). A plain `go build`
+# (without -o) drops the binary here matching the dir name — ignore it so
+# it can't get committed by accident.
+/specter
+
 # IDE
 .vscode/
 .idea/

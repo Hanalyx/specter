@@ -145,20 +145,13 @@ func BuildCoverageReportWithResults(specs []schema.SpecAST, annotations []Annota
 	report := &CoverageReport{}
 
 	for _, spec := range specs {
-		// Build a set of AC IDs that are marked gap: true — these are intentionally
-		// not covered and are excluded from coverage calculations.
-		gapACs := make(map[string]bool)
-		for _, ac := range spec.AcceptanceCriteria {
-			if ac.Gap {
-				gapACs[ac.ID] = true
-			}
-		}
-
+		// Every declared AC counts toward coverage, including gap: true. An
+		// unreviewed reverse-compiled spec must fail coverage until a human
+		// triages its gaps, otherwise the source-of-truth invariant is broken
+		// (a 100%-gap spec would silently pass with zero captured intent).
 		var allACIDs []string
 		for _, ac := range spec.AcceptanceCriteria {
-			if !ac.Gap {
-				allACIDs = append(allACIDs, ac.ID)
-			}
+			allACIDs = append(allACIDs, ac.ID)
 		}
 
 		ann := annotBySpec[spec.ID]
@@ -204,8 +197,9 @@ func BuildCoverageReportWithResults(specs []schema.SpecAST, annotations []Annota
 			}
 		}
 
-		// A spec with no trackable ACs (all marked gap: true) is exempt from
-		// threshold enforcement — there is nothing to cover.
+		// Schema requires minItems: 1 for acceptance_criteria, so totalACs
+		// should always be >= 1. Guard against empty just in case (defensive,
+		// not a supported path).
 		passesThreshold := totalACs == 0 || coveragePct >= float64(threshold)
 
 		entry := SpecCoverageEntry{

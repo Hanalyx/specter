@@ -471,7 +471,6 @@ func assembleSpec(groupKey string, group *fileGroup, adapter Adapter, systemName
 		},
 		Constraints:        specConstraints,
 		AcceptanceCriteria: specACs,
-		TrustLevel:         "auto_with_review",
 		GeneratedFrom: &schema.GeneratedFrom{
 			SourceFile:     sourceFilePath,
 			TestFiles:      testFilePaths,
