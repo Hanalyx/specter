@@ -60,39 +60,50 @@ and break acceptance criteria into individually testable AC-XX items.
 
 ### CLI
 
-**macOS / Linux:**
+Release assets follow the goreleaser convention `specter_<version>_<os>_<arch>.<ext>` — lowercase `linux`/`darwin`/`windows`, Go's `amd64`/`arm64` (not `uname`'s `x86_64`/`aarch64`). Each snippet below translates and picks the latest version automatically.
+
+**macOS / Linux (tar.gz):**
 ```bash
-curl -Lo specter.tar.gz https://github.com/Hanalyx/specter/releases/latest/download/specter_$(uname -s)_$(uname -m).tar.gz
-tar xzf specter.tar.gz && sudo mv specter /usr/local/bin/
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m); case "$ARCH" in x86_64) ARCH=amd64 ;; aarch64) ARCH=arm64 ;; esac
+VERSION=$(curl -sL https://api.github.com/repos/Hanalyx/specter/releases/latest | grep '"tag_name"' | head -n1 | cut -d'"' -f4 | sed 's/^v//')
+curl -LO "https://github.com/Hanalyx/specter/releases/download/v${VERSION}/specter_${VERSION}_${OS}_${ARCH}.tar.gz"
+tar xzf "specter_${VERSION}_${OS}_${ARCH}.tar.gz" && sudo mv specter /usr/local/bin/
 specter --version
 ```
 
 **DEB package (Ubuntu/Debian):**
 ```bash
-curl -Lo specter.deb https://github.com/Hanalyx/specter/releases/latest/download/specter_amd64.deb
-sudo dpkg -i specter.deb
+ARCH=$(dpkg --print-architecture)
+VERSION=$(curl -sL https://api.github.com/repos/Hanalyx/specter/releases/latest | grep '"tag_name"' | head -n1 | cut -d'"' -f4 | sed 's/^v//')
+curl -LO "https://github.com/Hanalyx/specter/releases/download/v${VERSION}/specter_${VERSION}_linux_${ARCH}.deb"
+sudo dpkg -i "specter_${VERSION}_linux_${ARCH}.deb"
 ```
 
 **RPM package (Fedora/RHEL):**
 ```bash
-curl -Lo specter.rpm https://github.com/Hanalyx/specter/releases/latest/download/specter_amd64.rpm
-sudo rpm -i specter.rpm
+ARCH=$(uname -m); case "$ARCH" in x86_64) ARCH=amd64 ;; aarch64) ARCH=arm64 ;; esac
+VERSION=$(curl -sL https://api.github.com/repos/Hanalyx/specter/releases/latest | grep '"tag_name"' | head -n1 | cut -d'"' -f4 | sed 's/^v//')
+curl -LO "https://github.com/Hanalyx/specter/releases/download/v${VERSION}/specter_${VERSION}_linux_${ARCH}.rpm"
+sudo rpm -i "specter_${VERSION}_linux_${ARCH}.rpm"
 ```
 
 **Windows (PowerShell):**
 ```powershell
-Invoke-WebRequest -Uri https://github.com/Hanalyx/specter/releases/latest/download/specter_Windows_x86_64.zip -OutFile specter.zip
-Expand-Archive specter.zip; Move-Item specter\specter.exe C:\Windows\System32\
+$v = (Invoke-RestMethod https://api.github.com/repos/Hanalyx/specter/releases/latest).tag_name -replace '^v',''
+Invoke-WebRequest -Uri "https://github.com/Hanalyx/specter/releases/download/v${v}/specter_${v}_windows_amd64.zip" -OutFile specter.zip
+Expand-Archive specter.zip -DestinationPath "$env:USERPROFILE\.specter\bin"
+[Environment]::SetEnvironmentVariable("Path", "$env:Path;$env:USERPROFILE\.specter\bin", "User")
 ```
 
 **Build from source (Go 1.22+):**
 ```bash
 git clone https://github.com/Hanalyx/specter.git
-cd specter && make build
+cd specter/specter && make build
 sudo mv bin/specter /usr/local/bin/
 ```
 
-Verify:
+Verify (restart terminal first on Windows so `PATH` picks up):
 ```bash
 specter --version
 specter --help
@@ -441,20 +452,25 @@ When a spec changes (you edit a constraint or AC description), the extension hig
 
 Once `specter sync` passes locally, add it to your CI pipeline. This is the gate that prevents specs and tests from drifting apart on every PR.
 
-**GitHub Actions:**
-```yaml
-- name: Specter sync
-  run: |
-    curl -Lo specter.tar.gz https://github.com/Hanalyx/specter/releases/latest/download/specter_Linux_x86_64.tar.gz
-    tar xzf specter.tar.gz
-    ./specter sync
-```
-
-**Or use the composite action (one line):**
+**GitHub Actions (composite action, pinned version — preferred):**
 ```yaml
 - uses: hanalyx/specter-sync-action@v1
   with:
-    version: latest
+    version: 0.6.9
+```
+
+**Or inline download (if you can't use the composite action):**
+```yaml
+- name: Install specter
+  shell: bash
+  run: |
+    OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
+    case "${{ runner.arch }}" in X64) ARCH=amd64 ;; ARM64) ARCH=arm64 ;; esac
+    VERSION=0.6.9   # pin a version; don't rely on "latest" in CI
+    curl -LO "https://github.com/Hanalyx/specter/releases/download/v${VERSION}/specter_${VERSION}_${OS}_${ARCH}.tar.gz"
+    tar xzf "specter_${VERSION}_${OS}_${ARCH}.tar.gz" && sudo mv specter /usr/local/bin/
+- name: Specter sync
+  run: specter sync
 ```
 
 ---

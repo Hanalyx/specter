@@ -301,6 +301,11 @@ spec:
       references_constraints: ["C-01"]
       priority: high
 
+    - id: AC-27
+      description: "On activation, when the cached CLI is at ~/.specter/bin and the detected shell's rc file exists but does not reference that dir, the extension shows a non-modal info prompt offering to add the CLI to shell PATH. The prompt offers 'Add to PATH' (runs specter.addCliToShellPath) and 'Don't show again' (persists an opt-out flag in globalState so future activations skip the prompt). Unknown shells, missing rc files, and already-present references suppress the prompt without user interaction."
+      references_constraints: ["C-01"]
+      priority: medium
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.1.0"

@@ -37,30 +37,65 @@ Specter enforces the discipline at every step: the spec must exist before code, 
 
 ## Install
 
-**Binary (Linux amd64):**
+### VS Code extension (recommended for most users)
+
+Search **Specter SDD** in the Extensions panel. The extension auto-downloads the CLI binary matching the host's OS and architecture, installs it under `~/.specter/bin/`, and wires up the integrated terminal so `specter` works without further setup. To call `specter` from external terminals, run **Specter: Add CLI to Shell PATH** from the command palette once.
+
+### CLI, Linux / macOS (tar.gz)
+
+Asset names follow Go's `GOOS`/`GOARCH` conventions (lowercase `linux`/`darwin`, `amd64`/`arm64`) — not `uname`'s `Linux`/`x86_64`. This snippet translates and picks the latest version automatically:
 
 ```bash
-curl -Lo specter.tar.gz https://github.com/Hanalyx/specter/releases/latest/download/specter_Linux_x86_64.tar.gz
-tar xzf specter.tar.gz
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m); case "$ARCH" in x86_64) ARCH=amd64 ;; aarch64) ARCH=arm64 ;; esac
+VERSION=$(curl -sL https://api.github.com/repos/Hanalyx/specter/releases/latest | grep '"tag_name"' | head -n1 | cut -d'"' -f4 | sed 's/^v//')
+curl -LO "https://github.com/Hanalyx/specter/releases/download/v${VERSION}/specter_${VERSION}_${OS}_${ARCH}.tar.gz"
+tar xzf "specter_${VERSION}_${OS}_${ARCH}.tar.gz"
 sudo mv specter /usr/local/bin/
 specter --version
 ```
 
-**DEB package:**
+### CLI, Debian / Ubuntu (.deb)
 
 ```bash
-curl -Lo specter.deb https://github.com/Hanalyx/specter/releases/latest/download/specter_amd64.deb
-sudo dpkg -i specter.deb
+ARCH=$(dpkg --print-architecture)   # amd64 or arm64
+VERSION=$(curl -sL https://api.github.com/repos/Hanalyx/specter/releases/latest | grep '"tag_name"' | head -n1 | cut -d'"' -f4 | sed 's/^v//')
+curl -LO "https://github.com/Hanalyx/specter/releases/download/v${VERSION}/specter_${VERSION}_linux_${ARCH}.deb"
+sudo dpkg -i "specter_${VERSION}_linux_${ARCH}.deb"
 ```
 
-**Build from source:**
+### CLI, Fedora / RHEL / openSUSE (.rpm)
+
+```bash
+ARCH=$(uname -m); case "$ARCH" in x86_64) ARCH=amd64 ;; aarch64) ARCH=arm64 ;; esac
+VERSION=$(curl -sL https://api.github.com/repos/Hanalyx/specter/releases/latest | grep '"tag_name"' | head -n1 | cut -d'"' -f4 | sed 's/^v//')
+curl -LO "https://github.com/Hanalyx/specter/releases/download/v${VERSION}/specter_${VERSION}_linux_${ARCH}.rpm"
+sudo rpm -i "specter_${VERSION}_linux_${ARCH}.rpm"
+```
+
+### CLI, Windows (PowerShell)
+
+```powershell
+$version = (Invoke-RestMethod https://api.github.com/repos/Hanalyx/specter/releases/latest).tag_name -replace '^v',''
+$asset = "specter_${version}_windows_amd64.zip"
+Invoke-WebRequest -Uri "https://github.com/Hanalyx/specter/releases/download/v${version}/${asset}" -OutFile specter.zip
+Expand-Archive specter.zip -DestinationPath "$env:USERPROFILE\.specter\bin"
+[Environment]::SetEnvironmentVariable("Path", "$env:Path;$env:USERPROFILE\.specter\bin", "User")
+specter --version  # restart terminal first, or reload $env:Path
+```
+
+### Build from source
 
 ```bash
 git clone https://github.com/Hanalyx/specter.git
-cd specter
+cd specter/specter
 make build
 ./bin/specter --version
 ```
+
+### Manual download
+
+If you prefer clicking, every asset is listed on the [Releases page](https://github.com/Hanalyx/specter/releases/latest). Naming pattern: `specter_<version>_<os>_<arch>.<ext>` — lowercase OS, `amd64`/`arm64` arch.
 
 ---
 

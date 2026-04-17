@@ -92,3 +92,26 @@ export function isPathAlreadyPresent(contents: string, binDir: string): boolean 
 export function formatAppendBlock(exportLine: string): string {
   return `\n${SPECTER_MARKER}\n${exportLine}\n`;
 }
+
+/**
+ * Pure decision: should we prompt the user to add the CLI to their PATH?
+ *
+ * `rcContents` is the current content of the detected shell's rc file, or
+ * null when the file does not exist on disk. `dismissed` is whatever the
+ * caller pulled out of persistent state for the "don't show again" flag.
+ *
+ * We prompt only when all three are true:
+ *   - the rc file exists (we don't create a shell config on someone's
+ *     behalf without invitation)
+ *   - the bin dir is not already referenced in it
+ *   - the user has not previously opted out
+ */
+export function shouldPromptAddPath(
+  rcContents: string | null,
+  binDir: string,
+  dismissed: boolean,
+): boolean {
+  if (dismissed) return false;
+  if (rcContents === null) return false;
+  return !isPathAlreadyPresent(rcContents, binDir);
+}
