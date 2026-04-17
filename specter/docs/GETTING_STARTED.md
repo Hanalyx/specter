@@ -30,14 +30,21 @@ I have specifications in [Gherkin / OpenAPI / plain text / other format].
 I want to migrate them to Specter's .spec.yaml format.
 
 Specter's schema requires these top-level fields:
-  spec.id (kebab-case string)
-  spec.version ("1.0.0" format)
-  spec.status (draft | review | approved | deprecated | removed)
-  spec.tier (1=Security/Money, 2=Core Business, 3=Utility)
-  spec.context.system (string)
-  spec.objective.summary (string)
-  spec.constraints (array of {id: C-01, description: "MUST..."})
-  spec.acceptance_criteria (array of {id: AC-01, description: "..."})
+  spec.id — lowercase letters, digits, hyphens only, must start with a letter
+            (e.g. "user-create", "payment-process"). No uppercase, no underscores.
+  spec.version — quoted semver string: "1.0.0" (must be quoted or YAML parsing fails)
+  spec.status — one of: draft | review | approved | deprecated | removed
+  spec.tier — integer only, no quotes: 1 (Security/Money), 2 (Core Business), 3 (Utility)
+  spec.context.system — string (name of the system or service)
+  spec.objective.summary — string inside an objective object, not a bare string
+  spec.constraints — array of objects. Required fields per item: id (format: C-01, C-02...),
+                     description. Optional fields: type (technical | security | performance |
+                     accessibility | business), enforcement (error | warning | info).
+                     No other fields are allowed.
+  spec.acceptance_criteria — array of objects. Required fields per item: id (format: AC-01,
+                     AC-02...), description. Optional fields: references_constraints (array
+                     of C-XX strings), inputs, expected_output, priority (critical | high |
+                     medium | low). No other fields are allowed.
 
 Here is my existing spec:
 [paste your spec]
