@@ -8,11 +8,13 @@ In Spec-Driven Development, the specification is the source of truth — not the
 
 ## Get Started
 
-New to Specter? The built-in walkthrough takes you from install to a passing pipeline — open it directly in VS Code:
+New to Specter? Open the built-in walkthrough directly in VS Code:
 
-**[Open QuickStart Walkthrough](command:workbench.action.openWalkthrough?%22Hanalyx.specter-vscode%23specter.gettingStarted%22)**
+> `Ctrl+Shift+P` → **Welcome: Open Walkthrough** → **Get Started with Specter**
 
-Or use the full written guides:
+It covers install, generating specs from your code, closing gaps with AI, annotating tests, and locking coverage into CI — all without leaving the editor.
+
+Prefer a written guide?
 - **[QuickStart](https://github.com/Hanalyx/specter/blob/main/specter/docs/QUICKSTART.md)** — 5-minute path: install → specs → tests → CI
 - **[Getting Started](https://github.com/Hanalyx/specter/blob/main/specter/docs/GETTING_STARTED.md)** — full walkthrough with AI prompts at every step
 
