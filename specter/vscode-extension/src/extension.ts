@@ -216,7 +216,34 @@ async function resolveBinary(ctx: vscode.ExtensionContext): Promise<string | nul
     cachePath: defaultCachePath(),
   });
 
-  if (resolved) return resolved;
+  // If resolved from cache, check whether the cached binary version matches
+  // the extension version.  When the extension updates, it should pull a
+  // matching CLI so features stay in sync.
+  if (resolved) {
+    const { source } = resolveBinaryPath({
+      workspaceSetting,
+      which: () => null,   // skip PATH — we just need to know if it was cache
+      fs: {
+        exists: p => p === resolved,
+        isExecutable: () => true,
+      },
+      cachePath: defaultCachePath(),
+    });
+
+    if (source === 'cache') {
+      const cliVersion = getCachedBinaryVersion(resolved);
+      const extVersion = vscode.extensions.getExtension('Hanalyx.specter-vscode')?.packageJSON?.version as string | undefined;
+      if (cliVersion && extVersion && cliVersion !== extVersion) {
+        const autoDownload = cfg.get<boolean>('autoDownload', true);
+        if (autoDownload) {
+          const updated = await downloadBinary(ctx);
+          if (updated) return updated;
+        }
+        // Fall through to the existing cached binary if download fails
+      }
+    }
+    return resolved;
+  }
 
   // Auto-download
   const autoDownload = cfg.get<boolean>('autoDownload', true);
@@ -1043,6 +1070,26 @@ async function scanForDrift(doc: vscode.TextDocument): Promise<void> {
     }
   }
   editor.setDecorations(driftDecorationType, decorations);
+}
+
+// ---------------------------------------------------------------------------
+// Binary version check
+// ---------------------------------------------------------------------------
+
+/** Runs `specter --version` and returns the semver string, or null on failure. */
+function getCachedBinaryVersion(binaryPath: string): string | null {
+  try {
+    const { execFileSync } = require('child_process');
+    const out: string = execFileSync(binaryPath, ['--version'], {
+      encoding: 'utf8',
+      timeout: 5000,
+    });
+    // Output format: "specter version 0.6.0"
+    const m = out.match(/(\d+\.\d+\.\d+)/);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
