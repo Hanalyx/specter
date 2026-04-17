@@ -145,6 +145,22 @@ The annotations are plain comments — no build step, no framework, works in any
 | `Specter: Open Insights Panel` | Plain-English health cards for all failing specs |
 | `Specter: Copy Spec Context for AI` | Copy current spec as a structured AI prompt preamble |
 | `Specter: Run Sync` | Re-run the full coverage pipeline manually |
+| `Specter: Run Reverse Compiler` | Generate draft specs from your source code |
+| `Specter: Open QuickStart` | Open the bundled QuickStart doc in VS Code |
+| `Specter: Add CLI to Shell PATH` | Append `~/.specter/bin` to your shell rc file so `specter` works in external terminals |
+| `Specter: Re-download CLI` | Force a fresh download of the CLI binary (recovery if the cached one is broken) |
+| `Specter: Show Output Log` | Open the Specter output channel with download/coverage error details |
+| `Specter: Reveal in Tree View` | Jump to the current spec in the Coverage sidebar |
+
+---
+
+## Using `specter` from external terminals
+
+When the extension auto-downloads the CLI, it lands at `~/.specter/bin/specter`. VS Code's integrated terminal gets this path prepended automatically. External terminals (iTerm, Windows Terminal, tmux, etc.) don't — you'd need to type the full path.
+
+Run `Specter: Add CLI to Shell PATH` from the command palette once, and the extension will append an idempotent export to your shell's rc file (`.bashrc` on Linux, `.bash_profile` on macOS, `.zshrc` for zsh, `config.fish` for fish). Restart your terminal and `specter` works from anywhere.
+
+The command is idempotent — running it again when the path is already set tells you so and makes no changes.
 
 ---
 

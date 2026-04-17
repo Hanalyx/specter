@@ -291,6 +291,16 @@ spec:
       references_constraints: ["C-01"]
       priority: high
 
+    - id: AC-25
+      description: "A `Specter: Add CLI to Shell PATH` command detects the user's shell ($SHELL env) and maps bash→.bashrc (or .bash_profile on darwin), zsh→.zshrc, fish→config.fish. Fish uses fish_add_path syntax; bash/zsh use export PATH. Unknown shells return null so the handler falls back to clipboard-copying the manual export line."
+      references_constraints: ["C-01"]
+      priority: high
+
+    - id: AC-26
+      description: "Appending to the shell rc file is idempotent — isPathAlreadyPresent ignores commented lines and detects an existing reference to the bin dir in any non-comment line, so running the command twice adds only one block."
+      references_constraints: ["C-01"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.1.0"
