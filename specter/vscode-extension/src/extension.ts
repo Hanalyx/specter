@@ -107,6 +107,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     for (const folder of e.removed) teardownFolder(folder);
   }, undefined, ctx.subscriptions);
 
+  // Watch for specter.yaml creation so `specter init` works without reload.
+  const manifestWatcher = vscode.workspace.createFileSystemWatcher('**/specter.yaml');
+  manifestWatcher.onDidCreate(async () => {
+    for (const folder of (vscode.workspace.workspaceFolders ?? [])) {
+      await setupFolder(ctx, folder);
+    }
+  });
+  ctx.subscriptions.push(manifestWatcher);
+
   // AC-11: Tree view sidebar
   treeProvider = new SpecterTreeProvider();
   vscode.window.registerTreeDataProvider('specterCoverage', treeProvider);
@@ -756,6 +765,13 @@ function registerCommands(ctx: vscode.ExtensionContext): void {
   // specter.runSync
   ctx.subscriptions.push(
     vscode.commands.registerCommand('specter.runSync', async () => {
+      // Retry setup if clients are empty (specter.yaml may have been created
+      // after activation, e.g. via `specter init` in the terminal).
+      if (clients.size === 0 && binaryPath) {
+        for (const folder of (vscode.workspace.workspaceFolders ?? [])) {
+          await setupFolder(ctx, folder);
+        }
+      }
       if (clients.size === 0) {
         vscode.window.showWarningMessage(
           'Specter: no specter.yaml found in this workspace. Run `specter init` to get started.',
