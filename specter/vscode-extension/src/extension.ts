@@ -37,7 +37,9 @@ import { buildConstraintHover, resolveDefinitionTarget } from './navigation';
 import { buildInsightCards, formatSpecContextForAI, shouldShowWalkthrough } from './insights';
 import { detectDrift, buildDriftHover } from './drift';
 import { SpecterClient } from './client';
+import { detectShellConfig, isPathAlreadyPresent, formatAppendBlock } from './shellPath';
 import * as crypto from 'crypto';
+import * as os from 'os';
 import type {
   SpecIndex,
   CoverageReport,
@@ -877,6 +879,55 @@ function registerCommands(ctx: vscode.ExtensionContext): void {
   ctx.subscriptions.push(
     vscode.commands.registerCommand('specter.showOutput', () => {
       outputChannel?.show(true);
+    }),
+  );
+
+  // Append ~/.specter/bin to the user's shell rc file so `specter` works in
+  // external terminals (the integrationVariableCollection path only affects
+  // VS Code's integrated terminals). Idempotent — does nothing if the path
+  // is already referenced.
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand('specter.addCliToShellPath', async () => {
+      const fs = require('fs');
+      const binDir = path.dirname(defaultCachePath());
+      const shell = process.env.SHELL || '';
+      const cfg = detectShellConfig({ shell, platform: process.platform, home: os.homedir() }, binDir);
+
+      if (!cfg) {
+        const manual = `export PATH="${binDir}:$PATH"`;
+        await vscode.env.clipboard.writeText(manual);
+        vscode.window.showWarningMessage(
+          `Specter: couldn't detect your shell (SHELL=${shell || 'unset'}). The export line has been copied to your clipboard — paste it into your shell's rc file.`,
+        );
+        return;
+      }
+
+      let existing = '';
+      try { existing = fs.readFileSync(cfg.rcFile, 'utf8'); } catch { /* file may not exist yet */ }
+
+      if (isPathAlreadyPresent(existing, binDir)) {
+        vscode.window.showInformationMessage(
+          `Specter: ${binDir} is already referenced in ${cfg.rcFile}. Nothing to do.`,
+        );
+        return;
+      }
+
+      try {
+        fs.mkdirSync(path.dirname(cfg.rcFile), { recursive: true });
+        fs.appendFileSync(cfg.rcFile, formatAppendBlock(cfg.exportLine), 'utf8');
+      } catch (e) {
+        vscode.window.showErrorMessage(`Specter: could not write to ${cfg.rcFile}: ${e}`);
+        return;
+      }
+
+      const sourceCmd = `source "${cfg.rcFile}"`;
+      const pick = await vscode.window.showInformationMessage(
+        `Specter: added ${binDir} to PATH via ${cfg.rcFile}. Restart your terminal or run "${sourceCmd}" to pick it up.`,
+        'Copy source command',
+      );
+      if (pick === 'Copy source command') {
+        await vscode.env.clipboard.writeText(sourceCmd);
+      }
     }),
   );
 
