@@ -3,10 +3,11 @@ name: CI
 on:
   push:
     branches: [main]
-    paths: ['specter/**']
+    paths: ['specter/**', '.github/**']
   pull_request:
     branches: [main]
-    paths: ['specter/**']
+    paths: ['specter/**', '.github/**']
+  workflow_dispatch:
 
 defaults:
   run:
