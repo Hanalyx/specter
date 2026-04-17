@@ -37,6 +37,7 @@ func TestGenerateSpecID(t *testing.T) {
 	}
 }
 
+// @ac AC-08
 func TestGenerateSpecIDFromRoute(t *testing.T) {
 	tests := []struct {
 		route string
@@ -61,6 +62,7 @@ func TestGenerateSpecIDFromRoute(t *testing.T) {
 	}
 }
 
+// @ac AC-08
 func TestGenerateSpecID_KebabCasePattern(t *testing.T) {
 	inputs := []string{
 		"UserRegistration.ts",

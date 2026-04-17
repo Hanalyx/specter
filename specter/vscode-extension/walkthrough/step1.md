@@ -1,23 +1,10 @@
-# Bootstrap your specs
+# Generate draft specs
 
-## 1. Install the Specter CLI
+The Specter CLI downloads automatically when this extension activates — no manual installation needed.
 
-**macOS / Linux:**
-```bash
-curl -Lo specter.tar.gz https://github.com/Hanalyx/specter/releases/latest/download/specter_$(uname -s)_$(uname -m).tar.gz
-tar xzf specter.tar.gz && sudo mv specter /usr/local/bin/
-specter --version
-```
+## Point Specter at your source code
 
-**Windows (PowerShell):**
-```powershell
-Invoke-WebRequest -Uri https://github.com/Hanalyx/specter/releases/latest/download/specter_Windows_x86_64.zip -OutFile specter.zip
-Expand-Archive specter.zip; Move-Item specter\specter.exe C:\Windows\System32\
-```
-
-## 2. Generate draft specs from your code
-
-Point Specter at your source directory — it generates one `.spec.yaml` per module automatically:
+Open the integrated terminal (**Ctrl+`**) and run:
 
 ```bash
 specter reverse src/        # TypeScript / JavaScript
@@ -25,14 +12,16 @@ specter reverse app/        # Python / Django / FastAPI
 specter reverse ./          # Go
 ```
 
-This creates a `specs/` directory. Every spec will have `gap: true` — that's expected. It means Specter extracted the structure but needs your intent to complete it.
+This creates a `specs/` directory with one `.spec.yaml` per module. Every spec will have `gap: true` on some ACs — that means Specter extracted the structure but needs your intent to complete it.
 
-## 3. Initialize the workspace manifest
+## Initialize the workspace manifest
 
 ```bash
 specter init
 ```
 
-Creates `specter.yaml` — required for this extension to activate. Once it exists, the **Sp** icon appears in the activity bar and the Coverage panel shows your specs.
+Creates `specter.yaml` — required for this extension to activate fully. Once it exists, the **Sp** icon appears in the activity bar and the Coverage panel shows your specs.
 
 > **Already have specs in another format?** See the [migration guide](https://github.com/Hanalyx/specter/blob/main/specter/docs/GETTING_STARTED.md#what-specter-is-not) for converting Gherkin, OpenAPI, or plain text specs into Specter's schema.
+
+> **Auto-download disabled?** If your environment blocks downloads (corporate proxy, air-gapped network), set `specter.autoDownload` to `false` and configure `specter.binaryPath` to point to a manually installed binary. Download binaries from [GitHub Releases](https://github.com/Hanalyx/specter/releases).

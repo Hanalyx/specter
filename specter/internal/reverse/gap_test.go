@@ -30,6 +30,7 @@ func TestDetectGaps_ConstraintWithNoMatchingAssertion(t *testing.T) {
 	}
 }
 
+// @ac AC-07
 func TestDetectGaps_AllConstraintsCovered(t *testing.T) {
 	constraints := []ExtractedConstraint{
 		{Field: "email", Rule: "format", Value: "email"},
@@ -44,6 +45,7 @@ func TestDetectGaps_AllConstraintsCovered(t *testing.T) {
 	}
 }
 
+// @ac AC-07
 func TestDetectGaps_ErrorTestCoversConstraint(t *testing.T) {
 	constraints := []ExtractedConstraint{
 		{Field: "age", Rule: "min", Value: 18},
@@ -59,6 +61,7 @@ func TestDetectGaps_ErrorTestCoversConstraint(t *testing.T) {
 	}
 }
 
+// @ac AC-07
 func TestDetectGaps_NoConstraints(t *testing.T) {
 	gaps := DetectGaps(nil, nil)
 	if len(gaps) != 0 {

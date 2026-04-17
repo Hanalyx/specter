@@ -135,6 +135,7 @@ describe("user's profile", () => {
 	}
 }
 
+// @ac AC-03
 func TestTypeScriptAdapter_ExtractRoutes_Express(t *testing.T) {
 	content := `import express from 'express';
 
@@ -159,6 +160,7 @@ router.delete('/api/users/:id', deleteUser);
 	}
 }
 
+// @ac AC-03
 func TestTypeScriptAdapter_ExtractRoutes_NextJS(t *testing.T) {
 	content := `import { NextResponse } from 'next/server';
 
@@ -182,6 +184,7 @@ export async function POST(request: Request) {
 	}
 }
 
+// @ac AC-03
 func TestTypeScriptAdapter_ExtractImports(t *testing.T) {
 	content := `import { z } from 'zod';
 import express from 'express';
@@ -210,6 +213,7 @@ import { authMiddleware } from '../middleware/auth';
 	}
 }
 
+// @ac AC-03
 func TestTypeScriptAdapter_InferSystemName(t *testing.T) {
 	files := []SourceFile{
 		{Path: "package.json", Content: `{"name": "my-nextjs-app", "version": "1.0.0"}`},
@@ -221,6 +225,7 @@ func TestTypeScriptAdapter_InferSystemName(t *testing.T) {
 	}
 }
 
+// @ac AC-12
 func TestTypeScriptAdapter_Detect(t *testing.T) {
 	for _, ext := range []string{".ts", ".tsx", ".js", ".jsx"} {
 		if !tsAdapter.Detect("file"+ext, "") {
@@ -235,6 +240,7 @@ func TestTypeScriptAdapter_Detect(t *testing.T) {
 	}
 }
 
+// @ac AC-03
 func TestTypeScriptAdapter_ExtractConstraints_TypeScriptEnum(t *testing.T) {
 	content := `enum Role { ADMIN = "ADMIN", USER = "USER", MODERATOR = "MODERATOR" }
 `
@@ -250,6 +256,7 @@ func TestTypeScriptAdapter_ExtractConstraints_TypeScriptEnum(t *testing.T) {
 	}
 }
 
+// @ac AC-03
 func TestTypeScriptAdapter_ExtractConstraints_UnionType(t *testing.T) {
 	content := `type Status = "active" | "inactive" | "pending"
 `
@@ -268,6 +275,7 @@ func TestTypeScriptAdapter_ExtractConstraints_UnionType(t *testing.T) {
 	}
 }
 
+// @ac AC-03
 func TestTypeScriptAdapter_ExtractConstraints_Prisma(t *testing.T) {
 	content := `model User {
   id        String   @id @default(cuid())
@@ -306,6 +314,7 @@ func TestTypeScriptAdapter_ExtractConstraints_Prisma(t *testing.T) {
 	}
 }
 
+// @ac AC-03
 func TestTypeScriptAdapter_ExtractConstraints_RoleChecks(t *testing.T) {
 	content := `export function requireRole(session: Session) {
   if (session.user.role === "ADMIN") {
@@ -335,6 +344,7 @@ func TestTypeScriptAdapter_ExtractConstraints_RoleChecks(t *testing.T) {
 	}
 }
 
+// @ac AC-03
 func TestTypeScriptAdapter_ExtractConstraints_ZodUrl(t *testing.T) {
 	content := `const schema = z.object({
   website: z.string().url(),
@@ -352,6 +362,7 @@ func TestTypeScriptAdapter_ExtractConstraints_ZodUrl(t *testing.T) {
 	}
 }
 
+// @ac AC-03
 func TestTypeScriptAdapter_ExtractConstraints_ZodBooleanArray(t *testing.T) {
 	content := `const schema = z.object({
   active: z.boolean(),
@@ -375,12 +386,14 @@ func TestTypeScriptAdapter_ExtractConstraints_ZodBooleanArray(t *testing.T) {
 	}
 }
 
+// @ac AC-12
 func TestTypeScriptAdapter_Detect_Prisma(t *testing.T) {
 	if !tsAdapter.Detect("schema.prisma", "") {
 		t.Error("expected Detect to return true for .prisma file")
 	}
 }
 
+// @ac AC-12
 func TestTypeScriptAdapter_IsTestFile(t *testing.T) {
 	testFiles := []string{
 		"handler.test.ts",

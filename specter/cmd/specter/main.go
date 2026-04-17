@@ -33,6 +33,25 @@ var version = "dev"
 const issuesURL = "https://github.com/Hanalyx/specter/issues/new?template=bug_report.md"
 
 // ---------------------------------------------------------------------------
+// Shared constants — extracted to avoid duplication and magic values.
+// ---------------------------------------------------------------------------
+
+const specFileExt = ".spec.yaml"
+
+var testFileExts = []string{".test.ts", ".test.js", ".test.py", "_test.go", "_test.py"}
+
+var validSyncPhases = map[string]bool{"parse": true, "resolve": true, "check": true, "coverage": true}
+
+const watchDebounce = 150 * time.Millisecond
+
+const maxDescLen = 50
+
+// errSilent is returned from RunE when diagnostics have already been printed
+// to stderr. Cobra will set exit code 1 without printing anything extra
+// (because SilenceErrors is true on the root command).
+var errSilent = fmt.Errorf("")
+
+// ---------------------------------------------------------------------------
 // CLI spinner — writes to stderr so it never interferes with --json or file
 // output. Suppressed when stderr is not a terminal (pipes, CI).
 // ---------------------------------------------------------------------------
@@ -116,6 +135,8 @@ func main() {
 		Long:    "Specter validates, links, and type-checks .spec.yaml files the way tsc validates .ts files.",
 		Version: version,
 	}
+	root.SilenceUsage = true
+	root.SilenceErrors = true
 
 	root.AddCommand(parseCmd())
 	root.AddCommand(resolveCmd())
@@ -234,7 +255,7 @@ func discoverSpecs(patterns ...string) []string {
 				return filepath.SkipDir
 			}
 		}
-		if strings.HasSuffix(path, ".spec.yaml") {
+		if strings.HasSuffix(path, specFileExt) {
 			files = append(files, path)
 		}
 		return nil
@@ -255,7 +276,6 @@ func discoverTestFiles(glob string) []string {
 
 	// Default: walk the repo for all recognized test file suffixes.
 	var files []string
-	exts := []string{".test.ts", ".test.js", ".test.py", "_test.go", "_test.py"}
 	_ = filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
@@ -263,7 +283,7 @@ func discoverTestFiles(glob string) []string {
 		if info.IsDir() && (info.Name() == "node_modules" || info.Name() == "dist" || info.Name() == ".git") {
 			return filepath.SkipDir
 		}
-		for _, ext := range exts {
+		for _, ext := range testFileExts {
 			if strings.HasSuffix(path, ext) {
 				files = append(files, path)
 				break
@@ -313,7 +333,7 @@ func parseCmd() *cobra.Command {
 			files := discoverSpecs(args...)
 			if len(files) == 0 {
 				fmt.Println("No .spec.yaml files found.")
-				os.Exit(1)
+				return errSilent
 			}
 
 			hasErrors := false
@@ -345,7 +365,7 @@ func parseCmd() *cobra.Command {
 			}
 
 			if hasErrors {
-				os.Exit(1)
+				return errSilent
 			}
 			return nil
 		},
@@ -363,13 +383,13 @@ func resolveCmd() *cobra.Command {
 			files := discoverSpecs()
 			if len(files) == 0 {
 				fmt.Println("No .spec.yaml files found.")
-				os.Exit(1)
+				return errSilent
 			}
 
 			inputs, _, hasErrors := parseAllSpecs(files)
 			if hasErrors {
 				fmt.Fprintln(os.Stderr, "\nFix parse errors before resolving dependencies.")
-				os.Exit(1)
+				return errSilent
 			}
 
 			graph := resolver.ResolveSpecs(inputs)
@@ -445,7 +465,7 @@ func resolveCmd() *cobra.Command {
 						}
 					}
 				}
-				os.Exit(1)
+				return errSilent
 			}
 			return nil
 		},
@@ -467,7 +487,7 @@ func checkCmd() *cobra.Command {
 			files := discoverSpecs()
 			inputs, _, hasErrors := parseAllSpecs(files)
 			if hasErrors {
-				os.Exit(1)
+				return errSilent
 			}
 
 			graph := resolver.ResolveSpecs(inputs)
@@ -482,7 +502,7 @@ func checkCmd() *cobra.Command {
 			}
 			if resolverErrors > 0 {
 				fmt.Fprintf(os.Stderr, "\n%d resolver error(s) — fix dependency issues before running check\n", resolverErrors)
-				os.Exit(1)
+				return errSilent
 			}
 
 			m, _ := loadManifest()
@@ -533,7 +553,7 @@ func checkCmd() *cobra.Command {
 			fmt.Printf("\n%d error(s), %d warning(s), %d info\n", result.Summary.Errors, result.Summary.Warnings+len(tierConflicts), result.Summary.Info)
 
 			if result.Summary.Errors > 0 {
-				os.Exit(1)
+				return errSilent
 			}
 			return nil
 		},
@@ -554,7 +574,7 @@ func coverageCmd() *cobra.Command {
 			files := discoverSpecs()
 			_, specs, hasErrors := parseAllSpecs(files)
 			if hasErrors {
-				os.Exit(1)
+				return errSilent
 			}
 
 			testFiles := discoverTestFiles(testsGlob)
@@ -570,7 +590,11 @@ func coverageCmd() *cobra.Command {
 			m, _ := loadManifest()
 			var results *coverage.ResultsFile
 			if data, err := os.ReadFile(".specter-results.json"); err == nil {
-				results, _ = coverage.ParseResultsFile(data)
+				var parseErr error
+				results, parseErr = coverage.ParseResultsFile(data)
+				if parseErr != nil {
+					fmt.Fprintf(os.Stderr, "warn: could not parse .specter-results.json: %v\n", parseErr)
+				}
 			}
 			report := coverage.BuildCoverageReportWithResults(specs, allAnnotations, m.CoverageThresholds(), results)
 
@@ -621,7 +645,7 @@ func coverageCmd() *cobra.Command {
 			}
 
 			if report.Summary.Failing > 0 {
-				os.Exit(1)
+				return errSilent
 			}
 			return nil
 		},
@@ -640,16 +664,15 @@ func syncCmd() *cobra.Command {
 		Use:   "sync",
 		Short: "Run full validation pipeline (parse + resolve + check + coverage)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			validPhases := map[string]bool{"parse": true, "resolve": true, "check": true, "coverage": true}
-			if onlyPhase != "" && !validPhases[onlyPhase] {
+			if onlyPhase != "" && !validSyncPhases[onlyPhase] {
 				fmt.Fprintf(os.Stderr, "error: --only must be one of: parse, resolve, check, coverage\n")
-				os.Exit(1)
+				return errSilent
 			}
 
 			specFiles := discoverSpecs()
 			if len(specFiles) == 0 {
 				fmt.Println("No .spec.yaml files found.")
-				os.Exit(1)
+				return errSilent
 			}
 			testFiles := discoverTestFiles(testsGlob)
 
@@ -672,7 +695,11 @@ func syncCmd() *cobra.Command {
 
 			var results *coverage.ResultsFile
 			if data, err := os.ReadFile(".specter-results.json"); err == nil {
-				results, _ = coverage.ParseResultsFile(data)
+				var parseErr error
+				results, parseErr = coverage.ParseResultsFile(data)
+				if parseErr != nil {
+					fmt.Fprintf(os.Stderr, "warn: could not parse .specter-results.json: %v\n", parseErr)
+				}
 			}
 
 			result := specsync.RunSync(specsync.SyncInput{
@@ -693,7 +720,7 @@ func syncCmd() *cobra.Command {
 					"stopped_at": result.StoppedAt,
 				})
 				if !result.Passed {
-					os.Exit(1)
+					return errSilent
 				}
 				return nil
 			}
@@ -719,7 +746,7 @@ func syncCmd() *cobra.Command {
 				fmt.Println("All checks passed.")
 			} else {
 				fmt.Printf("Pipeline failed at %s phase.\n", result.StoppedAt)
-				os.Exit(1)
+				return errSilent
 			}
 			return nil
 		},
@@ -836,7 +863,7 @@ func reverseCmd() *cobra.Command {
 			if len(files) == 0 {
 				spin.stop()
 				fmt.Println("No source files found.")
-				os.Exit(1)
+				return errSilent
 			}
 
 			// Make all source file paths relative to the scan root so the engine
@@ -877,7 +904,7 @@ func reverseCmd() *cobra.Command {
 					"summary":     result.Summary,
 				})
 				if result.Summary.SpecsGenerated == 0 {
-					os.Exit(1)
+					return errSilent
 				}
 				return nil
 			}
@@ -888,7 +915,7 @@ func reverseCmd() *cobra.Command {
 
 			if result.Summary.SpecsGenerated == 0 {
 				fmt.Println("No specs generated. Check diagnostics above.")
-				os.Exit(1)
+				return errSilent
 			}
 
 			for _, gs := range result.Specs {
@@ -911,11 +938,11 @@ func reverseCmd() *cobra.Command {
 
 				if mkErr := os.MkdirAll(filepath.Dir(outPath), 0755); mkErr != nil {
 					fmt.Fprintf(os.Stderr, "error creating output directory: %v\n", mkErr)
-					os.Exit(1)
+					return errSilent
 				}
 				if wErr := os.WriteFile(outPath, []byte(gs.YAML), 0644); wErr != nil {
 					fmt.Fprintf(os.Stderr, "error writing %s: %v\n", outPath, wErr)
-					os.Exit(1)
+					return errSilent
 				}
 				fmt.Printf("GENERATED %s — %s@%s (%d constraints, %d ACs)\n",
 					outPath, gs.Spec.ID, gs.Spec.Version,
@@ -1006,7 +1033,7 @@ func initCmd() *cobra.Command {
 
 			if _, err := os.Stat("specter.yaml"); err == nil && !force {
 				fmt.Println("specter.yaml already exists. Use --force to overwrite.")
-				os.Exit(1)
+				return errSilent
 			}
 
 			if name == "" {
@@ -1030,7 +1057,7 @@ func initCmd() *cobra.Command {
 			yamlStr := manifest.ScaffoldManifest(name, "", specIDs)
 			if err := os.WriteFile("specter.yaml", []byte(yamlStr), 0644); err != nil {
 				fmt.Fprintf(os.Stderr, "error writing specter.yaml: %v\n", err)
-				os.Exit(1)
+				return errSilent
 			}
 
 			fmt.Printf("Created specter.yaml with %d spec(s) in system %q\n", len(specIDs), name)
@@ -1050,18 +1077,18 @@ func runInitTemplate(templateType string, force bool) error {
 	content, err := manifest.SpecTemplate(templateType)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return errSilent
 	}
 
 	outFile := templateType + ".spec.yaml"
 	if _, statErr := os.Stat(outFile); statErr == nil && !force {
 		fmt.Printf("%s already exists. Use --force to overwrite.\n", outFile)
-		os.Exit(1)
+		return errSilent
 	}
 
 	if err := os.WriteFile(outFile, []byte(content), 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "error writing %s: %v\n", outFile, err)
-		os.Exit(1)
+		return errSilent
 	}
 
 	fmt.Printf("Created %s (template: %s)\n", outFile, templateType)
@@ -1200,7 +1227,7 @@ func doctorCmd() *cobra.Command {
 			// C-06: exit 0 if all PASS/WARN, exit 1 if any FAIL
 			if anyFail {
 				fmt.Println("Result: FAIL — fix the issues above before running `specter sync`")
-				os.Exit(1)
+				return errSilent
 			}
 			fmt.Println("Result: OK — project is ready for `specter sync`")
 			return nil
@@ -1249,7 +1276,7 @@ func explainCmd() *cobra.Command {
 					}
 					fmt.Fprintln(os.Stderr)
 				}
-				os.Exit(1)
+				return errSilent
 			}
 
 			// Discover test files and build coverage
@@ -1299,8 +1326,8 @@ func explainListMode(spec *schema.SpecAST, coveredBy map[string][]string, testFi
 			status = "COVERED"
 		}
 		desc := ac.Description
-		if len(desc) > 50 {
-			desc = desc[:47] + "..."
+		if len(desc) > maxDescLen {
+			desc = desc[:maxDescLen-3] + "..."
 		}
 		fmt.Printf("  %-8s %-8s  %s\n", status, ac.ID, desc)
 	}
@@ -1327,7 +1354,7 @@ func explainDetailMode(spec *schema.SpecAST, acID string, coveredBy map[string][
 			fmt.Fprintf(os.Stderr, " %s", ac.ID)
 		}
 		fmt.Fprintln(os.Stderr)
-		os.Exit(1)
+		return errSilent
 	}
 
 	files := coveredBy[acID]
@@ -1455,7 +1482,9 @@ func watchCmd() *cobra.Command {
 					if info.Name() == "node_modules" || info.Name() == ".git" || info.Name() == "dist" {
 						return filepath.SkipDir
 					}
-					_ = watcher.Add(path)
+					if addErr := watcher.Add(path); addErr != nil {
+						fmt.Fprintf(os.Stderr, "warn: could not watch %s: %v\n", path, addErr)
+					}
 					return nil
 				})
 			}
@@ -1480,16 +1509,16 @@ func watchCmd() *cobra.Command {
 						return nil
 					}
 					name := event.Name
-					isSpec := strings.HasSuffix(name, ".spec.yaml")
+					isSpec := strings.HasSuffix(name, specFileExt)
 					isTest := false
-					for _, ext := range []string{".test.ts", ".test.js", ".test.py", "_test.go", "_test.py"} {
+					for _, ext := range testFileExts {
 						if strings.HasSuffix(name, ext) {
 							isTest = true
 							break
 						}
 					}
 					if isSpec || isTest {
-						debounce = time.After(150 * time.Millisecond)
+						debounce = time.After(watchDebounce)
 					}
 				case err, ok := <-watcher.Errors:
 					if !ok {
@@ -1614,12 +1643,12 @@ Example:
 			v1, err := readSpecAtRef(args[0])
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error reading %s: %v\n", args[0], err)
-				os.Exit(1)
+				return errSilent
 			}
 			v2, err := readSpecAtRef(args[1])
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error reading %s: %v\n", args[1], err)
-				os.Exit(1)
+				return errSilent
 			}
 
 			d := specdiff.DiffSpecs(*v1, *v2)

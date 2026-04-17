@@ -71,6 +71,7 @@ func TestDetectAdapter_TypeScriptFiles(t *testing.T) {
 	}
 }
 
+// @ac AC-11
 func TestDetectAdapter_NoFiles(t *testing.T) {
 	adapters := []Adapter{
 		&mockAdapter{name: "go", extensions: []string{".go"}},
@@ -81,6 +82,7 @@ func TestDetectAdapter_NoFiles(t *testing.T) {
 	}
 }
 
+// @ac AC-11
 func TestDetectLanguage(t *testing.T) {
 	tests := []struct {
 		path string

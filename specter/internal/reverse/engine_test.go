@@ -118,6 +118,46 @@ type ChargeRequest struct {
 	}
 }
 
+// @ac AC-14
+func TestReverse_IsPureFunction(t *testing.T) {
+	// AC-14: the core Reverse function is a pure function — it accepts all
+	// inputs as parameters and returns all outputs without side effects.
+	// Verify it works with in-memory inputs and produces deterministic output.
+	files := makeGoFiles(
+		`package main
+type Item struct {
+	Name string `+"`validate:\"required\"`"+`
+}
+`,
+		`package main
+import "testing"
+func TestItem(t *testing.T) {
+	t.Run("valid item", func(t *testing.T) {})
+}
+`,
+	)
+	adapters := []Adapter{&GoAdapter{}, &TypeScriptAdapter{}, &PythonAdapter{}}
+	input := ReverseInput{Files: files, Date: "2026-01-01"}
+
+	r1 := Reverse(input, adapters)
+	r2 := Reverse(input, adapters)
+
+	// Same inputs must produce same number of specs (deterministic).
+	if len(r1.Specs) != len(r2.Specs) {
+		t.Errorf("Reverse is not deterministic: first call produced %d specs, second produced %d", len(r1.Specs), len(r2.Specs))
+	}
+	// Output must exist — a file with a validate tag should produce at least one spec.
+	if len(r1.Specs) == 0 {
+		t.Fatal("expected at least one spec from input with validate tags")
+	}
+	// YAML output must be identical across calls.
+	for i := range r1.Specs {
+		if r1.Specs[i].YAML != r2.Specs[i].YAML {
+			t.Errorf("spec[%d] YAML differs between calls — Reverse is not pure", i)
+		}
+	}
+}
+
 // @ac AC-13
 func TestReverse_ConstraintAndACIDsAreSequential(t *testing.T) {
 	files := makeGoFiles(
