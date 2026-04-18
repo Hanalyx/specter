@@ -90,16 +90,19 @@ export class SpecterClient {
     return result;
   }
 
-  /** Run `specter parse --json <file>`. */
+  /** Run `specter parse --json <file>`.
+   *
+   * v0.8.2: no --manifest flag (CLI doesn't support one). The CLI discovers
+   * the manifest by walking up from cwd, so we set cwd to the manifest's
+   * directory before invoking. Passing --manifest previously caused every
+   * parse/check/coverage invocation to fail with "unknown flag: --manifest"
+   * which surfaced to users as "no specter.yaml found in workspace" and
+   * an error-state status bar.
+   */
   parse(filePath: string): Promise<ParseResult> {
     return this.enqueue(signal =>
       this.run(
-        [
-          'parse',
-          '--json',
-          '--manifest', this.opts.manifestPath,
-          path.resolve(this.opts.workspaceFolder, filePath),
-        ],
+        ['parse', '--json', path.resolve(this.opts.workspaceFolder, filePath)],
         signal,
       ).then(out => JSON.parse(out) as ParseResult),
     );
@@ -108,29 +111,30 @@ export class SpecterClient {
   /** Run `specter check --json`. */
   check(): Promise<CheckResult> {
     return this.enqueue(signal =>
-      this.run(
-        ['check', '--json', '--manifest', this.opts.manifestPath],
-        signal,
-      ).then(out => JSON.parse(out) as CheckResult),
+      this.run(['check', '--json'], signal).then(out => JSON.parse(out) as CheckResult),
     );
   }
 
-  /** Run `specter coverage --json [--spec <id>]`. */
+  /** Run `specter coverage --json`. */
   coverage(specID?: string): Promise<CoverageResult> {
-    const args = ['coverage', '--json', '--manifest', this.opts.manifestPath];
-    if (specID) args.push('--spec', specID);
+    // The CLI has no --spec filter; specID arg is preserved for API
+    // compatibility but currently has no effect. Filter callers-side if needed.
+    void specID;
     return this.enqueue(signal =>
-      this.run(args, signal).then(out => JSON.parse(out) as CoverageResult),
+      this.run(['coverage', '--json'], signal).then(out => JSON.parse(out) as CoverageResult),
     );
   }
 
-  /** Run `specter diff --json --base <ref> <specFile>`. */
-  diff(specFile: string, baseRef: string): Promise<unknown> {
+  /** Run `specter diff <path>@<baseRef> <path>`.
+   *
+   * v0.8.2: The CLI takes two positional arguments in the form path[@ref],
+   * NOT --base + path. Previous invocation of --json --base <ref> <specFile>
+   * produced an "unknown flag" error. There's no --json output for diff;
+   * the CLI emits human-readable diff text only.
+   */
+  diff(specFile: string, baseRef: string): Promise<string> {
     return this.enqueue(signal =>
-      this.run(
-        ['diff', '--json', '--base', baseRef, specFile],
-        signal,
-      ).then(out => JSON.parse(out)),
+      this.run([`diff`, `${specFile}@${baseRef}`, specFile], signal),
     );
   }
 
@@ -146,7 +150,12 @@ export class SpecterClient {
         return;
       }
 
-      const proc = execFile(this.opts.binaryPath, args, (err, stdout) => {
+      // v0.8.2: set cwd to the manifest's directory so the CLI's findManifest
+      // walk-up lands on the right specter.yaml. Without this, cwd inherits
+      // from the extension host (often / or VS Code install dir) and the
+      // CLI searches from there — finding nothing or the wrong file.
+      const cwd = path.dirname(this.opts.manifestPath);
+      const proc = execFile(this.opts.binaryPath, args, { cwd }, (err, stdout) => {
         if (err) reject(err);
         else resolve(stdout);
       });

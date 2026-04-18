@@ -4,6 +4,20 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 ---
 
+## v0.8.2 — 2026-04-18
+
+### Fixed
+
+- **Critical: extension passed CLI flags that don't exist.** `SpecterClient` called `specter parse --json --manifest <path>`, `specter check --json --manifest <path>`, `specter coverage --json --manifest <path>`, and `specter diff --json --base <ref> <file>`. None of the `--manifest`, `--spec`, `--base`, or `--json` (on diff) flags exist in the CLI. Every invocation threw "unknown flag" and the try/catch in `runCoverageForFolder` surfaced it as "No coverage data loaded yet" in the sidebar — so users following v0.8.1's fix for the manifest-discovery bug would reload, the extension would find specter.yaml correctly, then fail to run any specter command because of the flag mismatch.
+
+  Fix: strip all fabricated flags. The CLI discovers `specter.yaml` by walking up from cwd, so `execFile` is now called with `cwd: path.dirname(manifestPath)`. Diff uses its actual positional `<path>[@<ref>]` syntax.
+
+- **New integration test suite (`client.test.ts`) invokes the real built CLI binary** against a tmpdir workspace. Would have caught every one of the fabricated flags immediately. Previously all extension tests were unit-level against TypeScript mocks that described intent, not contract.
+
+  GOTCHAS #17 documents the "mocks describe intent, not contract" lesson.
+
+---
+
 ## v0.8.1 — 2026-04-18
 
 ### Fixed
