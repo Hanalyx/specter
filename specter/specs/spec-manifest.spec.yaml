@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "1.3.0"
+  version: "1.4.0"
   status: draft
   tier: 2
 
@@ -117,6 +117,11 @@ spec:
     - id: C-14
       description: "MUST parse settings.tier_overrides (map[spec-id]int) and emit a tier_conflict warning when a spec's declared tier disagrees with its override value"
       type: technical
+      enforcement: error
+
+    - id: C-15
+      description: "ScaffoldManifest MUST emit a comment pointing at the canonical Specter GitHub repository. The URL MUST be https://github.com/Hanalyx/specter (not spec-dd, not another slug). The URL lives in the scaffold header and is the only external link shipped in fresh manifests — users clicking it must land on the right repo."
+      type: business
       enforcement: error
 
   acceptance_criteria:
@@ -310,6 +315,17 @@ spec:
       references_constraints: ["C-14"]
       priority: high
 
+    - id: AC-21
+      description: "ScaffoldManifest output contains the literal string 'https://github.com/Hanalyx/specter' in the header comment. It does NOT contain 'spec-dd' or any other repo slug. The URL is verifiable with a substring check against the full scaffold YAML."
+      inputs:
+        name: "my-app"
+        spec_ids: []
+      expected_output:
+        contains_url: "https://github.com/Hanalyx/specter"
+        does_not_contain: "spec-dd"
+      references_constraints: ["C-15"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -319,6 +335,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.4.0"
+      date: "2026-04-18"
+      author: "specter-team"
+      type: patch
+      description: "Add C-15/AC-21 pinning the canonical Specter GitHub URL in ScaffoldManifest output (was spec-dd, should be specter)."
     - version: "1.3.0"
       date: "2026-04-14"
       author: "specter-team"

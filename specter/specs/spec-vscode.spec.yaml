@@ -1,6 +1,6 @@
 spec:
   id: spec-vscode
-  version: "1.0.0"
+  version: "1.1.0"
   status: draft
   tier: 2
 
@@ -170,6 +170,11 @@ spec:
       type: technical
       enforcement: warning
 
+    - id: C-21
+      description: "The Coverage tree view MUST render a visible state message when there is no coverage data to display — whether because no specter.yaml was found in the workspace, no .spec.yaml files exist, or every spec failed to parse. The panel MUST NOT remain silently empty. The message MUST name the reason (missing manifest / no specs / parse failures) and point the user at a concrete action (specter init, specter reverse, or the Problems panel). This is the same discipline applied to the CLI's 'No .spec.yaml files found' message in v0.7.1 — no dead-end output."
+      type: technical
+      enforcement: error
+
   acceptance_criteria:
     - id: AC-01
       description: "Extension activates in a workspace containing specter.yaml; does NOT activate in a workspace with only generic YAML files"
@@ -306,6 +311,16 @@ spec:
       references_constraints: ["C-01"]
       priority: medium
 
+    - id: AC-28
+      description: "When the Coverage tree provider is queried and no CoverageReport is loaded, getChildren() returns exactly one synthetic 'message' node. The message text explains that coverage data is not available and names one or more concrete next steps (e.g. 'Run specter init' or 'Open Problems panel'). Tested via the pure buildTreeNodes-equivalent function, not via VS Code runtime mocks."
+      references_constraints: ["C-21"]
+      priority: high
+
+    - id: AC-29
+      description: "When the Coverage tree provider is queried and the loaded CoverageReport has an empty entries array (every spec failed to parse), getChildren() returns a synthetic 'message' node whose text references the parse failures and points at the Problems panel. Distinguished from AC-28 by the presence of a loaded-but-empty report — the user has done everything right but the specs are invalid."
+      references_constraints: ["C-21"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.1.0"
@@ -324,6 +339,16 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.1.0"
+      date: "2026-04-18"
+      author: "specter-team"
+      type: minor
+      description: >
+        Add C-21/AC-28/AC-29: Coverage sidebar renders a state message node
+        when no coverage data is available (missing manifest / no specs / all
+        specs failed to parse). Prevents the silent-empty-panel dead-end.
+        Also add AC-23..AC-27 retroactively covering v0.6.5–v0.6.9 extension
+        work that was previously not pinned in the spec.
     - version: "1.0.0"
       date: "2026-04-15"
       author: "specter-team"

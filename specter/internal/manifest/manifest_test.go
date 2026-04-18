@@ -3,6 +3,7 @@ package manifest
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/Hanalyx/specter/internal/coverage"
@@ -489,5 +490,17 @@ settings:
 	warnings := CheckTierConflicts(specs, m)
 	if len(warnings) != 0 {
 		t.Errorf("expected no conflict when spec has no declared tier, got %d warnings", len(warnings))
+	}
+}
+
+// @spec spec-manifest
+// @ac AC-21
+func TestScaffoldManifest_CanonicalGitHubURL(t *testing.T) {
+	out := ScaffoldManifest("my-app", "", nil)
+	if !strings.Contains(out, "https://github.com/Hanalyx/specter") {
+		t.Errorf("scaffold must contain canonical repo URL 'https://github.com/Hanalyx/specter', got:\n%s", out)
+	}
+	if strings.Contains(out, "spec-dd") {
+		t.Errorf("scaffold must not reference 'spec-dd' (stale slug), got:\n%s", out)
 	}
 }

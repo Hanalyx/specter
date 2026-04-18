@@ -4,6 +4,32 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 ---
 
+## v0.8.0 — 2026-04-18
+
+Followed the project's own SDD workflow: plan → specs first → failing tests → implement → validate → ship.
+
+### Fixed
+
+- **Wrong GitHub URL in `specter init` scaffold.** The header comment pointed at `github.com/Hanalyx/spec-dd` (wrong slug — that's the parent monorepo, not the Specter project). Now correctly emits `github.com/Hanalyx/specter`. spec-manifest C-15/AC-21 pin the canonical URL.
+
+### Added
+
+- **Coverage sidebar state messages.** When the Coverage tree has no data to display (report not yet loaded, or every spec failed parse), the panel now shows a synthetic node with a state explanation and a concrete next step. Previously the panel was silently empty — a dead-end UX. Two states distinguished:
+  - *No coverage data loaded yet* — points at `specter init`, `specter reverse`, or `Specter: Run Sync`.
+  - *All discovered specs failed to parse* — points at the Problems panel where the parse errors surface.
+
+  spec-vscode C-21/AC-28/AC-29 pin the behavior. Pure `buildCoverageTreeRoot` function in `coverage.ts` carries the decision logic, unit-tested without VS Code mocks.
+
+### Changed
+
+- **Marketplace categories**: `Linters + Testing + Other` → `AI + Linters + Testing`. Drops the uninformative "Other" and adds "AI" to signal the AI-assistant integration use case (Specter's `Copy Spec Context for AI` command, spec-as-contract-for-AI workflow).
+
+### Migration
+
+- No schema changes; no breaking behavior changes. Upgrade is drop-in.
+
+---
+
 ## v0.7.1 — 2026-04-18
 
 ### Fixed

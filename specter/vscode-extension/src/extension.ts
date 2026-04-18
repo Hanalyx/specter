@@ -31,6 +31,7 @@ import {
   buildFileDecoration,
   buildACDecorations,
   buildTreeNodes,
+  buildCoverageTreeRoot,
   NotificationRateLimiter,
 } from './coverage';
 import { buildConstraintHover, resolveDefinitionTarget } from './navigation';
@@ -1111,7 +1112,8 @@ ${cardHTML}
 
 type TreeElement = { kind: 'spec'; specID: string; file: string; children: TreeElement[] }
   | { kind: 'ac'; id: string; icon: 'covered' | 'uncovered' | 'gap'; children: TreeElement[] }
-  | { kind: 'testFile'; path: string };
+  | { kind: 'testFile'; path: string }
+  | { kind: 'message'; label: string; detail?: string; iconId?: string };
 
 class SpecterTreeProvider implements vscode.TreeDataProvider<TreeElement> {
   private _onDidChange = new vscode.EventEmitter<void>();
@@ -1141,26 +1143,43 @@ class SpecterTreeProvider implements vscode.TreeDataProvider<TreeElement> {
         item.iconPath = new vscode.ThemeIcon('file');
         return item;
       }
+      case 'message': {
+        // v0.8.0: synthetic empty-state node shown when there is no coverage data.
+        const item = new vscode.TreeItem(el.label, vscode.TreeItemCollapsibleState.None);
+        item.description = el.detail;
+        item.tooltip = el.detail ?? el.label;
+        item.iconPath = new vscode.ThemeIcon(el.iconId ?? 'info');
+        item.contextValue = 'specterMessage';
+        return item;
+      }
     }
   }
 
   getChildren(el?: TreeElement): TreeElement[] {
     if (!el) {
-      if (!coverageReport) return [];
-      const nodes = buildTreeNodes(coverageReport);
-      return nodes.map(n => ({
-        kind: 'spec' as const,
-        specID: n.specID,
-        file: n.file,
-        children: n.children.map(ac => ({
-          kind: 'ac' as const,
-          id: ac.id,
-          icon: ac.icon,
-          children: ac.children.map(tf => ({ kind: 'testFile' as const, path: tf.path })),
-        })),
-      }));
+      // v0.8.0: buildCoverageTreeRoot emits a synthetic message node for
+      // empty states (null report, or report with zero entries) so the
+      // panel is never silently empty.
+      const roots = buildCoverageTreeRoot(coverageReport);
+      return roots.map(n => {
+        if (n.kind === 'message') {
+          return { kind: 'message' as const, label: n.label, detail: n.detail, iconId: n.iconId };
+        }
+        return {
+          kind: 'spec' as const,
+          specID: n.specID,
+          file: n.file,
+          children: n.children.map(ac => ({
+            kind: 'ac' as const,
+            id: ac.id,
+            icon: ac.icon,
+            children: ac.children.map(tf => ({ kind: 'testFile' as const, path: tf.path })),
+          })),
+        };
+      });
     }
-    return el.kind === 'testFile' ? [] : el.children;
+    if (el.kind === 'testFile' || el.kind === 'message') return [];
+    return el.children;
   }
 }
 
