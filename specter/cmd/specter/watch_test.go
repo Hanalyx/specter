@@ -423,3 +423,40 @@ func TestSanitizeID(t *testing.T) {
 		t.Errorf("sanitizeID = %q, want %q", got, "my_spec")
 	}
 }
+
+// v0.8.3: resolve --dot / --mermaid must NOT include the plain-English
+// "No dependency issues found." footer on stdout. The footer pollutes
+// structured output and breaks pipes to dot / mmdc / GitHub renderers.
+//
+// @spec spec-resolve
+// @ac AC-08
+func TestResolve_DotOutput_NoPlainEnglishFooter(t *testing.T) {
+	dir := t.TempDir()
+	writeSpec(t, dir, "a.spec.yaml", minimalValidSpec("a", 3, "AC-01"))
+
+	out, _ := runCLI(t, dir, "resolve", "--dot")
+	if strings.Contains(out, "No dependency issues") {
+		t.Errorf("resolve --dot stdout must not contain human-readable footer; got:\n%s", out)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(out), "digraph") {
+		t.Errorf("resolve --dot must start with 'digraph', got:\n%s", out)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(out), "}") {
+		t.Errorf("resolve --dot must end with '}', got:\n%s", out)
+	}
+}
+
+// @spec spec-resolve
+// @ac AC-08
+func TestResolve_MermaidOutput_NoPlainEnglishFooter(t *testing.T) {
+	dir := t.TempDir()
+	writeSpec(t, dir, "a.spec.yaml", minimalValidSpec("a", 3, "AC-01"))
+
+	out, _ := runCLI(t, dir, "resolve", "--mermaid")
+	if strings.Contains(out, "No dependency issues") {
+		t.Errorf("resolve --mermaid stdout must not contain human-readable footer; got:\n%s", out)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(out), "graph BT") {
+		t.Errorf("resolve --mermaid must start with 'graph BT', got:\n%s", out)
+	}
+}
