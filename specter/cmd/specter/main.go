@@ -483,7 +483,14 @@ func resolveCmd() *cobra.Command {
 			}
 
 			if len(graph.Diagnostics) == 0 {
-				fmt.Println("No dependency issues found.")
+				// Plain-English footer belongs on stdout only for the default
+				// human-readable format. When the user asked for a structured
+				// format (--dot, --mermaid, --json) stdout must be pure so the
+				// output pipes cleanly to dot / mmdc / jq. The "no issues"
+				// status is implicit in the successful exit code.
+				if !dotOutput && !mermaidOutput && !jsonOutput {
+					fmt.Println("No dependency issues found.")
+				}
 			} else {
 				for _, d := range graph.Diagnostics {
 					fmt.Fprintf(os.Stderr, "error [%s] %s\n", d.Kind, d.Message)

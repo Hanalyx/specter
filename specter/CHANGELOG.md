@@ -4,6 +4,25 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 ---
 
+## v0.8.3 — 2026-04-18
+
+### Fixed
+
+- **`specter resolve --dot` and `specter resolve --mermaid` polluted stdout with a plain-English footer** (`No dependency issues found.`) after the structured output block. Piping to `dot -Tpng` or Mermaid renderers failed to parse. Fix: suppress the footer when `--dot`, `--mermaid`, or `--json` is set — the successful exit code already signals the no-issues status. Two regression tests added.
+
+### Audit (no changes needed)
+
+Full CLI audit performed, no other flag bugs found:
+- `parse --json`, `check --json`, `coverage --json`, `sync --json` — all emit clean structured output, no trailing text
+- Exit codes correct: unknown command / missing args / bad flag all exit 1
+- `--version` works on root and via `-v`
+- `sync --only <phase>` validates against the allowed set
+- `init --template <name>` validates against the allowed set, errors on unknown
+- `explain <unknown>` errors cleanly
+- `diff` no-args errors cleanly (2 positional args required)
+
+---
+
 ## v0.8.2 — 2026-04-18
 
 ### Fixed
