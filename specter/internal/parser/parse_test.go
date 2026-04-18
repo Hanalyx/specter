@@ -377,3 +377,41 @@ func TestParse_ACApprovalDateInvalidFormat_Rejected(t *testing.T) {
 		t.Fatal("expected parse to fail on invalid approval_date format")
 	}
 }
+
+// @ac AC-16 (v0.7.0 — parse-time cross-reference validation)
+func TestParse_DanglingConstraintReference_Rejected(t *testing.T) {
+	yaml := `spec:
+  id: test-dangling
+  version: "1.0.0"
+  status: draft
+  tier: 3
+  context:
+    system: test
+  objective:
+    summary: test
+  constraints:
+    - id: C-01
+      description: "only declared constraint"
+  acceptance_criteria:
+    - id: AC-01
+      description: "references something real"
+      references_constraints: ["C-01"]
+    - id: AC-02
+      description: "references something fake"
+      references_constraints: ["C-99"]
+`
+	result := ParseSpec(yaml)
+	if result.OK {
+		t.Fatal("expected parse to fail on dangling reference")
+	}
+	found := false
+	for _, e := range result.Errors {
+		if e.Type == "dangling_reference" && strings.Contains(e.Message, "C-99") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected dangling_reference error mentioning C-99, got: %v", result.Errors)
+	}
+}
