@@ -4,6 +4,20 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 ---
 
+## v0.8.1 — 2026-04-18
+
+### Fixed
+
+- **Critical: "no specter.yaml found" when the file IS at the workspace root.** `resolveManifestPath` in the VS Code extension called `path.dirname()` on the workspace folder path before starting its search. `path.dirname("/home/user/project")` returns `/home/user` (the parent), so the resolver searched `/home/user/specter.yaml`, `/home/specter.yaml`, and so on — **never checking `/home/user/project/specter.yaml`** which is the canonical location the docs explicitly recommend. Affected every user since spec-vscode v1.0.
+
+  Fix: `resolveManifestPath` now accepts an optional third argument `isDirectory` so the caller can say "this path IS the starting directory." The single runtime caller (`setupFolder`) supplies a real `statSync().isDirectory()` probe. Two regression tests pin both calling shapes.
+
+  GOTCHAS #16 documents the trap.
+
+  After updating, reload your VS Code window — the Coverage sidebar will populate.
+
+---
+
 ## v0.8.0 — 2026-04-18
 
 Followed the project's own SDD workflow: plan → specs first → failing tests → implement → validate → ship.

@@ -14,18 +14,33 @@ export function shouldActivate(workspaceFiles: string[]): boolean {
 }
 
 /**
- * AC-01 — Walks up the directory tree from `filePath` until it finds
- * `specter.yaml` or reaches the filesystem root.  Returns the manifest path
- * or null if none is found.
+ * AC-01 — Walks up the directory tree looking for `specter.yaml`. Returns
+ * the first match or null at filesystem root.
  *
- * @param filePath  The file to start from (its directory is the first candidate).
- * @param exists    Injectable predicate so callers can supply a mock FS.
+ * Two supported input shapes:
+ *   - A FILE path (e.g. `/project/specs/auth.spec.yaml`) — searches the
+ *     file's containing directory first, then walks up. `isDirectory`
+ *     must return false for this path.
+ *   - A DIRECTORY path (e.g. a VS Code `workspaceFolder.uri.fsPath` like
+ *     `/home/user/project`) — searches the directory itself first, then
+ *     walks up. `isDirectory` must return true for this path.
+ *
+ * `isDirectory` is injectable so callers can supply a mock FS. Defaults
+ * to a predicate that always returns false, matching the file-path
+ * calling convention used by the existing test suite. The single
+ * runtime caller (setupFolder) passes a real FS check — this is what
+ * fixes the pre-v0.8.1 bug where folder paths were being dirname'd into
+ * their parent before the search even started.
  */
 export function resolveManifestPath(
-  filePath: string,
+  startPath: string,
   exists: (p: string) => boolean,
+  isDirectory: (p: string) => boolean = () => false,
 ): string | null {
-  let dir = path.dirname(filePath);
+  // If we're handed a directory, start from IT. Otherwise start from the
+  // file's parent directory. Tested via unit test; bug-reproducing test
+  // included in the suite so this regression cannot come back quietly.
+  let dir = isDirectory(startPath) ? startPath : path.dirname(startPath);
 
   while (true) {
     const candidate = path.join(dir, 'specter.yaml');

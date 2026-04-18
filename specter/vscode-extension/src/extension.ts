@@ -176,6 +176,16 @@ async function setupFolder(
       try { require('fs').accessSync(p); return true; }
       catch { return false; }
     },
+    // Pre-v0.8.1, this call only passed the first two args. That caused
+    // resolveManifestPath to treat folder.uri.fsPath as a file path and
+    // dirname() up one level before the first check — so /home/.../jwtms
+    // would search /home/.../projects/specter.yaml first and never check
+    // /home/.../jwtms/specter.yaml at all. The third arg fixes that by
+    // telling the resolver "this path IS the starting directory."
+    p => {
+      try { return require('fs').statSync(p).isDirectory(); }
+      catch { return false; }
+    },
   );
   if (!manifestPath) return;
 
