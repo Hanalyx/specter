@@ -72,6 +72,33 @@ describe('resolveManifestPath', () => {
     const found = resolveManifestPath('/', () => false);
     expect(found).toBeNull();
   });
+
+  // Regression — pre-v0.8.1 bug. If resolveManifestPath is called with a
+  // directory path (as the extension's setupFolder does with
+  // folder.uri.fsPath) and no `isDirectory` predicate, it would dirname()
+  // up one level and miss a specter.yaml sitting at the start path.
+  //
+  // The real caller now passes an isDirectory probe; this test pins that
+  // shape so the bug can't sneak back.
+  it('finds specter.yaml at the directory itself when isDirectory predicate is supplied', () => {
+    const found = resolveManifestPath(
+      '/home/user/project',                       // a directory path, no trailing slash
+      p => p === '/home/user/project/specter.yaml',
+      p => p === '/home/user/project',            // isDirectory: yes for this path
+    );
+    expect(found).toBe('/home/user/project/specter.yaml');
+  });
+
+  it('without isDirectory predicate, directory paths get their parent searched (backwards compat)', () => {
+    // Matches the pre-v0.8.1 behaviour for callers who still pass a file path
+    // and leave isDirectory off. The found manifest is one directory up.
+    const found = resolveManifestPath(
+      '/home/user/project/spec.yaml',             // file path — not a directory
+      p => p === '/home/user/project/specter.yaml',
+      // no third arg — defaults to "not a directory"
+    );
+    expect(found).toBe('/home/user/project/specter.yaml');
+  });
 });
 
 // ---------------------------------------------------------------------------

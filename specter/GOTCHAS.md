@@ -196,7 +196,23 @@ goreleaser uses `name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ 
 
 ---
 
-## 16. VS Code extension and CLI versions must stay in lockstep
+## 16. `path.dirname()` on a directory path returns the PARENT, not the directory
+
+**Symptom:** VS Code extension reports "no specter.yaml found in this workspace" even though `specter.yaml` is at the workspace root. `specter init` produces the file, a reload doesn't help, running `specter init --force` doesn't help.
+
+**Cause:** `resolveManifestPath(filePath, exists)` in `activation.ts` started its search by calling `path.dirname(filePath)`. The function was designed to be called with a FILE path (e.g. `/project/specs/auth.spec.yaml`), where `dirname` correctly strips the filename to leave `/project/specs/`. All unit tests passed file paths.
+
+But the real caller in `setupFolder` passes `folder.uri.fsPath` — a DIRECTORY path like `/home/user/project`. `path.dirname` doesn't check whether the input is a directory; it treats it syntactically. `path.dirname("/home/user/project")` returns `/home/user` — the PARENT directory. The resolver then searched `/home/user/project/../specter.yaml`, `/home/user/specter.yaml`, etc., walking all the way to `/` — **never checking `/home/user/project/specter.yaml` itself**.
+
+This shipped in spec-vscode v1.0 and affected every user whose `specter.yaml` was at the workspace root — the canonical location the docs explicitly recommend. The unit tests covered the designed calling convention (file paths) but didn't cover the actual calling convention in production (directory paths).
+
+**What's in place now (v0.8.1+):** `resolveManifestPath` takes an optional third argument `isDirectory: (p: string) => boolean` so callers handling workspace folders can say "this path IS the starting directory." The runtime caller supplies a `statSync(...).isDirectory()` probe. Two regression tests pin both shapes.
+
+**Rule:** `path.dirname` operates on strings, not filesystem types. If a function accepts "a path" without saying which kind, assume at least one real caller will hand it a directory. Either restrict the contract (name it `resolveManifestFromFile`) or accept both and branch on an explicit predicate.
+
+---
+
+## 17. VS Code extension and CLI versions must stay in lockstep
 
 **Symptom:** Extension v0.6.5 queries `api.github.com/.../releases/latest`, gets back e.g. v0.6.5, then tries to download `.../releases/download/v0.6.5/...`. If the GitHub release for that tag doesn't exist yet, you get 404 "Not Found" in the body (see #3).
 

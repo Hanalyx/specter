@@ -2,7 +2,7 @@
   "name": "specter-vscode",
   "displayName": "Specter SDD",
   "description": "Spec-Driven Development tooling for VS Code — inline coverage, diagnostics, annotation assistance, and intent drift detection.",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "publisher": "Hanalyx",
   "license": "MIT",
   "engines": {
