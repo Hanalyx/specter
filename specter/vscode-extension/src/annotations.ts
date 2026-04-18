@@ -127,6 +127,15 @@ export function buildAnnotationHover(
     `Status: ${statusText}`,
   ];
 
+  // v0.7.0+ metadata. Shown only when the underlying spec declared them.
+  if (ac.approvalGate) {
+    const dateSuffix = ac.approvalDate ? ` (approved ${ac.approvalDate})` : ' (pending approval)';
+    lines.push('', `🔒 Requires human approval${dateSuffix}`);
+  }
+  if (ac.notes) {
+    lines.push('', `_${ac.notes}_`);
+  }
+
   if (isCovered && ctx.coveredByFiles.length > 0) {
     lines.push('', 'Also covered by:');
     for (const f of ctx.coveredByFiles) {
