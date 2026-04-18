@@ -163,7 +163,19 @@ The switch was case-sensitive with only uppercase cases. Lowercase values fell t
 
 ---
 
-## 14. Release asset names do NOT match `uname` output
+## 14. Context was extensible pre-v0.7.0 and silently dropped data
+
+**Symptom (pre-v0.7.0):** A user writes `context.role: "public API"` or `context.callers: [...]` in their spec. `specter parse` passes. Downstream tools see only the declared fields (`system`, `feature`, etc.) — the extra keys are gone.
+
+**Cause:** Schema had `context.additionalProperties: true` ("extras are OK"), but `SpecContext` (types.go) was a closed struct. yaml.v3's default non-strict unmarshal silently discarded anything the struct didn't declare. The schema's promise and the types' behavior disagreed, and the disagreement was invisible.
+
+**What's in place now (v0.7.0+):** `context.additionalProperties: false`. Unknown context keys are rejected at parse time with a named error. SPEC_SCHEMA_REFERENCE.md no longer advertises the "add custom keys" escape hatch.
+
+**Rule:** when a JSON Schema declares `additionalProperties: true` on an object that types.go parses into a closed struct, the mismatch causes silent data loss. Either make the schema strict (preferred, as of v0.7.0) or parse into `map[string]interface{}` in the struct (used for `inputs` and `expected_output` which ARE free-form by design).
+
+---
+
+## 15. Release asset names do NOT match `uname` output
 
 **Symptom:** Docs (and old extension code) that used `$(uname -s)_$(uname -m)` or `specter_Linux_x86_64.tar.gz` hit 404. On install, users get a 9-byte `Not Found` response written to disk and chmodded +x.
 
@@ -184,7 +196,7 @@ goreleaser uses `name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ 
 
 ---
 
-## 15. VS Code extension and CLI versions must stay in lockstep
+## 16. VS Code extension and CLI versions must stay in lockstep
 
 **Symptom:** Extension v0.6.5 queries `api.github.com/.../releases/latest`, gets back e.g. v0.6.5, then tries to download `.../releases/download/v0.6.5/...`. If the GitHub release for that tag doesn't exist yet, you get 404 "Not Found" in the body (see #3).
 

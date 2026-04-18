@@ -12,6 +12,7 @@ type SpecDocument struct {
 type SpecAST struct {
 	ID                 string                `yaml:"id" json:"id"`
 	Version            string                `yaml:"version" json:"version"`
+	Title              string                `yaml:"title,omitempty" json:"title,omitempty"`
 	Status             string                `yaml:"status" json:"status"`
 	Tier               int                   `yaml:"tier" json:"tier"`
 	CoverageThreshold  int                   `yaml:"coverage_threshold,omitempty" json:"coverage_threshold,omitempty"`
@@ -74,6 +75,9 @@ type AcceptanceCriterion struct {
 	ReferencesConstraints []string               `yaml:"references_constraints,omitempty" json:"references_constraints,omitempty"`
 	Gap                   bool                   `yaml:"gap,omitempty" json:"gap,omitempty"`
 	Priority              string                 `yaml:"priority,omitempty" json:"priority,omitempty"`
+	Notes                 string                 `yaml:"notes,omitempty" json:"notes,omitempty"`
+	ApprovalGate          bool                   `yaml:"approval_gate,omitempty" json:"approval_gate,omitempty"`
+	ApprovalDate          string                 `yaml:"approval_date,omitempty" json:"approval_date,omitempty"`
 }
 
 type DependencyRef struct {

@@ -56,6 +56,11 @@ func init() {
 	}
 
 	c := jsonschema.NewCompiler()
+	// Turn on format assertions so `format: date`, `format: email`, etc. are
+	// validated, not just annotated. Without this, `approval_date: "not-a-date"`
+	// would pass schema validation since draft 2020-12 treats format as
+	// annotation-only by default.
+	c.AssertFormat()
 	if err := c.AddResource("spec-schema.json", schemaDoc); err != nil {
 		panic(fmt.Sprintf("failed to add schema resource: %v", err))
 	}
@@ -137,7 +142,55 @@ func ParseSpec(yamlContent string) ParseResult {
 		}}
 	}
 
+	// Step 4: Structural cross-reference validation.
+	// JSON Schema can enforce that references_constraints entries MATCH the
+	// ^C-\d{2,}$ pattern, but cannot assert that the referenced constraint
+	// actually exists in this spec. That's a parse-level structural error —
+	// same class as "id doesn't match its pattern" — so we catch it here
+	// rather than waiting for specter check downstream.
+	if xrefErrors := validateReferencedConstraints(&doc.Spec); len(xrefErrors) > 0 {
+		return ParseResult{OK: false, Errors: xrefErrors}
+	}
+
 	return ParseResult{OK: true, Value: &doc.Spec}
+}
+
+// validateReferencedConstraints asserts every AC's references_constraints
+// entries point at a constraint declared in the same spec. Returns a ParseError
+// per dangling reference.
+func validateReferencedConstraints(spec *schema.SpecAST) []ParseError {
+	known := make(map[string]bool, len(spec.Constraints))
+	for _, c := range spec.Constraints {
+		known[c.ID] = true
+	}
+
+	var errs []ParseError
+	for _, ac := range spec.AcceptanceCriteria {
+		for _, ref := range ac.ReferencesConstraints {
+			if !known[ref] {
+				errs = append(errs, ParseError{
+					Type:    "dangling_reference",
+					Path:    fmt.Sprintf("spec.acceptance_criteria[%s].references_constraints", ac.ID),
+					Message: fmt.Sprintf("references constraint %q which is not declared in this spec (declared constraints: %v)", ref, sortedKeys(known)),
+				})
+			}
+		}
+	}
+	return errs
+}
+
+func sortedKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	// Simple sort — small lists, no need for sort package import overhead
+	for i := 1; i < len(keys); i++ {
+		for j := i; j > 0 && keys[j-1] > keys[j]; j-- {
+			keys[j-1], keys[j] = keys[j], keys[j-1]
+		}
+	}
+	return keys
 }
 
 // flattenValidationErrors converts nested jsonschema validation errors into flat ParseErrors.

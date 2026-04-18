@@ -7,6 +7,10 @@
 export interface ACEntry {
   id: string;
   description: string;
+  /** v0.7.0+ optional AC metadata. Present only when the source data carried them. */
+  notes?: string;
+  approvalGate?: boolean;
+  approvalDate?: string;
 }
 
 export interface ConstraintEntry {

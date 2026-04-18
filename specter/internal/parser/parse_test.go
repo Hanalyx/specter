@@ -276,3 +276,195 @@ func TestParsePureFunction(t *testing.T) {
 		t.Error("pure function violation: different IDs")
 	}
 }
+
+// @ac AC-14 (v0.7.0 — context.additionalProperties tightened to false)
+func TestParse_UnknownContextField_Rejected(t *testing.T) {
+	yaml := `spec:
+  id: test-unknown-context
+  version: "1.0.0"
+  status: draft
+  tier: 3
+  context:
+    system: test
+    role: "this field is not in the schema"
+  objective:
+    summary: test
+  constraints:
+    - id: C-01
+      description: "test"
+  acceptance_criteria:
+    - id: AC-01
+      description: "test"
+      references_constraints: ["C-01"]
+`
+	result := ParseSpec(yaml)
+	if result.OK {
+		t.Fatal("expected parse to fail on unknown context field")
+	}
+	found := false
+	for _, e := range result.Errors {
+		if strings.Contains(e.Message, "role") || strings.Contains(e.Path, "context") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected error mentioning 'role' or 'context', got: %v", result.Errors)
+	}
+}
+
+// @ac AC-15 (v0.7.0 — AC metadata fields)
+func TestParse_ACNotesAndApprovalFields(t *testing.T) {
+	yaml := `spec:
+  id: test-ac-metadata
+  version: "1.0.0"
+  status: approved
+  tier: 1
+  context:
+    system: test
+  objective:
+    summary: test
+  constraints:
+    - id: C-01
+      description: "test constraint"
+  acceptance_criteria:
+    - id: AC-01
+      description: "test AC"
+      references_constraints: ["C-01"]
+      notes: "Financial op — see also AC-03."
+      approval_gate: true
+      approval_date: "2026-04-17"
+`
+	result := ParseSpec(yaml)
+	if !result.OK {
+		t.Fatalf("expected OK, got errors: %v", result.Errors)
+	}
+	ac := result.Value.AcceptanceCriteria[0]
+	if ac.Notes != "Financial op — see also AC-03." {
+		t.Errorf("Notes not preserved, got %q", ac.Notes)
+	}
+	if !ac.ApprovalGate {
+		t.Error("ApprovalGate should be true")
+	}
+	if ac.ApprovalDate != "2026-04-17" {
+		t.Errorf("ApprovalDate mismatch, got %q", ac.ApprovalDate)
+	}
+}
+
+// @ac AC-15
+func TestParse_ACApprovalDateInvalidFormat_Rejected(t *testing.T) {
+	yaml := `spec:
+  id: test-bad-date
+  version: "1.0.0"
+  status: approved
+  tier: 1
+  context:
+    system: test
+  objective:
+    summary: test
+  constraints:
+    - id: C-01
+      description: "test"
+  acceptance_criteria:
+    - id: AC-01
+      description: "test"
+      references_constraints: ["C-01"]
+      approval_gate: true
+      approval_date: "not-a-date"
+`
+	result := ParseSpec(yaml)
+	if result.OK {
+		t.Fatal("expected parse to fail on invalid approval_date format")
+	}
+}
+
+// @ac AC-16 (v0.7.0 — parse-time cross-reference validation)
+func TestParse_DanglingConstraintReference_Rejected(t *testing.T) {
+	yaml := `spec:
+  id: test-dangling
+  version: "1.0.0"
+  status: draft
+  tier: 3
+  context:
+    system: test
+  objective:
+    summary: test
+  constraints:
+    - id: C-01
+      description: "only declared constraint"
+  acceptance_criteria:
+    - id: AC-01
+      description: "references something real"
+      references_constraints: ["C-01"]
+    - id: AC-02
+      description: "references something fake"
+      references_constraints: ["C-99"]
+`
+	result := ParseSpec(yaml)
+	if result.OK {
+		t.Fatal("expected parse to fail on dangling reference")
+	}
+	found := false
+	for _, e := range result.Errors {
+		if e.Type == "dangling_reference" && strings.Contains(e.Message, "C-99") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected dangling_reference error mentioning C-99, got: %v", result.Errors)
+	}
+}
+
+// @ac AC-17 (v0.7.0 — optional title on spec)
+func TestParse_SpecTitleOptional(t *testing.T) {
+	yamlWith := `spec:
+  id: test-title
+  title: "My Custom Title"
+  version: "1.0.0"
+  status: draft
+  tier: 3
+  context:
+    system: test
+  objective:
+    summary: test
+  constraints:
+    - id: C-01
+      description: "test"
+  acceptance_criteria:
+    - id: AC-01
+      description: "test"
+      references_constraints: ["C-01"]
+`
+	yamlWithout := `spec:
+  id: test-no-title
+  version: "1.0.0"
+  status: draft
+  tier: 3
+  context:
+    system: test
+  objective:
+    summary: test
+  constraints:
+    - id: C-01
+      description: "test"
+  acceptance_criteria:
+    - id: AC-01
+      description: "test"
+      references_constraints: ["C-01"]
+`
+	r1 := ParseSpec(yamlWith)
+	if !r1.OK {
+		t.Fatalf("spec with title should parse, got: %v", r1.Errors)
+	}
+	if r1.Value.Title != "My Custom Title" {
+		t.Errorf("expected title preserved, got %q", r1.Value.Title)
+	}
+	r2 := ParseSpec(yamlWithout)
+	if !r2.OK {
+		t.Fatalf("spec without title should parse (field optional), got: %v", r2.Errors)
+	}
+	if r2.Value.Title != "" {
+		t.Errorf("expected empty title when absent, got %q", r2.Value.Title)
+	}
+}
