@@ -6,6 +6,7 @@
 import {
   buildACDecorations,
   buildTreeNodes,
+  buildCoverageTreeRoot,
   formatStatusBar,
   classifyNotification,
   buildFileDecoration,
@@ -258,5 +259,64 @@ describe('buildFileDecoration', () => {
   it('uses yellow color for failing T2 spec', () => {
     const dec = buildFileDecoration(makeEntry('pay', 2, ['AC-01'], ['AC-02'], 80));
     expect(dec.color).toContain('yellow');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.8.0 — Empty-state tree rendering (AC-28, AC-29)
+// ---------------------------------------------------------------------------
+
+// @ac AC-28
+describe('buildCoverageTreeRoot (v0.8.0) — null report', () => {
+  it('returns exactly one message node when the report is null', () => {
+    const nodes = buildCoverageTreeRoot(null);
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0].kind).toBe('message');
+  });
+
+  it('message references coverage not being available and a next-step action', () => {
+    const nodes = buildCoverageTreeRoot(null);
+    const node = nodes[0];
+    expect(node.kind).toBe('message');
+    if (node.kind !== 'message') return; // for TS narrowing
+    const text = node.label + ' ' + (node.detail ?? '');
+    // Must name the state and point at an action
+    expect(text.toLowerCase()).toMatch(/no coverage|not yet|not loaded|not available/);
+    expect(text.toLowerCase()).toMatch(/specter init|specter reverse|problems panel|run sync/);
+  });
+});
+
+// @ac AC-29
+describe('buildCoverageTreeRoot (v0.8.0) — empty entries', () => {
+  it('returns exactly one message node when the report has zero entries', () => {
+    const emptyReport: CoverageReport = {
+      entries: [],
+      summary: { totalSpecs: 0, passing: 0, failing: 0, fullyCovered: 0, partiallyCovered: 0, uncovered: 0 },
+    };
+    const nodes = buildCoverageTreeRoot(emptyReport);
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0].kind).toBe('message');
+  });
+
+  it('message references the Problems panel (parse failures live there)', () => {
+    const emptyReport: CoverageReport = {
+      entries: [],
+      summary: { totalSpecs: 0, passing: 0, failing: 0, fullyCovered: 0, partiallyCovered: 0, uncovered: 0 },
+    };
+    const nodes = buildCoverageTreeRoot(emptyReport);
+    const node = nodes[0];
+    if (node.kind !== 'message') return;
+    const text = node.label + ' ' + (node.detail ?? '');
+    expect(text.toLowerCase()).toMatch(/problems panel|parse|failed/);
+  });
+
+  it('returns real spec nodes (not a message) when entries are present', () => {
+    const populated: CoverageReport = {
+      entries: [makeEntry('auth', 1, ['AC-01'], [], 100)],
+      summary: { totalSpecs: 1, passing: 1, failing: 0, fullyCovered: 1, partiallyCovered: 0, uncovered: 0 },
+    };
+    const nodes = buildCoverageTreeRoot(populated);
+    expect(nodes.length).toBeGreaterThan(0);
+    expect(nodes[0].kind).toBe('spec');
   });
 });

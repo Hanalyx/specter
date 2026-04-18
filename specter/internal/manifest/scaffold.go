@@ -45,7 +45,7 @@ func ScaffoldManifest(name, description string, specIDs []string) string {
 	// Add a header comment
 	var sb strings.Builder
 	sb.WriteString("# Specter Project Manifest\n")
-	sb.WriteString("# See: https://github.com/Hanalyx/spec-dd\n\n")
+	sb.WriteString("# See: https://github.com/Hanalyx/specter\n\n")
 	sb.Write(data)
 
 	return sb.String()

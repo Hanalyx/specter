@@ -5,6 +5,7 @@ import type {
   SpecCoverageEntry,
   CoverageReport,
   SpecTreeNode,
+  SpecTreeRootNode,
   ACNode,
   FileDecoration,
   NotificationResult,
@@ -51,6 +52,43 @@ export function buildACDecorations(input: BuildACDecorationsInput): ACDecoration
 // ---------------------------------------------------------------------------
 // AC-11: Tree view data model
 // ---------------------------------------------------------------------------
+
+/**
+ * v0.8.0+: wrapper around buildTreeNodes that returns a synthetic
+ * `message` node when there is no coverage data to show. Satisfies
+ * spec-vscode AC-28 (null report) and AC-29 (empty entries).
+ *
+ * Two distinct empty states:
+ *   - report === null → coverage run hasn't happened yet, OR the CLI
+ *     never returned usable output. Suggest user-driven actions.
+ *   - report.entries.length === 0 → coverage ran but every spec failed
+ *     parse, so there is nothing to display. Point at Problems panel
+ *     where the parse errors are visible.
+ */
+export function buildCoverageTreeRoot(report: CoverageReport | null): SpecTreeRootNode[] {
+  if (report === null) {
+    return [{
+      kind: 'message',
+      label: 'No coverage data loaded yet.',
+      detail: 'Run `specter init` to create a manifest, `specter reverse src/` to generate specs, or use the Specter: Run Sync command from the palette.',
+      iconId: 'info',
+    }];
+  }
+  if (report.entries.length === 0) {
+    return [{
+      kind: 'message',
+      label: 'No specs reached coverage analysis.',
+      detail: 'All discovered .spec.yaml files failed to parse. Open the Problems panel (Ctrl+Shift+M) to see the errors and fix them.',
+      iconId: 'warning',
+    }];
+  }
+  return buildTreeNodes(report).map(n => ({
+    kind: 'spec' as const,
+    specID: n.specID,
+    file: n.file,
+    children: n.children,
+  }));
+}
 
 /**
  * Converts a CoverageReport into SpecTreeNode[]  for the Specter sidebar.

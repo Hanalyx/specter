@@ -163,6 +163,31 @@ export interface SpecTreeNode {
   children: ACNode[];
 }
 
+/**
+ * v0.8.0+: synthetic node shown in the Coverage sidebar when there is no
+ * coverage data to render (report null, or report with zero entries). Gives
+ * the user a visible state + action instead of a silently empty panel.
+ */
+export interface TreeMessageNode {
+  kind: 'message';
+  label: string;
+  detail?: string;
+  iconId?: string; // optional theme icon id (e.g. 'info', 'warning')
+}
+
+/**
+ * Tagged variant of SpecTreeNode so buildCoverageTreeRoot can return either
+ * real spec nodes or a message node without the caller unpacking by index.
+ */
+export interface SpecTreeRootSpec {
+  kind: 'spec';
+  specID: string;
+  file: string;
+  children: ACNode[];
+}
+
+export type SpecTreeRootNode = SpecTreeRootSpec | TreeMessageNode;
+
 // ---------------------------------------------------------------------------
 // File decoration (VS-Code-agnostic)
 // ---------------------------------------------------------------------------
