@@ -46,6 +46,29 @@ const watchDebounce = 150 * time.Millisecond
 
 const maxDescLen = 50
 
+// noSpecsMessage is used by parse/resolve/sync when discovery turns up
+// nothing. Explains where specter looked and what to try next — users often
+// keep specs in a non-default directory and need the hint.
+func noSpecsMessage() string {
+	m, _ := loadManifest()
+	searched := m.SpecsDir()
+	if searched == "" || searched == "." {
+		searched = "current directory and subdirectories"
+	} else {
+		searched = fmt.Sprintf("%q (from specter.yaml)", searched)
+	}
+	return fmt.Sprintf(
+		"No .spec.yaml files found.\n\n"+
+			"  Searched: %s\n"+
+			"  Extension: .spec.yaml (literal)\n\n"+
+			"What to try next:\n"+
+			"  • Generate draft specs from existing code:   specter reverse src/\n"+
+			"  • Scaffold from a template:                   specter init --template api-endpoint\n"+
+			"  • Point specter at a different directory:     add specs_dir to specter.yaml\n",
+		searched,
+	)
+}
+
 // errSilent is returned from RunE when diagnostics have already been printed
 // to stderr. Cobra will set exit code 1 without printing anything extra
 // (because SilenceErrors is true on the root command).
@@ -152,6 +175,15 @@ func main() {
 	root.AddCommand(feedbackCmd())
 
 	if err := root.Execute(); err != nil {
+		// errSilent is our sentinel for "command already printed diagnostics
+		// to stderr; don't append anything." Used by every subcommand's RunE.
+		// Everything else is a Cobra-surfaced error (unknown command, bad
+		// flag, wrong args) that we DO need to print — SilenceErrors=true
+		// suppresses Cobra's own printing of them, so we have to do it.
+		if err != errSilent {
+			fmt.Fprintf(os.Stderr, "error: %s\n", err.Error())
+			fmt.Fprintln(os.Stderr, "\nRun `specter --help` to see available commands.")
+		}
 		os.Exit(1)
 	}
 }
@@ -332,7 +364,7 @@ func parseCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			files := discoverSpecs(args...)
 			if len(files) == 0 {
-				fmt.Println("No .spec.yaml files found.")
+				fmt.Print(noSpecsMessage())
 				return errSilent
 			}
 
@@ -382,7 +414,7 @@ func resolveCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			files := discoverSpecs()
 			if len(files) == 0 {
-				fmt.Println("No .spec.yaml files found.")
+				fmt.Print(noSpecsMessage())
 				return errSilent
 			}
 
@@ -675,7 +707,7 @@ func syncCmd() *cobra.Command {
 
 			specFiles := discoverSpecs()
 			if len(specFiles) == 0 {
-				fmt.Println("No .spec.yaml files found.")
+				fmt.Print(noSpecsMessage())
 				return errSilent
 			}
 			testFiles := discoverTestFiles(testsGlob)
@@ -961,8 +993,21 @@ func reverseCmd() *cobra.Command {
 				result.Summary.SpecsGenerated, result.Summary.ConstraintsFound,
 				result.Summary.AssertionsFound, gapCount)
 			if gapCount > 0 {
-				fmt.Printf("\nDRAFT: %d AC(s) require manual review — specter reverse can extract structure but not intent.\n", gapCount)
-				fmt.Printf("       Review each gap: true AC and fill in description, inputs, and expected_output.\n")
+				fmt.Printf("\n%d AC(s) need triage — reverse extracts structure but not intent. Until triaged, these ACs count as uncovered and `specter sync` will fail.\n", gapCount)
+				fmt.Println()
+				fmt.Println("Next steps:")
+				// Pick first generated spec to show a concrete example
+				if len(result.Specs) > 0 {
+					example := result.Specs[0].Spec.ID
+					fmt.Printf("  1. Triage gaps in one spec:     specter explain %s\n", example)
+					fmt.Printf("  2. Fill in each gap AC's description and remove the `gap: true` flag.\n")
+					fmt.Printf("  3. Run parse to validate:        specter parse %s/%s\n", outputDir, result.Specs[0].FileName)
+				} else {
+					fmt.Printf("  1. Open a generated spec and triage its gap ACs (fill description, remove gap: true)\n")
+					fmt.Printf("  2. Run: specter explain <spec-id>   to see annotation examples per AC\n")
+					fmt.Printf("  3. Run: specter parse <spec-file>   to validate your edits\n")
+				}
+				fmt.Printf("  4. Run sync to check the whole corpus: specter sync\n")
 			}
 
 			return nil

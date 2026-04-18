@@ -1,3 +1,7 @@
+> **⚠ Archived — stale content.** This document was written pre-v0.3.0 and was not maintained past that version. Current release status lives in [CHANGELOG.md](../../CHANGELOG.md); forward-looking roadmap lives in [BACKLOG.md](../../BACKLOG.md). Kept here for historical reference only.
+
+---
+
 # Specter: Open Source Release Plan
 
 ## 1. Pre-Release Checklist

@@ -31,7 +31,7 @@ func humanizeError(errType, path, rawMsg string) string {
 	case "required":
 		return humanizeRequired(path, rawMsg)
 	case "additionalProperties":
-		return humanizeAdditional(rawMsg)
+		return humanizeAdditional(path, rawMsg)
 	case "pattern":
 		return humanizePattern(path, rawMsg)
 	case "enum":
@@ -88,15 +88,25 @@ func humanizeRequired(path, rawMsg string) string {
 	}
 }
 
-func humanizeAdditional(rawMsg string) string {
+func humanizeAdditional(path, rawMsg string) string {
 	field := ""
 	if m := additionalPropRe.FindStringSubmatch(rawMsg); len(m) > 1 {
 		field = m[1]
 	}
-	if field != "" {
-		return fmt.Sprintf("Unknown field '%s'. Remove it or check for a typo in the field name", field)
+	// Special case: context was extensible pre-v0.7.0. Tell users explicitly
+	// what to do instead of just "unknown field".
+	if strings.Contains(path, "context") && field != "" {
+		return fmt.Sprintf(
+			"Unknown field 'context.%s'. Context was tightened in v0.7.0 — unknown keys are no longer silently dropped. "+
+				"Options: (1) move the value into context.description as prose, (2) use the spec-level tags array for categorical data, "+
+				"or (3) propose a new schema field at https://github.com/Hanalyx/specter/issues.",
+			field,
+		)
 	}
-	return "Unknown field found. Remove any fields not defined in the spec schema"
+	if field != "" {
+		return fmt.Sprintf("Unknown field '%s'. Remove it or check for a typo in the field name.", field)
+	}
+	return "Unknown field found. Remove any fields not defined in the spec schema."
 }
 
 func humanizePattern(path, _ string) string {
@@ -124,17 +134,25 @@ func humanizeEnum(path, rawMsg string) string {
 
 	switch {
 	case strings.HasSuffix(path, ".status"):
-		return "Invalid status value. Use one of: draft, approved, deprecated"
+		return "Invalid status value. Use one of: draft, review, approved, deprecated, removed"
+	case strings.HasSuffix(path, ".tier"):
+		return "Invalid tier value. Use an integer 1 (critical), 2 (standard), or 3 (informational) — no quotes"
 	case strings.Contains(path, "changelog") && strings.HasSuffix(path, ".type"):
-		return "Invalid changelog type. Use one of: initial, major, minor, patch"
+		// Could be either changelog_entry.type or changelog_entry.changes[].type
+		if strings.Contains(path, "changes") {
+			return "Invalid change type. Use one of: addition, removal, modification, deprecation"
+		}
+		return "Invalid changelog entry type. Use one of: initial, major, minor, patch"
 	case strings.Contains(path, "constraints") && strings.HasSuffix(path, ".type"):
-		return "Invalid constraint type. Use one of: technical, business, security, performance"
+		return "Invalid constraint type. Use one of: technical, security, performance, accessibility, business"
 	case strings.Contains(path, "constraints") && strings.HasSuffix(path, ".enforcement"):
 		return "Invalid enforcement level. Use one of: error, warning, info"
+	case strings.Contains(path, "constraints") && strings.HasSuffix(path, "validation.rule"):
+		return "Invalid validation rule. Use one of: type, min, max, pattern, enum, required, format, custom"
 	case strings.Contains(path, "acceptance_criteria") && strings.HasSuffix(path, ".priority"):
 		return "Invalid priority value. Use one of: critical, high, medium, low"
 	case strings.Contains(path, "depends_on") && strings.HasSuffix(path, ".relationship"):
-		return "Invalid relationship type. Use one of: requires, optional, extends"
+		return "Invalid relationship type. Use one of: requires, extends, conflicts_with"
 	default:
 		if allowed != "" {
 			return fmt.Sprintf("Invalid value. Must be one of: %s", allowed)

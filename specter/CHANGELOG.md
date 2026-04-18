@@ -4,7 +4,25 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 ---
 
-## v0.7.0 — 2026-04-17 (unreleased, on `release/v0.7.0`)
+## v0.7.1 — 2026-04-18
+
+### Fixed
+
+- **Silent exit on unknown command or bad flag.** Typos like `specter covera` or `specter parse --wrong-flag` previously exited with code 1 and no output. Root cause: `SilenceErrors = true` on the root Cobra command was suppressing both our intentional silent-exit path AND Cobra's own usage errors. Now only the `errSilent` sentinel is truly silent; everything else prints the error message plus a pointer to `specter --help`. Cobra's "Did you mean?" suggestions now surface for near-miss typos.
+
+### Changed
+
+- **"No .spec.yaml files found" message** now explains where specter looked (the specs_dir from specter.yaml, or the default) and lists three concrete next steps (`specter reverse src/`, `specter init --template`, or editing specter.yaml). Previously it was a one-line dead-end.
+- **`specter reverse` handoff.** Success output now concretely points at the first generated spec with a step-by-step triage walkthrough: `specter explain <spec-id>`, triage gaps, `specter parse`, `specter sync`. Previously it said "review each gap AC" without telling you where to start.
+- **Parse-error hints refreshed.** Enum error messages for `status`, `constraint.type`, `constraint.enforcement`, `depends_on.relationship`, and `changelog.type` were out of date (listed old values or missing new ones). Added hints for `tier`, `constraint.validation.rule`, and a special case for `context.*` unknown-field errors that explains the v0.7.0 tightening and gives three remediation options.
+
+### Docs
+
+- **`docs/RELEASE_PLAN.md` archived** to `docs/archive/RELEASE_PLAN.md` with a prominent "stale" notice. Current release status → `CHANGELOG.md`, forward roadmap → `BACKLOG.md`.
+
+---
+
+## v0.7.0 — 2026-04-17
 
 ### Breaking
 
