@@ -77,9 +77,9 @@ func TestValidateEnums_ConstantsMatchSchema(t *testing.T) {
 	// Guard: if someone changes a constant value, this test surfaces the drift.
 	// Pairs the Go constants to the canonical values that appear in the JSON Schema.
 	cases := map[string]string{
-		EnforcementError:   "error",
-		StatusApproved:     "approved",
-		PriorityCritical:   "critical",
+		EnforcementError:     "error",
+		StatusApproved:       "approved",
+		PriorityCritical:     "critical",
 		RelationshipRequires: "requires",
 	}
 	for got, want := range cases {
