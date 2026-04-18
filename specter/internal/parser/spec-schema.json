@@ -302,6 +302,20 @@
           "type": "string",
           "enum": ["critical", "high", "medium", "low"],
           "description": "Implementation priority."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Free-form narrative attached to this AC. Use for context, caveats, or cross-references to other ACs. Prefer the top-level changelog for version-over-version history; use notes for lifetime-of-the-AC annotation."
+        },
+        "approval_gate": {
+          "type": "boolean",
+          "default": false,
+          "description": "True when this AC requires explicit human approval before it can be considered done. Specter does not enforce approval semantics — teams wire this into their own PR/CI gates. See approval_date for when the approval was granted."
+        },
+        "approval_date": {
+          "type": "string",
+          "format": "date",
+          "description": "Date (YYYY-MM-DD) when this AC was approved by a human reviewer. Meaningful only in conjunction with approval_gate: true."
         }
       }
     },

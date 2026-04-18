@@ -56,6 +56,11 @@ func init() {
 	}
 
 	c := jsonschema.NewCompiler()
+	// Turn on format assertions so `format: date`, `format: email`, etc. are
+	// validated, not just annotated. Without this, `approval_date: "not-a-date"`
+	// would pass schema validation since draft 2020-12 treats format as
+	// annotation-only by default.
+	c.AssertFormat()
 	if err := c.AddResource("spec-schema.json", schemaDoc); err != nil {
 		panic(fmt.Sprintf("failed to add schema resource: %v", err))
 	}

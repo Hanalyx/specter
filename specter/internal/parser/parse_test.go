@@ -312,3 +312,68 @@ func TestParse_UnknownContextField_Rejected(t *testing.T) {
 		t.Errorf("expected error mentioning 'role' or 'context', got: %v", result.Errors)
 	}
 }
+
+// @ac AC-15 (v0.7.0 — AC metadata fields)
+func TestParse_ACNotesAndApprovalFields(t *testing.T) {
+	yaml := `spec:
+  id: test-ac-metadata
+  version: "1.0.0"
+  status: approved
+  tier: 1
+  context:
+    system: test
+  objective:
+    summary: test
+  constraints:
+    - id: C-01
+      description: "test constraint"
+  acceptance_criteria:
+    - id: AC-01
+      description: "test AC"
+      references_constraints: ["C-01"]
+      notes: "Financial op — see also AC-03."
+      approval_gate: true
+      approval_date: "2026-04-17"
+`
+	result := ParseSpec(yaml)
+	if !result.OK {
+		t.Fatalf("expected OK, got errors: %v", result.Errors)
+	}
+	ac := result.Value.AcceptanceCriteria[0]
+	if ac.Notes != "Financial op — see also AC-03." {
+		t.Errorf("Notes not preserved, got %q", ac.Notes)
+	}
+	if !ac.ApprovalGate {
+		t.Error("ApprovalGate should be true")
+	}
+	if ac.ApprovalDate != "2026-04-17" {
+		t.Errorf("ApprovalDate mismatch, got %q", ac.ApprovalDate)
+	}
+}
+
+// @ac AC-15
+func TestParse_ACApprovalDateInvalidFormat_Rejected(t *testing.T) {
+	yaml := `spec:
+  id: test-bad-date
+  version: "1.0.0"
+  status: approved
+  tier: 1
+  context:
+    system: test
+  objective:
+    summary: test
+  constraints:
+    - id: C-01
+      description: "test"
+  acceptance_criteria:
+    - id: AC-01
+      description: "test"
+      references_constraints: ["C-01"]
+      approval_gate: true
+      approval_date: "not-a-date"
+`
+	result := ParseSpec(yaml)
+	if result.OK {
+		t.Fatal("expected parse to fail on invalid approval_date format")
+	}
+}

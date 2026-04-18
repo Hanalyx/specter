@@ -74,6 +74,9 @@ type AcceptanceCriterion struct {
 	ReferencesConstraints []string               `yaml:"references_constraints,omitempty" json:"references_constraints,omitempty"`
 	Gap                   bool                   `yaml:"gap,omitempty" json:"gap,omitempty"`
 	Priority              string                 `yaml:"priority,omitempty" json:"priority,omitempty"`
+	Notes                 string                 `yaml:"notes,omitempty" json:"notes,omitempty"`
+	ApprovalGate          bool                   `yaml:"approval_gate,omitempty" json:"approval_gate,omitempty"`
+	ApprovalDate          string                 `yaml:"approval_date,omitempty" json:"approval_date,omitempty"`
 }
 
 type DependencyRef struct {
