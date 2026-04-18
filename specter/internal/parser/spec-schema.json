@@ -27,6 +27,12 @@
           "examples": ["1.0.0", "2.1.0", "1.0.0-draft"]
         },
 
+        "title": {
+          "type": "string",
+          "description": "Human-readable display name. Optional — defaults to a titlecased version of id when omitted. Used by VS Code extension tree view, PR rendering, and spec-explain output.",
+          "examples": ["Payment Create Intent API", "External Voucher Redemption"]
+        },
+
         "status": {
           "type": "string",
           "enum": ["draft", "review", "approved", "deprecated", "removed"],

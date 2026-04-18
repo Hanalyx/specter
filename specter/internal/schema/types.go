@@ -12,6 +12,7 @@ type SpecDocument struct {
 type SpecAST struct {
 	ID                 string                `yaml:"id" json:"id"`
 	Version            string                `yaml:"version" json:"version"`
+	Title              string                `yaml:"title,omitempty" json:"title,omitempty"`
 	Status             string                `yaml:"status" json:"status"`
 	Tier               int                   `yaml:"tier" json:"tier"`
 	CoverageThreshold  int                   `yaml:"coverage_threshold,omitempty" json:"coverage_threshold,omitempty"`

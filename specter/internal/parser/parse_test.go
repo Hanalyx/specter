@@ -415,3 +415,56 @@ func TestParse_DanglingConstraintReference_Rejected(t *testing.T) {
 		t.Errorf("expected dangling_reference error mentioning C-99, got: %v", result.Errors)
 	}
 }
+
+// @ac AC-17 (v0.7.0 — optional title on spec)
+func TestParse_SpecTitleOptional(t *testing.T) {
+	yamlWith := `spec:
+  id: test-title
+  title: "My Custom Title"
+  version: "1.0.0"
+  status: draft
+  tier: 3
+  context:
+    system: test
+  objective:
+    summary: test
+  constraints:
+    - id: C-01
+      description: "test"
+  acceptance_criteria:
+    - id: AC-01
+      description: "test"
+      references_constraints: ["C-01"]
+`
+	yamlWithout := `spec:
+  id: test-no-title
+  version: "1.0.0"
+  status: draft
+  tier: 3
+  context:
+    system: test
+  objective:
+    summary: test
+  constraints:
+    - id: C-01
+      description: "test"
+  acceptance_criteria:
+    - id: AC-01
+      description: "test"
+      references_constraints: ["C-01"]
+`
+	r1 := ParseSpec(yamlWith)
+	if !r1.OK {
+		t.Fatalf("spec with title should parse, got: %v", r1.Errors)
+	}
+	if r1.Value.Title != "My Custom Title" {
+		t.Errorf("expected title preserved, got %q", r1.Value.Title)
+	}
+	r2 := ParseSpec(yamlWithout)
+	if !r2.OK {
+		t.Fatalf("spec without title should parse (field optional), got: %v", r2.Errors)
+	}
+	if r2.Value.Title != "" {
+		t.Errorf("expected empty title when absent, got %q", r2.Value.Title)
+	}
+}
