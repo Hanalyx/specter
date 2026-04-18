@@ -212,7 +212,28 @@ This shipped in spec-vscode v1.0 and affected every user whose `specter.yaml` wa
 
 ---
 
-## 17. VS Code extension and CLI versions must stay in lockstep
+## 17. Extension hallucinated CLI flags the binary never accepted
+
+**Symptom (v0.8.1):** Coverage run fails with `error: unknown flag: --manifest`. Also affected `parse` and `check` calls from the extension.
+
+**Cause:** `SpecterClient` in `client.ts` was built assuming the CLI had flags it never shipped:
+
+- `specter parse --json --manifest <path>` — no `--manifest` flag exists
+- `specter check --json --manifest <path>` — same
+- `specter coverage --json --manifest <path> [--spec <id>]` — same, plus `--spec` doesn't exist either
+- `specter diff --json --base <ref> <file>` — no `--base`, no `--json`; diff is two positional args `<path>[@<ref>]` and emits human-readable text
+
+Five fabricated flags in production code. The CLI rejects unknown flags (Cobra default), so every invocation threw, which `runCoverageForFolder`'s try/catch surfaced as "no coverage data" in the sidebar. Users saw empty coverage state regardless of whether their specs were valid.
+
+**Why it slipped:** no integration test in the extension ever invoked the real CLI binary. All tests were unit-level, against TypeScript mocks of the CLI's contract. The mocks described what the extension *wanted* the CLI to accept, not what it actually accepted.
+
+**What's in place now (v0.8.2+):** The `--manifest` / `--spec` / `--base` / `--json` (on diff) flags are stripped from `SpecterClient`. Instead, `execFile` is called with `cwd: path.dirname(manifestPath)` so the CLI's own `findManifest` walk-up finds the correct `specter.yaml`. New `client.test.ts` integration suite spawns the real built CLI against a tmpdir workspace and asserts every public method runs without throwing. The suite is skipped when `bin/specter` doesn't exist (pre-build) so CI requires a build step first.
+
+**Rule:** any code that shells out to another binary gets at least one integration test that spawns the real binary. Mocks describe intent, not contract. If CI doesn't exercise the real-binary path, every flag is a guess.
+
+---
+
+## 18. VS Code extension and CLI versions must stay in lockstep
 
 **Symptom:** Extension v0.6.5 queries `api.github.com/.../releases/latest`, gets back e.g. v0.6.5, then tries to download `.../releases/download/v0.6.5/...`. If the GitHub release for that tag doesn't exist yet, you get 404 "Not Found" in the body (see #3).
 
