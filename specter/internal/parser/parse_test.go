@@ -276,3 +276,39 @@ func TestParsePureFunction(t *testing.T) {
 		t.Error("pure function violation: different IDs")
 	}
 }
+
+// @ac AC-14 (v0.7.0 — context.additionalProperties tightened to false)
+func TestParse_UnknownContextField_Rejected(t *testing.T) {
+	yaml := `spec:
+  id: test-unknown-context
+  version: "1.0.0"
+  status: draft
+  tier: 3
+  context:
+    system: test
+    role: "this field is not in the schema"
+  objective:
+    summary: test
+  constraints:
+    - id: C-01
+      description: "test"
+  acceptance_criteria:
+    - id: AC-01
+      description: "test"
+      references_constraints: ["C-01"]
+`
+	result := ParseSpec(yaml)
+	if result.OK {
+		t.Fatal("expected parse to fail on unknown context field")
+	}
+	found := false
+	for _, e := range result.Errors {
+		if strings.Contains(e.Message, "role") || strings.Contains(e.Path, "context") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected error mentioning 'role' or 'context', got: %v", result.Errors)
+	}
+}

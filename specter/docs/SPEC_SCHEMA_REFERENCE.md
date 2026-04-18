@@ -105,7 +105,7 @@ Describes **what system** this spec belongs to and **why it exists**. The `conte
 | `related_specs` | No | `array` of `string` | Other spec files that interact with this one. |
 | `assumptions` | No | `array` of `string` | Things taken as given. If wrong, the spec needs revision. |
 
-**Note:** `additionalProperties` is `true` on the context object. You may add custom keys beyond the ones listed here.
+**Note:** All fields in the context object are declared above. Unknown fields are rejected at parse time — `specter parse` returns an error naming the offending key. If you need to capture additional metadata, use the spec-level `tags` array for categorical data, or `context.description` for free-form narrative. Extension by adding ad-hoc keys to `context` is not supported; propose a new schema field instead. (Changed in v0.7.0 — earlier versions silently dropped unknown context keys via `additionalProperties: true`, causing data loss for AI-assisted migrations.)
 
 ```yaml
 context:
