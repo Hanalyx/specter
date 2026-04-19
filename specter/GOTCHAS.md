@@ -233,7 +233,30 @@ Five fabricated flags in production code. The CLI rejects unknown flags (Cobra d
 
 ---
 
-## 18. VS Code extension and CLI versions must stay in lockstep
+## 18. Marketplace is NOT a test harness — humans must verify before publish
+
+**Symptom:** Four patch releases of the VS Code extension in a single day (v0.8.0 → v0.8.1 → v0.8.2 → v0.8.3), each one fixing a bug that the first real user hit the moment they installed. Users see the auto-update notification every few hours and each install reveals another regression. Damages credibility.
+
+**Cause:** The pre-publish loop was:
+1. Write code
+2. Run `make check` + `npx jest`
+3. `vsce package` + `vsce publish`
+4. Wait for a user to install and report whatever broke
+
+Step 4 was the test. Unit tests covered roughly 30% of the extension's actual user-facing surface — specifically the pure-function parts. The un-covered 70% (binary resolution, tree rendering, CLI invocation, activation race conditions, cwd assumptions) is where every one of the four v0.8.x bugs lived.
+
+The lesson isn't "write more unit tests" alone — the real gap was the absence of a human-verified end-to-end test in a real VS Code window against a real workspace before every publish. No mock, no CI substitute, no "I'm confident it works" — an actual install + reload + click-through.
+
+**What's in place now (v0.8.3+):**
+- `RELEASING.md` documents an 8-step gate. Mandatory before any `vsce publish`.
+- `make release-check` packages the VSIX and prints the checklist. It does not run `vsce publish` — that stays manual so the operator cannot forget step 7 (human sign-off).
+- `BACKLOG.md` queues `@vscode/test-electron` headless integration tests for v0.9 — the proper long-term backstop.
+
+**Rule:** Marketplace is a distribution channel, not a test harness. Every publish must ship behavior that has already been verified by a person in a live VS Code window. If that person is me or an AI agent, the verification must be demonstrated (screenshot, recorded session, or reproducible script) — not asserted. The first user to install should be the hundred-and-first person to see the feature work, not the first.
+
+---
+
+## 19. VS Code extension and CLI versions must stay in lockstep
 
 **Symptom:** Extension v0.6.5 queries `api.github.com/.../releases/latest`, gets back e.g. v0.6.5, then tries to download `.../releases/download/v0.6.5/...`. If the GitHub release for that tag doesn't exist yet, you get 404 "Not Found" in the body (see #3).
 

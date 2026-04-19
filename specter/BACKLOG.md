@@ -34,6 +34,13 @@ Motivation: provide the "which specs govern this file?" use case from jwtms with
 
 ---
 
+## v0.8.x prerequisites / blocking future releases
+
+- **Go toolchain bump (1.22 → 1.23+).** `govulncheck` flags 5 Go stdlib CVEs fixed in 1.23+; `make release-check` now chains through `prerelease` which includes `vulncheck`, so no release can ship until this lands. Low-risk bump; update `go.mod` directive, CI workflow `setup-go` pin, and any contributor install docs. Probably an hour of work plus re-running `make check` and `make dogfood`.
+- **`@vscode/test-electron` headless integration tests.** The release-gate currently relies on a human operator reproducing changes in a live VS Code window. Automating that via `@vscode/test-electron` would let CI spawn a real VS Code instance with the extension loaded against fixture workspaces and assert the sidebar / status bar / output channel behave as expected. Backstops the human gate; does not replace it. About a day of setup.
+
+---
+
 ## v0.8+ / unscheduled — deferred from v0.7.0 proposal
 
 Each needs its own design doc before scheduling:

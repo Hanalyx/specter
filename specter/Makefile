@@ -1,4 +1,4 @@
-.PHONY: build test test-race lint fmt fmt-check vulncheck check clean dogfood prerelease install-hooks version-sync publish-vscode
+.PHONY: build test test-race lint fmt fmt-check vulncheck check clean dogfood prerelease install-hooks version-sync publish-vscode release-check
 
 BINARY := bin/specter
 VERSION := $(shell cat VERSION 2>/dev/null || echo "dev")
@@ -95,3 +95,46 @@ prerelease: check test-race vulncheck dogfood
 	cd vscode-extension && npm run build && npm run package
 	@echo ""
 	@echo "--- All pre-release checks passed ---"
+
+# Release gate — packages the VSIX and prints the mandatory human-verification
+# checklist. Does NOT run vsce publish under any circumstance.
+# See CLAUDE.md > "Release discipline" for why every step matters.
+release-check: prerelease
+	@VER=$$(cat VERSION); \
+	VSIX=vscode-extension/specter-vscode-$$VER.vsix; \
+	if [ ! -f "$$VSIX" ]; then \
+		echo "ERROR: expected $$VSIX after prerelease; not found."; exit 1; \
+	fi; \
+	echo ""; \
+	echo "============================================================"; \
+	echo "  VSIX built: $$VSIX"; \
+	echo "============================================================"; \
+	echo ""; \
+	echo "Before running 'vsce publish', the human operator MUST:"; \
+	echo ""; \
+	echo "  1. Install locally:"; \
+	echo "       code --install-extension $$VSIX --force"; \
+	echo ""; \
+	echo "  2. Reload VS Code and open a KNOWN-WORKING workspace"; \
+	echo "     (the specter/ repo itself — 14 dogfood specs)."; \
+	echo "     Verify: Coverage sidebar populates with spec entries."; \
+	echo ""; \
+	echo "  3. Reload VS Code and open a KNOWN-FAILING workspace"; \
+	echo "     (one whose specs do not parse Specter's schema)."; \
+	echo "     Verify: sidebar shows the empty-state message AND"; \
+	echo "     status bar shows the error state AND Output channel"; \
+	echo "     contains the parse errors."; \
+	echo ""; \
+	echo "  4. Exercise every changed code path end-to-end."; \
+	echo ""; \
+	echo "  5. Check the Output channel for unexplained red entries."; \
+	echo ""; \
+	echo "  6. Sign off."; \
+	echo ""; \
+	echo "  7. Publish:"; \
+	echo "       npx vsce publish --packagePath $$VSIX"; \
+	echo "     For non-trivial changes, prefer --pre-release first."; \
+	echo ""; \
+	echo "Skipping a step is not a shortcut — it's a commitment to"; \
+	echo "ship a broken version. See RELEASING.md for the full gate."; \
+	echo "============================================================"
