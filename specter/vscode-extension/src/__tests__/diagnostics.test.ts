@@ -3,8 +3,8 @@
 // Tests for diagnostic lifecycle: debounce, atomic replacement, and on-save
 // triggering of the correct specter commands.
 
-import { buildDiagnostics, DiagnosticReplacer, shouldRunCoverageForFile } from '../diagnostics';
-import type { SpecterParseError, SpecterCheckDiagnostic } from '../types';
+import { buildDiagnostics, buildCoverageParseDiagnostics, DiagnosticReplacer, shouldRunCoverageForFile } from '../diagnostics';
+import type { SpecterParseError, SpecterCheckDiagnostic, CoverageParseError } from '../types';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -156,6 +156,55 @@ function testVerifyToken() {}
 
   it('returns empty array for files with no @spec annotations', () => {
     expect(shouldRunCoverageForFile('function testSomething() {}')).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-34 (v0.9.0): coverage parse_errors → per-file VS Code diagnostics
+// ---------------------------------------------------------------------------
+
+// @spec spec-vscode
+// @ac AC-34
+describe('buildCoverageParseDiagnostics', () => {
+  it('groups one diagnostic per error and keys by file', () => {
+    const errors: CoverageParseError[] = [
+      { file: 'specs/a.spec.yaml', type: 'required', path: 'spec.objective', message: 'missing', line: 5, column: 3 },
+      { file: 'specs/a.spec.yaml', type: 'enum', path: 'spec.status', message: 'bad value', line: 2, column: 1 },
+      { file: 'specs/b.spec.yaml', type: 'required', path: 'spec.objective', message: 'missing', line: 1, column: 1 },
+    ];
+    const out = buildCoverageParseDiagnostics(errors);
+    expect(out).toHaveLength(2);
+    const a = out.find(x => x.file === 'specs/a.spec.yaml');
+    expect(a?.diagnostics).toHaveLength(2);
+    const b = out.find(x => x.file === 'specs/b.spec.yaml');
+    expect(b?.diagnostics).toHaveLength(1);
+  });
+
+  it('converts 1-indexed line/column to 0-indexed ranges', () => {
+    const out = buildCoverageParseDiagnostics([
+      { file: 'x.yaml', message: 'oops', line: 10, column: 4 },
+    ]);
+    expect(out[0].diagnostics[0].range.start.line).toBe(9);
+    expect(out[0].diagnostics[0].range.start.character).toBe(3);
+  });
+
+  it('prefixes the error type into the message', () => {
+    const out = buildCoverageParseDiagnostics([
+      { file: 'x.yaml', type: 'required', message: 'field is missing' },
+    ]);
+    expect(out[0].diagnostics[0].message).toContain('[required]');
+    expect(out[0].diagnostics[0].message).toContain('field is missing');
+  });
+
+  it('returns [] for empty/null input', () => {
+    expect(buildCoverageParseDiagnostics(null)).toEqual([]);
+    expect(buildCoverageParseDiagnostics(undefined)).toEqual([]);
+    expect(buildCoverageParseDiagnostics([])).toEqual([]);
+  });
+
+  it('falls back to line 0 when line is missing', () => {
+    const out = buildCoverageParseDiagnostics([{ file: 'x.yaml', message: 'err' }]);
+    expect(out[0].diagnostics[0].range.start.line).toBe(0);
   });
 });
 

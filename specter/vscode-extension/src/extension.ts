@@ -16,7 +16,7 @@ import {
   downloadChecksums,
   isBinaryFile,
 } from './binaryDiscovery';
-import { buildDiagnostics, DiagnosticReplacer, shouldRunCoverageForFile } from './diagnostics';
+import { buildDiagnostics, buildCoverageParseDiagnostics, DiagnosticReplacer, shouldRunCoverageForFile } from './diagnostics';
 import {
   buildSpecCompletions,
   buildACCompletions,
@@ -32,9 +32,13 @@ import {
   buildACDecorations,
   buildCoverageTreeRoot,
   NotificationRateLimiter,
+  resolveCoveringFiles,
+  formatSyncCompletion,
+  resolveWorkspacePathPure,
+  matchFileInIndex,
 } from './coverage';
 import { buildConstraintHover, resolveDefinitionTarget } from './navigation';
-import { buildInsightCards, formatSpecContextForAI, shouldShowWalkthrough } from './insights';
+import { buildInsightCards, computeInsightsStatus, formatSpecContextForAI, shouldShowWalkthrough } from './insights';
 import { detectDrift, buildDriftHover } from './drift';
 import { SpecterClient } from './client';
 import { detectShellConfig, isPathAlreadyPresent, formatAppendBlock, shouldPromptAddPath } from './shellPath';
@@ -54,10 +58,15 @@ const diagnosticReplacers = new Map<string, DiagnosticReplacer>();
 const diagnosticCollections = new Map<string, vscode.DiagnosticCollection>();
 let specIndex: SpecIndex = { specs: {} };
 let coverageReport: CoverageReport | null = null;
+// Folders where the most recent coverage run failed (parse errors or
+// process-level failure). Consulted by specter.runSync to emit an honest
+// completion message — see AC-31.
+const coverageErrorFolders = new Set<string>();
 let statusBarItem: vscode.StatusBarItem | null = null;
 let binaryPath: string | null = null;
 const rateLimiter = new NotificationRateLimiter({ windowMs: 60_000 });
 let treeProvider: SpecterTreeProvider | null = null;
+let specterTreeView: vscode.TreeView<unknown> | null = null;
 let driftDecorationType: vscode.TextEditorDecorationType | null = null;
 let outputChannel: vscode.OutputChannel | null = null;
 
@@ -135,8 +144,16 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   ctx.subscriptions.push(manifestWatcher);
 
   // AC-11: Tree view sidebar
+  // AC-38 (v0.9.0): createTreeView instead of registerTreeDataProvider so
+  // specter.revealInTree has a handle to call .reveal() on — the command
+  // was declared in package.json from the start but never actually wired,
+  // surfacing as "command 'specter.revealInTree' not found" when invoked.
   treeProvider = new SpecterTreeProvider();
-  vscode.window.registerTreeDataProvider('specterCoverage', treeProvider);
+  specterTreeView = vscode.window.createTreeView('specterCoverage', {
+    treeDataProvider: treeProvider,
+    showCollapseAll: true,
+  });
+  ctx.subscriptions.push(specterTreeView);
 
   // AC-14: Drift decoration type
   driftDecorationType = vscode.window.createTextEditorDecorationType({
@@ -422,26 +439,91 @@ async function runCoverageForFolder(key: string, client: SpecterClient): Promise
     const result = await client.coverage();
     coverageReport = result as unknown as CoverageReport;
     updateSpecIndex(coverageReport);
-    updateStatusBar(coverageReport);
+
+    // v0.9.0: parse errors flow through the report now, not a rejected
+    // promise. Distinguish "CLI ran but parses failed" from the happy path
+    // so the sidebar + status bar reflect the real state.
+    const parseErrors = coverageReport.parseErrors ?? [];
+    pushCoverageParseDiagnostics(key, parseErrors);
+    if (parseErrors.length > 0) {
+      outputChannel?.appendLine(
+        `[${new Date().toISOString()}] coverage for ${key}: ${parseErrors.length} parse error(s):`,
+      );
+      for (const pe of parseErrors) {
+        const loc = pe.line ? `:${pe.line}` : '';
+        outputChannel?.appendLine(`  ${pe.file}${loc} — ${pe.message}`);
+      }
+      setStatusBarError('Specter: parse errors. Click to view details.');
+      coverageErrorFolders.add(key);
+    } else {
+      updateStatusBar(coverageReport);
+      coverageErrorFolders.delete(key);
+    }
     treeProvider?.refresh();
   } catch (e) {
-    // Don't hang on "loading…" forever. Surface the failure so the user can
-    // act — log details, flip the status bar to an error state that opens
-    // the output channel on click.
+    // runAllowingNonZero only rejects for real spawn failures (ENOENT,
+    // aborted, malformed JSON). These are process-level problems, not
+    // per-spec parse failures — surface as an error state with no report.
     const msg = e instanceof Error ? e.message : String(e);
     outputChannel?.appendLine(`[${new Date().toISOString()}] coverage run failed for ${key}:`);
     outputChannel?.appendLine('  ' + msg);
-    if (statusBarItem) {
-      statusBarItem.text = '$(error) Specter: error';
-      statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
-      statusBarItem.tooltip = 'Specter coverage failed. Click to view details.';
-      statusBarItem.command = 'specter.showOutput';
-    }
+    setStatusBarError('Specter coverage failed. Click to view details.');
+    coverageErrorFolders.add(key);
   }
 }
 
+/**
+ * AC-34 (v0.9.0): push CLI-reported parse errors into the per-folder
+ * DiagnosticCollection so VS Code's Problems panel shows one clickable
+ * entry per broken spec file. Previously the only surfacing was a single
+ * sidebar message and lines in the Output channel — users couldn't jump
+ * to the offending file without copy-pasting the path.
+ */
+function pushCoverageParseDiagnostics(
+  key: string,
+  parseErrors: ReadonlyArray<{ file: string; path?: string; type?: string; message: string; line?: number; column?: number }>,
+): void {
+  const dc = diagnosticCollections.get(key);
+  if (!dc) return;
+  // Clear prior coverage-sourced diagnostics for this folder. We clear
+  // everything tagged with our source; per-file replacement happens below.
+  dc.clear();
+  const grouped = buildCoverageParseDiagnostics(parseErrors as { file: string; path?: string; type?: string; message: string; line?: number; column?: number }[]);
+  for (const { file, diagnostics } of grouped) {
+    const abs = path.isAbsolute(file)
+      ? file
+      : path.resolve(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '', file);
+    const uri = vscode.Uri.file(abs);
+    const vsDiags = diagnostics.map(d => {
+      const range = new vscode.Range(
+        d.range.start.line,
+        d.range.start.character,
+        d.range.end.line,
+        Math.min(d.range.end.character, 1_000_000),
+      );
+      const diag = new vscode.Diagnostic(
+        range,
+        d.message,
+        d.severity === 'error' ? vscode.DiagnosticSeverity.Error : vscode.DiagnosticSeverity.Warning,
+      );
+      diag.source = d.source;
+      return diag;
+    });
+    dc.set(uri, vsDiags);
+  }
+}
+
+function setStatusBarError(tooltip: string): void {
+  if (!statusBarItem) return;
+  statusBarItem.text = '$(error) Specter: error';
+  statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+  statusBarItem.tooltip = tooltip;
+  statusBarItem.command = 'specter.showOutput';
+}
+
 function updateSpecIndex(report: CoverageReport): void {
-  for (const entry of report.entries) {
+  const entries = report.entries ?? [];
+  for (const entry of entries) {
     if (!specIndex.specs[entry.specID]) {
       specIndex.specs[entry.specID] = {
         id: entry.specID,
@@ -458,16 +540,17 @@ function updateSpecIndex(report: CoverageReport): void {
 
 function updateStatusBar(report: CoverageReport): void {
   if (!statusBarItem) return;
-  const hasT1OrT2Failure = report.entries.some(
+  const entries = report.entries ?? [];
+  const hasT1OrT2Failure = entries.some(
     e => !e.passesThreshold && (e.tier === 1 || e.tier === 2),
   );
-  const totalPct = report.entries.length === 0
+  const totalPct = entries.length === 0
     ? 0
-    : Math.round(report.entries.reduce((s, e) => s + e.coveragePct, 0) / report.entries.length);
-  const failing = report.entries.filter(e => !e.passesThreshold).length;
+    : Math.round(entries.reduce((s, e) => s + e.coveragePct, 0) / entries.length);
+  const failing = entries.filter(e => !e.passesThreshold).length;
 
   const result = formatStatusBar({
-    totalSpecs: report.entries.length,
+    totalSpecs: entries.length,
     coveragePct: totalPct,
     failing,
     hasT1OrT2Failure,
@@ -528,7 +611,7 @@ function registerProviders(ctx: vscode.ExtensionContext): void {
     ),
   );
 
-  // -- Hover: @ac annotation in test files (AC-09)
+  // -- Hover: @ac annotation in test files (AC-09, AC-32)
   ctx.subscriptions.push(
     vscode.languages.registerHoverProvider(testFileSelector, {
       provideHover(doc, pos) {
@@ -539,8 +622,20 @@ function registerProviders(ctx: vscode.ExtensionContext): void {
         const specID = findNearestSpecAnnotation(doc.getText(), pos.line);
         if (!specID) return;
 
+        // AC-32: populate coveredByFiles from the live CoverageReport so the
+        // hover reflects reality. The previous implementation hard-coded []
+        // which made every `@ac` hover display as "uncovered" — a UX
+        // regression caught by the quality audit (H3).
+        const coveredByFiles = resolveCoveringFiles(
+          coverageReport,
+          specID,
+          m[1],
+          doc.uri.fsPath,
+          path.resolve,
+        );
+
         const hover = buildAnnotationHover(specIndex, specID, m[1], {
-          coveredByFiles: [],
+          coveredByFiles,
         });
         if (!hover.contents) return;
         return new vscode.Hover(new vscode.MarkdownString(hover.contents));
@@ -669,7 +764,7 @@ function registerProviders(ctx: vscode.ExtensionContext): void {
         const specID = guessSpecIDFromFile(uri.fsPath);
         if (!specID) return;
 
-        const entry = coverageReport.entries.find(e => e.specID === specID);
+        const entry = (coverageReport.entries ?? []).find(e => e.specID === specID);
         if (!entry) return;
 
         const dec = buildFileDecoration(entry);
@@ -690,12 +785,12 @@ function registerProviders(ctx: vscode.ExtensionContext): void {
         const specID = guessSpecIDFromFile(doc.uri.fsPath);
         if (!specID) return [];
 
-        const entry = coverageReport.entries.find(e => e.specID === specID);
+        const entry = (coverageReport.entries ?? []).find(e => e.specID === specID);
         if (!entry) return [];
 
         const decorations = buildACDecorations({
-          coveredACs: entry.coveredACs,
-          uncoveredACs: entry.uncoveredACs,
+          coveredACs: entry.coveredACs ?? [],
+          uncoveredACs: entry.uncoveredACs ?? [],
           gapACs: [],
         });
 
@@ -781,6 +876,7 @@ function registerDiagnosticHooks(ctx: vscode.ExtensionContext): void {
         for (const specID of specIDs) {
           const result = await client.coverage(specID);
           if (coverageReport) {
+            if (!coverageReport.entries) coverageReport.entries = [];
             const idx = coverageReport.entries.findIndex(e => e.specID === specID);
             const newEntry = (result as any).entries?.[0];
             if (newEntry) {
@@ -869,14 +965,36 @@ function registerCommands(ctx: vscode.ExtensionContext): void {
         vscode.window.showInformationMessage('Specter coverage not yet loaded.');
         return;
       }
+      // v0.9.0: Insights now renders parse failures AND coverage cards in
+      // one view. Previously it short-circuited on parse errors or — worse
+      // — silently claimed "all specs passing" when entries was empty.
+      const entries = coverageReport.entries ?? [];
+      const parseErrors = coverageReport.parseErrors ?? [];
       const panel = vscode.window.createWebviewPanel(
         'specterInsights',
         'Specter Insights',
         vscode.ViewColumn.Beside,
-        { enableScripts: false },
+        { enableScripts: true },
       );
-      const cards = buildInsightCards(coverageReport.entries, specIndex);
-      panel.webview.html = renderInsightsHTML(cards);
+      const cards = buildInsightCards(entries, specIndex);
+      panel.webview.html = renderInsightsHTML({
+        cards,
+        parseErrors,
+        specCandidatesCount: coverageReport.specCandidatesCount ?? 0,
+        entryCount: entries.length,
+      });
+      // AC-39: parse-failure cards emit {openFile: path} messages when the
+      // user clicks the header. Route them to vscode.open with the
+      // resolved absolute URI so the file opens at the reported line.
+      panel.webview.onDidReceiveMessage((msg: { openFile?: string; line?: number }) => {
+        if (!msg?.openFile) return;
+        const abs = resolveWorkspacePath(msg.openFile);
+        const uri = vscode.Uri.file(abs);
+        const selection = msg.line && msg.line > 0
+          ? new vscode.Range(msg.line - 1, 0, msg.line - 1, 0)
+          : undefined;
+        void vscode.commands.executeCommand('vscode.open', uri, selection ? { selection } : undefined);
+      }, undefined, ctx.subscriptions);
     }),
   );
 
@@ -915,10 +1033,23 @@ function registerCommands(ctx: vscode.ExtensionContext): void {
         );
         return;
       }
+      coverageErrorFolders.clear();
       for (const [key, client] of clients) {
         await runCoverageForFolder(key, client);
       }
-      vscode.window.showInformationMessage('Specter sync complete.');
+      // AC-31: completion message reflects reality. A silent success toast
+      // after a failed coverage run (the v0.8.x behavior) misled the user
+      // into thinking everything was fine — fixed per quality-audit H1.
+      const completion = formatSyncCompletion(coverageErrorFolders.size);
+      if (completion.kind === 'warning') {
+        vscode.window.showWarningMessage(completion.message, 'Show Output').then(pick => {
+          if (pick === 'Show Output') {
+            void vscode.commands.executeCommand('specter.showOutput');
+          }
+        });
+      } else {
+        vscode.window.showInformationMessage(completion.message);
+      }
     }),
   );
 
@@ -940,6 +1071,37 @@ function registerCommands(ctx: vscode.ExtensionContext): void {
   ctx.subscriptions.push(
     vscode.commands.registerCommand('specter.showOutput', () => {
       outputChannel?.show(true);
+    }),
+  );
+
+  // AC-38: Reveal the active file in the Coverage sidebar. Matches in this
+  // priority: (1) a spec entry whose specFile resolves to the active file,
+  // (2) a parse-error leaf, (3) the spec whose @spec annotations live in
+  // the active test file. Opens the Specter view container if collapsed.
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand('specter.revealInTree', async () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) {
+        vscode.window.showInformationMessage('Open a spec or test file first, then invoke Specter: Reveal in Tree View.');
+        return;
+      }
+      if (!treeProvider || !specterTreeView) {
+        vscode.window.showInformationMessage('Specter sidebar is not available in this workspace.');
+        return;
+      }
+      const activePath = editor.document.uri.fsPath;
+      const target = treeProvider.findElementForFile(activePath);
+      if (!target) {
+        vscode.window.showInformationMessage(
+          'This file is not tracked by Specter coverage yet. Save it (for test files with @spec annotations) or re-run Specter: Run Sync.',
+        );
+        return;
+      }
+      try {
+        await specterTreeView.reveal(target, { select: true, focus: true, expand: true });
+      } catch (e) {
+        outputChannel?.appendLine(`revealInTree failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
     }),
   );
 
@@ -1073,11 +1235,65 @@ function toVscodeDiagnostic(d: ReturnType<typeof buildDiagnostics>[0]): vscode.D
   return diag;
 }
 
-function renderInsightsHTML(cards: ReturnType<typeof buildInsightCards>): string {
-  if (cards.length === 0) {
-    return `<!DOCTYPE html><html><body><h1>All specs passing ✓</h1></body></html>`;
+interface RenderInsightsInput {
+  cards: ReturnType<typeof buildInsightCards>;
+  parseErrors: Array<{ file: string; line?: number; message: string; type?: string; path?: string }>;
+  specCandidatesCount: number;
+  entryCount: number;
+}
+
+function renderInsightsHTML(input: RenderInsightsInput): string {
+  const { cards, parseErrors, specCandidatesCount, entryCount } = input;
+
+  // AC-37: single source of truth for "what does the panel claim?".
+  // See insights.ts computeInsightsStatus — the webview is a dumb
+  // renderer around that decision.
+  const status = computeInsightsStatus({
+    parseErrorCount: parseErrors.length,
+    uncoveredCardCount: cards.length,
+    entryCount,
+    specCandidatesCount,
+  });
+  const header = `<h1>${escapeHtml(status.header)}</h1>`;
+
+  // Parse-failures section (when applicable).
+  let parseErrorHTML = '';
+  if (status.showParseErrorsSection) {
+    // Group by file so multiple errors on one file fold into one card.
+    const byFile = new Map<string, Array<{ message: string; type?: string; path?: string; line?: number }>>();
+    for (const e of parseErrors) {
+      const arr = byFile.get(e.file) ?? [];
+      arr.push({ message: e.message, type: e.type, path: e.path, line: e.line });
+      byFile.set(e.file, arr);
+    }
+    const fileCards = Array.from(byFile, ([file, errs]) => {
+      const items = errs.map(e => {
+        const prefix = e.type ? `[${escapeHtml(e.type)}] ` : '';
+        const pathSuffix = e.path ? ` <em>(at ${escapeHtml(e.path)})</em>` : '';
+        const lineSuffix = e.line ? ` <span class="dim">(line ${e.line})</span>` : '';
+        return `<li>${prefix}${escapeHtml(e.message)}${pathSuffix}${lineSuffix}</li>`;
+      }).join('');
+      // AC-39: header is a clickable link that posts {openFile} to the
+      // extension host, which opens the file at the reported line.
+      const firstLine = errs.find(e => e.line)?.line ?? 0;
+      const payload = JSON.stringify({ openFile: file, line: firstLine });
+      return `
+        <div class="card parse-error-card">
+          <h2><a class="open-file" href="#" data-payload='${escapeAttr(payload)}'>${escapeHtml(file)}</a></h2>
+          <ul>${items}</ul>
+        </div>
+      `;
+    }).join('');
+    parseErrorHTML = `
+      <section>
+        <h2 class="section-heading">Parse failures</h2>
+        <p class="muted">These spec files could not be parsed and are excluded from coverage analysis. Fix each one and re-run sync.</p>
+        ${fileCards}
+      </section>
+    `;
   }
 
+  // Normal uncovered-AC cards (may be empty).
   const cardHTML = cards.map(card => {
     const acList = card.uncoveredACDetails
       .map(ac => `<li><strong>${ac.id}</strong> — ${escapeHtml(ac.description)}</li>`)
@@ -1097,22 +1313,58 @@ function renderInsightsHTML(cards: ReturnType<typeof buildInsightCards>): string
     `;
   }).join('');
 
+  const coverageSection = status.showCoverageSection
+    ? `<section><h2 class="section-heading">Coverage gaps</h2>${cardHTML}</section>`
+    : '';
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <style>
   body { font-family: var(--vscode-font-family); padding: 1rem; }
+  h1 { color: var(--vscode-foreground); }
+  .section-heading { color: var(--vscode-descriptionForeground); margin-top: 1.5rem; }
+  .muted { color: var(--vscode-descriptionForeground); font-size: 0.9em; }
+  .dim { color: var(--vscode-descriptionForeground); }
   .card { border: 1px solid var(--vscode-panel-border); border-radius: 4px; padding: 1rem; margin-bottom: 1rem; }
-  h2 { margin-top: 0; color: var(--vscode-errorForeground); }
-  h3 { color: var(--vscode-descriptionForeground); }
+  .card h2 { margin-top: 0; color: var(--vscode-errorForeground); }
+  .card h3 { color: var(--vscode-descriptionForeground); }
+  .parse-error-card { border-left: 3px solid var(--vscode-errorForeground); }
+  .parse-error-card h2 { font-family: var(--vscode-editor-font-family); font-size: 1em; word-break: break-all; }
+  .parse-error-card h2 a.open-file { color: var(--vscode-textLink-foreground); text-decoration: none; cursor: pointer; }
+  .parse-error-card h2 a.open-file:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
-<h1>Specter Insights</h1>
-${cardHTML}
+${header}
+${parseErrorHTML}
+${coverageSection}
+<script>
+  (function() {
+    const vscode = acquireVsCodeApi();
+    document.querySelectorAll('a.open-file').forEach(a => {
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        try {
+          const payload = JSON.parse(a.getAttribute('data-payload') || '{}');
+          vscode.postMessage(payload);
+        } catch (_) { /* ignore malformed payloads */ }
+      });
+    });
+  })();
+</script>
 </body>
 </html>`;
+}
+
+function escapeAttr(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/'/g, '&#39;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 // ---------------------------------------------------------------------------
@@ -1122,11 +1374,32 @@ ${cardHTML}
 type TreeElement = { kind: 'spec'; specID: string; file: string; children: TreeElement[] }
   | { kind: 'ac'; id: string; icon: 'covered' | 'uncovered' | 'gap'; children: TreeElement[] }
   | { kind: 'testFile'; path: string }
-  | { kind: 'message'; label: string; detail?: string; iconId?: string };
+  | { kind: 'message'; label: string; detail?: string; iconId?: string }
+  | { kind: 'parseErrorGroup'; label: string; children: TreeElement[] }
+  | { kind: 'parseErrorFile'; file: string; message: string; line?: number };
+
+/**
+ * AC-33 (v0.9.0): resolve a CLI-emitted relative path against the first
+ * workspace folder so `vscode.Uri.file` produces an openable absolute URI.
+ * Passing a relative path directly to `Uri.file` treats it as absolute from
+ * '/' and silently yields a non-existent URI — the "file not found" path
+ * users hit when clicking a leaf in the Coverage sidebar.
+ */
+function resolveWorkspacePath(p: string): string {
+  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  return resolveWorkspacePathPure(p, root, (a, b) => path.resolve(a, b), path.isAbsolute);
+}
 
 class SpecterTreeProvider implements vscode.TreeDataProvider<TreeElement> {
   private _onDidChange = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this._onDidChange.event;
+
+  // Caches rebuilt each time getChildren(undefined) runs. Needed so
+  // TreeView.reveal() can walk from a leaf back up to its parent and so
+  // findElementForFile() can answer O(1) lookups by absolute path.
+  private rootCache: TreeElement[] = [];
+  private parentMap = new WeakMap<object, TreeElement>();
+  private fileIndex = new Map<string, TreeElement>();
 
   refresh(): void { this._onDidChange.fire(); }
 
@@ -1136,6 +1409,14 @@ class SpecterTreeProvider implements vscode.TreeDataProvider<TreeElement> {
         const item = new vscode.TreeItem(el.specID, vscode.TreeItemCollapsibleState.Collapsed);
         item.contextValue = 'spec';
         item.iconPath = new vscode.ThemeIcon('file-code');
+        // AC-33: clicking a spec node opens the .spec.yaml. Only wired when
+        // the CLI supplied a file path (spec_file field, v1.5.0+).
+        if (el.file) {
+          const uri = vscode.Uri.file(resolveWorkspacePath(el.file));
+          item.resourceUri = uri;
+          item.command = { command: 'vscode.open', title: 'Open Spec', arguments: [uri] };
+          item.tooltip = el.file;
+        }
         return item;
       }
       case 'ac': {
@@ -1146,9 +1427,13 @@ class SpecterTreeProvider implements vscode.TreeDataProvider<TreeElement> {
         return item;
       }
       case 'testFile': {
+        // AC-33: the CLI emits workspace-relative paths; resolve before use.
+        const abs = resolveWorkspacePath(el.path);
+        const uri = vscode.Uri.file(abs);
         const item = new vscode.TreeItem(path.basename(el.path), vscode.TreeItemCollapsibleState.None);
-        item.resourceUri = vscode.Uri.file(el.path);
-        item.command = { command: 'vscode.open', title: 'Open', arguments: [vscode.Uri.file(el.path)] };
+        item.resourceUri = uri;
+        item.command = { command: 'vscode.open', title: 'Open', arguments: [uri] };
+        item.tooltip = el.path;
         item.iconPath = new vscode.ThemeIcon('file');
         return item;
       }
@@ -1161,34 +1446,113 @@ class SpecterTreeProvider implements vscode.TreeDataProvider<TreeElement> {
         item.contextValue = 'specterMessage';
         return item;
       }
+      case 'parseErrorGroup': {
+        // AC-36: the "Failed to parse" collapsible group. Rendered alongside
+        // passing spec nodes so the user can see both and act on either.
+        const item = new vscode.TreeItem(el.label, vscode.TreeItemCollapsibleState.Expanded);
+        item.iconPath = new vscode.ThemeIcon('error');
+        item.contextValue = 'specterParseErrorGroup';
+        item.tooltip = 'Spec files the CLI could not parse. Each child opens the failing file.';
+        return item;
+      }
+      case 'parseErrorFile': {
+        // AC-36: each failing file is a clickable leaf. Click opens the
+        // file; the error message is surfaced as both description (inline)
+        // and tooltip (for the full detail) so the user doesn't have to
+        // visit the Problems panel to know what broke.
+        const abs = resolveWorkspacePath(el.file);
+        const uri = vscode.Uri.file(abs);
+        const item = new vscode.TreeItem(path.basename(el.file), vscode.TreeItemCollapsibleState.None);
+        item.resourceUri = uri;
+        // Jump to the reported line when the CLI provided one.
+        const selection = el.line && el.line > 0
+          ? new vscode.Range(el.line - 1, 0, el.line - 1, 0)
+          : undefined;
+        item.command = {
+          command: 'vscode.open',
+          title: 'Open failing spec',
+          arguments: selection ? [uri, { selection }] : [uri],
+        };
+        item.description = el.message;
+        item.tooltip = `${el.file}${el.line ? `:${el.line}` : ''} — ${el.message}`;
+        item.iconPath = new vscode.ThemeIcon('error');
+        return item;
+      }
     }
   }
 
   getChildren(el?: TreeElement): TreeElement[] {
     if (!el) {
-      // v0.8.0: buildCoverageTreeRoot emits a synthetic message node for
-      // empty states (null report, or report with zero entries) so the
-      // panel is never silently empty.
+      // v0.9.0: buildCoverageTreeRoot may now return a mix of spec nodes,
+      // a parse-error group, and/or a message node. Map each root shape to
+      // the corresponding TreeElement so the provider renders all three.
+      //
+      // Also rebuild parentMap + fileIndex on every root refresh so
+      // TreeView.reveal() can walk leaves back to their parents and
+      // findElementForFile() can answer in O(1).
+      this.parentMap = new WeakMap<object, TreeElement>();
+      this.fileIndex = new Map<string, TreeElement>();
+
       const roots = buildCoverageTreeRoot(coverageReport);
-      return roots.map(n => {
+      const built: TreeElement[] = roots.map(n => {
         if (n.kind === 'message') {
           return { kind: 'message' as const, label: n.label, detail: n.detail, iconId: n.iconId };
         }
-        return {
-          kind: 'spec' as const,
-          specID: n.specID,
-          file: n.file,
-          children: n.children.map(ac => ({
-            kind: 'ac' as const,
-            id: ac.id,
-            icon: ac.icon,
-            children: ac.children.map(tf => ({ kind: 'testFile' as const, path: tf.path })),
-          })),
-        };
+        if (n.kind === 'parseErrorGroup') {
+          const group: TreeElement = { kind: 'parseErrorGroup', label: n.label, children: [] };
+          group.children = n.children.map(c => {
+            const leaf: TreeElement = { kind: 'parseErrorFile', file: c.file, message: c.message, line: c.line };
+            this.parentMap.set(leaf as object, group);
+            this.indexFile(c.file, leaf);
+            return leaf;
+          });
+          return group;
+        }
+        const specEl: TreeElement = { kind: 'spec', specID: n.specID, file: n.file, children: [] };
+        specEl.children = n.children.map(ac => {
+          const acEl: TreeElement = {
+            kind: 'ac', id: ac.id, icon: ac.icon,
+            children: ac.children.map(tf => {
+              const tfEl: TreeElement = { kind: 'testFile', path: tf.path };
+              this.indexFile(tf.path, tfEl);
+              return tfEl;
+            }),
+          };
+          for (const child of acEl.children) this.parentMap.set(child as object, acEl);
+          this.parentMap.set(acEl as object, specEl);
+          return acEl;
+        });
+        if (n.file) this.indexFile(n.file, specEl);
+        return specEl;
       });
+      this.rootCache = built;
+      return built;
     }
-    if (el.kind === 'testFile' || el.kind === 'message') return [];
+    if (el.kind === 'testFile' || el.kind === 'message' || el.kind === 'parseErrorFile') return [];
     return el.children;
+  }
+
+  getParent(el: TreeElement): TreeElement | null {
+    return this.parentMap.get(el as object) ?? null;
+  }
+
+  /**
+   * AC-38: resolve the active file (absolute path) to the best-matching
+   * tree element. Tries absolute-path match first; falls back to suffix
+   * match so a CLI-emitted relative path ("specs/foo.spec.yaml") still
+   * finds its element when the query is the absolute form.
+   */
+  findElementForFile(absPath: string): TreeElement | undefined {
+    return matchFileInIndex(this.fileIndex, absPath);
+  }
+
+  private indexFile(file: string, el: TreeElement): void {
+    if (!file) return;
+    this.fileIndex.set(file, el);
+    // Also index the workspace-absolute form so activeTextEditor's
+    // absolute URI can match the CLI-relative path we stored.
+    const abs = resolveWorkspacePath(file);
+    if (abs !== file) this.fileIndex.set(abs, el);
   }
 }
 

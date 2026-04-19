@@ -327,8 +327,18 @@ func discoverTestFiles(glob string) []string {
 }
 
 func parseAllSpecs(files []string) ([]resolver.SpecInput, []schema.SpecAST, bool) {
+	inputs, specs, _, hasErrors := parseAllSpecsDetailed(files)
+	return inputs, specs, hasErrors
+}
+
+// parseAllSpecsDetailed is parseAllSpecs with the per-file parse errors
+// collected in structured form. The v0.9.0 coverage JSON contract surfaces
+// these to the VS Code extension so the sidebar can distinguish "no specs
+// yet" from "specs present but failed to parse" — see spec-coverage C-10.
+func parseAllSpecsDetailed(files []string) ([]resolver.SpecInput, []schema.SpecAST, []coverage.ParseErrorEntry, bool) {
 	var inputs []resolver.SpecInput
 	var specs []schema.SpecAST
+	var parseErrors []coverage.ParseErrorEntry
 	hasErrors := false
 
 	for _, file := range files {
@@ -336,6 +346,11 @@ func parseAllSpecs(files []string) ([]resolver.SpecInput, []schema.SpecAST, bool
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "FAIL %s: %v\n", file, err)
 			hasErrors = true
+			parseErrors = append(parseErrors, coverage.ParseErrorEntry{
+				File:    file,
+				Type:    "io",
+				Message: err.Error(),
+			})
 			continue
 		}
 		result := parser.ParseSpec(string(data))
@@ -347,11 +362,19 @@ func parseAllSpecs(files []string) ([]resolver.SpecInput, []schema.SpecAST, bool
 			fmt.Fprintf(os.Stderr, "FAIL %s\n", file)
 			for _, e := range result.Errors {
 				fmt.Fprintf(os.Stderr, "  error [%s] %s: %s\n", e.Type, e.Path, e.Message)
+				parseErrors = append(parseErrors, coverage.ParseErrorEntry{
+					File:    file,
+					Path:    e.Path,
+					Type:    e.Type,
+					Message: e.Message,
+					Line:    e.Line,
+					Column:  e.Column,
+				})
 			}
 		}
 	}
 
-	return inputs, specs, hasErrors
+	return inputs, specs, parseErrors, hasErrors
 }
 
 // --- Commands ---
@@ -615,9 +638,14 @@ func coverageCmd() *cobra.Command {
 		Short: "Generate spec-to-test traceability matrix",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			files := discoverSpecs()
-			_, specs, hasErrors := parseAllSpecs(files)
-			if hasErrors {
-				return errSilent
+			inputs, specs, parseErrors, hasErrors := parseAllSpecsDetailed(files)
+
+			// Build specID → source-file map so the CLI can populate
+			// SpecFile on each coverage entry after the pure builder runs.
+			// Consumers (VS Code sidebar click-to-open) rely on this.
+			specFileByID := make(map[string]string, len(inputs))
+			for _, in := range inputs {
+				specFileByID[in.Spec.ID] = in.File
 			}
 
 			testFiles := discoverTestFiles(testsGlob)
@@ -633,19 +661,36 @@ func coverageCmd() *cobra.Command {
 			m, _ := loadManifest()
 			var results *coverage.ResultsFile
 			if data, err := os.ReadFile(".specter-results.json"); err == nil {
-				var parseErr error
-				results, parseErr = coverage.ParseResultsFile(data)
-				if parseErr != nil {
-					fmt.Fprintf(os.Stderr, "warn: could not parse .specter-results.json: %v\n", parseErr)
+				var pErr error
+				results, pErr = coverage.ParseResultsFile(data)
+				if pErr != nil {
+					fmt.Fprintf(os.Stderr, "warn: could not parse .specter-results.json: %v\n", pErr)
 				}
 			}
 			report := coverage.BuildCoverageReportWithResults(specs, allAnnotations, m.CoverageThresholds(), results)
+			report.ParseErrors = parseErrors
+			report.ParseErrorPatterns = coverage.SummarizeParseErrors(parseErrors)
+			report.SpecCandidatesCount = len(files)
+			for i := range report.Entries {
+				report.Entries[i].SpecFile = specFileByID[report.Entries[i].SpecID]
+			}
 
+			// C-10: --json emits the report in every state, including when
+			// parse failed. Downstream consumers (VS Code extension) branch on
+			// ParseErrors vs Entries to decide what to render. Exit code, not
+			// stdout presence, signals pass/fail.
 			if jsonOutput {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
 				_ = enc.Encode(report)
+				if hasErrors {
+					return errSilent
+				}
 				return nil
+			}
+
+			if hasErrors {
+				return errSilent
 			}
 
 			fmt.Println("Spec Coverage Report")
@@ -1099,24 +1144,64 @@ func initCmd() *cobra.Command {
 
 			specFiles := discoverSpecs()
 			var specIDs []string
+			var initParseErrors []coverage.ParseErrorEntry
 			for _, file := range specFiles {
 				data, err := os.ReadFile(file)
 				if err != nil {
+					initParseErrors = append(initParseErrors, coverage.ParseErrorEntry{File: file, Type: "io", Message: err.Error()})
 					continue
 				}
 				result := parser.ParseSpec(string(data))
 				if result.OK {
 					specIDs = append(specIDs, result.Value.ID)
+				} else {
+					for _, pe := range result.Errors {
+						initParseErrors = append(initParseErrors, coverage.ParseErrorEntry{
+							File: file, Path: pe.Path, Type: pe.Type, Message: pe.Message, Line: pe.Line, Column: pe.Column,
+						})
+					}
 				}
 			}
 
-			yamlStr := manifest.ScaffoldManifest(name, "", specIDs)
+			yamlStr := manifest.ScaffoldManifestWithContext(name, "", specIDs, len(specFiles))
 			if err := os.WriteFile("specter.yaml", []byte(yamlStr), 0644); err != nil {
 				fmt.Fprintf(os.Stderr, "error writing specter.yaml: %v\n", err)
 				return errSilent
 			}
 
 			fmt.Printf("Created specter.yaml with %d spec(s) in system %q\n", len(specIDs), name)
+			unparsedFiles := len(specFiles) - len(specIDs)
+			if unparsedFiles > 0 {
+				fmt.Println()
+				fmt.Printf("Warning: %d spec file(s) were discovered but could not be parsed:\n", unparsedFiles)
+				patterns := coverage.SummarizeParseErrors(initParseErrors)
+				if len(patterns) > 0 {
+					top := patterns[0]
+					if top.Count == unparsedFiles && unparsedFiles > 1 {
+						pathPart := ""
+						if top.Path != "" {
+							pathPart = fmt.Sprintf(" at %q", top.Path)
+						}
+						fmt.Printf("  Every failing spec hit the same error: [%s]%s.\n", top.Type, pathPart)
+						fmt.Println("  This is the signature of schema version drift — the specs may")
+						fmt.Println("  have been written against an older Specter schema. Run `specter")
+						fmt.Println("  doctor` for a full report, then fix the specs and re-run")
+						fmt.Println("  `specter init --force` to populate the manifest.")
+					} else {
+						for _, p := range patterns {
+							pathPart := ""
+							if p.Path != "" {
+								pathPart = fmt.Sprintf(" at %q", p.Path)
+							}
+							fmt.Printf("  [%s]%s — %d occurrence(s) across %d file(s)\n", p.Type, pathPart, p.Count, len(p.Files))
+						}
+					}
+				}
+				fmt.Println()
+				fmt.Println("The manifest was still written with an empty default domain as a")
+				fmt.Println("placeholder. Add your spec IDs under `domains.default.specs` once")
+				fmt.Println("the parse errors are resolved.")
+			}
 			return nil
 		},
 	}
@@ -1193,11 +1278,13 @@ func doctorCmd() *cobra.Command {
 			// --- Check 3: All specs parse cleanly (C-03, AC-04) ---
 			parseOK := true
 			parseErrors := 0
+			var allParseErrs []coverage.ParseErrorEntry
 			for _, f := range specFiles {
 				data, err := os.ReadFile(f)
 				if err != nil {
 					parseOK = false
 					parseErrors++
+					allParseErrs = append(allParseErrs, coverage.ParseErrorEntry{File: f, Type: "io", Message: err.Error()})
 					continue
 				}
 				result := parser.ParseSpec(string(data))
@@ -1206,12 +1293,46 @@ func doctorCmd() *cobra.Command {
 					parseErrors++
 					for _, pe := range result.Errors {
 						fmt.Printf("    %s: %s\n", f, pe.Message)
+						allParseErrs = append(allParseErrs, coverage.ParseErrorEntry{
+							File: f, Path: pe.Path, Type: pe.Type, Message: pe.Message, Line: pe.Line, Column: pe.Column,
+						})
 					}
 				}
 			}
 			if !parseOK {
 				printCheck("parse", "FAIL", fmt.Sprintf("%d spec file(s) have parse errors (see above)", parseErrors))
 				anyFail = true
+				// AC-09 (spec-doctor v1.1.0): when parse fails, name the
+				// widespread pattern. If the same (type, path) hits every
+				// discovered spec, that's schema drift, not N bugs.
+				patterns := coverage.SummarizeParseErrors(allParseErrs)
+				if len(patterns) > 0 && len(specFiles) > 0 {
+					top := patterns[0]
+					affected := len(top.Files)
+					fmt.Println()
+					fmt.Println("  Pattern analysis:")
+					if affected == len(specFiles) && len(specFiles) > 1 {
+						pathPart := ""
+						if top.Path != "" {
+							pathPart = fmt.Sprintf(" at %q", top.Path)
+						}
+						fmt.Printf("    Every %d discovered spec hit the same failure: [%s]%s.\n", len(specFiles), top.Type, pathPart)
+						fmt.Println("    This pattern is the signature of schema version drift —")
+						fmt.Println("    your specs may have been written against an older Specter")
+						fmt.Println("    schema. Check the spec-parse changelog and migrate each file.")
+					} else {
+						for _, p := range patterns {
+							pathPart := ""
+							if p.Path != "" {
+								pathPart = fmt.Sprintf(" at %q", p.Path)
+							}
+							fmt.Printf("    [%s]%s — %d occurrence(s) across %d file(s)\n", p.Type, pathPart, p.Count, len(p.Files))
+							if len(patterns) > 3 {
+								break
+							}
+						}
+					}
+				}
 			} else if len(specFiles) > 0 {
 				printCheck("parse", "PASS", "All specs parse cleanly")
 			} else {

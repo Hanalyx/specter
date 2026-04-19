@@ -1,6 +1,6 @@
 spec:
   id: spec-coverage
-  version: "1.4.0"
+  version: "1.6.0"
   status: approved
   tier: 2
 
@@ -81,6 +81,26 @@ spec:
     - id: C-09
       description: "MUST count every declared acceptance criterion in the denominator of the coverage percentage, including ACs marked gap: true. An AC marked gap: true with no matching @ac annotation counts as uncovered. Rationale: a spec whose ACs are all gaps has no captured intent and must fail coverage rather than silently pass."
       type: business
+      enforcement: error
+
+    - id: C-10
+      description: "`specter coverage --json` MUST always emit a CoverageReport JSON document to stdout, including when one or more spec files fail to parse. The report's parse_errors array carries per-file failures; pass/fail is signalled by process exit code, not by the presence or absence of JSON output. Rationale: downstream consumers (VS Code extension, CI jobs) need a structured document in every state to distinguish 'no specs yet' from 'specs present but failed to parse'."
+      type: technical
+      enforcement: error
+
+    - id: C-11
+      description: "ExtractAnnotations MUST NOT treat comment-like lines appearing inside multi-line string literals as real annotations. Applies to backtick-delimited strings (TypeScript/JavaScript template literals, Go raw strings) and Python triple-quoted strings (''' and \"\"\"). Rationale: example fixtures and inline payloads frequently contain strings like \\`// @spec foo\\`; interpreting these as annotations produces phantom coverage entries."
+      type: technical
+      enforcement: error
+
+    - id: C-12
+      description: "`specter coverage --json` MUST emit spec_candidates_count (count of .spec.yaml files discovered on disk) so downstream consumers can distinguish `no specs exist` from `specs exist but failed to parse`. Rationale: without this field, a parse-failure workspace is indistinguishable from a greenfield one, so tools mistakenly suggest `specter init`."
+      type: technical
+      enforcement: error
+
+    - id: C-13
+      description: "`specter coverage --json` MUST emit parse_error_patterns — a list grouping parse_errors by (type, path) sorted by count descending. Enables downstream consumers to surface schema drift in one sentence (`20 specs: missing required field 'objective'`) instead of N individual messages."
+      type: technical
       enforcement: error
 
   depends_on:
@@ -173,7 +193,55 @@ spec:
       references_constraints: ["C-09"]
       priority: critical
 
+    - id: AC-10
+      description: "`specter coverage --json` run in a workspace where every spec file has a schema violation emits valid JSON containing an empty entries array, a zeroed summary, and a parse_errors array with at least one entry (file + message populated). Process exits non-zero."
+      inputs:
+        workspace: "one .spec.yaml present, missing required field `objective`"
+        command: "specter coverage --json"
+      expected_output:
+        stdout: "valid CoverageReport JSON"
+        entries: []
+        parse_errors_count: ">= 1"
+        exit_code: "non-zero"
+      references_constraints: ["C-10"]
+      priority: critical
+
+    - id: AC-11
+      description: "A TypeScript test file that contains a template literal whose body includes the literal text `// @spec ghost-spec` produces zero annotations for `ghost-spec`. The same file's real `// @spec real-spec` on an actual comment line is still detected."
+      inputs:
+        file: |
+          // @spec real-spec
+          const payload = `
+            // @spec ghost-spec
+            // @ac AC-99
+          `;
+      expected_output:
+        spec_ids_extracted: ["real-spec"]
+        ghost_spec_present: false
+      references_constraints: ["C-11"]
+      priority: high
+
+    - id: AC-12
+      description: "`specter coverage --json` run in a workspace with 3 .spec.yaml files (all schema-invalid) emits spec_candidates_count: 3, entries: [], parse_errors populated. Run in an empty workspace emits spec_candidates_count: 0, entries: [], parse_errors absent or empty."
+      references_constraints: ["C-12"]
+      priority: high
+
+    - id: AC-13
+      description: "SummarizeParseErrors, given 20 ParseErrorEntry values all with Type=\"required\" and Path=\"spec.objective\", returns one ParseErrorPattern with Count=20, Type=\"required\", Path=\"spec.objective\", Files containing all 20 unique file paths. When mixed with one entry of Type=\"enum\", the \"required\"/\"spec.objective\" pattern sorts first by count."
+      references_constraints: ["C-13"]
+      priority: high
+
   changelog:
+    - version: "1.6.0"
+      date: "2026-04-19"
+      author: "specter-team"
+      type: minor
+      description: "Add C-12/AC-12 (spec_candidates_count field), C-13/AC-13 (parse_error_patterns summary). Together these let downstream consumers distinguish `no specs exist` from `schema drift`, and collapse N identical parse failures into one actionable diagnosis. Drives AC-29 sidebar messaging and specter doctor pattern analysis."
+    - version: "1.5.0"
+      date: "2026-04-18"
+      author: "specter-team"
+      type: minor
+      description: "Add C-10/AC-10: `specter coverage --json` always emits a CoverageReport document, including on parse failure. Parse errors surface via a new `parse_errors` field. Unblocks the VS Code extension's three-state sidebar (no-specs / have-specs / parse-failed)."
     - version: "1.4.0"
       date: "2026-04-17"
       author: "specter-team"

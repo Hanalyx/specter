@@ -11,6 +11,10 @@ import {
   classifyNotification,
   buildFileDecoration,
   NotificationRateLimiter,
+  resolveCoveringFiles,
+  formatSyncCompletion,
+  resolveWorkspacePathPure,
+  matchFileInIndex,
 } from '../coverage';
 
 import type { SpecCoverageEntry, CoverageReport } from '../types';
@@ -287,30 +291,37 @@ describe('buildCoverageTreeRoot (v0.8.0) — null report', () => {
 });
 
 // @ac AC-29
-describe('buildCoverageTreeRoot (v0.8.0) — empty entries', () => {
-  it('returns exactly one message node when the report has zero entries', () => {
-    const emptyReport: CoverageReport = {
+describe('buildCoverageTreeRoot (v0.9.0) — parse errors present', () => {
+  it('returns a Failed-to-parse group (not a message) when parseErrors is non-empty', () => {
+    const erroredReport: CoverageReport = {
       entries: [],
       summary: { totalSpecs: 0, passing: 0, failing: 0, fullyCovered: 0, partiallyCovered: 0, uncovered: 0 },
+      parseErrors: [
+        { file: 'specs/broken.spec.yaml', message: "missing required field 'objective'" },
+      ],
     };
-    const nodes = buildCoverageTreeRoot(emptyReport);
+    const nodes = buildCoverageTreeRoot(erroredReport);
     expect(nodes).toHaveLength(1);
-    expect(nodes[0].kind).toBe('message');
+    expect(nodes[0].kind).toBe('parseErrorGroup');
   });
 
-  it('message references the Problems panel (parse failures live there)', () => {
-    const emptyReport: CoverageReport = {
+  it('group label surfaces the failure-count so the user sees it without expanding', () => {
+    const erroredReport: CoverageReport = {
       entries: [],
       summary: { totalSpecs: 0, passing: 0, failing: 0, fullyCovered: 0, partiallyCovered: 0, uncovered: 0 },
+      parseErrors: [
+        { file: 'specs/broken.spec.yaml', message: "missing required field 'objective'" },
+        { file: 'specs/other.spec.yaml', message: 'yaml: syntax error' },
+      ],
     };
-    const nodes = buildCoverageTreeRoot(emptyReport);
-    const node = nodes[0];
-    if (node.kind !== 'message') return;
-    const text = node.label + ' ' + (node.detail ?? '');
-    expect(text.toLowerCase()).toMatch(/problems panel|parse|failed/);
+    const nodes = buildCoverageTreeRoot(erroredReport);
+    if (nodes[0].kind !== 'parseErrorGroup') return;
+    expect(nodes[0].label).toMatch(/2/);
+    expect(nodes[0].label.toLowerCase()).toContain('failed to parse');
+    expect(nodes[0].children).toHaveLength(2);
   });
 
-  it('returns real spec nodes (not a message) when entries are present', () => {
+  it('returns real spec nodes (not a group) when entries are present and parseErrors is absent', () => {
     const populated: CoverageReport = {
       entries: [makeEntry('auth', 1, ['AC-01'], [], 100)],
       summary: { totalSpecs: 1, passing: 1, failing: 0, fullyCovered: 1, partiallyCovered: 0, uncovered: 0 },
@@ -318,5 +329,295 @@ describe('buildCoverageTreeRoot (v0.8.0) — empty entries', () => {
     const nodes = buildCoverageTreeRoot(populated);
     expect(nodes.length).toBeGreaterThan(0);
     expect(nodes[0].kind).toBe('spec');
+  });
+});
+
+// @spec spec-vscode
+// @ac AC-33
+describe('resolveWorkspacePathPure (v0.9.0) — Coverage tree click-to-open', () => {
+  const posixJoin = (a: string, b: string) => (a.endsWith('/') ? a + b : `${a}/${b}`);
+  const posixIsAbs = (p: string) => p.startsWith('/');
+
+  it('joins a relative path onto the workspace root', () => {
+    const out = resolveWorkspacePathPure('internal/watch/watch_test.go', '/home/user/proj', posixJoin, posixIsAbs);
+    expect(out).toBe('/home/user/proj/internal/watch/watch_test.go');
+  });
+
+  it('returns absolute paths unchanged', () => {
+    const out = resolveWorkspacePathPure('/tmp/foo.go', '/home/user/proj', posixJoin, posixIsAbs);
+    expect(out).toBe('/tmp/foo.go');
+  });
+
+  it('returns the input unchanged when there is no workspace root', () => {
+    const out = resolveWorkspacePathPure('foo.go', undefined, posixJoin, posixIsAbs);
+    expect(out).toBe('foo.go');
+  });
+
+  it('returns empty input unchanged', () => {
+    expect(resolveWorkspacePathPure('', '/home/user/proj', posixJoin, posixIsAbs)).toBe('');
+  });
+});
+
+// @spec spec-vscode
+// @ac AC-31
+describe('formatSyncCompletion (v0.9.0) — honest completion toast', () => {
+  it('returns an info-level "sync complete" message when no folders errored', () => {
+    const c = formatSyncCompletion(0);
+    expect(c.kind).toBe('info');
+    expect(c.message).toMatch(/sync complete/i);
+  });
+
+  it('returns a warning-level message naming the errored folder count', () => {
+    const c = formatSyncCompletion(2);
+    expect(c.kind).toBe('warning');
+    expect(c.message).toMatch(/2 folders/);
+    expect(c.message.toLowerCase()).toMatch(/error/);
+    expect(c.message.toLowerCase()).toMatch(/output channel/);
+  });
+
+  it('uses singular "folder" when exactly one folder errored', () => {
+    const c = formatSyncCompletion(1);
+    expect(c.kind).toBe('warning');
+    expect(c.message).toMatch(/1 folder\b/);
+  });
+});
+
+// @spec spec-vscode
+// @ac AC-32
+describe('resolveCoveringFiles (v0.9.0) — hover populates from report', () => {
+  const report: CoverageReport = {
+    entries: [
+      {
+        specID: 'payment-create-intent',
+        tier: 1,
+        totalACs: 2,
+        coveredACs: ['AC-01'],
+        uncoveredACs: ['AC-02'],
+        coveragePct: 50,
+        threshold: 100,
+        passesThreshold: false,
+        testFiles: ['src/payments/create_test.ts', 'src/integration/payment_test.ts'],
+      },
+    ],
+    summary: { totalSpecs: 1, passing: 0, failing: 1, fullyCovered: 0, partiallyCovered: 1, uncovered: 0 },
+  };
+
+  it('returns covering files (excluding the current file) for a covered AC', () => {
+    const files = resolveCoveringFiles(
+      report,
+      'payment-create-intent',
+      'AC-01',
+      'src/payments/create_test.ts',
+    );
+    expect(files).toEqual(['src/integration/payment_test.ts']);
+  });
+
+  it('returns [] for an uncovered AC — buildAnnotationHover will render as "uncovered"', () => {
+    const files = resolveCoveringFiles(
+      report,
+      'payment-create-intent',
+      'AC-02',
+      'src/payments/create_test.ts',
+    );
+    expect(files).toEqual([]);
+  });
+
+  it('returns [] when the report is null (no coverage run yet)', () => {
+    const files = resolveCoveringFiles(null, 'payment-create-intent', 'AC-01', 'anything');
+    expect(files).toEqual([]);
+  });
+
+  it('returns [] when the spec is not in the report', () => {
+    const files = resolveCoveringFiles(report, 'nonexistent-spec', 'AC-01', 'anything');
+    expect(files).toEqual([]);
+  });
+});
+
+// @spec spec-vscode
+// @ac AC-38
+describe('matchFileInIndex (v0.9.0) — reveal-in-tree path match', () => {
+  it('returns the value for an exact key match', () => {
+    const idx = new Map([['specs/a.spec.yaml', 'A']]);
+    expect(matchFileInIndex(idx, 'specs/a.spec.yaml')).toBe('A');
+  });
+
+  it('finds a relative-path key when given the absolute form', () => {
+    const idx = new Map([['specs/a.spec.yaml', 'A']]);
+    expect(matchFileInIndex(idx, '/home/user/proj/specs/a.spec.yaml')).toBe('A');
+  });
+
+  it('finds an absolute-path key when given the relative form', () => {
+    const idx = new Map([['/home/user/proj/specs/a.spec.yaml', 'A']]);
+    expect(matchFileInIndex(idx, 'specs/a.spec.yaml')).toBe('A');
+  });
+
+  it('normalizes windows-style backslashes', () => {
+    const idx = new Map([['specs\\a.spec.yaml', 'A']]);
+    expect(matchFileInIndex(idx, '/proj/specs/a.spec.yaml')).toBe('A');
+  });
+
+  it('returns undefined when nothing matches', () => {
+    const idx = new Map([['specs/a.spec.yaml', 'A']]);
+    expect(matchFileInIndex(idx, 'specs/b.spec.yaml')).toBeUndefined();
+  });
+});
+
+// @spec spec-vscode
+// @ac AC-36
+describe('buildCoverageTreeRoot (v0.9.0) — mixed pass + fail rendering', () => {
+  const passingEntry = makeEntry('payments', 1, ['AC-01'], [], 100);
+
+  it('renders a Failed-to-parse group alongside spec nodes when both exist', () => {
+    const report: CoverageReport = {
+      entries: [passingEntry],
+      summary: { totalSpecs: 1, passing: 1, failing: 0, fullyCovered: 1, partiallyCovered: 0, uncovered: 0 },
+      specCandidatesCount: 3,
+      parseErrors: [
+        { file: 'specs/a.spec.yaml', type: 'required', path: 'spec.objective', message: 'missing' },
+        { file: 'specs/b.spec.yaml', type: 'required', path: 'spec.objective', message: 'missing' },
+      ],
+    };
+    const nodes = buildCoverageTreeRoot(report);
+    // Group first, then passing spec.
+    expect(nodes.length).toBe(2);
+    expect(nodes[0].kind).toBe('parseErrorGroup');
+    expect(nodes[1].kind).toBe('spec');
+  });
+
+  it('exposes each failing file as a clickable parseErrorFile child', () => {
+    const report: CoverageReport = {
+      entries: [],
+      summary: { totalSpecs: 0, passing: 0, failing: 0, fullyCovered: 0, partiallyCovered: 0, uncovered: 0 },
+      parseErrors: [
+        { file: 'specs/a.spec.yaml', type: 'required', message: "missing 'objective'", line: 12 },
+      ],
+    };
+    const nodes = buildCoverageTreeRoot(report);
+    expect(nodes).toHaveLength(1);
+    if (nodes[0].kind !== 'parseErrorGroup') return;
+    expect(nodes[0].children).toHaveLength(1);
+    const leaf = nodes[0].children[0];
+    expect(leaf.file).toBe('specs/a.spec.yaml');
+    expect(leaf.line).toBe(12);
+    expect(leaf.message).toContain('[required]');
+    expect(leaf.message).toContain("missing 'objective'");
+  });
+
+  it('omits the Failed-to-parse group when every spec parsed cleanly', () => {
+    const report: CoverageReport = {
+      entries: [passingEntry],
+      summary: { totalSpecs: 1, passing: 1, failing: 0, fullyCovered: 1, partiallyCovered: 0, uncovered: 0 },
+      parseErrors: [],
+    };
+    const nodes = buildCoverageTreeRoot(report);
+    expect(nodes.every(n => n.kind !== 'parseErrorGroup')).toBe(true);
+  });
+
+  it('names schema drift in the group label when every discovered spec hit the same pattern', () => {
+    const report: CoverageReport = {
+      entries: [],
+      summary: { totalSpecs: 0, passing: 0, failing: 0, fullyCovered: 0, partiallyCovered: 0, uncovered: 0 },
+      specCandidatesCount: 3,
+      parseErrors: [
+        { file: 'a.yaml', type: 'required', path: 'spec.objective', message: 'missing' },
+        { file: 'b.yaml', type: 'required', path: 'spec.objective', message: 'missing' },
+        { file: 'c.yaml', type: 'required', path: 'spec.objective', message: 'missing' },
+      ],
+      parseErrorPatterns: [{ type: 'required', path: 'spec.objective', count: 3 }],
+    };
+    const nodes = buildCoverageTreeRoot(report);
+    if (nodes[0].kind !== 'parseErrorGroup') return;
+    expect(nodes[0].label.toLowerCase()).toContain('schema drift');
+    expect(nodes[0].label).toContain('spec.objective');
+  });
+});
+
+// @spec spec-vscode
+// @ac AC-35
+describe('buildCoverageTreeRoot (v0.9.0) — drift diagnosis', () => {
+  it('names schema drift in the group label when every discovered spec hit the same pattern', () => {
+    const report: CoverageReport = {
+      entries: [],
+      summary: { totalSpecs: 0, passing: 0, failing: 0, fullyCovered: 0, partiallyCovered: 0, uncovered: 0 },
+      specCandidatesCount: 3,
+      parseErrors: [
+        { file: 'a.yaml', type: 'required', path: 'spec.objective', message: 'missing' },
+        { file: 'b.yaml', type: 'required', path: 'spec.objective', message: 'missing' },
+        { file: 'c.yaml', type: 'required', path: 'spec.objective', message: 'missing' },
+      ],
+      parseErrorPatterns: [
+        { type: 'required', path: 'spec.objective', count: 3 },
+      ],
+    };
+    const nodes = buildCoverageTreeRoot(report);
+    expect(nodes).toHaveLength(1);
+    if (nodes[0].kind !== 'parseErrorGroup') return;
+    expect(nodes[0].label.toLowerCase()).toContain('schema drift');
+    expect(nodes[0].label).toContain('spec.objective');
+  });
+
+  it('does not claim schema drift when parse errors are heterogeneous', () => {
+    const report: CoverageReport = {
+      entries: [],
+      summary: { totalSpecs: 0, passing: 0, failing: 0, fullyCovered: 0, partiallyCovered: 0, uncovered: 0 },
+      specCandidatesCount: 3,
+      parseErrors: [
+        { file: 'a.yaml', type: 'required', path: 'spec.objective', message: 'missing' },
+        { file: 'b.yaml', type: 'enum', path: 'spec.status', message: 'bad' },
+      ],
+      parseErrorPatterns: [
+        { type: 'required', path: 'spec.objective', count: 1 },
+        { type: 'enum', path: 'spec.status', count: 1 },
+      ],
+    };
+    const nodes = buildCoverageTreeRoot(report);
+    if (nodes[0].kind !== 'parseErrorGroup') return;
+    expect(nodes[0].label.toLowerCase()).not.toContain('schema drift');
+  });
+
+  it('surfaces manifest-misconfiguration when candidates exist but no parse errors and no entries', () => {
+    const report: CoverageReport = {
+      entries: [],
+      summary: { totalSpecs: 0, passing: 0, failing: 0, fullyCovered: 0, partiallyCovered: 0, uncovered: 0 },
+      specCandidatesCount: 5,
+      parseErrors: [],
+    };
+    const nodes = buildCoverageTreeRoot(report);
+    if (nodes[0].kind !== 'message') return;
+    const text = nodes[0].label + ' ' + (nodes[0].detail ?? '');
+    expect(text.toLowerCase()).toContain('manifest');
+    expect(text.toLowerCase()).toContain('domains');
+    expect(text.toLowerCase()).not.toMatch(/run `specter init` to scaffold a manifest/);
+  });
+});
+
+// @spec spec-vscode
+// @ac AC-30
+describe('buildCoverageTreeRoot (v0.9.0) — no specs yet', () => {
+  it('returns a message node distinct from the parse-error state when entries is empty and parseErrors is empty/undefined', () => {
+    const noSpecs: CoverageReport = {
+      entries: [],
+      summary: { totalSpecs: 0, passing: 0, failing: 0, fullyCovered: 0, partiallyCovered: 0, uncovered: 0 },
+      parseErrors: [],
+    };
+    const nodes = buildCoverageTreeRoot(noSpecs);
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0].kind).toBe('message');
+    if (nodes[0].kind !== 'message') return;
+    const text = nodes[0].label + ' ' + (nodes[0].detail ?? '');
+    // Suggests a next step (init/reverse), NOT the Problems panel
+    expect(text.toLowerCase()).toMatch(/specter init|specter reverse/);
+    expect(text.toLowerCase()).not.toMatch(/problems panel/);
+  });
+
+  it('treats missing parseErrors field the same as empty parseErrors (no-specs state)', () => {
+    const noSpecs: CoverageReport = {
+      entries: [],
+      summary: { totalSpecs: 0, passing: 0, failing: 0, fullyCovered: 0, partiallyCovered: 0, uncovered: 0 },
+    };
+    const nodes = buildCoverageTreeRoot(noSpecs);
+    if (nodes[0].kind !== 'message') return;
+    const text = nodes[0].label + ' ' + (nodes[0].detail ?? '');
+    expect(text.toLowerCase()).toMatch(/specter init|specter reverse/);
   });
 });

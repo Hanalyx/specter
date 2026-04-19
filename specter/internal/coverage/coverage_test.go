@@ -275,3 +275,148 @@ func TestBar(t *testing.T) {}
 		}
 	}
 }
+
+// @ac AC-11
+// v1.5.0: a `// @spec` sequence appearing inside a multi-line TypeScript
+// template literal (backtick) must not be parsed as a real annotation. The
+// real `// @spec` on a proper comment line MUST still be detected.
+func TestAnnotationExtraction_TemplateLiteralNotHijacked(t *testing.T) {
+	content := "// @spec real-spec\n" +
+		"// @ac AC-01\n" +
+		"const payload = `\n" +
+		"  // @spec ghost-spec\n" +
+		"  // @ac AC-99\n" +
+		"`;\n" +
+		"// @ac AC-02\n"
+
+	matches := ExtractAnnotations(content, "example.test.ts")
+
+	for _, m := range matches {
+		if m.SpecID == "ghost-spec" {
+			t.Fatal("ghost-spec inside a template literal must not produce an annotation")
+		}
+	}
+
+	// The real spec should still be present, and a @ac line AFTER the
+	// template literal must still attach to real-spec (state preserved).
+	var real *AnnotationMatch
+	for i := range matches {
+		if matches[i].SpecID == "real-spec" {
+			real = &matches[i]
+		}
+	}
+	if real == nil {
+		t.Fatal("real-spec should still be detected around the template literal")
+	}
+	has := func(id string) bool {
+		for _, a := range real.ACIDs {
+			if a == id {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("AC-01") {
+		t.Error("expected AC-01 on real-spec")
+	}
+	if !has("AC-02") {
+		t.Errorf("expected AC-02 on real-spec (after template literal closes), got %v", real.ACIDs)
+	}
+	if has("AC-99") {
+		t.Error("AC-99 came from inside a template literal and must not be attached to real-spec")
+	}
+}
+
+// @ac AC-13
+// SummarizeParseErrors groups entries by (type, path) and sorts by count desc.
+// Enables one-sentence drift diagnosis ("20 specs missing objective").
+func TestSummarizeParseErrors_GroupsAndSorts(t *testing.T) {
+	entries := []ParseErrorEntry{
+		{File: "a.yaml", Type: "required", Path: "spec.objective", Message: "missing"},
+		{File: "b.yaml", Type: "required", Path: "spec.objective", Message: "missing"},
+		{File: "c.yaml", Type: "required", Path: "spec.objective", Message: "missing"},
+		{File: "d.yaml", Type: "enum", Path: "spec.status", Message: "bad"},
+	}
+	patterns := SummarizeParseErrors(entries)
+	if len(patterns) != 2 {
+		t.Fatalf("expected 2 patterns, got %d", len(patterns))
+	}
+	if patterns[0].Type != "required" || patterns[0].Path != "spec.objective" {
+		t.Errorf("expected most-frequent pattern first, got %+v", patterns[0])
+	}
+	if patterns[0].Count != 3 {
+		t.Errorf("expected count 3 for top pattern, got %d", patterns[0].Count)
+	}
+	if len(patterns[0].Files) != 3 {
+		t.Errorf("expected 3 files for top pattern, got %d", len(patterns[0].Files))
+	}
+	if patterns[1].Type != "enum" {
+		t.Errorf("expected enum pattern second, got %+v", patterns[1])
+	}
+}
+
+func TestSummarizeParseErrors_DedupesFilesWithinPattern(t *testing.T) {
+	// Same file hit by the same pattern twice (e.g. two fields missing
+	// from the same spec) must appear once in Files, count twice.
+	entries := []ParseErrorEntry{
+		{File: "a.yaml", Type: "required", Path: "spec.objective", Message: "m1"},
+		{File: "a.yaml", Type: "required", Path: "spec.objective", Message: "m2"},
+	}
+	patterns := SummarizeParseErrors(entries)
+	if len(patterns[0].Files) != 1 {
+		t.Errorf("expected Files deduped to 1, got %d", len(patterns[0].Files))
+	}
+	if patterns[0].Count != 2 {
+		t.Errorf("expected Count 2, got %d", patterns[0].Count)
+	}
+}
+
+func TestSummarizeParseErrors_EmptyInput(t *testing.T) {
+	if got := SummarizeParseErrors(nil); got != nil {
+		t.Errorf("expected nil for empty input, got %+v", got)
+	}
+}
+
+// @ac AC-11
+// Python multi-line string (triple-double) must not bleed annotations.
+func TestAnnotationExtraction_PythonTripleQuoteNotHijacked(t *testing.T) {
+	content := "# @spec real-py\n" +
+		"# @ac AC-01\n" +
+		"docstring = \"\"\"\n" +
+		"# @spec ghost-py\n" +
+		"# @ac AC-99\n" +
+		"\"\"\"\n" +
+		"# @ac AC-02\n"
+
+	matches := ExtractAnnotations(content, "example_test.py")
+
+	for _, m := range matches {
+		if m.SpecID == "ghost-py" {
+			t.Fatal("ghost-py inside a triple-quoted string must not produce an annotation")
+		}
+	}
+
+	var real *AnnotationMatch
+	for i := range matches {
+		if matches[i].SpecID == "real-py" {
+			real = &matches[i]
+		}
+	}
+	if real == nil {
+		t.Fatal("real-py should still be detected around the triple-quoted string")
+	}
+	has := func(id string) bool {
+		for _, a := range real.ACIDs {
+			if a == id {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("AC-01") || !has("AC-02") {
+		t.Errorf("expected AC-01 and AC-02 on real-py, got %v", real.ACIDs)
+	}
+	if has("AC-99") {
+		t.Error("AC-99 from inside triple-quoted string must not be attached to real-py")
+	}
+}
