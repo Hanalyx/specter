@@ -371,6 +371,17 @@ spec:
       references_constraints: ["C-10"]
       priority: medium
 
+    - id: AC-40
+      description: "The on-change and on-save diagnostic hooks skip any document whose path does not end in `.spec.yaml`. The specter.yaml manifest, a test file open in the editor, or any other YAML document is not parsed against the spec schema. Previously the hooks ran `specter parse` on every YAML document, producing false 'Missing required field spec' and 'Unknown field settings' diagnostics on the manifest whose shape is `system: / settings: / domains:`. Gate is a path-suffix check (not languageId) because YAML language registration is shared across all .yaml files."
+      inputs:
+        doc_a: "specter.yaml (manifest — system:, settings:)"
+        doc_b: "specs/auth.spec.yaml (real spec)"
+      expected_output:
+        doc_a_parse_invoked: false
+        doc_b_parse_invoked: true
+      references_constraints: ["C-10"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.1.0"
@@ -413,7 +424,10 @@ spec:
         (specter.revealInTree command wired end-to-end: active editor →
         matching tree node, previously declared in package.json but never
         registered), AC-39 (Insights parse-failure cards have clickable
-        file-path headers that open the file at the reported line).
+        file-path headers that open the file at the reported line),
+        AC-40 (on-change/on-save parse hooks gated to .spec.yaml so the
+        manifest specter.yaml stops receiving spurious `Missing required
+        field 'spec'` diagnostics).
         Addresses quality-audit BLOCKER B1 and HIGHs H1/H3.
     - version: "1.1.0"
       date: "2026-04-18"

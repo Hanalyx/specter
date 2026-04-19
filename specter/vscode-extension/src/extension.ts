@@ -3,7 +3,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 
-import { shouldActivate, resolveManifestPath, createClientKey } from './activation';
+import { shouldActivate, resolveManifestPath, createClientKey, isSpecFilePath } from './activation';
 import {
   resolveBinaryPath,
   buildDownloadUrl,
@@ -827,6 +827,12 @@ function registerDiagnosticHooks(ctx: vscode.ExtensionContext): void {
   // On-type debounce: 400ms, parse only (AC-03)
   ctx.subscriptions.push(
     vscode.workspace.onDidChangeTextDocument(e => {
+      // AC-40: `specter parse` is spec-schema-only. Running it against the
+      // project manifest (specter.yaml) surfaces false "Missing required
+      // field 'spec'" / "Unknown field 'settings'" diagnostics — the
+      // manifest has a system: block, not a spec: block. Gate on
+      // `.spec.yaml` like the hover, completion, and codelens hooks do.
+      if (!isSpecDocument(e.document)) return;
       const uri = e.document.uri.toString();
       const existing = debounceMap.get(uri);
       if (existing) clearTimeout(existing);
@@ -855,6 +861,8 @@ function registerDiagnosticHooks(ctx: vscode.ExtensionContext): void {
   // On-save: check + coverage (AC-04)
   ctx.subscriptions.push(
     vscode.workspace.onDidSaveTextDocument(async doc => {
+      // AC-40: same gate as on-change — don't parse-as-spec a manifest.
+      if (!isSpecDocument(doc)) return;
       const client = clientForDocument(doc);
       const replacer = replacerForDocument(doc);
       if (!client || !replacer) return;
@@ -1180,6 +1188,20 @@ function clientForDocument(doc: vscode.TextDocument): SpecterClient | undefined 
   const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
   if (!folder) return undefined;
   return clients.get(createClientKey(folder.uri.fsPath));
+}
+
+/**
+ * AC-40: predicate used by the on-change / on-save hooks to gate
+ * `specter parse` invocations. The CLI's parse command validates against
+ * the spec schema only — running it on a manifest (specter.yaml) surfaces
+ * spurious "Missing required field 'spec'" / "Unknown field 'settings'"
+ * diagnostics because the manifest uses a different schema.
+ *
+ * Pure path predicate lives in activation.ts so it's testable without
+ * importing vscode.
+ */
+function isSpecDocument(doc: vscode.TextDocument): boolean {
+  return isSpecFilePath(doc.uri.fsPath);
 }
 
 function replacerForDocument(doc: vscode.TextDocument): DiagnosticReplacer | undefined {
