@@ -101,6 +101,57 @@ export function formatSpecContextForAI(spec: SpecEntry): string {
 }
 
 // ---------------------------------------------------------------------------
+// AC-37 (v0.9.0): Insights-panel header & section decisions
+// ---------------------------------------------------------------------------
+
+export interface InsightsStatusInput {
+  parseErrorCount: number;
+  uncoveredCardCount: number;
+  entryCount: number;
+  specCandidatesCount: number;
+}
+
+export interface InsightsStatus {
+  header: string;
+  showParseErrorsSection: boolean;
+  showCoverageSection: boolean;
+}
+
+/**
+ * Decides the Insights panel's headline and which sections render. Pure so
+ * the "never falsely claim `All specs passing` when parses failed"
+ * contract is testable without the VS Code webview. This is the single
+ * invariant AC-37 enforces; the HTML builder in extension.ts composes the
+ * output around it.
+ */
+export function computeInsightsStatus(input: InsightsStatusInput): InsightsStatus {
+  const { parseErrorCount, uncoveredCardCount, entryCount, specCandidatesCount } = input;
+  const hasParseErrors = parseErrorCount > 0;
+  const hasUncovered = uncoveredCardCount > 0;
+
+  let header: string;
+  if (hasParseErrors && hasUncovered) {
+    header = `Specter Insights — ${parseErrorCount} parse error(s), ${uncoveredCardCount} spec(s) need coverage attention`;
+  } else if (hasParseErrors) {
+    header = entryCount > 0
+      ? `Specter Insights — ${parseErrorCount} parse error(s), ${entryCount} spec(s) parsing cleanly`
+      : `Specter Insights — every discovered spec failed to parse`;
+  } else if (hasUncovered) {
+    header = `Specter Insights — ${uncoveredCardCount} spec(s) need attention`;
+  } else {
+    header = specCandidatesCount === 0
+      ? `Specter Insights — no specs in this workspace`
+      : `All specs passing ✓`;
+  }
+
+  return {
+    header,
+    showParseErrorsSection: hasParseErrors,
+    showCoverageSection: hasUncovered,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // AC-17: Onboarding walkthrough trigger
 // ---------------------------------------------------------------------------
 

@@ -507,6 +507,48 @@ func TestScaffoldManifest_CanonicalGitHubURL(t *testing.T) {
 	}
 }
 
+// @spec spec-manifest
+// @ac AC-22
+// Greenfield case: zero specs, zero candidates → placeholder default domain
+// with an "Add spec IDs here" description, so the operator sees where to
+// extend the manifest.
+func TestScaffoldManifest_Greenfield_EmitsDefaultDomainPlaceholder(t *testing.T) {
+	out := ScaffoldManifestWithContext("my-app", "", nil, 0)
+	if !strings.Contains(out, "domains:") {
+		t.Fatalf("greenfield scaffold must emit `domains:` section, got:\n%s", out)
+	}
+	if !strings.Contains(out, "default:") {
+		t.Fatalf("greenfield scaffold must emit `default:` domain, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Add spec IDs") {
+		t.Errorf("greenfield description must explain placeholder, got:\n%s", out)
+	}
+	if strings.Contains(out, "could not be parsed") {
+		t.Errorf("greenfield must not claim parse failure, got:\n%s", out)
+	}
+	// Round-trip: the placeholder must still produce valid YAML.
+	if _, err := ParseManifest(out); err != nil {
+		t.Errorf("greenfield scaffold failed to round-trip: %v", err)
+	}
+}
+
+// @spec spec-manifest
+// @ac AC-22
+// Drift case: zero specs parsed but N candidates on disk → domain
+// description names the parse-failure mismatch and points at doctor.
+func TestScaffoldManifest_Drift_DescribesParseFailure(t *testing.T) {
+	out := ScaffoldManifestWithContext("my-app", "", nil, 3)
+	if !strings.Contains(out, "could not be parsed") {
+		t.Errorf("drift-case scaffold must name the parse-failure mismatch, got:\n%s", out)
+	}
+	if !strings.Contains(out, "specter doctor") {
+		t.Errorf("drift-case scaffold must point at `specter doctor`, got:\n%s", out)
+	}
+	if _, err := ParseManifest(out); err != nil {
+		t.Errorf("drift scaffold failed to round-trip: %v", err)
+	}
+}
+
 // @ac AC-13 — when specter.yaml is absent, Defaults() returns a usable
 // Manifest and all consumers (specs_dir resolution, thresholds, excludes)
 // produce identical behavior to what a minimal explicit manifest would.

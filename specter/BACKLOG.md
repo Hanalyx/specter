@@ -2,61 +2,79 @@
 
 Forward-looking roadmap. Items are grouped by target release. Each item is a single sentence of intent plus a link to the design doc or discussion when one exists.
 
-Current shipped version: **v0.6.9** (see [CHANGELOG](CHANGELOG.md) when created, or `git tag`).
+Current shipped version: **v0.8.3**. Pre-release in flight: **v0.9.0-dev.0** on `release/v0.9.0`.
 
 ---
 
-## v0.7.0 — Schema hardening (in progress on `release/v0.7.0`)
+## v0.9.0 — Coherent failure-handling & intelligent diagnosis (pre-release)
 
-Design rationale captured in local research notes (not shipped with the repo). See `CHANGELOG.md` for the public-facing summary.
+Shipped on `release/v0.9.0`. Awaiting publish. Covers:
 
-- Tighten `context.additionalProperties` to `false` (breaking) — close the silent-data-loss gap between schema and `types.go`.
-- Add `notes`, `approval_gate`, `approval_date` to `acceptance_criterion` — narrative and audit metadata per AC.
-- Move `references_constraints` cross-reference validation to parse time — catch dangling refs before any downstream stage runs.
-- Add optional `title` to `spec` — human-readable display name, defaults to `id` when absent.
-- Internal Go enum validation helpers — protect internal code paths (reverse compiler, migration scripts) that skip JSON Schema.
-- VS Code extension updates to render `title`, show `notes` in AC hover, surface `approval_gate` as a gutter indicator.
+- **B1 fix**: `specter coverage --json` always emits a CoverageReport, including on parse failure (new `parse_errors` field). Extension reads this reliably in every state.
+- **H1 fix**: VS Code `specter.runSync` emits an honest completion toast that reflects success vs failure, no more unconditional "Specter sync complete."
+- **H3 fix**: `@ac` hovers in test files populate `coveredByFiles` from the live CoverageReport instead of always rendering as "uncovered."
+- **M8 fix**: annotation extractor respects multi-line string literals (backtick, triple-quote) so `// @spec` inside a template literal is no longer hijacked.
+- **Intelligent drift diagnosis**: `parse_error_patterns` + `spec_candidates_count` let consumers name "every discovered spec hit the same `required` error at `spec.objective`" as schema drift in one sentence. Surfaced in `specter doctor` output and the VS Code sidebar message.
+- **`specter init` discovers existing specs**: populates `domains` from parseable specs; always emits a `domains:` section (fixes silent-exclusion footgun); prints parse-error pattern analysis when specs fail.
+- **VS Code Problems panel plumbing**: parse errors pushed as per-file `vscode.Diagnostic` entries — clickable, positioned at line/column.
+- **Sidebar mixed-render**: passing specs and a "Failed to parse" group render together. Each failing file is a clickable leaf. Previously all-or-nothing.
+- **Click-to-open**: spec nodes and test-file leaves open the underlying file at the reported line.
+- **Honest Insights panel**: parse-failures section + coverage-gaps section; header text reflects true mixed state; file-path headers in parse cards are clickable.
+- **`specter.revealInTree`**: wired end-to-end (previously declared in `package.json` but never registered).
+- **snake_case → camelCase shape conversion**: latent runtime bug where `entry.specID` returned undefined — the VS Code types declared camelCase but the CLI emits snake_case.
 
----
-
-## v0.8.0 — Annotation-based source-file tracking (proposed)
-
-Motivation: provide the "which specs govern this file?" use case from jwtms without introducing a `spec.source_files` schema field (which duplicates state and invites drift).
-
-- Extend `@spec` annotation support from test files to source files. The existing extractor already scans for `@spec <id>` comments — broaden the scan from `tests_dir` to the full project (excluding build output, node_modules, etc.).
-- New CLI command: `specter specs governing <path>` — reverse lookup given a file, returns specs that annotate it.
-- Extend `specter coverage --json` output with a derived `source_files` array per spec, populated from annotations (not from a schema field).
-- VS Code extension: gutter icon on source files with `@spec` annotations; hover shows spec summary and coverage status.
-- Opt-in via `specter.yaml` setting (`scan_sources: true`) so teams that dislike metadata comments in production code aren't forced.
-- Migration script for jwtms-style projects that already have `spec.source_files` lists: read the lists, insert `@spec` annotations into each target file, leave the schema untouched.
-
-**Why annotations, not a schema field:** single source of truth (the annotation is IN the file, so rename/delete keeps them aligned), matches Specter's existing test-coverage model, zero drift class, no schema surface growth.
+Spec bumps: `spec-coverage` 1.4.0→1.6.0, `spec-doctor` 1.0.0→1.1.0, `spec-manifest` 1.4.0→1.5.0, `spec-vscode` 1.1.0→1.2.0.
 
 ---
 
 ## v0.8.x prerequisites / blocking future releases
 
-- **Go toolchain bump (1.22 → 1.23+).** `govulncheck` flags 5 Go stdlib CVEs fixed in 1.23+; `make release-check` now chains through `prerelease` which includes `vulncheck`, so no release can ship until this lands. Low-risk bump; update `go.mod` directive, CI workflow `setup-go` pin, and any contributor install docs. Probably an hour of work plus re-running `make check` and `make dogfood`.
 - **`@vscode/test-electron` headless integration tests.** The release-gate currently relies on a human operator reproducing changes in a live VS Code window. Automating that via `@vscode/test-electron` would let CI spawn a real VS Code instance with the extension loaded against fixture workspaces and assert the sidebar / status bar / output channel behave as expected. Backstops the human gate; does not replace it. About a day of setup.
+- **Go toolchain bump (1.22 → 1.23+).** ✅ Done in v0.8.3. Clears 5 stdlib CVEs under `govulncheck`. Now at Go 1.25.8 + golangci-lint v2.6.2.
 
 ---
 
-## v0.8+ / unscheduled — deferred from v0.7.0 proposal
+## v0.10 — Migration tooling (candidate)
+
+The v0.9.0 work made schema drift *visible* via intelligent diagnosis. v0.10 should make it *fixable* without hand-editing:
+
+- **`specter migrate` command.** Given specs from an older schema version, apply known-safe rewrites: strip removed fields (`trust_level`), rename renamed fields, update enum values. Dry-run by default; `--apply` writes changes. Seed with the v0.6.5 `trust_level` removal and the v0.7.0 field renames.
+- **VS Code quick-fix for removed fields.** Lightbulb action on a parse error like `Unknown field 'trust_level'` → "Remove deprecated field." Applies to the one file; `Fix all in workspace` batches across every failing spec. Pairs with `specter migrate` for the CLI path.
+- **Schema-version metadata.** Record the schema version in each spec (`spec.schema_version`) so `specter migrate` can target known old versions instead of inferring from failure patterns. Optional field with sensible default.
+
+---
+
+## Audit items still pending (from `research/SPECTER_QUALITY_AUDIT.md`)
+
+- **H4 — Status-bar error differentiation.** Today `Specter: error` says the same thing for "CLI not found," "17 parse errors," "coverage below threshold." Split these into distinct status-bar text + tooltip. Low effort, modest polish.
+- **H5 — `specter reverse --dry-run` has no CLI-level test.** Add `TestReverse_DryRun_PrintsWithoutWriting` in `cmd/specter/reverse_test.go`.
+- **M1/M3** — `spec-sync` phase-result assertions are too loose.
+- **M2** — `spec-resolve` AC-08 Mermaid output tested at CLI layer only.
+- **M4** — `spec-doctor` C-08 vs skip-coverage-on-parse-error conflict.
+- **M5** — `spec-explain` annotation examples use inconsistent naming across languages.
+- **M6** — `spec-check` AC-03 structural-conflict detection uses fragile keyword matching.
+- **M7** — `spec-coverage` AC-01 float assertion looser than rounding contract.
+- **LOW-tier** — several test-fidelity gaps where tests check *that* something happened but not *what*. Batch into a "test hardening" PR.
+
+---
+
+## v0.8+ / unscheduled — deferred from earlier proposals
 
 Each needs its own design doc before scheduling:
 
-- Generalize `generated_from` to `provenance` with a `governs: [string]` list — overlaps semantically with `depends_on`, needs careful design to avoid muddling "spec depends on spec" with "spec governs file." May be obsoleted by the v0.8 annotation-based approach.
-- Optional `contracts` section for HTTP APIs — Specter's mission is framework-agnostic; HTTP specialization is a commitment. Better as an adapter/extension than core schema.
-- Derived `callers` via `specter graph --callers-of <spec-id>` — no schema change; derivable from the existing `depends_on` graph. Low-cost feature.
-- Per-rule narrowing of `constraint_validation.value` — constrain value type based on `rule` (e.g., `rule: "min"` implies numeric value). Field is write-only today; defer until someone consumes it.
+- **Annotation-based source-file tracking.** Extend `@spec` annotations from test files to source files; new `specter specs governing <path>` command; coverage output carries a derived `source_files` array. Opt-in via `specter.yaml` setting. Rationale: single source of truth, matches existing test-coverage model, zero drift class.
+- **Generalize `generated_from` to `provenance` with a `governs: [string]` list** — overlaps semantically with `depends_on`, needs careful design to avoid muddling "spec depends on spec" with "spec governs file." May be obsoleted by the annotation-based approach.
+- **Optional `contracts` section for HTTP APIs** — Specter's mission is framework-agnostic; HTTP specialization is a commitment. Better as an adapter/extension than core schema.
+- **Derived `callers` via `specter graph --callers-of <spec-id>`** — no schema change; derivable from existing `depends_on` graph. Low-cost feature.
+- **Per-rule narrowing of `constraint_validation.value`** — constrain value type based on `rule` (e.g., `rule: "min"` implies numeric value). Field is write-only today; defer until someone consumes it.
 
 ---
 
-## Open adoption-friction items (from v0.6.x review)
+## Open adoption-friction items
 
 Not schema-scoped; move to a specific release when picked up:
 
-- Zero-state and bare-command UX — `specter` with no args shows help; "no specs found" messages explain what was searched and suggest `init` / `reverse`.
-- Parse-error hint map — common pattern violations include an example of the correct form.
-- Reverse compiler handoff — success output points users at `specter explain <spec-id>` for gap triage.
-- Docs consolidation — merge QUICKSTART into README, keep GETTING_STARTED as deep-dive, archive stale RELEASE_PLAN.
+- **Zero-state and bare-command UX** — `specter` with no args shows help; "no specs found" messages explain what was searched and suggest `init` / `reverse`. (v0.9.0 improved this for the sidebar; CLI still has gaps.)
+- **Parse-error hint map** — common pattern violations include an example of the correct form. Partially addressed in v0.9.0 via drift-pattern detection; per-error hints still missing.
+- **Reverse compiler handoff** — success output points users at `specter explain <spec-id>` for gap triage.
+- **Docs consolidation** — merge QUICKSTART into README, keep GETTING_STARTED as deep-dive, archive stale RELEASE_PLAN.

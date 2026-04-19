@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "1.4.0"
+  version: "1.5.0"
   status: draft
   tier: 2
 
@@ -121,6 +121,11 @@ spec:
 
     - id: C-15
       description: "ScaffoldManifest MUST emit a comment pointing at the canonical Specter GitHub repository. The URL MUST be https://github.com/Hanalyx/specter (not spec-dd, not another slug). The URL lives in the scaffold header and is the only external link shipped in fresh manifests — users clicking it must land on the right repo."
+      type: business
+      enforcement: error
+
+    - id: C-16
+      description: "ScaffoldManifest MUST always emit a `domains:` section. When the caller provides at least one spec ID, a default domain carries those IDs. When the caller provides zero spec IDs, the scaffolder MUST emit an empty default-domain placeholder with a description explaining the shape — either `Add spec IDs here` (greenfield) or `N spec files were discovered but could not be parsed` (drift). Rationale: a manifest with no `domains:` silently excludes every subsequent spec from sync, so the operator's first `specter sync` looks green while ignoring their work."
       type: business
       enforcement: error
 
@@ -326,6 +331,18 @@ spec:
       references_constraints: ["C-15"]
       priority: high
 
+    - id: AC-22
+      description: "ScaffoldManifest called with an empty spec_ids slice and candidatesCount=0 (greenfield) still emits `domains:` with a `default` entry whose description guides the operator to add spec IDs. Called with empty spec_ids but candidatesCount > 0 (drift), the default domain description names the discovery-but-parse-failure mismatch and points at `specter doctor`."
+      inputs:
+        case_greenfield: "spec_ids=[], candidates=0"
+        case_drift: "spec_ids=[], candidates=3"
+      expected_output:
+        greenfield_has_domains_default: true
+        greenfield_description_contains: "Add spec IDs"
+        drift_description_contains: "could not be parsed"
+      references_constraints: ["C-16"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -335,6 +352,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.5.0"
+      date: "2026-04-19"
+      author: "specter-team"
+      type: minor
+      description: "Add C-16/AC-22: ScaffoldManifest always emits a `domains:` section, with a placeholder default domain when spec_ids is empty. Fixes the silent-exclusion footgun where an empty domains map caused `specter sync` to ignore every later spec the operator added. New ScaffoldManifestWithContext variant takes candidatesCount so the placeholder description names the schema-drift case distinctly."
     - version: "1.4.0"
       date: "2026-04-18"
       author: "specter-team"

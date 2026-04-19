@@ -2,7 +2,7 @@
   "name": "specter-vscode",
   "displayName": "Specter SDD",
   "description": "Spec-Driven Development tooling for VS Code — inline coverage, diagnostics, annotation assistance, and intent drift detection.",
-  "version": "0.8.3",
+  "version": "0.9.0-dev.0",
   "publisher": "Hanalyx",
   "license": "MIT",
   "engines": {
@@ -122,6 +122,11 @@
         {
           "command": "specter.copySpecContext",
           "when": "resourceExtname == .yaml",
+          "group": "specter"
+        },
+        {
+          "command": "specter.revealInTree",
+          "when": "resourceExtname == .yaml || resourceFilename =~ /_test\\.(go|py)$/ || resourceExtname == .ts",
           "group": "specter"
         }
       ]

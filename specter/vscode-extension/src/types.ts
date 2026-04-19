@@ -58,11 +58,55 @@ export interface SpecCoverageEntry {
   threshold: number;
   passesThreshold: boolean;
   testFiles: string[];
+  /**
+   * v0.9.0+: path to the .spec.yaml that declared this spec. Emitted by the
+   * CLI (may be relative to the workspace root). Used to wire up click-to-
+   * open from the Coverage sidebar's spec nodes.
+   */
+  specFile?: string;
 }
 
 export interface CoverageReport {
   entries: SpecCoverageEntry[];
   summary: SpecSummary;
+  /**
+   * v0.9.0+: per-file parse errors surfaced by `specter coverage --json`.
+   * Present (even as []) whenever the CLI ran; absent when coverage has not
+   * been run yet. Used to distinguish the three sidebar states: not-run
+   * (report === null), parse-failed (entries empty AND parseErrors non-empty),
+   * nothing-to-show (entries empty AND parseErrors empty).
+   */
+  parseErrors?: CoverageParseError[];
+  /**
+   * v0.9.0+: number of .spec.yaml files discovered on disk. When > 0 with
+   * entries empty, the workspace has specs that didn't parse — tell the
+   * user that, don't suggest `specter init`.
+   */
+  specCandidatesCount?: number;
+  /**
+   * v0.9.0+: grouped summary of parseErrors — each entry is one (type, path)
+   * that appears in many specs. Sorted by count desc. Enables surfacing
+   * schema drift in one sentence ("20 specs: missing `objective`") instead
+   * of 20 individual diagnostics.
+   */
+  parseErrorPatterns?: CoverageParseErrorPattern[];
+}
+
+export interface CoverageParseErrorPattern {
+  type: string;
+  path?: string;
+  count: number;
+  exampleFile?: string;
+  files?: string[];
+}
+
+export interface CoverageParseError {
+  file: string;
+  path?: string;
+  type?: string;
+  message: string;
+  line?: number;
+  column?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -186,7 +230,30 @@ export interface SpecTreeRootSpec {
   children: ACNode[];
 }
 
-export type SpecTreeRootNode = SpecTreeRootSpec | TreeMessageNode;
+/**
+ * v0.9.0+: collapsible "Failed to parse" group that appears alongside
+ * passing spec nodes when the coverage report contains parseErrors. Each
+ * child is a clickable file the user can open to fix the error. This
+ * replaces the v0.8.x all-or-nothing behavior where parse failures hid
+ * every passing spec.
+ */
+export interface ParseErrorGroupNode {
+  kind: 'parseErrorGroup';
+  label: string;
+  children: ParseErrorFileNode[];
+}
+
+export interface ParseErrorFileNode {
+  kind: 'parseErrorFile';
+  file: string;
+  message: string;
+  line?: number;
+}
+
+export type SpecTreeRootNode =
+  | SpecTreeRootSpec
+  | TreeMessageNode
+  | ParseErrorGroupNode;
 
 // ---------------------------------------------------------------------------
 // File decoration (VS-Code-agnostic)

@@ -10,7 +10,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { SpecterClient } from '../client';
+import { SpecterClient, snakeToCamelCoverage } from '../client';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 const CLI = path.join(REPO_ROOT, 'bin', 'specter');
@@ -92,5 +92,54 @@ describeOrSkip('SpecterClient integration (real CLI)', () => {
     const result = await client.coverage();
     expect(result).toBeTruthy();
     expect(Array.isArray(result.entries)).toBe(true);
+  });
+
+  // @ac AC-10
+  // v0.9.0: coverage() converts CLI's snake_case JSON into the camelCase
+  // shape the extension consumes. Regression guard: if this breaks, every
+  // access to entry.specID / coveragePct / parseErrors silently returns
+  // undefined at runtime.
+  it('coverage() returns camelCase fields — the shape the rest of the extension expects', async () => {
+    const client = makeClient();
+    const result = await client.coverage();
+    if (result.entries.length > 0) {
+      const e = result.entries[0];
+      expect(typeof e.specID).toBe('string');
+      expect(typeof e.tier).toBe('number');
+      // coveredACs is nullable in the CLI JSON (omitempty) — tolerate null/undefined
+      expect(e.coveredACs === null || Array.isArray(e.coveredACs)).toBe(true);
+      expect(typeof e.coveragePct).toBe('number');
+    }
+  });
+});
+
+// @spec spec-vscode
+// @ac AC-04
+describe('snakeToCamelCoverage — shape conversion', () => {
+  it('rewrites snake_case keys at every depth', () => {
+    const input = {
+      entries: [
+        { spec_id: 'x', covered_acs: ['AC-01'], coverage_pct: 100 },
+      ],
+      summary: { total_specs: 1 },
+      parse_errors: [{ file: 'a.yaml', message: 'bad' }],
+    };
+    const out = snakeToCamelCoverage(input) as {
+      entries: Array<{ specID: string; coveredACs: string[]; coveragePct: number }>;
+      summary: { totalSpecs: number };
+      parseErrors: Array<{ file: string; message: string }>;
+    };
+    expect(out.entries[0].specID).toBe('x');
+    expect(out.entries[0].coveredACs).toEqual(['AC-01']);
+    expect(out.entries[0].coveragePct).toBe(100);
+    expect(out.summary.totalSpecs).toBe(1);
+    expect(out.parseErrors[0].file).toBe('a.yaml');
+  });
+
+  it('passes arrays, primitives, and null through unchanged', () => {
+    expect(snakeToCamelCoverage(null)).toBeNull();
+    expect(snakeToCamelCoverage(42)).toBe(42);
+    expect(snakeToCamelCoverage('hello_world')).toBe('hello_world');
+    expect(snakeToCamelCoverage([1, 2, 3])).toEqual([1, 2, 3]);
   });
 });

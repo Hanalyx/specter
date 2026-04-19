@@ -1,6 +1,6 @@
 spec:
   id: spec-vscode
-  version: "1.1.0"
+  version: "1.2.0"
   status: draft
   tier: 2
 
@@ -317,9 +317,59 @@ spec:
       priority: high
 
     - id: AC-29
-      description: "When the Coverage tree provider is queried and the loaded CoverageReport has an empty entries array (every spec failed to parse), getChildren() returns a synthetic 'message' node whose text references the parse failures and points at the Problems panel. Distinguished from AC-28 by the presence of a loaded-but-empty report — the user has done everything right but the specs are invalid."
+      description: "When the loaded CoverageReport has parseErrors[] non-empty (CLI ran but specs failed to parse), the tree provider returns one synthetic 'message' node whose text names the parse-failure count and points at the Problems panel / Output channel. Distinguished from AC-28 (not-yet-run) and AC-30 (no-specs-yet) by the presence of structured parse failures in the report."
       references_constraints: ["C-21"]
       priority: high
+
+    - id: AC-30
+      description: "When the loaded CoverageReport has entries.length === 0 and parseErrors is empty or absent (CLI ran successfully but there are no specs in the workspace), the tree provider returns one synthetic 'message' node suggesting `specter init` or `specter reverse src/`. Distinct from AC-28: coverage has been run; distinct from AC-29: no specs failed, there just aren't any."
+      references_constraints: ["C-21"]
+      priority: high
+
+    - id: AC-31
+      description: "`specter.runSync` emits a completion message that honestly reflects the outcome. If every folder's coverage step succeeded, the user sees 'Specter sync complete.' If any folder entered the error state (CLI failed or parseErrors returned), the completion message is phrased as a failure ('Specter sync finished with errors — see Output channel.') and surfaces via a warning-level notification rather than an info toast."
+      references_constraints: ["C-19"]
+      priority: high
+
+    - id: AC-32
+      description: "Hovering an `@ac AC-XX` annotation in a test file produces a hover that lists the actual covering test files for that AC — read from the workspace's current CoverageReport entry's testFiles, filtered to files whose annotations reference this (spec, AC) pair. The hover is 'uncovered' only when the AC is genuinely absent from the report's coveredACs. Fixes the v0.8.x regression where hovers always showed the empty-state content because the caller passed coveredByFiles: []."
+      references_constraints: ["C-10"]
+      priority: high
+
+    - id: AC-33
+      description: "Clicking a spec node or a test-file leaf in the Coverage sidebar opens the corresponding file in an editor tab. The spec node uses the path from CoverageReport entries[*].specFile (new in coverage v1.5.0); the test-file leaf uses entry.testFiles[i]. Relative paths emitted by the CLI are resolved against the workspace folder root before being passed to vscode.Uri.file. Previously, test-file leaves rendered as undefined/null (runtime shape mismatch) or passed a relative path straight to Uri.file, which produced a non-existent '/watch_test.go' URI and the 'file not found' editor error."
+      references_constraints: ["C-10"]
+      priority: high
+
+    - id: AC-34
+      description: "When `specter coverage --json` returns parseErrors, the extension pushes one VS Code diagnostic per error into the per-folder DiagnosticCollection (keyed by the absolute file URI after resolving relative CLI paths). VS Code's Problems panel shows one clickable entry per broken spec, positioned at the reported line/column, labelled with the error type prefix. Previously the Problems panel stayed empty even when the sidebar said '22 parse errors' — users could see there was a problem but not which files. The diagnostic collection is cleared before re-populating so stale errors don't accumulate across coverage runs."
+      references_constraints: ["C-10"]
+      priority: high
+
+    - id: AC-35
+      description: "The Coverage sidebar's parse-error message uses CoverageReport.specCandidatesCount and parseErrorPatterns to diagnose the shape of failure. When every discovered spec file hit the same parse error pattern (count == spec_candidates_count > 1), the message names this as `schema version drift` and points at `specter doctor`. When patterns are heterogeneous, the generic `open the Problems panel` guidance applies. When specCandidatesCount > 0 and parseErrors is empty but entries is also empty, the message names a manifest-misconfiguration case (domains excluding the specs) instead of suggesting `specter init`."
+      references_constraints: ["C-10"]
+      priority: high
+
+    - id: AC-36
+      description: "When the CoverageReport contains both `entries` (parsed specs) and `parseErrors` (failed files), the Coverage sidebar renders them together: a collapsible `Failed to parse` group lists each failing file as a clickable leaf (opens the file at the reported line), followed by the normal spec tree nodes for every entry. Replaces the v0.8.x behavior where parse errors hid every passing spec behind a single banner. When only parseErrors exist (no entries), the group is the only root. When only entries exist (no parseErrors), the group is omitted."
+      references_constraints: ["C-10"]
+      priority: critical
+
+    - id: AC-37
+      description: "The Insights panel (`specter.openInsights`) never renders 'All specs passing ✓' when CoverageReport.parseErrors is non-empty. When parse errors exist, the panel shows a `Parse failures` section listing each failing file with its error message, plus the normal `Coverage gaps` section for specs that did parse. Header text reflects the true mixed state (e.g. '17 parse error(s), 4 spec(s) parsing cleanly'). Previously the panel either crashed with `entries is not iterable` or — once the crash was fixed — defaulted to the 'all passing' headline when entries was empty, silently erasing the parse failures from the user's mental model."
+      references_constraints: ["C-10"]
+      priority: high
+
+    - id: AC-38
+      description: "The `specter.revealInTree` command (exposed via command palette and file-context menu) takes the active editor's file and reveals the matching node in the Coverage sidebar — expanding any collapsed ancestors and focusing the leaf. Priority: (1) spec entry whose specFile is the active file, (2) parse-error leaf for an unparsable spec, (3) test-file leaf under an AC. Requires the tree to be registered via createTreeView so .reveal() is available; registerTreeDataProvider alone is not enough. Previously the command was declared in package.json but never registered, surfacing to users as `command 'specter.revealInTree' not found`."
+      references_constraints: ["C-10"]
+      priority: high
+
+    - id: AC-39
+      description: "In the Insights panel, each Parse-failures card's file-path header is a clickable link that opens the corresponding file at the reported line. Implemented via webview postMessage with an `{openFile, line}` payload routed through vscode.open on the extension host. Previously the file paths were plain text, forcing users to switch back to the Coverage sidebar or Problems panel to reach the file."
+      references_constraints: ["C-10"]
+      priority: medium
 
   depends_on:
     - spec_id: spec-parse
@@ -329,7 +379,7 @@ spec:
       version_range: "^1.1.0"
       relationship: requires
     - spec_id: spec-coverage
-      version_range: "^1.3.0"
+      version_range: "^1.5.0"
       relationship: requires
     - spec_id: spec-diff
       version_range: "^1.0.0"
@@ -339,6 +389,32 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.2.0"
+      date: "2026-04-19"
+      author: "specter-team"
+      type: minor
+      description: >
+        v0.9.0 coherent failure-handling. Rewrite AC-29 against the new
+        spec-coverage 1.5.0 parse_errors contract. Add AC-30 (no-specs-yet
+        distinct from parse-failure), AC-31 (runSync emits honest completion
+        message), AC-32 (hover populates coveredByFiles from the real
+        report instead of passing []), AC-33 (Coverage sidebar is clickable
+        — spec nodes open the .spec.yaml, test-file leaves open the test
+        file, with relative paths resolved against the workspace root),
+        AC-34 (parse errors push to VS Code Problems panel as diagnostics,
+        one per broken file, clickable), AC-35 (sidebar diagnostic message
+        uses spec_candidates_count + parse_error_patterns to name schema
+        drift explicitly when every spec hit the same failure), AC-36
+        (sidebar renders passing specs AND a Failed-to-parse group in the
+        same tree so users can act on both without one hiding the other),
+        AC-37 (Insights panel no longer claims `All specs passing` when
+        parse failures exist — renders a Parse-failures section alongside
+        coverage cards, with an honest mixed-state header), AC-38
+        (specter.revealInTree command wired end-to-end: active editor →
+        matching tree node, previously declared in package.json but never
+        registered), AC-39 (Insights parse-failure cards have clickable
+        file-path headers that open the file at the reported line).
+        Addresses quality-audit BLOCKER B1 and HIGHs H1/H3.
     - version: "1.1.0"
       date: "2026-04-18"
       author: "specter-team"

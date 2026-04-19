@@ -4,6 +4,7 @@ import type {
   ExtensionDiagnostic,
   SpecterParseError,
   SpecterCheckDiagnostic,
+  CoverageParseError,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -53,6 +54,51 @@ export function buildDiagnostics(input: BuildDiagnosticsInput): ExtensionDiagnos
   }
 
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// AC-34 (v0.9.0): Coverage-level parse errors → per-file diagnostics.
+// The `specter coverage --json` output carries a parse_errors array that
+// covers every failing spec in one CLI call; grouping by file produces the
+// set of DiagnosticCollection.set(...) arguments the Problems panel needs.
+// ---------------------------------------------------------------------------
+
+export interface CoverageDiagnosticsPerFile {
+  file: string;
+  diagnostics: ExtensionDiagnostic[];
+}
+
+/**
+ * Groups CoverageParseError entries by file and converts each into a
+ * VS-Code-agnostic diagnostic. Handles missing line/column gracefully
+ * (falls back to line 0) and includes the error type as a prefix so
+ * "[required] field objective is missing" reads cleanly in the UI.
+ */
+export function buildCoverageParseDiagnostics(
+  parseErrors: CoverageParseError[] | undefined | null,
+): CoverageDiagnosticsPerFile[] {
+  if (!parseErrors || parseErrors.length === 0) return [];
+
+  const byFile = new Map<string, ExtensionDiagnostic[]>();
+  for (const err of parseErrors) {
+    const line = Math.max(0, (err.line ?? 1) - 1);
+    const char = Math.max(0, (err.column ?? 1) - 1);
+    const prefix = err.type ? `[${err.type}] ` : '';
+    const pathSuffix = err.path && err.path !== '' ? ` (at ${err.path})` : '';
+    const diag: ExtensionDiagnostic = {
+      severity: 'error',
+      source: 'specter',
+      message: `${prefix}${err.message}${pathSuffix}`,
+      range: {
+        start: { line, character: char },
+        end: { line, character: Number.MAX_SAFE_INTEGER },
+      },
+    };
+    const bucket = byFile.get(err.file);
+    if (bucket) bucket.push(diag);
+    else byFile.set(err.file, [diag]);
+  }
+  return Array.from(byFile, ([file, diagnostics]) => ({ file, diagnostics }));
 }
 
 // ---------------------------------------------------------------------------

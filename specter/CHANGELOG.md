@@ -4,6 +4,61 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 ---
 
+## v0.9.0 — 2026-04-19 *(pre-release)*
+
+**Theme: coherent failure-handling and intelligent diagnosis.**
+
+When specs fail to parse, every seam of the tool used to lie in a different way: the coverage command swallowed JSON output, the VS Code sidebar pointed at `specter init` (wrong state), the Insights panel claimed "All specs passing ✓" on top of 17 broken files, and `specter doctor` printed 20 identical error lines that together named a schema mismatch nobody could see. v0.9.0 fixes the whole pipeline end-to-end.
+
+The trigger was a real workspace: `kensa-go` specs were written against the pre-v0.6.5 schema, and every tool in the suite disagreed about what that meant.
+
+### Breaking changes
+
+- **`specter coverage --json` now always emits a CoverageReport**, including when specs fail to parse. Exit code (not the presence/absence of JSON) signals pass/fail. Previous behavior: no JSON on parse error, tools had no structured data to work with. Any programmatic consumer that relied on "no JSON = failure" needs to check `exit_code` instead.
+
+### Added
+
+#### CLI (`cmd/specter`, `internal/coverage`)
+
+- **`parse_errors` field** on `CoverageReport` — per-file schema violations (file, path, type, message, line, column).
+- **`parse_error_patterns` field** — errors grouped by `(type, path)` sorted by count descending. Enables one-sentence drift diagnosis: "20 specs: missing `objective` at `spec.objective`" instead of 20 individual messages.
+- **`spec_candidates_count` field** — count of `.spec.yaml` files on disk before any parse was attempted. Distinguishes "no specs exist" from "specs exist but drift."
+- **`spec_file` field** on each entry — path to the source `.spec.yaml`. Populated by the CLI from discovery; previously not exposed.
+- **`specter doctor` pattern analysis** — when the parse check fails, doctor prints a `Pattern analysis:` block that names schema version drift explicitly when every discovered spec hit the same error shape. Heterogeneous errors get a top-N list with counts.
+- **`specter init` discovers existing specs** — scans `specs/`, populates `domains.default.specs` from parseable spec IDs, prints a warning with pattern analysis for any that fail. Always emits a `domains:` section with a placeholder default domain when empty (fixes a silent-exclusion footgun where an empty domains map caused `specter sync` to ignore every later spec).
+
+#### VS Code extension
+
+- **Parse errors populate the Problems panel** — each failing spec appears as a clickable `vscode.Diagnostic` entry at the reported line/column, prefixed with the error type (e.g. `[required] field is missing (at spec.objective)`).
+- **Mixed-render Coverage sidebar** — passing specs and a "Failed to parse" group render in the same tree. Each failing file is a clickable leaf that opens the file at the reported line. Previously the sidebar was all-or-nothing: tree OR error banner.
+- **Click-to-open on tree nodes** — spec nodes open their `.spec.yaml`, test-file leaves open the test file, failing spec leaves open the broken spec. Relative paths from the CLI are resolved against the workspace root.
+- **Honest Insights panel** — renders a `Parse failures` section listing each broken file with its error, alongside the normal `Coverage gaps` section. Header reflects the true mixed state ("17 parse error(s), 4 spec(s) parsing cleanly"). The "All specs passing ✓" headline now appears only when it's literally true.
+- **Clickable file-path headers** in Insights parse-error cards — webview posts an `{openFile, line}` message to the extension host, which opens the file.
+- **`specter.revealInTree` command wired end-to-end** — takes the active editor's file and reveals the matching node in the Coverage sidebar. Previously declared in `package.json` but never registered, surfacing as "command 'specter.revealInTree' not found."
+- **Honest `specter.runSync` completion toast** — info-level success vs warning-level "finished with errors in N folder(s)" with a "Show Output" button.
+- **`@ac` hover populates covering files** from the live CoverageReport instead of always rendering as "uncovered" (latent UX regression).
+- **Annotation extractor respects multi-line string literals** — `// @spec` inside a TypeScript template literal, Go raw string, or Python triple-quoted string is no longer treated as a real annotation.
+- **Sidebar message names schema drift** when the pattern signature is unambiguous ("Every one of N .spec.yaml files hit the same failure: **required** at `spec.objective`").
+
+### Fixed
+
+- **Latent runtime bug: `entry.specID` was always undefined at runtime.** The VS Code types declared camelCase (`specID`, `coveragePct`, `parseErrors`) but the CLI emits snake_case JSON. A new `snakeToCamelCoverage` converter in the client layer handles the mapping; every downstream consumer now sees the shape its types promise.
+- **Defensive guards against null arrays** — Go's `omitempty` emits `null` for empty slices, so `entry.coveredACs` could be `null` at runtime. Hardened every site that iterates entries/ACs/test files/parseErrors.
+- **Insights panel crashed with `entries is not iterable`** when parses failed (`entries` was `null`).
+- **Template-literal annotation bleed** — a `// @spec foo` mentioned inside a template literal (typical test-fixture content) no longer registers as a real annotation.
+- **Annotation regex anchored to line start** — a prose comment that happened to quote `// @spec other-spec` no longer hijacked the surrounding `currentSpecID`. Caught when spec-coverage's own regression tests described string-literal handling.
+
+### Spec bumps
+
+- `spec-coverage`: 1.4.0 → **1.6.0** (C-10/AC-10 always-emit contract; C-11/AC-11 string-literal safety; C-12/AC-12 `spec_candidates_count`; C-13/AC-13 `parse_error_patterns`)
+- `spec-doctor`: 1.0.0 → **1.1.0** (C-09/AC-09 pattern analysis + drift diagnosis)
+- `spec-manifest`: 1.4.0 → **1.5.0** (C-16/AC-22 ScaffoldManifest always emits `domains:` section)
+- `spec-vscode`: 1.1.0 → **1.2.0** (AC-29 rewritten; AC-30 no-specs-yet; AC-31 honest runSync toast; AC-32 hover populates coveredByFiles; AC-33 click-to-open; AC-34 Problems-panel plumbing; AC-35 drift diagnosis in sidebar; AC-36 mixed-render tree; AC-37 honest Insights; AC-38 revealInTree; AC-39 clickable Insights file headers)
+
+All 14 specs dogfood at 100% AC coverage. 192 TypeScript tests pass. All Go tests pass under Go 1.25.8 + golangci-lint v2.6.2.
+
+---
+
 ## v0.8.3 — 2026-04-18
 
 ### Fixed

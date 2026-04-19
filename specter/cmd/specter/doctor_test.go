@@ -84,6 +84,35 @@ func TestDoctor_ParseErrors_ReportsFail(t *testing.T) {
 	}
 }
 
+// @spec spec-doctor
+// @ac AC-09
+// When every discovered spec hits the same parse-error shape, doctor names
+// it as schema version drift instead of printing N identical errors.
+func TestDoctor_ParsePatternAnalysis_NamesDrift(t *testing.T) {
+	dir := t.TempDir()
+	specsDir := filepath.Join(dir, "specs")
+	if err := os.MkdirAll(specsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Two specs both missing the required `objective` field.
+	broken := []byte("spec:\n  id: x\n  version: \"1.0.0\"\n  status: draft\n  tier: 3\n  context:\n    system: t\n    feature: f\n  constraints:\n    - id: C-01\n      description: x\n      type: technical\n      enforcement: error\n  acceptance_criteria:\n    - id: AC-01\n      description: y\n      references_constraints: [\"C-01\"]\n      priority: high\n")
+	if err := os.WriteFile(filepath.Join(specsDir, "a.spec.yaml"), broken, 0644); err != nil {
+		t.Fatal(err)
+	}
+	broken2 := []byte(string(broken) + "\n")
+	if err := os.WriteFile(filepath.Join(specsDir, "b.spec.yaml"), broken2, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _ := runCLI(t, dir, "doctor")
+	if !strings.Contains(out, "Pattern analysis") {
+		t.Fatalf("expected pattern analysis block, got:\n%s", out)
+	}
+	if !strings.Contains(strings.ToLower(out), "schema version drift") {
+		t.Errorf("expected 'schema version drift' diagnosis when every spec hits same pattern, got:\n%s", out)
+	}
+}
+
 // @ac AC-05
 func TestDoctor_NoAnnotations_ReportsWarnNotFail(t *testing.T) {
 	dir := t.TempDir()

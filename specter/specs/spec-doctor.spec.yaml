@@ -1,6 +1,6 @@
 spec:
   id: spec-doctor
-  version: "1.0.0"
+  version: "1.1.0"
   status: draft
   tier: 2
 
@@ -78,6 +78,11 @@ spec:
       type: technical
       enforcement: error
 
+    - id: C-09
+      description: "When the parse check fails, doctor MUST print a pattern analysis section that groups parse errors by (type, path). If a single pattern covers every discovered spec, doctor MUST name this as the signature of schema-version drift and suggest the operator check the Specter schema changelog. Rationale: a flat list of 20 identical parse errors is noise; a single `every spec missing required field X` line is a diagnosis."
+      type: business
+      enforcement: error
+
   acceptance_criteria:
     - id: AC-01
       description: "Project with specter.yaml reports manifest check as PASS"
@@ -152,6 +157,17 @@ spec:
       references_constraints: ["C-07"]
       priority: high
 
+    - id: AC-09
+      description: "Workspace with 3 .spec.yaml files all missing the required field `objective` — doctor prints a pattern analysis block naming the single widespread (type=required, path=spec.objective) signature and flags it as schema version drift. When the errors are heterogeneous (different fields across files), doctor lists the top patterns with counts instead of naming drift."
+      inputs:
+        project_a: "3 spec files, all missing `objective`"
+        project_b: "3 spec files, different errors (missing objective, bad enum, bad format)"
+      expected_output:
+        project_a_output_includes: "schema version drift"
+        project_b_output_includes: "occurrence(s) across"
+      references_constraints: ["C-09"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -164,6 +180,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.1.0"
+      date: "2026-04-19"
+      author: "specter-team"
+      type: minor
+      description: "Add C-09/AC-09: doctor prints a parse-error pattern analysis that names schema version drift when a single error shape covers every discovered spec. Replaces unactionable noise with one sentence of diagnosis."
     - version: "1.0.0"
       date: "2026-04-14"
       author: "specter-team"

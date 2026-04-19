@@ -13,9 +13,16 @@ import (
 	"github.com/Hanalyx/specter/internal/schema"
 )
 
-// C-01, C-02: Recognize @spec and @ac in //, #, and * (JSDoc) comments
-var specAnnotationRE = regexp.MustCompile(`(?://|#|\*)\s*@spec\s+([\w-]+)`)
-var acTagRE = regexp.MustCompile(`(?://|#|\*)\s*@ac\s+(.+)`)
+// C-01, C-02: Recognize @spec and @ac in //, #, and * (JSDoc) comments.
+// Anchored to the start of the trimmed line: an annotation must be the sole
+// subject of its comment. Previously, a comment like
+//
+//	// Mentions "// @spec other-spec" for explanatory purposes
+//
+// matched and hijacked currentSpecID — caught when spec-coverage's own tests
+// described string-literal handling in prose.
+var specAnnotationRE = regexp.MustCompile(`^\s*(?://|#|\*)\s*@spec\s+([\w-]+)`)
+var acTagRE = regexp.MustCompile(`^\s*(?://|#|\*)\s*@ac\s+(.+)`)
 var acIDRE = regexp.MustCompile(`AC-\d{2,}`)
 
 // AnnotationMatch represents annotations found in a test file.
@@ -36,12 +43,100 @@ type SpecCoverageEntry struct {
 	Threshold       int      `json:"threshold"`
 	PassesThreshold bool     `json:"passes_threshold"`
 	TestFiles       []string `json:"test_files"`
+	// SpecFile is the path to the .spec.yaml that declared this spec.
+	// Populated by the CLI after report construction (the pure builder
+	// doesn't have file-path context). Used by downstream consumers that
+	// want to open the source file — e.g. the VS Code coverage sidebar's
+	// click-to-open on a spec node.
+	SpecFile string `json:"spec_file,omitempty"`
 }
 
 // CoverageReport is the full coverage result.
 type CoverageReport struct {
-	Entries []SpecCoverageEntry `json:"entries"`
-	Summary CoverageSummary     `json:"summary"`
+	Entries     []SpecCoverageEntry `json:"entries"`
+	Summary     CoverageSummary     `json:"summary"`
+	ParseErrors []ParseErrorEntry   `json:"parse_errors,omitempty"`
+	// SpecCandidatesCount is the number of .spec.yaml files discovered on
+	// disk before any parse was attempted. When > 0 but len(Entries) == 0,
+	// the workspace has specs but none parsed — almost certainly a schema
+	// mismatch, not an empty workspace. Used by downstream consumers to
+	// give a targeted diagnosis instead of suggesting `specter init`.
+	SpecCandidatesCount int `json:"spec_candidates_count"`
+	// ParseErrorPatterns groups ParseErrors by (type, path) so downstream
+	// consumers can name "all 20 specs are missing `objective`" in one
+	// breath instead of 20 individual messages. Sorted by count descending.
+	ParseErrorPatterns []ParseErrorPattern `json:"parse_error_patterns,omitempty"`
+}
+
+// ParseErrorEntry carries a single parse failure through --json output so
+// downstream consumers (VS Code extension, CI, scripts) can render something
+// useful even when the specs didn't parse. Shape mirrors parser.ParseError but
+// is redeclared here to keep the coverage package free of a parser dependency.
+type ParseErrorEntry struct {
+	File    string `json:"file"`
+	Path    string `json:"path,omitempty"`
+	Type    string `json:"type,omitempty"`
+	Message string `json:"message"`
+	Line    int    `json:"line,omitempty"`
+	Column  int    `json:"column,omitempty"`
+}
+
+// ParseErrorPattern is a grouping of parse errors that share the same
+// (type, path) signature. When the same missing/invalid field shows up in
+// many specs, it's almost always schema drift, not independent typos. The
+// pattern surfaces that shape at the CLI layer so consumers don't need to
+// re-group.
+type ParseErrorPattern struct {
+	Type        string   `json:"type"`           // e.g. "required", "enum"
+	Path        string   `json:"path,omitempty"` // e.g. "spec.objective"
+	Count       int      `json:"count"`          // how many specs hit this
+	ExampleFile string   `json:"example_file,omitempty"`
+	Files       []string `json:"files,omitempty"`
+}
+
+// SummarizeParseErrors groups a flat list of parse errors by (type, path).
+// Patterns are returned sorted by count desc so the most widespread issue
+// surfaces first. The top pattern plus total-file count is usually enough
+// to name schema drift without further analysis.
+func SummarizeParseErrors(errs []ParseErrorEntry) []ParseErrorPattern {
+	if len(errs) == 0 {
+		return nil
+	}
+	type key struct{ t, p string }
+	seen := map[key]*ParseErrorPattern{}
+	order := []key{}
+	for _, e := range errs {
+		k := key{t: e.Type, p: e.Path}
+		p, ok := seen[k]
+		if !ok {
+			p = &ParseErrorPattern{Type: e.Type, Path: e.Path, ExampleFile: e.File}
+			seen[k] = p
+			order = append(order, k)
+		}
+		p.Count++
+		// Dedupe files within the same pattern; order preserved.
+		already := false
+		for _, f := range p.Files {
+			if f == e.File {
+				already = true
+				break
+			}
+		}
+		if !already {
+			p.Files = append(p.Files, e.File)
+		}
+	}
+	out := make([]ParseErrorPattern, 0, len(order))
+	for _, k := range order {
+		out = append(out, *seen[k])
+	}
+	// Sort by count desc, stable for ties by first-encountered order.
+	for i := 1; i < len(out); i++ {
+		for j := i; j > 0 && out[j].Count > out[j-1].Count; j-- {
+			out[j-1], out[j] = out[j], out[j-1]
+		}
+	}
+	return out
 }
 
 type CoverageSummary struct {
@@ -57,35 +152,51 @@ type CoverageSummary struct {
 //
 // C-01: Supports // @spec, # @spec, * @spec
 // C-02: Supports // @ac, # @ac, * @ac
+// C-11 (v1.5.0): Respects multi-line string literals so `// @spec foo`
+// appearing inside a TypeScript/JS template literal (backtick), a Go raw
+// string (backtick), or a Python triple-quoted string is NOT treated as a
+// real annotation. Previously, any line whose trimmed text began with //
+// was parsed as a comment, which caused annotation bleed in any test file
+// containing an example payload that happened to start with `//`.
 func ExtractAnnotations(fileContent, filePath string) []AnnotationMatch {
 	matchMap := make(map[string]map[string]bool)
 
 	lines := strings.Split(fileContent, "\n")
 	var currentSpecID string
 
+	var inBacktick, inTripleDouble, inTripleSingle bool
+
 	for _, line := range lines {
-		// Only process annotations on real comment lines — not inside string literals
-		// or at the end of code lines (e.g. content := "// @spec foo" must not match).
+		lineStartsInString := inBacktick || inTripleDouble || inTripleSingle
+
 		trimmed := strings.TrimSpace(line)
-		isCommentLine := strings.HasPrefix(trimmed, "//") ||
+		isCommentLine := !lineStartsInString && (strings.HasPrefix(trimmed, "//") ||
 			strings.HasPrefix(trimmed, "#") ||
-			strings.HasPrefix(trimmed, "*")
-		if !isCommentLine {
+			strings.HasPrefix(trimmed, "*"))
+
+		if isCommentLine {
+			if m := specAnnotationRE.FindStringSubmatch(line); len(m) > 1 {
+				currentSpecID = m[1]
+				if matchMap[currentSpecID] == nil {
+					matchMap[currentSpecID] = make(map[string]bool)
+				}
+			}
+
+			if m := acTagRE.FindStringSubmatch(line); len(m) > 1 && currentSpecID != "" {
+				for _, acID := range acIDRE.FindAllString(m[1], -1) {
+					matchMap[currentSpecID][acID] = true
+				}
+			}
+			// Line comments consume the rest of the line in all supported
+			// languages (//, #) and we don't flip multi-line string state
+			// inside JSDoc (*) blocks — so the string-literal scanner can
+			// skip this line entirely.
 			continue
 		}
 
-		if m := specAnnotationRE.FindStringSubmatch(line); len(m) > 1 {
-			currentSpecID = m[1]
-			if matchMap[currentSpecID] == nil {
-				matchMap[currentSpecID] = make(map[string]bool)
-			}
-		}
-
-		if m := acTagRE.FindStringSubmatch(line); len(m) > 1 && currentSpecID != "" {
-			for _, acID := range acIDRE.FindAllString(m[1], -1) {
-				matchMap[currentSpecID][acID] = true
-			}
-		}
+		inBacktick, inTripleDouble, inTripleSingle = updateMultilineStringState(
+			line, inBacktick, inTripleDouble, inTripleSingle,
+		)
 	}
 
 	var results []AnnotationMatch
@@ -281,4 +392,112 @@ func CheckDependencyCoverage(edges []DepEdge, report *CoverageReport) []Dependen
 		})
 	}
 	return warnings
+}
+
+// updateMultilineStringState walks one non-comment line and reports whether a
+// TypeScript/JS/Go backtick template/raw string, a Python triple-double, or a
+// Python triple-single string is open at end of line. Single-line strings
+// ('...', "...") and Go/TS/JS line comments (//...) are handled locally: they
+// cannot cross line boundaries, so we don't propagate their state.
+//
+// This is a deliberately small scanner — the aim is "don't mis-detect a `//`
+// inside a template literal," not full lexical analysis. Edge cases it
+// doesn't handle (and doesn't need to for annotation extraction):
+//   - JSDoc /* ... */ block comments: the existing extractor already treats
+//     lines starting with `*` as comment-like, and block comments don't bleed
+//     annotations into string literals.
+//   - Template literal interpolations ${...}: strings inside interpolations
+//     are treated as independent single-line strings, which is fine.
+//   - Escape sequences inside template literals: \` is respected; other
+//     escapes are skipped without interpretation.
+func updateMultilineStringState(line string, inBacktick, inTripleDouble, inTripleSingle bool) (bool, bool, bool) {
+	inSingle := false
+	inDouble := false
+	n := len(line)
+	for i := 0; i < n; {
+		// Multi-line string closers take priority — nothing else inside matters.
+		if inBacktick {
+			if line[i] == '\\' && i+1 < n {
+				i += 2
+				continue
+			}
+			if line[i] == '`' {
+				inBacktick = false
+			}
+			i++
+			continue
+		}
+		if inTripleDouble {
+			if i+2 < n && line[i] == '"' && line[i+1] == '"' && line[i+2] == '"' {
+				inTripleDouble = false
+				i += 3
+				continue
+			}
+			i++
+			continue
+		}
+		if inTripleSingle {
+			if i+2 < n && line[i] == '\'' && line[i+1] == '\'' && line[i+2] == '\'' {
+				inTripleSingle = false
+				i += 3
+				continue
+			}
+			i++
+			continue
+		}
+		// Single-line string closers.
+		if inSingle {
+			if line[i] == '\\' && i+1 < n {
+				i += 2
+				continue
+			}
+			if line[i] == '\'' {
+				inSingle = false
+			}
+			i++
+			continue
+		}
+		if inDouble {
+			if line[i] == '\\' && i+1 < n {
+				i += 2
+				continue
+			}
+			if line[i] == '"' {
+				inDouble = false
+			}
+			i++
+			continue
+		}
+		// Not in any string — check for line-comment and string openers.
+		// A `//` line comment consumes the rest of the line; a `#` line
+		// comment does the same in Python / shell. JSDoc `*` prefixes only
+		// appear on comment lines (handled by the caller).
+		if i+1 < n && line[i] == '/' && line[i+1] == '/' {
+			return inBacktick, inTripleDouble, inTripleSingle
+		}
+		if line[i] == '#' {
+			return inBacktick, inTripleDouble, inTripleSingle
+		}
+		// Triple-quote openers before single-quote openers.
+		if i+2 < n && line[i] == '"' && line[i+1] == '"' && line[i+2] == '"' {
+			inTripleDouble = true
+			i += 3
+			continue
+		}
+		if i+2 < n && line[i] == '\'' && line[i+1] == '\'' && line[i+2] == '\'' {
+			inTripleSingle = true
+			i += 3
+			continue
+		}
+		switch line[i] {
+		case '`':
+			inBacktick = true
+		case '"':
+			inDouble = true
+		case '\'':
+			inSingle = true
+		}
+		i++
+	}
+	return inBacktick, inTripleDouble, inTripleSingle
 }
