@@ -2,7 +2,7 @@
 //
 // Tests for extension activation logic and multi-root workspace isolation.
 
-import { shouldActivate, resolveManifestPath, createClientKey } from '../activation';
+import { shouldActivate, resolveManifestPath, createClientKey, isSpecFilePath } from '../activation';
 import * as path from 'path';
 
 // ---------------------------------------------------------------------------
@@ -119,5 +119,41 @@ describe('createClientKey', () => {
 
   it('normalizes trailing slashes so /project and /project/ are the same client', () => {
     expect(createClientKey('/workspace/project/')).toBe(createClientKey('/workspace/project'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-40: parse-on-edit hooks gate on isSpecFilePath
+// ---------------------------------------------------------------------------
+
+// @spec spec-vscode
+// @ac AC-40
+describe('isSpecFilePath', () => {
+  it('accepts a double-extension .spec.yaml file', () => {
+    expect(isSpecFilePath('/project/specs/auth.spec.yaml')).toBe(true);
+  });
+
+  it('rejects the project manifest specter.yaml', () => {
+    expect(isSpecFilePath('/project/specter.yaml')).toBe(false);
+  });
+
+  it('rejects generic .yaml and .yml files', () => {
+    expect(isSpecFilePath('/project/.github/workflows/ci.yml')).toBe(false);
+    expect(isSpecFilePath('/project/config.yaml')).toBe(false);
+  });
+
+  it('rejects a bare ".spec.yaml" filename (no stem) as a guard edge case', () => {
+    // Pathological input; treating it as a spec would crash the parser
+    // on an empty spec name. The predicate rejects it to stay safe.
+    expect(isSpecFilePath('/project/.spec.yaml')).toBe(false);
+  });
+
+  it('matches on basename, not substring, so "openapi-spec.yaml" is rejected', () => {
+    // A file whose basename ends with "spec.yaml" but not ".spec.yaml".
+    expect(isSpecFilePath('/project/docs/openapi-spec.yaml')).toBe(false);
+  });
+
+  it('accepts a nested spec file regardless of depth', () => {
+    expect(isSpecFilePath('/project/specs/domain/a/b/c/foo.spec.yaml')).toBe(true);
   });
 });

@@ -3,6 +3,22 @@
 import * as path from 'path';
 
 /**
+ * AC-40: gate `specter parse` invocations to real spec files. Returns
+ * true when `fsPath`'s basename ends with `.spec.yaml` (double extension,
+ * e.g. `auth.spec.yaml`), false for anything else — including the
+ * project manifest `specter.yaml`, generic .yaml config, or files whose
+ * name happens to match `specter.yaml` but not `*.spec.yaml`.
+ *
+ * Used by the on-change and on-save hooks so the manifest doesn't get
+ * parsed against the spec schema, which would produce spurious
+ * "Missing required field 'spec'" / "Unknown field 'settings'" diagnostics.
+ */
+export function isSpecFilePath(fsPath: string): boolean {
+  const base = path.basename(fsPath);
+  return base.endsWith('.spec.yaml') && base !== '.spec.yaml';
+}
+
+/**
  * AC-01 — Returns true when the workspace contains specter.yaml or at least
  * one *.spec.yaml file (double extension only, not openapi-spec.yaml).
  */
