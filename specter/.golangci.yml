@@ -1,4 +1,7 @@
+version: "2"
+
 linters:
+  default: none
   enable:
     - errcheck      # unchecked error return values
     - staticcheck   # comprehensive static analysis (replaces gosimple, unused, stylecheck)
@@ -6,8 +9,8 @@ linters:
     - misspell      # common spelling mistakes in comments and strings
     - govet         # reports suspicious constructs (superset of go vet)
 
-linters-settings:
-  errcheck:
+  settings:
+    errcheck:
       # These patterns are intentionally unchecked throughout the codebase
       # (e.g. best-effort stderr writes, deferred closes where error is irrelevant).
       exclude-functions:
@@ -16,16 +19,30 @@ linters-settings:
         - (os.File).Close
         - (*os.File).Close
 
-  misspell:
-    locale: US
+    misspell:
+      locale: US
+
+    staticcheck:
+      # Correctness and security checks (SA*, S*, U*) are on by default.
+      # Quick-fix suggestions (QF*) and style checks (ST*) are off — too
+      # opinionated for a tool where file-level doc comments are the author
+      # convention and stylistic refactors don't improve correctness.
+      checks:
+        - all
+        - -QF*
+        - -ST*
+
+  exclusions:
+    # Don't lint vendored / third-party code that happens to live inside the tree.
+    paths:
+      - vscode-extension/node_modules
+    rules:
+      # Test files get more latitude — ignore unused parameters in table-driven tests
+      - path: "_test\\.go"
+        linters:
+          - ineffassign
 
 issues:
   # Show all issues, don't cap at 3 per linter
   max-issues-per-linter: 0
   max-same-issues: 0
-
-  exclude-rules:
-    # Test files get more latitude — ignore unused parameters in table-driven tests
-    - path: "_test\\.go"
-      linters:
-        - ineffassign

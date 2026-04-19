@@ -1527,7 +1527,7 @@ func watchCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to start file watcher: %w", err)
 			}
-			defer watcher.Close()
+			defer func() { _ = watcher.Close() }()
 
 			// Watch the specs directory and current directory (for test files).
 			for _, dir := range []string{specsDir, "."} {

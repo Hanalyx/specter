@@ -41,7 +41,7 @@ jobs:
       - name: Lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: v1.64.8
+          version: v2.6.2
           working-directory: specter
 
       - name: Test
