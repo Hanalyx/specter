@@ -30,7 +30,6 @@ import {
   classifyNotification,
   buildFileDecoration,
   buildACDecorations,
-  buildTreeNodes,
   buildCoverageTreeRoot,
   NotificationRateLimiter,
 } from './coverage';
