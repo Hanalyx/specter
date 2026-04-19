@@ -2,13 +2,13 @@
 
 Forward-looking roadmap. Items are grouped by target release. Each item is a single sentence of intent plus a link to the design doc or discussion when one exists.
 
-Current shipped version: **v0.8.3**. Pre-release in flight: **v0.9.0-dev.0** on `release/v0.9.0`.
+Current shipped version: **v0.9.0** (published to VS Code Marketplace as stable 2026-04-19).
 
 ---
 
-## v0.9.0 — Coherent failure-handling & intelligent diagnosis (pre-release)
+## v0.9.0 — Coherent failure-handling & intelligent diagnosis (shipped)
 
-Shipped on `release/v0.9.0`. Awaiting publish. Covers:
+Published to Marketplace 2026-04-19 as stable. Covers:
 
 - **B1 fix**: `specter coverage --json` always emits a CoverageReport, including on parse failure (new `parse_errors` field). Extension reads this reliably in every state.
 - **H1 fix**: VS Code `specter.runSync` emits an honest completion toast that reflects success vs failure, no more unconditional "Specter sync complete."
@@ -38,9 +38,36 @@ Spec bumps: `spec-coverage` 1.4.0→1.6.0, `spec-doctor` 1.0.0→1.1.0, `spec-ma
 
 The v0.9.0 work made schema drift *visible* via intelligent diagnosis. v0.10 should make it *fixable* without hand-editing:
 
-- **`specter migrate` command.** Given specs from an older schema version, apply known-safe rewrites: strip removed fields (`trust_level`), rename renamed fields, update enum values. Dry-run by default; `--apply` writes changes. Seed with the v0.6.5 `trust_level` removal and the v0.7.0 field renames.
+- **`specter migrate` command.** Given specs from an older schema version, apply known-safe rewrites: strip removed fields (`trust_level`), rename renamed fields, update enum values, move root-level blocks under `spec:` (jwtms pattern). Dry-run by default; `--apply` writes changes. Seed with the v0.6.5 `trust_level` removal, the v0.7.0 field renames, and the jwtms v1 shape. See `research/JWTMS_SPECTER_REASSESSMENT_V0.9.md` for the driving design case.
 - **VS Code quick-fix for removed fields.** Lightbulb action on a parse error like `Unknown field 'trust_level'` → "Remove deprecated field." Applies to the one file; `Fix all in workspace` batches across every failing spec. Pairs with `specter migrate` for the CLI path.
 - **Schema-version metadata.** Record the schema version in each spec (`spec.schema_version`) so `specter migrate` can target known old versions instead of inferring from failure patterns. Optional field with sensible default.
+- **`specter show <spec-id>`** — human-readable spec card assembled from existing coverage JSON. Shows tier, coverage %, test files covering each AC, uncovered ACs with descriptions. Closes the "where do I look to verify this spec?" gap for test files without waiting on source-annotation scanning. No new data collection — pure presentation over `specter coverage --json`. Small scope, ~2-3h.
+
+---
+
+## v0.11 — AI loop enforcement (candidate)
+
+The CI gate (`specter sync`) already enforces annotated tests must exist. This phase makes the loop *proactive* rather than reactive — close the spec → test → implement → eval cycle for AI coding assistants. Items retrieved from the pre-v0.3 `docs/IMPROVEMENT_ROADMAP.md` (local, gitignored); they were Phase 5 in that doc and remain unshipped.
+
+- **`specter context`** — generates AI-tool-specific instruction files from current specs so the AI reads and respects the spec before generating code:
+  - `specter context --format claude` → updates/creates `CLAUDE.md` with current spec summaries, AC list, tier constraints
+  - `specter context --format cursor` → writes `.cursor/rules` with spec constraints formatted as Cursor rule blocks
+  - `specter context --format copilot` → writes `.github/copilot-instructions.md`
+  - `specter context --format all` — one-pass generation
+  - `specter context --spec <id>` — scope to a single spec for focused AI sessions
+  - Output covers tier, objective, constraints, ACs with descriptions, current coverage status, uncovered ACs highlighted
+  - Idempotent: re-running updates the context section without clobbering manual additions
+  - `specter sync --update-context` flag regenerates context files as part of the sync pipeline
+
+- **Pre-push hook integration** — `specter hook install` writes a git pre-push hook that:
+  - Blocks pushes where implementation files changed but no corresponding `@spec`/`@ac` annotation was added or updated in the diff
+  - Reports which specs are affected and which ACs have no test annotation in the changeset
+  - Bypass with `git push --no-verify` (documented, discouraged)
+
+- **`.specter-results.json` test runner adapters** — first-party adapters that write pass/fail results automatically so the pass-rate-aware coverage loop (already implemented for Tier 1 in v0.4) closes end-to-end without manual results-file maintenance:
+  - Go: `go test -json | specter results ingest`
+  - pytest: `pytest --specter` plugin
+  - Jest: `jest-specter` reporter
 
 ---
 
