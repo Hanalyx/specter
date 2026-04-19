@@ -456,7 +456,7 @@ Once `specter sync` passes locally, add it to your CI pipeline. This is the gate
 ```yaml
 - uses: hanalyx/specter-sync-action@v1
   with:
-    version: 0.6.9
+    version: 0.9.0
 ```
 
 **Or inline download (if you can't use the composite action):**
@@ -466,7 +466,7 @@ Once `specter sync` passes locally, add it to your CI pipeline. This is the gate
   run: |
     OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
     case "${{ runner.arch }}" in X64) ARCH=amd64 ;; ARM64) ARCH=arm64 ;; esac
-    VERSION=0.6.9   # pin a version; don't rely on "latest" in CI
+    VERSION=0.9.0   # pin a version; don't rely on "latest" in CI
     curl -LO "https://github.com/Hanalyx/specter/releases/download/v${VERSION}/specter_${VERSION}_${OS}_${ARCH}.tar.gz"
     tar xzf "specter_${VERSION}_${OS}_${ARCH}.tar.gz" && sudo mv specter /usr/local/bin/
 - name: Specter sync

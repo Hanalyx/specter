@@ -83,6 +83,7 @@ These fields may be omitted entirely. When absent, Specter does not supply defau
 
 | Field | Type | Description |
 |---|---|---|
+| `title` | `string` | Human-readable display name. Defaults to a titlecased version of `id` when omitted. Used by the VS Code extension tree view, PR rendering, and `specter explain` output. Added in v0.7.0. |
 | `depends_on` | `array` of [Dependency Reference](#dependency-reference-object) | Other specs this depends on. Creates edges in the dependency graph. |
 | `environment` | [Environment Object](#environment-object) | Required environment variables and deployment targets. |
 | `tags` | `array` of `string` | Free-form tags for categorization and filtering. |
@@ -215,6 +216,9 @@ An acceptance criterion (AC) is a **testable condition** that defines "done." Ea
 | `references_constraints` | No | `array` of `string` | Each item: regex `^C-\d{2,}$` | Which constraints this AC validates. Used for orphan detection. |
 | `gap` | No | `boolean` | Default: `false` | `true` if this AC was identified by gap analysis (no existing test covers it). |
 | `priority` | No | `string` | Enum: `critical`, `high`, `medium`, `low` | Implementation priority. |
+| `notes` | No | `string` | -- | Free-form narrative about edge cases, rationale, or non-obvious implementation details. Rendered in the VS Code `@ac` hover and `specter explain` output. Added in v0.7.0. |
+| `approval_gate` | No | `boolean` | Default: `false` | When `true`, this AC is treated as uncovered by `specter coverage` until `approval_date` is set in the same AC, regardless of whether a matching `@ac` annotation exists. Use for ACs whose correctness can't be verified by an automated test alone and require human sign-off. Added in v0.7.0. |
+| `approval_date` | No | `string` | ISO-8601 date: `YYYY-MM-DD` | Date a human verified this AC. Only meaningful when `approval_gate: true`. Added in v0.7.0. |
 
 ```yaml
 acceptance_criteria:
