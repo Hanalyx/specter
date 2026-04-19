@@ -211,7 +211,7 @@ func TestValidRegistration(t *testing.T) { ... }
 | 2 (Core Business Logic) | 80% |
 | 3 (Utility / Internal) | 50% |
 
-**Example:**
+**Example (table output):**
 
 ```
 $ specter coverage
@@ -227,7 +227,100 @@ spec-payments            T2     5        5         100%       PASS
 2 specs: 1 passing, 1 failing
 ```
 
-**Exit codes:** `0` = all specs meet thresholds. `1` = one or more below threshold.
+**Example (`--json`):**
+
+Since v0.9.0, `--json` **always emits a CoverageReport JSON document to stdout**, including when one or more spec files fail to parse. The process exit code signals pass/fail; the presence of JSON does not. This is a breaking change from earlier versions which emitted no JSON on parse failure.
+
+```json
+{
+  "entries": [
+    {
+      "spec_id": "spec-auth",
+      "tier": 1,
+      "total_acs": 6,
+      "covered_acs": ["AC-01", "AC-02", "AC-03", "AC-04"],
+      "uncovered_acs": ["AC-05", "AC-06"],
+      "coverage_pct": 66.7,
+      "threshold": 100,
+      "passes_threshold": false,
+      "test_files": ["tests/auth/login.test.ts"],
+      "spec_file": "specs/spec-auth.spec.yaml"
+    }
+  ],
+  "summary": {
+    "total_specs": 1,
+    "fully_covered": 0,
+    "partially_covered": 1,
+    "uncovered": 0,
+    "passing": 0,
+    "failing": 1
+  },
+  "spec_candidates_count": 1
+}
+```
+
+When specs fail to parse, the report carries a `parse_errors` array and a grouped `parse_error_patterns` summary:
+
+```json
+{
+  "entries": [],
+  "summary": { "total_specs": 0, "passing": 0, "failing": 0, ... },
+  "parse_errors": [
+    {
+      "file": "specs/broken.spec.yaml",
+      "path": "spec.objective",
+      "type": "required",
+      "message": "Missing required field 'objective'",
+      "line": 12,
+      "column": 3
+    }
+  ],
+  "parse_error_patterns": [
+    {
+      "type": "required",
+      "path": "spec.objective",
+      "count": 20,
+      "example_file": "specs/auth.spec.yaml",
+      "files": ["specs/auth.spec.yaml", "specs/payments.spec.yaml", ...]
+    }
+  ],
+  "spec_candidates_count": 22
+}
+```
+
+**Report field reference:**
+
+| Top-level field | Since | Description |
+|---|---|---|
+| `entries[]` | v1.0 | One per parseable spec. Always present; may be empty. |
+| `summary` | v1.0 | Roll-up counts. |
+| `parse_errors` | v0.9.0 | Per-file schema violations. Absent or `null` when every spec parsed cleanly. |
+| `parse_error_patterns` | v0.9.0 | `parse_errors` grouped by `(type, path)` sorted by count desc. Useful for naming schema drift ("20 specs missing `objective`"). |
+| `spec_candidates_count` | v0.9.0 | Number of `.spec.yaml` files discovered on disk before parsing. Distinguishes "no specs exist" (count 0) from "specs exist but failed to parse" (count > 0, entries empty). |
+
+| Entry field | Since | Description |
+|---|---|---|
+| `spec_file` | v0.9.0 | Path to the source `.spec.yaml` for this entry. Lets downstream consumers open the file. |
+
+**Exit codes:**
+- `0` — all specs parsed AND all meet their coverage thresholds
+- `1` — one or more specs failed to parse, OR one or more specs are below threshold
+
+**Consuming the JSON programmatically:**
+
+Since v0.9.0 emits JSON in every state, the pattern for scripting is:
+
+```bash
+specter coverage --json > /tmp/cov.json
+rc=$?
+if [ "$(jq '.parse_errors | length' /tmp/cov.json)" -gt 0 ]; then
+  echo "Parse errors — fix spec files first"
+  exit 2
+elif [ $rc -ne 0 ]; then
+  echo "Coverage below threshold"
+  exit 1
+fi
+```
 
 ---
 
@@ -344,12 +437,51 @@ specter init [--name <name>] [--force] [--template <type>]
 | `--force` | Overwrite an existing `specter.yaml`. |
 | `--template <type>` | Create a draft `.spec.yaml` from a template instead of a manifest. Types: `api-endpoint`, `service`, `auth`, `data-model`. |
 
-**Example:**
+**Behaviour (v0.9.0+):**
+
+`specter init` scans the workspace's `specs/` directory and populates the manifest's default domain based on what it finds.
+
+- **Greenfield workspace (no spec files):** emits a manifest with an empty `domains.default` entry whose description invites you to add spec IDs as you author them.
+- **Workspace with parseable specs:** reads each one, extracts its `spec.id`, and populates `domains.default.specs: [...]`.
+- **Workspace with specs that fail to parse:** still writes the manifest (with an explanatory placeholder default domain) and prints a warning that includes a **Pattern analysis** block naming the shape of the failure — if every discovered spec hit the same error, init calls out schema version drift and points at `specter doctor` for deeper diagnosis.
+
+**Important (v0.9.0+):** init always emits a `domains:` section, even in the greenfield case. Previous versions omitted `domains:` entirely when no spec IDs were discovered, which caused later `specter sync` runs to silently skip every spec the user added afterward — a silent-exclusion footgun now eliminated.
+
+**Example (greenfield):**
 
 ```
 $ specter init
-Created specter.yaml with 5 spec(s) in system "my-project"
+Created specter.yaml with 0 spec(s) in system "my-project"
+```
 
+**Example (existing parseable specs):**
+
+```
+$ specter init
+Created specter.yaml with 14 spec(s) in system "specter"
+```
+
+**Example (existing specs with schema drift):**
+
+```
+$ specter init
+Created specter.yaml with 0 spec(s) in system "my-project"
+
+Warning: 22 spec file(s) were discovered but could not be parsed:
+  Every failing spec hit the same error: [additionalProperties] at "spec".
+  This is the signature of schema version drift — the specs may
+  have been written against an older Specter schema. Run `specter
+  doctor` for a full report, then fix the specs and re-run
+  `specter init --force` to populate the manifest.
+
+The manifest was still written with an empty default domain as a
+placeholder. Add your spec IDs under `domains.default.specs` once
+the parse errors are resolved.
+```
+
+**Example (template):**
+
+```
 $ specter init --template api-endpoint
 Created api-endpoint.spec.yaml (template: api-endpoint)
 Edit the file to replace placeholder values, then run: specter sync
@@ -377,7 +509,7 @@ specter doctor
 | `annotations` | `@spec`/`@ac` annotations found in tests | No annotations found | — |
 | `coverage` | All specs meet tier thresholds | — | ≥1 spec below threshold |
 
-**Example:**
+**Example (happy path):**
 
 ```
 $ specter doctor
@@ -391,6 +523,41 @@ specter doctor
   coverage     [WARN]  No specs to check coverage for
 
 Result: OK — project is ready for `specter sync`
+```
+
+**Pattern analysis on parse failure (v0.9.0+):**
+
+When the parse check fails, `specter doctor` prints a **Pattern analysis** block that groups errors by `(type, path)`. If every discovered spec hit the same pattern, doctor names it explicitly as the signature of schema version drift — a common shape for projects whose specs predate the current schema.
+
+```
+$ specter doctor
+
+  manifest     [PASS]  specter.yaml found at specter.yaml
+  spec-files   [PASS]  22 spec file(s) discovered
+    specs/auth.spec.yaml: Unknown field 'trust_level'. Remove it or check for a typo in the field name.
+    specs/payments.spec.yaml: Unknown field 'trust_level'. Remove it or check for a typo in the field name.
+    ...
+  parse        [FAIL]  22 spec file(s) have parse errors (see above)
+
+  Pattern analysis:
+    Every 22 discovered spec hit the same failure: [additionalProperties] at "spec".
+    This pattern is the signature of schema version drift —
+    your specs may have been written against an older Specter
+    schema. Check the spec-parse changelog and migrate each file.
+
+  annotations  [PASS]  8 annotation(s) found across 45 test file(s)
+  coverage     [WARN]  Skipping coverage check — specs have parse errors
+
+Result: FAIL — fix the issues above before running `specter sync`
+```
+
+When errors are heterogeneous (multiple distinct failure shapes), doctor lists the top patterns with counts instead of claiming drift:
+
+```
+  Pattern analysis:
+    [required] at "spec.objective" — 12 occurrence(s) across 12 file(s)
+    [enum] at "spec.status" — 3 occurrence(s) across 3 file(s)
+    [additionalProperties] at "spec" — 2 occurrence(s) across 2 file(s)
 ```
 
 **Exit codes:** `0` = all checks PASS or WARN. `1` = any check FAIL.
