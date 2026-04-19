@@ -4,7 +4,7 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 ---
 
-## v0.9.0 — 2026-04-19 *(pre-release)*
+## v0.9.0 — 2026-04-19
 
 **Theme: coherent failure-handling and intelligent diagnosis.**
 
