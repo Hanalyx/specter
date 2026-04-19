@@ -110,6 +110,7 @@ function testCreateIntent() {}
 // AC-09: Hover on @ac shows full description, coverage status, and other files
 // ---------------------------------------------------------------------------
 
+// @spec spec-vscode
 // @ac AC-09
 describe('buildAnnotationHover', () => {
   it('shows the full AC description on hover over @ac AC-01', () => {
@@ -149,6 +150,7 @@ describe('buildAnnotationHover', () => {
 // AC-15: Quick-fix inserts @spec + @ac snippet above unannotated function
 // ---------------------------------------------------------------------------
 
+// @spec spec-vscode
 // @ac AC-15
 describe('buildQuickFix', () => {
   it('inserts @spec and @ac lines above the function', () => {
@@ -177,6 +179,7 @@ describe('buildQuickFix', () => {
 // AC-21: tf-idf AC suggestion — offline, no LM call
 // ---------------------------------------------------------------------------
 
+// @spec spec-vscode
 // @ac AC-21
 describe('suggestACsForFunction', () => {
   it('returns top-2 AC suggestions for a function body', () => {

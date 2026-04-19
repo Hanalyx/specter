@@ -3,6 +3,8 @@ package manifest
 
 import (
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -502,5 +504,89 @@ func TestScaffoldManifest_CanonicalGitHubURL(t *testing.T) {
 	}
 	if strings.Contains(out, "spec-dd") {
 		t.Errorf("scaffold must not reference 'spec-dd' (stale slug), got:\n%s", out)
+	}
+}
+
+// @ac AC-13 — when specter.yaml is absent, Defaults() returns a usable
+// Manifest and all consumers (specs_dir resolution, thresholds, excludes)
+// produce identical behavior to what a minimal explicit manifest would.
+// This is the "backward compatibility" contract: running specter in a
+// directory without specter.yaml must not fail.
+func TestDefaults_MatchesImplicitManifestBehavior(t *testing.T) {
+	implicit := Defaults()
+
+	// An explicit manifest with the documented defaults should produce the
+	// same behavior as Defaults().
+	yamlBody := `
+system:
+  name: anything
+settings:
+  specs_dir: specs
+  coverage:
+    tier1: 100
+    tier2: 80
+    tier3: 50
+`
+	explicit, err := ParseManifest(yamlBody)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	if implicit.SpecsDir() != explicit.SpecsDir() {
+		t.Errorf("specs_dir mismatch: implicit %q vs explicit %q",
+			implicit.SpecsDir(), explicit.SpecsDir())
+	}
+	ithr := implicit.CoverageThresholds()
+	ethr := explicit.CoverageThresholds()
+	for tier := 1; tier <= 3; tier++ {
+		if ithr[tier] != ethr[tier] {
+			t.Errorf("tier %d threshold mismatch: implicit %d vs explicit %d",
+				tier, ithr[tier], ethr[tier])
+		}
+	}
+}
+
+// @ac AC-14 — the manifest package must be a pure, injectable unit with
+// no dependencies on I/O, the CLI layer, or anything that performs
+// side effects. The package is consumed by cmd/specter (which does do
+// I/O) but must itself be callable from tests, the reverse compiler,
+// and any future migration tooling without a working filesystem.
+func TestManifestPackage_HasNoForbiddenImports(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot determine test file path")
+	}
+	pkgDir := filepath.Dir(file)
+
+	forbidden := []string{
+		`"os/exec"`,                        // no subprocess spawning
+		`"net/http"`,                       // no network
+		`"github.com/spf13/cobra"`,         // no CLI framework
+		`"github.com/Hanalyx/specter/cmd/`, // no reverse dep on CLI layer
+	}
+
+	entries, err := os.ReadDir(pkgDir)
+	if err != nil {
+		t.Fatalf("read pkg dir: %v", err)
+	}
+
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
+			continue
+		}
+		// Skip test files — they may legitimately import test helpers.
+		if strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(pkgDir, e.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", e.Name(), err)
+		}
+		content := string(data)
+		for _, imp := range forbidden {
+			if strings.Contains(content, imp) {
+				t.Errorf("%s imports forbidden package %s (manifest package must be I/O-free)", e.Name(), imp)
+			}
+		}
 	}
 }

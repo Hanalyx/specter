@@ -176,3 +176,31 @@ describe('verifyChecksum', () => {
     expect(ok).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// v0.6.5+ — Error-state recovery affordances (AC-24)
+// ---------------------------------------------------------------------------
+
+// @spec spec-vscode
+// @ac AC-24
+describe('Specter: Re-download CLI command is declared in package.json', () => {
+  // AC-24 pins the presence of the user-facing recovery command. The status-
+  // bar error transition itself is vscode-runtime-coupled and exercised by
+  // client.test.ts (which invokes the real CLI against a fixture workspace
+  // that would fail coverage); the palette-entry existence is a pure
+  // structural fact about package.json.
+  it('package.json declares the specter.redownloadCli command', () => {
+    const pkg = require('../../package.json');
+    const commands: Array<{ command: string; title: string }> = pkg.contributes?.commands ?? [];
+    const found = commands.find(c => c.command === 'specter.redownloadCli');
+    expect(found).toBeTruthy();
+    expect(found?.title.toLowerCase()).toContain('re-download');
+  });
+
+  it('package.json also declares the specter.showOutput command', () => {
+    const pkg = require('../../package.json');
+    const commands: Array<{ command: string; title: string }> = pkg.contributes?.commands ?? [];
+    const found = commands.find(c => c.command === 'specter.showOutput');
+    expect(found).toBeTruthy();
+  });
+});
