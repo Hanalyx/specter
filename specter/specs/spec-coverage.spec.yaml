@@ -1,6 +1,6 @@
 spec:
   id: spec-coverage
-  version: "1.6.0"
+  version: "1.7.0"
   status: approved
   tier: 2
 
@@ -100,6 +100,11 @@ spec:
 
     - id: C-13
       description: "`specter coverage --json` MUST emit parse_error_patterns — a list grouping parse_errors by (type, path) sorted by count descending. Enables downstream consumers to surface schema drift in one sentence (`20 specs: missing required field 'objective'`) instead of N individual messages."
+      type: technical
+      enforcement: error
+
+    - id: C-14
+      description: "Array-valued fields in the coverage JSON output MUST NOT be emitted as `null`. Fields without `omitempty` MUST emit `[]` when empty (the Go struct field is initialized as an empty slice, not left as nil). Fields with `omitempty` MUST be absent from the output when empty (Go's default behavior). Rationale: downstream TypeScript consumers declare these fields as `string[]` (non-nullable arrays); emitting `null` is a silent type contract violation that crashes any consumer iterating without a nullish-coalesce guard."
       type: technical
       enforcement: error
 
@@ -231,7 +236,24 @@ spec:
       references_constraints: ["C-13"]
       priority: high
 
+    - id: AC-14
+      description: "`specter coverage --json` run on a workspace where every AC is covered emits `\"uncovered_acs\": []` for the covered entries (not `null`). Run on a workspace with no parse failures, the top-level `parse_errors` and `parse_error_patterns` fields are absent entirely (Go's `omitempty` behavior) rather than emitted as `null`. No field declared as `[]T` in a downstream TypeScript consumer ever receives `null` from the CLI."
+      inputs:
+        case_a: "spec with 100% coverage → uncovered_acs should be []"
+        case_b: "run with no parse failures → parse_errors should be absent"
+      expected_output:
+        case_a_value: "[]"
+        case_a_type: "array"
+        case_b_present: false
+      references_constraints: ["C-14"]
+      priority: high
+
   changelog:
+    - version: "1.7.0"
+      date: "2026-04-19"
+      author: "specter-team"
+      type: minor
+      description: "Add C-14/AC-14: coverage --json emits `[]` (not `null`) for empty array fields without omitempty; fields with omitempty are absent rather than null. Eliminates a latent runtime-crash class on the TypeScript consumer side where types declare `string[]` but Go emits `null`."
     - version: "1.6.0"
       date: "2026-04-19"
       author: "specter-team"
