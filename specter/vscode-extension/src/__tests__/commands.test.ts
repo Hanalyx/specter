@@ -45,9 +45,12 @@ describe('command parity (package.json ↔ extension.ts)', () => {
     expect(unregistered).toEqual([]);
   });
 
-  it('every registered handler is declared in package.json', () => {
+  it('every public registered handler is declared in package.json', () => {
     // Catches the reverse: handlers for commands that were renamed/removed
-    // and would be unreachable from the command palette.
+    // and would be unreachable from the command palette. Commands whose id
+    // begins with `specter._` are internal by VS Code community convention
+    // (invoked programmatically from CodeActions / CodeLenses, never from
+    // the palette) and are exempt from the declaration requirement.
     const pkg = readPkg();
     const declared = new Set<string>(
       (pkg.contributes?.commands ?? []).map((c: { command: string }) => c.command),
@@ -56,7 +59,10 @@ describe('command parity (package.json ↔ extension.ts)', () => {
     const src = readSrc();
     const registered = new Set<string>();
     for (const m of src.matchAll(/registerCommand\(\s*['"]([^'"]+)['"]/g)) {
-      if (m[1].startsWith('specter.')) registered.add(m[1]);
+      const id = m[1];
+      if (id.startsWith('specter.') && !id.startsWith('specter._')) {
+        registered.add(id);
+      }
     }
 
     const undeclared = [...registered].filter(c => !declared.has(c)).sort();
@@ -108,19 +114,32 @@ describe('disposables lifecycle', () => {
 // @ac AC-45
 // @ac AC-46
 describe('activation control flow', () => {
-  it('binary resolution runs before any shouldActivate early-return', () => {
+  it('binary resolution runs before the hasSpecOrManifest early-return', () => {
     // AC-45: commands like specter.runReverse must work in empty workspaces.
     // That requires resolveBinary to run before we short-circuit on
-    // "workspace has no specs."
+    // "workspace has no specs." The invariant is encoded as: the result
+    // of shouldActivate(...) is captured into a variable, and the early-
+    // return happens AFTER resolveBinary. The test searches for the
+    // early-return by whichever variable name the code uses; both
+    // `hasSpecOrManifest` and the legacy inline `shouldActivate(...)`
+    // form are accepted.
     const src = readSrc();
-    const earlyReturnIdx = src.indexOf('if (!shouldActivate(filePaths)) return');
     const resolveBinaryIdx = src.indexOf('await resolveBinary(ctx)');
-
-    // Both markers MUST still exist in the source — if either is gone,
-    // the invariant is encoded differently and this test is stale.
-    expect(earlyReturnIdx).toBeGreaterThan(-1);
     expect(resolveBinaryIdx).toBeGreaterThan(-1);
-    // Binary resolution must precede the early-return.
+
+    // The early-return can be any of:
+    //   if (!shouldActivate(filePaths)) return
+    //   if (!hasSpecOrManifest) return
+    // Take the first that matches.
+    const candidates = [
+      'if (!shouldActivate(filePaths)) return',
+      'if (!hasSpecOrManifest) return',
+    ];
+    const earlyReturnIdx = candidates
+      .map(p => src.indexOf(p))
+      .filter(i => i > -1)
+      .sort((a, b) => a - b)[0] ?? -1;
+    expect(earlyReturnIdx).toBeGreaterThan(-1);
     expect(resolveBinaryIdx).toBeLessThan(earlyReturnIdx);
   });
 
@@ -130,9 +149,16 @@ describe('activation control flow', () => {
     // start a new Specter project."
     const src = readSrc();
     const walkthroughIdx = src.indexOf('shouldShowWalkthrough(');
-    const earlyReturnIdx = src.indexOf('if (!shouldActivate(filePaths)) return');
-
     expect(walkthroughIdx).toBeGreaterThan(-1);
+
+    const candidates = [
+      'if (!shouldActivate(filePaths)) return',
+      'if (!hasSpecOrManifest) return',
+    ];
+    const earlyReturnIdx = candidates
+      .map(p => src.indexOf(p))
+      .filter(i => i > -1)
+      .sort((a, b) => a - b)[0] ?? -1;
     expect(earlyReturnIdx).toBeGreaterThan(-1);
     expect(walkthroughIdx).toBeLessThan(earlyReturnIdx);
   });
