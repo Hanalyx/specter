@@ -2,7 +2,70 @@
 
 Forward-looking roadmap. Items are grouped by target release. Each item is a single sentence of intent plus a link to the design doc or discussion when one exists.
 
-Current shipped version: **v0.9.0** (published to VS Code Marketplace as stable 2026-04-19).
+Current shipped version: **v0.9.0** (published to VS Code Marketplace as stable 2026-04-19). **v0.9.1** in flight on `release/v0.9.1` — post-audit fixes.
+
+---
+
+## v0.9.1 — Post-audit fixes (in flight)
+
+On `release/v0.9.1` branch. Three commits: specs → failing tests → implementation. Derived from `research/SPECTER_AUDIT_2026-04-19.md`.
+
+- **CRITICAL**: mandatory SHA256 checksum verification on binary download (no silent fallback).
+- **BLOCKERS**: register `specter.runReverse`, remove `specter.openQuickStart` orphan declaration, CI-enforced package.json ↔ extension.ts command parity test.
+- **HIGH**: fresh-install binary resolution, reachable walkthrough, `driftDecorationType` disposal, on-type + drift-scan error surfacing, Go `[]` not `null` emission.
+- **Internal**: `specter.insertAnnotation` → `specter._insertAnnotation` (VS Code community convention for internal commands).
+
+Spec bumps: `spec-coverage` 1.6.0→1.7.0, `spec-vscode` 1.2.0→1.3.0.
+
+---
+
+## v0.9.2 — UX polish (candidate)
+
+Two items surfaced during jwtms migration testing. Neither is audit-critical; queued after v0.9.1 ships the security fix.
+
+### `specter coverage` visual display redesign
+
+**Pain**: on a 249-spec workspace (jwtms), the coverage report is 249 lines where ~220 are "100% PASS". The 20-ish rows that need attention are scattered throughout; developer has to scan every line to find them. Long spec IDs break column alignment.
+
+**Pinned design**:
+
+- **Sort worst-first by default**: failing → partial (under threshold but status PASS) → 100% covered. User sees what needs action at the top; sea of green is below the fold.
+- **Summary header** before the table, e.g. `Spec Coverage Report — 249 specs · 97.2% avg coverage` followed by per-tier breakdown (`Tier 1: 32/34 passing (94%)` etc.).
+- **`--failing` flag** hides 100%-covered specs. Optionally combine with `--tier=1` and `--below-threshold` as filter flags.
+- **Column alignment**: truncate spec IDs over 40 chars with an ellipsis, or dynamically compute column widths at render time from the actual content.
+- **`--quiet` flag** (lower priority): prints a single line when all specs pass, suitable for CI log noise reduction.
+
+**Deliberately excluded**: terminal color codes (TTY detection is fiddly and unreliable in CI), tier section headers (sort does more with less complexity), progress-bar rendering (visual noise with limited signal).
+
+**Spec changes expected**: `spec-coverage` 1.7.0 → 1.8.0 adds constraints + ACs for the sort, filter, and summary.
+
+**Scope**: ~4 hours Go + tests + doc update.
+
+### `specter init --refresh` for non-greenfield workspaces
+
+**Pain**: after the user adds specs to an existing project, there's no non-destructive way to update `domains.default.specs`. Today's options: `specter init` refuses (manifest exists), `specter init --force` rewrites everything (loses manual edits to `settings`, `registry`, tier overrides, custom domains).
+
+**Pinned design**:
+
+- New flag: `specter init --refresh`.
+  1. Reads existing `specter.yaml`.
+  2. Rescans `settings.specs_dir` (or default `specs/`) for parseable spec files.
+  3. Updates **only** `domains.default.specs` with the current set of parseable IDs.
+  4. Leaves every other manifest field untouched.
+- **Decision pins**:
+  - *Custom domains* (user splits specs across multiple domains): refresh does NOT touch them. Only `domains.default.specs` is refreshed; unclaimed specs (not in any other domain) go into `default`. Deterministic, scriptable.
+  - *Removed specs* (present in `domains.default.specs` but no longer on disk): silent removal. Print a summary at the end: `updated specter.yaml: +3 specs added, -1 removed`.
+  - *Parse-failing specs*: skip them, print the v0.9.0 pattern-analysis warning. Reuses the existing code path in `specter init`.
+  - *Dry-run*: `specter init --refresh --dry-run` prints the diff without writing. Useful for review before committing.
+- **Name chosen**: `--refresh` flag on `specter init`, not a separate `specter manifest refresh` subcommand. Lower discovery cost; users already know `init`. Matches `git init` semantics (safe in existing repos). If a richer `specter manifest *` subcommand tree emerges later (e.g. for add/remove/validate), revisit.
+
+**Spec changes expected**: `spec-manifest` 1.5.0 → 1.6.0 adds constraints + ACs for `--refresh`, `--dry-run`, and the decision pins.
+
+**Scope**: ~6 hours Go + tests + doc update.
+
+### Why these are in v0.9.2 and not v0.9.1
+
+v0.9.1 ships a CRITICAL security fix (mandatory checksum verification) and three BLOCKERS. It should ship promptly and small. These two items are UX polish — real value, not urgent. Same pattern as shipping the v0.8.x CVE fix quickly and scheduling the v0.9.0 UX cleanup separately.
 
 ---
 
