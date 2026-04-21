@@ -1,6 +1,6 @@
 spec:
   id: spec-coverage
-  version: "1.7.0"
+  version: "1.8.0"
   status: approved
   tier: 2
 
@@ -105,6 +105,26 @@ spec:
 
     - id: C-14
       description: "Array-valued fields in the coverage JSON output MUST NOT be emitted as `null`. Fields without `omitempty` MUST emit `[]` when empty (the Go struct field is initialized as an empty slice, not left as nil). Fields with `omitempty` MUST be absent from the output when empty (Go's default behavior). Rationale: downstream TypeScript consumers declare these fields as `string[]` (non-nullable arrays); emitting `null` is a silent type contract violation that crashes any consumer iterating without a nullish-coalesce guard."
+      type: technical
+      enforcement: error
+
+    - id: C-15
+      description: "The default table output of `specter coverage` MUST sort entries worst-first — failing specs (below threshold AND not 100%) first, then partial coverage (below 100% but passing threshold), then 100%-covered. Within each bucket, sort by tier descending (T1 > T2 > T3) so higher-risk work surfaces first. Rationale: on a large workspace (100+ specs), the developer needs to see what requires attention at the top; hiding failures in a sea of PASS defeats the table's purpose."
+      type: business
+      enforcement: error
+
+    - id: C-16
+      description: "Every table output of `specter coverage` MUST include a summary header line above the table, formatted as `Spec Coverage Report — N specs · P% avg coverage` followed by per-tier breakdown lines (`  Tier K: X/Y passing (Z%)`) for each tier present in the report. The header MUST reflect the full report state, not a filtered view. Rationale: one-glance readability on workspaces where the table itself is long."
+      type: business
+      enforcement: error
+
+    - id: C-17
+      description: "`specter coverage --failing` MUST restrict the table to entries whose `passes_threshold == false` OR `coverage_pct < 100` (i.e. everything below 100% coverage, whether it's under threshold or just not complete). The summary header still reflects the full report, not the filtered view. When all entries are 100%, the filter produces an empty table with a single-line confirmation: `All N specs at 100% coverage.`"
+      type: technical
+      enforcement: error
+
+    - id: C-18
+      description: "In the default table output, spec IDs longer than 40 characters MUST be truncated in the `Spec ID` column with a trailing ellipsis (`…`) so subsequent columns remain aligned. The `--json` output is unaffected — it emits the full spec_id. Rationale: long path-derived IDs (e.g. `app-api-admin-appointments-id-service`) break the table in v0.9.0/v0.9.1; alignment is a legibility prerequisite for the sort + summary work to be useful."
       type: technical
       enforcement: error
 
@@ -248,7 +268,57 @@ spec:
       references_constraints: ["C-14"]
       priority: high
 
+    - id: AC-15
+      description: "Given a report with three entries — one failing below threshold (40%, tier 2), one partial passing (60% coverage on tier 3 with 50% threshold → passes), and one 100% covered (tier 1) — the default table output orders them: failing first, partial second, 100% third. A pure sort function SortCoverageEntriesForDisplay over []SpecCoverageEntry MUST produce this order deterministically."
+      inputs:
+        entries: "3 entries (40%/T2/FAIL, 60%/T3/PASS-partial, 100%/T1/PASS)"
+      expected_output:
+        order: ["failing-t2", "partial-t3", "complete-t1"]
+      references_constraints: ["C-15"]
+      priority: high
+
+    - id: AC-16
+      description: "Given a report with 14 specs across tiers (T1: 4, T2: 8, T3: 2), a pure function BuildSummaryHeader(report) returns a multi-line string starting with `Spec Coverage Report — 14 specs · {avg_pct}% avg coverage` and containing three `  Tier K: X/Y passing (Z%)` lines (one per tier present). Tiers with zero specs are omitted. Format is stable for regression pinning."
+      inputs:
+        report: "14 specs: 4xT1 (all passing), 8xT2 (6 passing), 2xT3 (1 passing)"
+      expected_output:
+        header_contains: "Spec Coverage Report — 14 specs"
+        tier_lines:
+          - "Tier 1: 4/4 passing"
+          - "Tier 2: 6/8 passing"
+          - "Tier 3: 1/2 passing"
+      references_constraints: ["C-16"]
+      priority: high
+
+    - id: AC-17
+      description: "`specter coverage --failing` on a 14-spec workspace where 2 specs are below 100% (1 failing, 1 partial) prints the summary header (reflecting all 14), then a table containing only those 2 entries. On a workspace where all 14 are 100%, the flag produces no table and a single line: `All 14 specs at 100% coverage.` Exit code respects threshold, not the filter."
+      inputs:
+        case_a: "14 specs, 2 below 100% (1 FAIL, 1 partial-PASS)"
+        case_b: "14 specs, all 100% covered"
+      expected_output:
+        case_a_table_rows: 2
+        case_b_table_empty: true
+        case_b_footer_contains: "All 14 specs at 100% coverage"
+      references_constraints: ["C-17"]
+      priority: high
+
+    - id: AC-18
+      description: "A spec ID of 50 characters (e.g. `app-api-admin-appointments-id-service-override`) rendered in the default table is truncated to 40 characters followed by `…` (ellipsis), keeping the Tier column aligned. `specter coverage --json` emits the full ID unchanged. A function TruncateSpecID(id, maxLen) is the pure helper under this AC."
+      inputs:
+        id: "app-api-admin-appointments-id-service-override"
+        max_len: 40
+      expected_output:
+        truncated: "app-api-admin-appointments-id-service-o…"
+        truncated_length: 40
+      references_constraints: ["C-18"]
+      priority: medium
+
   changelog:
+    - version: "1.8.0"
+      date: "2026-04-20"
+      author: "specter-team"
+      type: minor
+      description: "Add C-15/AC-15 (table sort worst-first), C-16/AC-16 (summary header with per-tier breakdown), C-17/AC-17 (--failing filter), C-18/AC-18 (spec-ID truncation for column alignment). UX improvements driven by jwtms migration testing where 249 specs produced an unreadable wall of green."
     - version: "1.7.0"
       date: "2026-04-19"
       author: "specter-team"

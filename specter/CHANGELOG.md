@@ -4,6 +4,45 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 ---
 
+## v0.9.2 — 2026-04-20
+
+**Theme: UX polish from jwtms migration testing.**
+
+Two items surfaced when running v0.9.1 against the fully-migrated jwtms workspace (249 specs). Both are quality-of-life fixes; no security or correctness issues.
+
+### Added
+
+#### `specter coverage` visual redesign
+
+- **Summary header** above the table:
+  ```
+  Spec Coverage Report — 249 specs · 97.2% avg coverage
+    Tier 1: 32/34 passing (94%)
+    Tier 2: 168/192 passing (88%)
+    Tier 3: 11/23 passing (48%)
+  ```
+  Gives one-glance visibility into the overall shape before scanning the table. Tiers with zero specs are omitted.
+- **Worst-first sort** in the default table: failing (below threshold) → partial (below 100% but passing threshold) → 100% covered. Within each bucket, tier descending (T1 > T2 > T3) so higher-risk work surfaces first.
+- **`--failing` flag** filters the table to entries below 100% coverage. Summary header still reflects the full report. When every spec is at 100%, emits a single-line confirmation (`All N specs at 100% coverage.`) instead of an empty table.
+- **Long spec ID truncation**: IDs over 40 characters are truncated with a trailing ellipsis (`…`) so the Tier column stays aligned. `--json` output is unaffected — it emits the full spec_id.
+
+#### `specter init --refresh` for non-greenfield workspaces
+
+- **`--refresh` flag**: updates only `domains.default.specs` in an existing `specter.yaml`. Preserves every other field — `settings`, `registry`, tier overrides, system metadata, and any custom domains the operator declared.
+- **Smart diff**: specs on disk that are claimed by a non-default domain stay in that domain (aren't duplicated into `default`). Specs that used to be in `default.specs` but are no longer on disk are removed.
+- **Summary line**: `updated specter.yaml: +A added, -B removed`.
+- **`--dry-run` variant**: `specter init --refresh --dry-run` prints the proposed diff without writing the file. Matches `git add -p` / `terraform plan` discipline.
+- **`--refresh` and `--force` mutually exclusive**: `--force` rewrites everything; `--refresh` preserves everything except `domains.default.specs`. Attempting both exits non-zero with a clear message.
+
+### Spec bumps
+
+- `spec-coverage`: 1.7.0 → **1.8.0** (+C-15/AC-15 sort, +C-16/AC-16 summary header, +C-17/AC-17 --failing, +C-18/AC-18 truncation)
+- `spec-manifest`: 1.5.0 → **1.6.0** (+C-17/AC-23 through +C-21/AC-26 covering --refresh, --dry-run, custom domains, removed specs, flag conflict)
+
+14 specs dogfood at 100% AC coverage. All Go + TS tests pass. No security changes.
+
+---
+
 ## v0.9.1 — 2026-04-19
 
 **Theme: post-ship audit fixes.**

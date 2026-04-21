@@ -5,6 +5,8 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -196,5 +198,162 @@ func TestCoverage_JSON_HappyPath(t *testing.T) {
 	}
 	if len(report.Entries) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(report.Entries))
+	}
+}
+
+// --- v0.9.2 UX polish tests ---
+
+// @spec spec-coverage
+// @ac AC-16
+// Default table output must include a summary header: `Spec Coverage Report —
+// N specs · P% avg coverage` followed by per-tier breakdown lines.
+func TestCoverage_Table_HasSummaryHeader(t *testing.T) {
+	dir := t.TempDir()
+	writeSpec(t, dir, "alpha.spec.yaml", minimalValidSpec("alpha", 2, "AC-01"))
+	writeSpec(t, dir, "beta.spec.yaml", minimalValidSpec("beta", 3, "AC-01"))
+
+	out, _ := runCLI(t, dir, "coverage")
+
+	// Header must include the em-dash form AND the spec count.
+	if !strings.Contains(out, "Spec Coverage Report — 2 specs") {
+		t.Errorf("expected summary header `Spec Coverage Report — 2 specs` in output, got:\n%s", out)
+	}
+	// Must include per-tier breakdown for every tier present.
+	if !strings.Contains(out, "Tier 2:") {
+		t.Errorf("expected `Tier 2:` breakdown line in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Tier 3:") {
+		t.Errorf("expected `Tier 3:` breakdown line in output, got:\n%s", out)
+	}
+	// Tier 1 not present in this workspace — MUST NOT be in output.
+	if strings.Contains(out, "Tier 1:") {
+		t.Errorf("unexpected `Tier 1:` breakdown line (no T1 specs in workspace):\n%s", out)
+	}
+}
+
+// @spec spec-coverage
+// @ac AC-15
+// Entries are sorted worst-first: failing below threshold → partial but
+// passing threshold → 100% covered. Within each bucket, tier desc (T1 > T2 > T3).
+func TestCoverage_Table_SortsWorstFirst(t *testing.T) {
+	dir := t.TempDir()
+	// failing-t2: tier 2, 1 AC, no coverage → 0%, below 80% threshold, FAIL
+	writeSpec(t, dir, "failing-t2.spec.yaml", minimalValidSpec("failing-t2", 2, "AC-01"))
+	// complete-t1: tier 1, 1 AC covered → 100%, PASS
+	writeSpec(t, dir, "complete-t1.spec.yaml", minimalValidSpec("complete-t1", 1, "AC-01"))
+	// The tier-1 spec gets covered via an annotation file.
+	testDir := filepath.Join(dir, "tests")
+	if err := os.MkdirAll(testDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(testDir, "complete_test.go"),
+		[]byte("// @spec complete-t1\n// @ac AC-01\nfunc TestC(t *testing.T) {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _ := runCLI(t, dir, "coverage")
+
+	// The failing spec must appear before the complete spec in the output.
+	failingIdx := strings.Index(out, "failing-t2")
+	completeIdx := strings.Index(out, "complete-t1")
+	if failingIdx < 0 || completeIdx < 0 {
+		t.Fatalf("both specs must appear in output; got:\n%s", out)
+	}
+	if failingIdx > completeIdx {
+		t.Errorf("failing spec must sort before complete spec; complete-t1 at %d appeared before failing-t2 at %d", completeIdx, failingIdx)
+	}
+}
+
+// @spec spec-coverage
+// @ac AC-17
+// `--failing` filters the table to entries below 100% coverage. When all
+// specs are at 100%, the flag produces a single-line confirmation.
+func TestCoverage_Failing_HidesPassingEntries(t *testing.T) {
+	dir := t.TempDir()
+	// complete: 100% covered
+	writeSpec(t, dir, "complete.spec.yaml", minimalValidSpec("complete", 3, "AC-01"))
+	testDir := filepath.Join(dir, "tests")
+	if err := os.MkdirAll(testDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(testDir, "complete_test.go"),
+		[]byte("// @spec complete\n// @ac AC-01\nfunc TestC(t *testing.T) {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// failing: no annotations, 0% covered
+	writeSpec(t, dir, "failing.spec.yaml", minimalValidSpec("failing", 2, "AC-01"))
+
+	out, _ := runCLI(t, dir, "coverage", "--failing")
+
+	// Must still print the summary header (reflects full report).
+	if !strings.Contains(out, "Spec Coverage Report") {
+		t.Errorf("expected summary header even with --failing, got:\n%s", out)
+	}
+	// Must include the failing spec in the table.
+	if !strings.Contains(out, "failing") {
+		t.Errorf("expected failing spec in --failing output, got:\n%s", out)
+	}
+	// Must NOT include the complete spec's table row.
+	// Check as a word boundary — the spec ID "complete" MUST not show up
+	// as a table row entry (it can still appear inside the summary line).
+	lines := strings.Split(out, "\n")
+	for _, ln := range lines {
+		if strings.HasPrefix(strings.TrimSpace(ln), "complete ") {
+			t.Errorf("--failing MUST hide 100%%-covered specs, but found row: %s", ln)
+		}
+	}
+}
+
+// @spec spec-coverage
+// @ac AC-17
+// When every spec is 100% covered, `--failing` emits a single-line
+// confirmation instead of an empty table.
+func TestCoverage_Failing_AllPassing_SingleLine(t *testing.T) {
+	dir := t.TempDir()
+	writeSpec(t, dir, "a.spec.yaml", minimalValidSpec("a", 3, "AC-01"))
+	writeSpec(t, dir, "b.spec.yaml", minimalValidSpec("b", 3, "AC-01"))
+	testDir := filepath.Join(dir, "tests")
+	if err := os.MkdirAll(testDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(testDir, "t_test.go"), []byte(
+		"// @spec a\n// @ac AC-01\nfunc TestA(t *testing.T) {}\n"+
+			"// @spec b\n// @ac AC-01\nfunc TestB(t *testing.T) {}\n"),
+		0644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _ := runCLI(t, dir, "coverage", "--failing")
+	if !strings.Contains(out, "All 2 specs at 100% coverage.") {
+		t.Errorf("expected single-line confirmation, got:\n%s", out)
+	}
+}
+
+// @spec spec-coverage
+// @ac AC-18
+// Spec IDs longer than 40 chars are truncated in the default table output.
+// JSON output is unaffected.
+func TestCoverage_Table_TruncatesLongSpecIDs(t *testing.T) {
+	dir := t.TempDir()
+	// 50-char spec ID.
+	longID := "app-api-admin-appointments-id-service-override-xxx" // 50 chars
+	if len(longID) != 50 {
+		t.Fatalf("test setup: expected 50-char ID, got %d chars: %q", len(longID), longID)
+	}
+	writeSpec(t, dir, "long.spec.yaml", minimalValidSpec(longID, 2, "AC-01"))
+
+	// Table output MUST contain a truncated form, with an ellipsis.
+	tableOut, _ := runCLI(t, dir, "coverage")
+	if !strings.Contains(tableOut, "…") {
+		t.Errorf("expected ellipsis in truncated output; got:\n%s", tableOut)
+	}
+	if strings.Contains(tableOut, longID) {
+		t.Errorf("table output must NOT contain the full 50-char spec ID (should be truncated); got:\n%s", tableOut)
+	}
+
+	// JSON output MUST contain the full ID unchanged.
+	jsonOut, _ := runCLI(t, dir, "coverage", "--json")
+	if !strings.Contains(jsonOut, longID) {
+		t.Errorf("--json output must contain full spec ID, got:\n%s", jsonOut)
 	}
 }

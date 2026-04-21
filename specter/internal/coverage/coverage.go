@@ -506,3 +506,128 @@ func updateMultilineStringState(line string, inBacktick, inTripleDouble, inTripl
 	}
 	return inBacktick, inTripleDouble, inTripleSingle
 }
+
+// ---------------------------------------------------------------------------
+// v1.8.0 — table output UX helpers
+// ---------------------------------------------------------------------------
+
+// specCoverageBucket groups an entry for display-sort. 0 = failing below
+// threshold, 1 = partial (below 100% but above threshold, "PASS" status),
+// 2 = fully covered at 100%. Sort order is bucket asc, tier desc.
+func specCoverageBucket(e SpecCoverageEntry) int {
+	if e.CoveragePct >= 100 {
+		return 2
+	}
+	if !e.PassesThreshold {
+		return 0
+	}
+	return 1
+}
+
+// SortCoverageEntriesForDisplay returns a copy of entries sorted worst-first
+// for human-readable table rendering: failing → partial → 100%, with tier
+// descending within each bucket so T1 (highest risk) surfaces above T3.
+// Implements C-15. Pure: the input slice is not mutated.
+func SortCoverageEntriesForDisplay(entries []SpecCoverageEntry) []SpecCoverageEntry {
+	out := make([]SpecCoverageEntry, len(entries))
+	copy(out, entries)
+	// Simple selection-style stable sort for determinism; O(n²) is fine at
+	// the scales Specter targets (thousands of specs is already large, and
+	// the sort runs once per `specter coverage`).
+	for i := 1; i < len(out); i++ {
+		for j := i; j > 0; j-- {
+			bi, bj := specCoverageBucket(out[j]), specCoverageBucket(out[j-1])
+			if bi < bj {
+				out[j-1], out[j] = out[j], out[j-1]
+				continue
+			}
+			if bi == bj && out[j].Tier < out[j-1].Tier {
+				out[j-1], out[j] = out[j], out[j-1]
+				continue
+			}
+			break
+		}
+	}
+	return out
+}
+
+// BuildSummaryHeader produces the multi-line header block rendered above the
+// coverage table. Implements C-16. Pure.
+//
+//	Spec Coverage Report — N specs · P% avg coverage
+//	  Tier K: X/Y passing (Z%)
+//	  ...
+//
+// Tiers with zero specs are omitted. Avg coverage is the arithmetic mean of
+// per-spec CoveragePct values (not weighted by AC count — matches what the
+// old footer was effectively reporting).
+func BuildSummaryHeader(report *CoverageReport) string {
+	entries := report.Entries
+	if len(entries) == 0 {
+		return "Spec Coverage Report — 0 specs"
+	}
+	var totalPct float64
+	byTier := map[int]*struct{ total, passing int }{}
+	for _, e := range entries {
+		totalPct += e.CoveragePct
+		t := byTier[e.Tier]
+		if t == nil {
+			t = &struct{ total, passing int }{}
+			byTier[e.Tier] = t
+		}
+		t.total++
+		if e.PassesThreshold {
+			t.passing++
+		}
+	}
+	avg := totalPct / float64(len(entries))
+	var b strings.Builder
+	fmt.Fprintf(&b, "Spec Coverage Report — %d specs · %.0f%% avg coverage\n", len(entries), avg)
+	for tier := 1; tier <= 3; tier++ {
+		t := byTier[tier]
+		if t == nil {
+			continue
+		}
+		pct := 0
+		if t.total > 0 {
+			pct = int(float64(t.passing) / float64(t.total) * 100)
+		}
+		fmt.Fprintf(&b, "  Tier %d: %d/%d passing (%d%%)\n", tier, t.passing, t.total, pct)
+	}
+	return b.String()
+}
+
+// FilterFailing returns the subset of entries below 100% coverage — whether
+// below threshold ("FAIL") or partial but above threshold ("PASS"). Implements
+// the selection half of C-17. Pure.
+func FilterFailing(entries []SpecCoverageEntry) []SpecCoverageEntry {
+	out := make([]SpecCoverageEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.CoveragePct < 100 {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// maxSpecIDDisplayLen is the cap enforced by the default table. Spec IDs
+// longer than this are truncated to maxLen-1 characters plus an ellipsis so
+// subsequent columns stay aligned. Implements C-18.
+const maxSpecIDDisplayLen = 40
+
+// TruncateSpecID trims a spec ID to maxLen characters, replacing the trailing
+// character with `…` when truncation was needed. Pure.
+func TruncateSpecID(id string, maxLen int) string {
+	if maxLen < 2 {
+		return id
+	}
+	if len(id) <= maxLen {
+		return id
+	}
+	return id[:maxLen-1] + "…"
+}
+
+// DisplaySpecID is the default-cap convenience wrapper.
+func DisplaySpecID(id string) string {
+	return TruncateSpecID(id, maxSpecIDDisplayLen)
+}

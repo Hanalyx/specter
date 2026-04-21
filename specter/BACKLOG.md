@@ -97,14 +97,54 @@ Spec bumps: `spec-coverage` 1.4.0→1.6.0, `spec-doctor` 1.0.0→1.1.0, `spec-ma
 
 ---
 
-## v0.10 — Migration tooling (candidate)
+## v0.10 — Migration tooling + CI-gated coverage quality (candidate)
 
-The v0.9.0 work made schema drift *visible* via intelligent diagnosis. v0.10 should make it *fixable* without hand-editing:
+The v0.9.0 work made schema drift *visible* via intelligent diagnosis. v0.10 should make it *fixable* without hand-editing, and make the coverage gate resistant to two failure modes currently silent: skipped tests counting as covered, and failing-but-annotated tests counting as covered.
+
+### Migration tooling
 
 - **`specter migrate` command.** Given specs from an older schema version, apply known-safe rewrites: strip removed fields (`trust_level`), rename renamed fields, update enum values, move root-level blocks under `spec:` (jwtms pattern). Dry-run by default; `--apply` writes changes. Seed with the v0.6.5 `trust_level` removal, the v0.7.0 field renames, and the jwtms v1 shape. See `research/JWTMS_SPECTER_REASSESSMENT_V0.9.md` for the driving design case.
 - **VS Code quick-fix for removed fields.** Lightbulb action on a parse error like `Unknown field 'trust_level'` → "Remove deprecated field." Applies to the one file; `Fix all in workspace` batches across every failing spec. Pairs with `specter migrate` for the CLI path.
 - **Schema-version metadata.** Record the schema version in each spec (`spec.schema_version`) so `specter migrate` can target known old versions instead of inferring from failure patterns. Optional field with sensible default.
 - **`specter show <spec-id>`** — human-readable spec card assembled from existing coverage JSON. Shows tier, coverage %, test files covering each AC, uncovered ACs with descriptions. Closes the "where do I look to verify this spec?" gap for test files without waiting on source-annotation scanning. No new data collection — pure presentation over `specter coverage --json`. Small scope, ~2-3h.
+
+### CI-gated coverage quality (test-results ingestion)
+
+Today, `specter coverage` counts an AC as "covered" if any test file has a `// @ac AC-NN` annotation for it. This silently mis-reports in three shapes:
+- A test with `it.skip(...)` + the annotation reads as "covered" — skipped tests claim coverage.
+- A test that now fails but still has the annotation reads as "covered" — regressions slip through the gate.
+- A flaky test that's intermittently failing reads as "covered on runs where it passed, uncovered on runs where it failed" — noise in the gate.
+
+v0.4 shipped pass-rate-aware coverage for Tier 1 via a `.specter-results.json` file — but writing that file is manual, so adoption is near-zero. v0.10 makes CI-gated coverage quality a first-class, runner-agnostic feature.
+
+**Design — two-stage ingest:**
+
+- **`specter ingest` (new command).** Consumes CI-native test output formats and writes `.specter-results.json`. Initial flavors: JUnit XML (vitest / jest / pytest / playwright), `go test -json`. Fast-follow: TAP.
+  - `specter ingest --junit 'test-results/*.xml' --output .specter-results.json`
+  - `specter ingest --go-test test-output.json --output .specter-results.json`
+  - Keeps JUnit parsing out of `specter coverage`'s hot path — coverage stays fast and deterministic.
+- **Extended `.specter-results.json` schema.** Status enum: `passed | failed | skipped | errored | flaky`. Reserves space for flake handling without retrofitting.
+- **`specter coverage --strict` (new flag).** Treats any non-`passed` annotated AC as uncovered, regardless of tier. `--strict` with no results file is a hard fail ("no test results found, can't verify coverage"). Non-strict coverage keeps today's behavior: annotation-only for Tier 2/3, pass-rate-aware for Tier 1 when results exist.
+
+**CI wiring — downstream job consumes test artifacts:**
+
+```yaml
+specter-coverage:
+  needs: [test, integration-test, specter]
+  steps:
+    - uses: actions/download-artifact@v4
+      with: { pattern: test-results-*, merge-multiple: true, path: test-results/ }
+    - run: specter ingest --junit 'test-results/*.xml' --output .specter-results.json
+    - run: specter coverage --results .specter-results.json --strict
+```
+
+Blocks on test completion (~30s cost for jwtms's 250s integration suite). Unit + integration jobs emit JUnit via `--reporter=junit`; Specter reads the merged artifact.
+
+**Open design question — flakes.** The proposal to "add `--retry 2` on test jobs" is a workaround that hides legitimate regressions. Better answer (deferred to v0.11): test runners distinguish flakes from deterministic failures in the results file; `--strict` tolerates `flaky`, `--deny-flaky` fails hard on them. Ship v0.10 with only `passed/failed/skipped/errored`; revisit flake handling when real patterns surface from v0.10 usage.
+
+**Design discussion**: see the thread in session notes (2026-04-20) — the three design tradeoffs (two-stage vs one-stage ingest, JUnit flavor handling, missing-results behavior under `--strict`) are resolved in the bullets above. Flake handling deferred.
+
+**Scope**: ~2 days for the `specter ingest` command with JUnit + go test flavors, `--strict` semantics on coverage, extended results-file schema. Spec bumps: new `spec-ingest`, `spec-coverage` 1.8.0 → 1.9.0.
 
 ---
 

@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "1.5.0"
+  version: "1.6.0"
   status: draft
   tier: 2
 
@@ -127,6 +127,31 @@ spec:
     - id: C-16
       description: "ScaffoldManifest MUST always emit a `domains:` section. When the caller provides at least one spec ID, a default domain carries those IDs. When the caller provides zero spec IDs, the scaffolder MUST emit an empty default-domain placeholder with a description explaining the shape — either `Add spec IDs here` (greenfield) or `N spec files were discovered but could not be parsed` (drift). Rationale: a manifest with no `domains:` silently excludes every subsequent spec from sync, so the operator's first `specter sync` looks green while ignoring their work."
       type: business
+      enforcement: error
+
+    - id: C-17
+      description: "`specter init --refresh` MUST update only `domains.default.specs` in an existing `specter.yaml`, leaving every other manifest field untouched: `system`, `settings`, `registry`, `settings.tier_overrides`, and any custom domains the operator declared (anything under `domains.*` that isn't `default`). Rationale: after adding new specs, the operator needs a deterministic, non-destructive way to refresh the manifest; `--force` rewrites everything, losing manual configuration."
+      type: business
+      enforcement: error
+
+    - id: C-18
+      description: "`specter init --refresh` MUST rescan `settings.specs_dir` (or the default `specs/`) for parseable spec files, collect their IDs, and replace `domains.default.specs` with the resulting set. Specs that previously appeared in `domains.default.specs` but no longer exist on disk (or fail to parse) MUST be removed from the list. The command MUST print a summary line of the form `updated specter.yaml: +A added, -B removed` where A and B are counts. Parse-failing specs are skipped with the v0.9.0 pattern-analysis warning."
+      type: technical
+      enforcement: error
+
+    - id: C-19
+      description: "`specter init --refresh` MUST NOT touch custom domains. If `domains.auth.specs` contains spec IDs, --refresh leaves the `auth` domain entirely alone. Specs that are discovered on disk but already claimed by a non-default domain MUST NOT be added to `domains.default.specs`. Rationale: a spec can only belong to one domain; refresh is about the 'catch-all' default domain, not about redistribution."
+      type: business
+      enforcement: error
+
+    - id: C-20
+      description: "`specter init --refresh --dry-run` MUST print the proposed diff (which specs would be added, which removed from `domains.default.specs`) to stdout and exit 0 WITHOUT writing any file changes to disk. The manifest on disk is unchanged after the command exits. Rationale: lets operators review before committing; matches `git add -p` / `terraform plan` discipline."
+      type: business
+      enforcement: error
+
+    - id: C-21
+      description: "`--refresh` and `--force` MUST be mutually exclusive. `specter init --refresh --force` MUST exit non-zero with a clear error message naming the conflict. Rationale: `--force` rewrites everything (operator accepts loss); `--refresh` preserves everything except `domains.default.specs` (operator wants a surgical update). Combining them is incoherent and almost always a mistake."
+      type: technical
       enforcement: error
 
   acceptance_criteria:
@@ -343,6 +368,52 @@ spec:
       references_constraints: ["C-16"]
       priority: high
 
+    - id: AC-23
+      description: "Running `specter init --refresh` on a workspace with an existing `specter.yaml` that has `domains.default.specs: [\"spec-a\"]`, `settings.strict: true`, and a custom `domains.auth.specs: [\"spec-b\"]` — after adding spec-c to specs/ on disk — produces: `domains.default.specs: [\"spec-a\", \"spec-c\"]`, unchanged `settings.strict`, unchanged `domains.auth`. A pure helper RefreshManifestDomains(existing, discoveredIDs) returns the updated Manifest deterministically."
+      inputs:
+        existing: "domains.default.specs=[spec-a], domains.auth.specs=[spec-b], settings.strict=true"
+        discovered: "[spec-a, spec-b, spec-c]"
+      expected_output:
+        default_specs: ["spec-a", "spec-c"]
+        auth_specs: ["spec-b"]
+        strict_preserved: true
+      references_constraints: ["C-17", "C-18", "C-19"]
+      priority: critical
+
+    - id: AC-24
+      description: "`specter init --refresh` on a manifest with `domains.default.specs: [\"spec-a\", \"spec-b\"]` when `spec-b` has been deleted from the workspace (no matching .spec.yaml on disk) produces `domains.default.specs: [\"spec-a\"]` and prints a summary line containing `-1 removed`. Dry-run variant produces the same output but the file on disk is unchanged."
+      inputs:
+        existing: "domains.default.specs=[spec-a, spec-b]"
+        discovered: "[spec-a]"
+      expected_output:
+        default_specs: ["spec-a"]
+        summary_contains: "-1 removed"
+      references_constraints: ["C-18"]
+      priority: high
+
+    - id: AC-25
+      description: "`specter init --refresh --dry-run` run on a workspace where a spec was added prints a diff to stdout indicating the proposed change (e.g. `+ spec-c`) but writes nothing. The file on disk (verified by reading + comparing to the pre-command contents) is byte-identical before and after."
+      inputs:
+        command: "specter init --refresh --dry-run"
+        workspace_state: "existing manifest + one new spec on disk"
+      expected_output:
+        stdout_contains_diff: true
+        file_unchanged_on_disk: true
+        exit_code: 0
+      references_constraints: ["C-20"]
+      priority: high
+
+    - id: AC-26
+      description: "`specter init --refresh --force` exits non-zero with a message naming the flag conflict: `--refresh and --force are mutually exclusive`. No file write occurs."
+      inputs:
+        command: "specter init --refresh --force"
+      expected_output:
+        exit_code: "non-zero"
+        stderr_contains: "mutually exclusive"
+        file_unchanged_on_disk: true
+      references_constraints: ["C-21"]
+      priority: medium
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -352,6 +423,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.6.0"
+      date: "2026-04-20"
+      author: "specter-team"
+      type: minor
+      description: "Add C-17 through C-21 and AC-23 through AC-26 for `specter init --refresh`. Non-destructive manifest update: rescans specs_dir, refreshes only domains.default.specs, preserves every other field including custom domains, settings, and tier overrides. `--dry-run` prints the proposed diff without writing. `--refresh` and `--force` are mutually exclusive. Driven by jwtms migration testing where operators needed to update domains after adding specs but couldn't without losing manual config."
     - version: "1.5.0"
       date: "2026-04-19"
       author: "specter-team"
