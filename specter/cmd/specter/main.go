@@ -26,6 +26,7 @@ import (
 	specsync "github.com/Hanalyx/specter/internal/sync"
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 var version = "dev"
@@ -633,6 +634,7 @@ func checkCmd() *cobra.Command {
 func coverageCmd() *cobra.Command {
 	var jsonOutput bool
 	var testsGlob string
+	var failingOnly bool
 	cmd := &cobra.Command{
 		Use:   "coverage",
 		Short: "Generate spec-to-test traceability matrix",
@@ -693,12 +695,30 @@ func coverageCmd() *cobra.Command {
 				return errSilent
 			}
 
-			fmt.Println("Spec Coverage Report")
+			// C-16: summary header ABOVE the table, reflects the full
+			// report even when --failing filters the rendered rows.
+			fmt.Print(coverage.BuildSummaryHeader(report))
 			fmt.Println()
-			fmt.Printf("%-24s %-6s %-8s %-9s %-10s %s\n", "Spec ID", "Tier", "ACs", "Covered", "Coverage", "Status")
-			fmt.Println(strings.Repeat("-", 65))
 
-			for _, e := range report.Entries {
+			// C-15 / C-17: sort worst-first; optionally filter to sub-100%.
+			displayEntries := coverage.SortCoverageEntriesForDisplay(report.Entries)
+			if failingOnly {
+				displayEntries = coverage.FilterFailing(displayEntries)
+				if len(displayEntries) == 0 {
+					fmt.Printf("All %d specs at 100%% coverage.\n", len(report.Entries))
+					// Exit code still respects threshold pass/fail —
+					// --failing is a display filter, not a status change.
+					if report.Summary.Failing > 0 {
+						return errSilent
+					}
+					return nil
+				}
+			}
+
+			fmt.Printf("%-41s %-6s %-8s %-9s %-10s %s\n", "Spec ID", "Tier", "ACs", "Covered", "Coverage", "Status")
+			fmt.Println(strings.Repeat("-", 82))
+
+			for _, e := range displayEntries {
 				status := "PASS"
 				if !e.PassesThreshold {
 					if e.CoveragePct == 0 {
@@ -707,8 +727,9 @@ func coverageCmd() *cobra.Command {
 						status = "FAIL"
 					}
 				}
-				fmt.Printf("%-24s T%-5d %-8d %-9d %-10s %s\n",
-					e.SpecID, e.Tier, e.TotalACs, len(e.CoveredACs),
+				// C-18: truncate long spec IDs so the column stays aligned.
+				fmt.Printf("%-41s T%-5d %-8d %-9d %-10s %s\n",
+					coverage.DisplaySpecID(e.SpecID), e.Tier, e.TotalACs, len(e.CoveredACs),
 					fmt.Sprintf("%.0f%%", e.CoveragePct), status)
 
 				if len(e.UncoveredACs) > 0 {
@@ -740,6 +761,7 @@ func coverageCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
 	cmd.Flags().StringVar(&testsGlob, "tests", "", "Glob pattern for test files")
+	cmd.Flags().BoolVar(&failingOnly, "failing", false, "Show only specs below 100% coverage in the table (summary header still reflects the full report)")
 	return cmd
 }
 
@@ -1120,16 +1142,29 @@ func initCmd() *cobra.Command {
 		name     string
 		force    bool
 		template string
+		refresh  bool
+		dryRun   bool
 	)
 
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize a specter.yaml project manifest",
-		Long:  "Scaffold a specter.yaml file from existing .spec.yaml files in the current directory. Groups all specs into a default domain with sensible settings.\n\nWith --template, creates a draft .spec.yaml file instead of specter.yaml.",
+		Long:  "Scaffold a specter.yaml file from existing .spec.yaml files in the current directory. Groups all specs into a default domain with sensible settings.\n\nWith --template, creates a draft .spec.yaml file instead of specter.yaml.\n\nWith --refresh, updates only domains.default.specs in an existing manifest; preserves every other field.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// --template: create a spec file, not specter.yaml
 			if template != "" {
 				return runInitTemplate(template, force)
+			}
+
+			// C-21: --refresh and --force are mutually exclusive.
+			if refresh && force {
+				fmt.Fprintln(os.Stderr, "error: --refresh and --force are mutually exclusive. --force rewrites the entire manifest; --refresh updates only domains.default.specs.")
+				return errSilent
+			}
+
+			// C-17/C-18: --refresh updates an existing manifest in place.
+			if refresh {
+				return runInitRefresh(dryRun)
 			}
 
 			if _, err := os.Stat("specter.yaml"); err == nil && !force {
@@ -1209,8 +1244,107 @@ func initCmd() *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "System name (defaults to directory name)")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing specter.yaml")
 	cmd.Flags().StringVar(&template, "template", "", "Create a spec file from a template (api-endpoint, service, auth, data-model)")
+	cmd.Flags().BoolVar(&refresh, "refresh", false, "Update domains.default.specs in an existing specter.yaml from the current on-disk spec list; preserves all other fields")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "With --refresh, print the proposed change to stdout without writing the file")
 
 	return cmd
+}
+
+// runInitRefresh implements `specter init --refresh` (C-17 through C-21).
+// Reads the existing specter.yaml, rescans the specs directory for
+// parseable spec IDs, and updates only domains.default.specs. Every other
+// manifest field is preserved. In dry-run mode, prints the proposed diff
+// and exits without writing.
+func runInitRefresh(dryRun bool) error {
+	data, err := os.ReadFile("specter.yaml")
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Fprintln(os.Stderr, "error: specter.yaml not found. Use `specter init` (without --refresh) to create one.")
+			return errSilent
+		}
+		fmt.Fprintf(os.Stderr, "error reading specter.yaml: %v\n", err)
+		return errSilent
+	}
+	existing, err := manifest.ParseManifest(string(data))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: specter.yaml failed to parse: %v\n", err)
+		return errSilent
+	}
+
+	// Rescan specs directory for parseable IDs. Same discovery + parse
+	// flow as greenfield `specter init`.
+	specFiles := discoverSpecs()
+	var specIDs []string
+	var parseErrors []coverage.ParseErrorEntry
+	for _, file := range specFiles {
+		fdata, rerr := os.ReadFile(file)
+		if rerr != nil {
+			parseErrors = append(parseErrors, coverage.ParseErrorEntry{File: file, Type: "io", Message: rerr.Error()})
+			continue
+		}
+		result := parser.ParseSpec(string(fdata))
+		if result.OK {
+			specIDs = append(specIDs, result.Value.ID)
+		} else {
+			for _, pe := range result.Errors {
+				parseErrors = append(parseErrors, coverage.ParseErrorEntry{
+					File: file, Path: pe.Path, Type: pe.Type, Message: pe.Message, Line: pe.Line, Column: pe.Column,
+				})
+			}
+		}
+	}
+
+	updated, diff := manifest.RefreshManifestDomains(existing, specIDs)
+
+	if dryRun {
+		fmt.Println("Dry run — no changes will be written.")
+		fmt.Println()
+		if len(diff.Added) == 0 && len(diff.Removed) == 0 {
+			fmt.Println("No changes needed: domains.default.specs already reflects the on-disk spec set.")
+			return nil
+		}
+		fmt.Println("Proposed changes to domains.default.specs:")
+		for _, id := range diff.Added {
+			fmt.Printf("  + %s\n", id)
+		}
+		for _, id := range diff.Removed {
+			fmt.Printf("  - %s\n", id)
+		}
+		fmt.Println()
+		fmt.Println("Run `specter init --refresh` (without --dry-run) to apply.")
+		return nil
+	}
+
+	// Serialize and write.
+	out, err := yaml.Marshal(updated)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error marshaling updated manifest: %v\n", err)
+		return errSilent
+	}
+	var sb strings.Builder
+	sb.WriteString("# Specter Project Manifest\n")
+	sb.WriteString("# See: https://github.com/Hanalyx/specter\n\n")
+	sb.Write(out)
+	if werr := os.WriteFile("specter.yaml", []byte(sb.String()), 0644); werr != nil {
+		fmt.Fprintf(os.Stderr, "error writing specter.yaml: %v\n", werr)
+		return errSilent
+	}
+
+	fmt.Printf("updated specter.yaml: +%d added, -%d removed\n", len(diff.Added), len(diff.Removed))
+	if len(parseErrors) > 0 {
+		fmt.Println()
+		fmt.Printf("Warning: %d spec file(s) were discovered but could not be parsed:\n", len(parseErrors))
+		patterns := coverage.SummarizeParseErrors(parseErrors)
+		for _, p := range patterns {
+			pathPart := ""
+			if p.Path != "" {
+				pathPart = fmt.Sprintf(" at %q", p.Path)
+			}
+			fmt.Printf("  [%s]%s — %d occurrence(s)\n", p.Type, pathPart, p.Count)
+		}
+		fmt.Println("Run `specter doctor` for a full report.")
+	}
+	return nil
 }
 
 // runInitTemplate creates a draft .spec.yaml from a named template.
