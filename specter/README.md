@@ -308,20 +308,26 @@ Every package in `internal/` is a pure function — no I/O, no CLI dependencies.
 
 ## Dogfooding
 
-Specter validates its own specs. The tool has 5 specs covering its own pipeline, 33 acceptance criteria, and 37 annotated tests. Every feature was specified before it was implemented.
+Specter validates its own specs. The tool has 14 specs covering its own pipeline and extension, 192 acceptance criteria, and a large annotated test suite. Every feature was specified before it was implemented.
 
 ```
 $ specter coverage
 
-Spec ID          Tier  ACs  Covered  Coverage  Status
-─────────────────────────────────────────────────────
-spec-check       T1    6    6        100%      PASS
-spec-coverage    T2    5    5        100%      PASS
-spec-parse       T1    10   10       100%      PASS
-spec-resolve     T1    7    7        100%      PASS
-spec-sync        T2    5    5        100%      PASS
+Spec Coverage Report — 14 specs · 100% avg coverage
+  Tier 1: 3/3 passing (100%)
+  Tier 2: 9/9 passing (100%)
+  Tier 3: 2/2 passing (100%)
 
-5 specs: 5 passing, 0 failing
+Spec ID                                   Tier   ACs      Covered   Coverage   Status
+----------------------------------------------------------------------------------
+spec-check                                T1     8        8         100%       PASS
+spec-parse                                T1     13       13        100%       PASS
+spec-resolve                              T1     9        9         100%       PASS
+spec-coverage                             T2     18       18        100%       PASS
+spec-diff                                 T2     10       10        100%       PASS
+...
+
+14 specs: 14 passing, 0 failing
 ```
 
 ---

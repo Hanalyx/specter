@@ -172,7 +172,7 @@ Generate a spec-to-test traceability matrix. Scans test files for `@spec` and `@
 **Synopsis:**
 
 ```
-specter coverage [--json] [--tests <glob>]
+specter coverage [--json] [--failing] [--tests <glob>]
 ```
 
 **Options:**
@@ -180,6 +180,7 @@ specter coverage [--json] [--tests <glob>]
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--json` | — | Output the coverage report as JSON. |
+| `--failing` | — | Show only specs below 100% coverage in the table. Summary header still reflects the full report. When all specs are at 100%, emits a single-line confirmation instead of an empty table. Added in v0.9.2. |
 | `--tests <glob>` | auto-discover | Glob pattern for test files. Default discovers `*.test.ts`, `*.test.js`, `*.test.py`, `*_test.go`, `*_test.py`. |
 
 **Annotation format:**
@@ -211,20 +212,58 @@ func TestValidRegistration(t *testing.T) { ... }
 | 2 (Core Business Logic) | 80% |
 | 3 (Utility / Internal) | 50% |
 
-**Example (table output):**
+**Example (table output, v0.9.2+):**
 
 ```
 $ specter coverage
 
-Spec Coverage Report
+Spec Coverage Report — 2 specs · 83% avg coverage
+  Tier 1: 0/1 passing (0%)
+  Tier 2: 1/1 passing (100%)
 
-Spec ID                  Tier   ACs      Covered   Coverage   Status
------------------------------------------------------------------
-spec-auth                T1     6        4         67%        FAIL
-spec-payments            T2     5        5         100%       PASS
+Spec ID                                   Tier   ACs      Covered   Coverage   Status
+----------------------------------------------------------------------------------
+spec-auth                                 T1     6        4         67%        FAIL
+  uncovered: AC-01, AC-03
+spec-payments                             T2     5        5         100%       PASS
+
+2 specs: 1 passing, 1 failing
+```
+
+**Table output shape (since v0.9.2):**
+
+- A **summary header** precedes the table: total-specs count, arithmetic-mean coverage, and per-tier breakdown (`Tier K: X/Y passing (Z%)`). Tiers with zero specs in the workspace are omitted.
+- Entries are **sorted worst-first**: failing (below threshold) → partial (below 100% but passing threshold) → 100% covered. Within each bucket, tier descending (T1 before T2 before T3) so higher-risk specs surface first.
+- Spec IDs longer than 40 characters are **truncated** in the table with a trailing ellipsis (`…`). This keeps column alignment on workspaces with long path-derived IDs. The `--json` output is unaffected — it emits the full spec_id.
+
+**Example (`--failing`, v0.9.2+):**
+
+```
+$ specter coverage --failing
+
+Spec Coverage Report — 2 specs · 83% avg coverage
+  Tier 1: 0/1 passing (0%)
+  Tier 2: 1/1 passing (100%)
+
+Spec ID                                   Tier   ACs      Covered   Coverage   Status
+----------------------------------------------------------------------------------
+spec-auth                                 T1     6        4         67%        FAIL
   uncovered: AC-01, AC-03
 
 2 specs: 1 passing, 1 failing
+```
+
+When every spec is at 100%, `--failing` emits a single-line confirmation in place of the empty table:
+
+```
+$ specter coverage --failing
+
+Spec Coverage Report — 14 specs · 100% avg coverage
+  Tier 1: 3/3 passing (100%)
+  Tier 2: 9/9 passing (100%)
+  Tier 3: 2/2 passing (100%)
+
+All 14 specs at 100% coverage.
 ```
 
 **Example (`--json`):**
@@ -427,6 +466,7 @@ Initialize a `specter.yaml` project manifest, or scaffold a draft `.spec.yaml` f
 
 ```
 specter init [--name <name>] [--force] [--template <type>]
+specter init --refresh [--dry-run]
 ```
 
 **Options:**
@@ -434,8 +474,10 @@ specter init [--name <name>] [--force] [--template <type>]
 | Option | Description |
 |--------|-------------|
 | `--name <name>` | System name for the manifest. Defaults to the current directory name. |
-| `--force` | Overwrite an existing `specter.yaml`. |
+| `--force` | Overwrite an existing `specter.yaml`. Mutually exclusive with `--refresh`. |
 | `--template <type>` | Create a draft `.spec.yaml` from a template instead of a manifest. Types: `api-endpoint`, `service`, `auth`, `data-model`. |
+| `--refresh` | Update only `domains.default.specs` in an existing `specter.yaml`. Preserves every other field — `settings`, `registry`, tier overrides, custom domains. Added in v0.9.2. |
+| `--dry-run` | Used with `--refresh`: print the proposed diff to stdout without writing the file. Added in v0.9.2. |
 
 **Behaviour (v0.9.0+):**
 
@@ -478,6 +520,38 @@ The manifest was still written with an empty default domain as a
 placeholder. Add your spec IDs under `domains.default.specs` once
 the parse errors are resolved.
 ```
+
+**Refresh mode (v0.9.2+):**
+
+`specter init --refresh` is the non-destructive counterpart to `--force`. It reads the existing `specter.yaml`, rescans `settings.specs_dir` (or default `specs/`), and updates **only** `domains.default.specs` with the current on-disk spec set. Every other field is preserved — `settings`, `registry`, system metadata, and any custom domains declared under `domains.<name>` (anything that isn't `default`).
+
+Specs claimed by a custom domain (listed under a non-default `domains.<name>.specs`) stay in that domain and are **not** migrated into `default`. A spec belongs to exactly one domain.
+
+Specs that were previously listed in `domains.default.specs` but are no longer discoverable on disk (deleted, renamed, or now failing to parse) are removed from the list. The summary line reports the change counts.
+
+**Example (`--refresh`):**
+
+```
+$ specter init --refresh
+updated specter.yaml: +1 added, -0 removed
+```
+
+**Example (`--refresh --dry-run`):**
+
+Prints the proposed diff without writing. The file on disk is byte-identical before and after. Useful for review before committing.
+
+```
+$ specter init --refresh --dry-run
+Dry run — no changes will be written.
+
+Proposed changes to domains.default.specs:
+  + spec-payments
+  - spec-legacy-auth
+
+Run `specter init --refresh` (without --dry-run) to apply.
+```
+
+**Flag conflict:** `--refresh` and `--force` are mutually exclusive. `--force` rewrites the entire manifest; `--refresh` is surgical. Combining them exits non-zero with a clear error.
 
 **Example (template):**
 
