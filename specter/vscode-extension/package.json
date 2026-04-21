@@ -11,7 +11,18 @@
   "categories": [
     "AI",
     "Linters",
-    "Testing"
+    "Testing",
+    "Other"
+  ],
+  "keywords": [
+    "spec",
+    "sdd",
+    "spec-driven-development",
+    "specification",
+    "acceptance-criteria",
+    "traceability",
+    "coverage",
+    "yaml"
   ],
   "icon": "images/specter-icon.png",
   "repository": {
