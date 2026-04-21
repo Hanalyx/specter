@@ -2,11 +2,36 @@
 package coverage
 
 import (
+	"encoding/json"
+	"regexp"
 	"testing"
 
 	"github.com/Hanalyx/specter/internal/checker"
 	"github.com/Hanalyx/specter/internal/schema"
 )
+
+// Helpers for AC-14 JSON-shape assertions. The AC invariant is structural
+// ("a TypeScript consumer sees an array or absence, never null") so the
+// assertion is also structural — inspect the rendered JSON text rather
+// than the typed report.
+func marshalJSON(v interface{}) ([]byte, error) {
+	return json.Marshal(v)
+}
+
+func containsJSONNull(data []byte, key string) bool {
+	re := regexp.MustCompile(`"` + regexp.QuoteMeta(key) + `"\s*:\s*null`)
+	return re.Match(data)
+}
+
+func containsJSONEmptyArray(data []byte, key string) bool {
+	re := regexp.MustCompile(`"` + regexp.QuoteMeta(key) + `"\s*:\s*\[\s*\]`)
+	return re.Match(data)
+}
+
+func containsJSONKey(data []byte, key string) bool {
+	re := regexp.MustCompile(`"` + regexp.QuoteMeta(key) + `"\s*:`)
+	return re.Match(data)
+}
 
 func makeSpec(id string, tier int, acIDs ...string) schema.SpecAST {
 	var acs []schema.AcceptanceCriterion
@@ -418,5 +443,54 @@ func TestAnnotationExtraction_PythonTripleQuoteNotHijacked(t *testing.T) {
 	}
 	if has("AC-99") {
 		t.Error("AC-99 from inside triple-quoted string must not be attached to real-py")
+	}
+}
+
+// @ac AC-14
+// Coverage report emits `[]` for empty array fields without omitempty. A
+// TypeScript consumer that declares `uncoveredACs: string[]` MUST never see
+// `null` at runtime — that's a silent contract violation class.
+func TestCoverageReport_EmitsEmptyArrayNotNull(t *testing.T) {
+	// One spec, both ACs covered by one annotation. Post-build entry.UncoveredACs
+	// will be a zero-valued slice; the JSON marshal MUST emit `[]`, not `null`.
+	spec := makeSpec("all-covered", 3, "AC-01", "AC-02")
+	annotations := []AnnotationMatch{
+		{File: "test.go", SpecID: "all-covered", ACIDs: []string{"AC-01", "AC-02"}},
+	}
+	report := BuildCoverageReport([]schema.SpecAST{spec}, annotations, map[int]int{3: 50})
+
+	data, err := marshalJSON(report)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	// The JSON output MUST NOT contain `"uncovered_acs": null`.
+	if containsJSONNull(data, "uncovered_acs") {
+		t.Fatalf("uncovered_acs emitted as null; expected []. payload:\n%s", data)
+	}
+	// Positive: it MUST contain `"uncovered_acs": []`.
+	if !containsJSONEmptyArray(data, "uncovered_acs") {
+		t.Fatalf("uncovered_acs not emitted as []; payload:\n%s", data)
+	}
+}
+
+// @ac AC-14
+// Omitempty fields stay absent (not null) when empty. parse_errors and
+// parse_error_patterns are optional on the top-level CoverageReport.
+func TestCoverageReport_OmitemptyFieldsAbsentNotNull(t *testing.T) {
+	report := &CoverageReport{
+		Entries: []SpecCoverageEntry{},
+		Summary: CoverageSummary{},
+	}
+	data, err := marshalJSON(report)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	// These fields MUST be absent entirely — not emitted as `null`.
+	if containsJSONKey(data, "parse_errors") {
+		t.Errorf("parse_errors appeared in output; must be absent when nil/empty. payload:\n%s", data)
+	}
+	if containsJSONKey(data, "parse_error_patterns") {
+		t.Errorf("parse_error_patterns appeared in output; must be absent when nil/empty. payload:\n%s", data)
 	}
 }

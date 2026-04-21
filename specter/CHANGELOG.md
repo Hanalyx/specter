@@ -4,6 +4,44 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 ---
 
+## v0.9.1 — 2026-04-19
+
+**Theme: post-ship audit fixes.**
+
+Derived from `research/SPECTER_AUDIT_2026-04-19.md`. Five parallel audit agents reviewed the v0.9.0 codebase; findings were verified against live code before triage. This release ships the CRITICAL + BLOCKER + HIGH items; MEDIUM and LOW items are queued for v0.10.
+
+### Fixed (CRITICAL)
+
+- **Binary-download checksum verification is now mandatory.** Prior behavior: if `checksums.txt` was unreachable (404, timeout, MITM block), the extension silently fell back to installing the unverified binary. A MITM attacker with the ability to selectively block `checksums.txt` could deliver a tampered archive. Now: missing checksums file, missing entry for the specific archive, or hash mismatch all produce a modal error and refuse installation.
+
+### Fixed (BLOCKER)
+
+- **`specter.runReverse` is now registered.** The command was declared in `package.json` (including as the first step of the onboarding walkthrough) but had no handler in `extension.ts`. Invoking it produced "command not found." The handler opens the integrated terminal with `specter reverse` prefilled so the user can pick a source directory.
+- **`specter.openQuickStart` orphan declaration removed.** Declared in `package.json` with no handler and no user-facing invocation. Removing the declaration is the honest move until an actual QuickStart walkthrough is designed.
+- **Package.json ↔ extension.ts command parity is now CI-enforced.** A new `commands.test.ts` reads both sources and asserts set equality (minus `specter._`-prefixed internal commands, by convention). Prevents the declared-but-unregistered class that shipped three times in v0.9.0 (`specter.revealInTree`, `specter.runReverse`, `specter.openQuickStart`).
+
+### Fixed (HIGH)
+
+- **Fresh-install UX on new machines.** Extension activation now resolves the CLI binary (with auto-download, subject to `specter.autoDownload`) even when the current workspace contains no `.spec.yaml` files and no `specter.yaml`. Users who install the extension on a new machine and open a folder that isn't yet a Specter project can now invoke `specter.runReverse` and other commands without first having to manually trigger a download via the command palette.
+- **Walkthrough reachable.** The `shouldShowWalkthrough` condition (no specs, no manifest) was mutually exclusive with the `shouldActivate` early-return that preceded it (has specs or manifest). The onboarding walkthrough that fires for empty workspaces could never run. Moved the check before the early-return.
+- **`driftDecorationType` disposed on reload.** Created via `vscode.window.createTextEditorDecorationType` but never pushed to `ctx.subscriptions`; leaked across every Developer: Reload Window cycle. Now correctly disposed.
+- **On-type parse errors and drift-scan failures route to the Output channel.** Three previously-silent `catch` sites (`catch { /* ignore parse failures */ }` and two `scanForDrift(...).catch(() => {})`) now log a timestamped entry to the Specter Output channel. Same discipline applied across v0.9.0 for coverage failures; caught these stragglers in the audit.
+- **Nil slices in `CoverageReport` now marshal as `[]`, not `null`.** Go's zero-valued `[]string` previously marshalled to `null`, but TypeScript consumers declared `string[]` (non-nullable). Latent runtime-crash class for any future code trusting the type. Now consistent: fields without `omitempty` emit `[]`; fields with `omitempty` are absent.
+- **`specter.insertAnnotation` renamed to `specter._insertAnnotation`.** VS Code community convention: internal commands (invoked programmatically from CodeActions / CodeLenses, never from the palette) use the `_` prefix and are exempt from the package.json declaration requirement.
+
+### Spec bumps
+
+- `spec-vscode`: 1.2.0 → **1.3.0** — adds C-22 through C-26 (parity, disposables, activation, checksum, error surfacing) and AC-41 through AC-49.
+- `spec-coverage`: 1.6.0 → **1.7.0** — adds C-14 / AC-14 (empty array emits `[]`, never `null`).
+
+All 14 specs dogfood at 100% AC coverage. 209 TypeScript tests pass. All Go tests pass under Go 1.25.8 + golangci-lint v2.6.2.
+
+### Deferred to v0.10
+
+From the audit's MEDIUM tier: HTTPS-redirect validation in `httpsGet`, cache-directory permission hardening (`mode: 0o700`), subprocess `maxBuffer` caps, tar-slip defenses via `node-tar`, YAML-bomb anchor limits, snake/camel conversion for `check --json` and `parse --json`, TOCTOU race on cache-path `exists()` check. Full list in BACKLOG.md.
+
+---
+
 ## v0.9.0 — 2026-04-19
 
 **Theme: coherent failure-handling and intelligent diagnosis.**

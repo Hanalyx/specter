@@ -1,6 +1,6 @@
 spec:
   id: spec-vscode
-  version: "1.2.0"
+  version: "1.3.0"
   status: draft
   tier: 2
 
@@ -173,6 +173,31 @@ spec:
     - id: C-21
       description: "The Coverage tree view MUST render a visible state message when there is no coverage data to display — whether because no specter.yaml was found in the workspace, no .spec.yaml files exist, or every spec failed to parse. The panel MUST NOT remain silently empty. The message MUST name the reason (missing manifest / no specs / parse failures) and point the user at a concrete action (specter init, specter reverse, or the Problems panel). This is the same discipline applied to the CLI's 'No .spec.yaml files found' message in v0.7.1 — no dead-end output."
       type: technical
+      enforcement: error
+
+    - id: C-22
+      description: "Every command declared in package.json contributes.commands[].command MUST have a corresponding vscode.commands.registerCommand(id, handler) call in extension.ts. Parity MUST be enforced by an automated test that runs in CI. Rationale: the 'declared but unregistered' failure mode has shipped three times in seven days (specter.revealInTree, specter.runReverse, specter.openQuickStart) — a one-time test eliminates the class."
+      type: technical
+      enforcement: error
+
+    - id: C-23
+      description: "Every disposable resource returned by a VS Code factory function (createTextEditorDecorationType, createOutputChannel, createStatusBarItem, createTreeView, createDiagnosticCollection, createWebviewPanel, createFileSystemWatcher, registerCommand, registerHoverProvider, registerCompletionItemProvider, registerCodeLensProvider, registerDefinitionProvider, registerCodeActionsProvider, workspace.onDid*, window.onDid*) MUST be pushed to ctx.subscriptions so it is disposed on extension deactivation. Rationale: orphan disposables leak across Developer: Reload Window cycles and can produce subtle duplicate-event bugs."
+      type: technical
+      enforcement: error
+
+    - id: C-24
+      description: "Auto-downloaded CLI binaries MUST be installed only after SHA256 checksum verification succeeds against the checksums.txt accompanying the GitHub release. If checksums.txt is unreachable, malformed, or does not contain an entry for the exact archive being downloaded, installation MUST fail with a modal error — silent fallback to 'install without verifying' is prohibited. Rationale: the prior fallback let a MITM attacker selectively block checksums.txt while delivering a tampered archive; the extension would install it."
+      type: business
+      enforcement: error
+
+    - id: C-25
+      description: "Extension activation MUST resolve the CLI binary (including auto-download, subject to specter.autoDownload) even when the current workspace contains no .spec.yaml files and no specter.yaml. Commands like specter.runReverse are meaningful in an empty workspace — the user invokes them to bootstrap. Activation MUST also fire the onboarding walkthrough when the workspace has no specs and no manifest; the gate MUST NOT be placed behind a mutually-exclusive activation check."
+      type: technical
+      enforcement: error
+
+    - id: C-26
+      description: "Async and synchronous error paths in editor hooks (onDidChangeTextDocument, onDidSaveTextDocument, onDidChangeActiveTextEditor, hover/completion/codeLens providers, drift scanner) MUST route caught errors to the Specter Output channel with a timestamp and context string, NOT silently discard them. `catch {}`, `catch (_) {}`, and `.catch(() => {})` on promise chains that can hide real failures are prohibited."
+      type: business
       enforcement: error
 
   acceptance_criteria:
@@ -382,6 +407,75 @@ spec:
       references_constraints: ["C-10"]
       priority: high
 
+    - id: AC-41
+      description: "An automated test reads vscode-extension/package.json, extracts every `contributes.commands[].command` identifier, extracts every id passed to `vscode.commands.registerCommand(id, ...)` in vscode-extension/src/extension.ts (and any file it imports from), and asserts set equality. Missing registrations fail the build. The test runs in CI (jest or equivalent) so the gap cannot ship. Prevents the 'declared but unregistered' class demonstrated by specter.revealInTree (v0.9.0), specter.runReverse (v0.9.1), and specter.openQuickStart (v0.9.1)."
+      references_constraints: ["C-22"]
+      priority: critical
+
+    - id: AC-42
+      description: "`driftDecorationType` (created via vscode.window.createTextEditorDecorationType at extension activation) is pushed to ctx.subscriptions immediately after creation, so it is disposed on extension deactivation. An automated test verifies this by running activation against a stub ExtensionContext and asserting the decoration type appears in subscriptions. The same test pattern extends to every disposable covered by C-23."
+      references_constraints: ["C-23"]
+      priority: high
+
+    - id: AC-43
+      description: "`specter.runReverse` is registered via vscode.commands.registerCommand. The handler opens the integrated terminal with `specter reverse` prefilled, or runs the CLI directly and streams output to the Specter Output channel. Invoking the command from the command palette or from a walkthrough link (command:specter.runReverse) does not produce 'command not found'."
+      inputs:
+        invocation: "vscode.commands.executeCommand('specter.runReverse')"
+      expected_output:
+        registered: true
+        raises_not_found: false
+      references_constraints: ["C-22"]
+      priority: critical
+
+    - id: AC-44
+      description: "`specter.openQuickStart` is either implemented as a registered command (opens a QuickStart walkthrough/webview) OR its declaration is removed from package.json contributes.commands. An orphan declaration is prohibited. Verified by the same parity test as AC-41."
+      references_constraints: ["C-22"]
+      priority: high
+
+    - id: AC-45
+      description: "When the extension activates in a workspace with no .spec.yaml and no specter.yaml, the CLI binary is still resolved (auto-download if specter.autoDownload is true, modal error if false and no binary found). Commands like specter.runReverse, specter.init (via terminal), and specter.showOutput are usable in a fresh workspace before any spec exists. The v0.8.x behavior where the extension silently sat dormant until specs appeared is prohibited."
+      inputs:
+        workspace_state: "no specter.yaml, no .spec.yaml, specter.autoDownload=true, binary not present"
+      expected_output:
+        binary_download_attempted: true
+        runReverse_command_usable: true
+      references_constraints: ["C-25"]
+      priority: high
+
+    - id: AC-46
+      description: "The onboarding walkthrough (`specter.gettingStarted`) fires when `shouldShowWalkthrough({ specFiles: [], hasSpecterManifest: false })` returns true. The check MUST execute; it MUST NOT be placed after an early-return gated on a condition mutually exclusive with the walkthrough's own (i.e., 'has specs or manifest')."
+      inputs:
+        workspace_state: "no specs, no manifest, extension just installed"
+      expected_output:
+        walkthrough_opened: true
+      references_constraints: ["C-25"]
+      priority: high
+
+    - id: AC-47
+      description: "Auto-downloaded CLI installation refuses to write the binary to disk unless SHA256 verification succeeds. Test cases: (1) checksums.txt is 404 — installation fails with modal error, no partial binary on disk; (2) checksums.txt is valid but does not contain an entry for the downloaded archive name — installation fails; (3) checksums.txt contains a mismatched hash — installation fails. Only case where installation succeeds is when the archive's computed SHA256 matches the expected hash. No silent fallback under any condition."
+      inputs:
+        case_a: "checksums.txt 404"
+        case_b: "checksums.txt missing archive entry"
+        case_c: "checksums.txt has wrong hash"
+        case_d: "checksums.txt has correct hash"
+      expected_output:
+        case_a_installs: false
+        case_b_installs: false
+        case_c_installs: false
+        case_d_installs: true
+      references_constraints: ["C-24"]
+      priority: critical
+
+    - id: AC-48
+      description: "The on-type debounce handler in onDidChangeTextDocument catches parse errors and writes a `[timestamp] parse failed for <file>: <message>` line to the Specter Output channel. The user editing a .spec.yaml and introducing invalid YAML can open the Output channel and see the failure, rather than observing nothing."
+      references_constraints: ["C-26"]
+      priority: medium
+
+    - id: AC-49
+      description: "Drift-scan failures in both hooks (onDidChangeActiveTextEditor and onDidSaveTextDocument) write a `[timestamp] drift scan failed for <file>: <message>` line to the Specter Output channel. Previously both sites had `.catch(() => {})`, silently discarding failures. The Output channel is the authoritative place to see them."
+      references_constraints: ["C-26"]
+      priority: medium
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.1.0"
@@ -400,6 +494,23 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.3.0"
+      date: "2026-04-19"
+      author: "specter-team"
+      type: minor
+      description: >
+        v0.9.1 post-ship audit fixes (see research/SPECTER_AUDIT_2026-04-19.md).
+        Add C-22/AC-41 (package.json ↔ extension.ts command parity enforced by
+        CI test — eliminates the declared-but-unregistered class that shipped
+        three times in v0.9.0/v0.9.1). Add C-23/AC-42 (disposables pushed to
+        ctx.subscriptions; specifically fixes driftDecorationType leak). Add
+        C-22/AC-43 (register specter.runReverse) and C-22/AC-44 (resolve the
+        specter.openQuickStart orphan declaration). Add C-24/AC-47 (mandatory
+        checksum verification — no silent fallback when checksums.txt is
+        unreachable). Add C-25/AC-45 (binary resolution runs even in empty
+        workspaces) and C-25/AC-46 (walkthrough reachable when its condition
+        is true). Add C-26/AC-48 (on-type parse errors to Output channel) and
+        C-26/AC-49 (drift-scan errors to Output channel).
     - version: "1.2.0"
       date: "2026-04-19"
       author: "specter-team"

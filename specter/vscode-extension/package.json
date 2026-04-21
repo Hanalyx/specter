@@ -2,7 +2,7 @@
   "name": "specter-vscode",
   "displayName": "Specter SDD",
   "description": "Spec-Driven Development tooling for VS Code — inline coverage, diagnostics, annotation assistance, and intent drift detection.",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "publisher": "Hanalyx",
   "license": "MIT",
   "engines": {
@@ -73,10 +73,6 @@
         "command": "specter.runReverse",
         "title": "Specter: Run Reverse Compiler",
         "icon": "$(database)"
-      },
-      {
-        "command": "specter.openQuickStart",
-        "title": "Specter: Open QuickStart"
       },
       {
         "command": "specter.showOutput",

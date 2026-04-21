@@ -266,7 +266,12 @@ func BuildCoverageReportWithResults(specs []schema.SpecAST, annotations []Annota
 		}
 
 		ann := annotBySpec[spec.ID]
-		var coveredACs, uncoveredACs []string
+		// C-14 (v1.7.0): initialize as empty slices so JSON marshals `[]`,
+		// not `null`, for entries where one side ends up empty (e.g.
+		// 100%-covered spec has zero uncovered ACs). Downstream TS
+		// consumers declare these as non-nullable arrays.
+		coveredACs := []string{}
+		uncoveredACs := []string{}
 		for _, id := range allACIDs {
 			annotationExists := ann.acIDs != nil && ann.acIDs[id]
 			var isCovered bool
@@ -301,7 +306,7 @@ func BuildCoverageReportWithResults(specs []schema.SpecAST, annotations []Annota
 			threshold = spec.CoverageThreshold
 		}
 
-		var testFiles []string
+		testFiles := []string{}
 		if ann.files != nil {
 			for f := range ann.files {
 				testFiles = append(testFiles, f)

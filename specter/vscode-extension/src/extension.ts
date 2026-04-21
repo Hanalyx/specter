@@ -82,24 +82,36 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
   const folders = vscode.workspace.workspaceFolders ?? [];
 
-  // AC-01: check activation conditions
+  // Output channel for errors and logs — create early so every downstream
+  // path (binary resolution, walkthrough, download) can route errors here.
+  outputChannel = vscode.window.createOutputChannel('Specter');
+  ctx.subscriptions.push(outputChannel);
+
+  // AC-01: discover YAML to decide how much of the per-folder wiring runs.
   const allFiles = await vscode.workspace.findFiles('**/*.{yaml,yml}', undefined, 500);
   const filePaths = allFiles.map(u => u.fsPath);
-  if (!shouldActivate(filePaths)) return;
+  const hasSpecOrManifest = shouldActivate(filePaths);
 
-  // AC-17: walkthrough for empty workspaces
+  // AC-17 / AC-46 (v1.3.0): walkthrough for empty workspaces. Fires when
+  // the workspace has neither specs nor manifest — which means it MUST be
+  // checked BEFORE the `shouldActivate` early-return (the two conditions
+  // are mutually exclusive, so gating the walkthrough behind shouldActivate
+  // made it unreachable).
   const specFiles = filePaths.filter(f => path.basename(f).endsWith('.spec.yaml'));
   const manifestFiles = filePaths.filter(f => path.basename(f) === 'specter.yaml');
   if (shouldShowWalkthrough({ specFiles, hasSpecterManifest: manifestFiles.length > 0 })) {
-    vscode.commands.executeCommand(
+    void vscode.commands.executeCommand(
       'workbench.action.openWalkthrough',
       'specter-team.specter-vscode#specter.gettingStarted',
     );
   }
 
-  // AC-02: binary resolution
+  // AC-02 / AC-45 (v1.3.0): binary resolution runs UNCONDITIONALLY (subject
+  // to specter.autoDownload). The user's freshly-installed extension must
+  // have the CLI available even before any specs exist — otherwise
+  // specter.runReverse (the walkthrough's first step) has nothing to call.
   const resolved = await resolveBinary(ctx);
-  if (!resolved) return; // modal error already shown
+  if (!resolved) return; // modal error already shown from inside resolveBinary
 
   binaryPath = resolved;
 
@@ -113,11 +125,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // CLI works from external terminals. Non-blocking — fire and forget.
   void maybePromptAddCliToShellPath(ctx, specterBinDir);
 
-  // Output channel for errors and logs.
-  outputChannel = vscode.window.createOutputChannel('Specter');
-  ctx.subscriptions.push(outputChannel);
+  // If the workspace has no specs or manifest, we're done. Commands are
+  // registered, the binary is available, the walkthrough fired if needed.
+  // No per-folder client wiring, no tree provider — there's nothing to
+  // track coverage for yet.
+  if (!hasSpecOrManifest) return;
 
-  // Status bar (AC-12)
+  // Status bar (AC-12) — only when we have something to report on.
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   statusBarItem.command = 'specter.openInsights';
   statusBarItem.text = 'Specter: loading…';
@@ -156,6 +170,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   ctx.subscriptions.push(specterTreeView);
 
   // AC-14: Drift decoration type
+  // AC-42 (v1.3.0): push to subscriptions so the decoration type is
+  // disposed on extension deactivation. Previously it leaked across
+  // Developer: Reload Window cycles.
   driftDecorationType = vscode.window.createTextEditorDecorationType({
     gutterIconPath: new vscode.ThemeIcon('warning').id ? undefined : undefined,
     overviewRulerColor: 'orange',
@@ -165,6 +182,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       color: new vscode.ThemeColor('editorWarning.foreground'),
     },
   });
+  ctx.subscriptions.push(driftDecorationType);
 
   // Providers (registered once, they read per-folder state as needed)
   registerProviders(ctx);
@@ -339,23 +357,40 @@ async function downloadBinary(_ctx: vscode.ExtensionContext): Promise<string | n
         progress.report({ message: `downloading v${version}…` });
         const archiveData = await httpsGet(url);
 
-        // 4. Verify SHA256
+        // 4. Verify SHA256 — MANDATORY.
+        // AC-47 (v1.3.0): no silent fallback. Any failure in the
+        // verification chain (checksums.txt unreachable, archive absent
+        // from checksums.txt, hash mismatch) is a hard fail. Prior
+        // behavior let a MITM attacker selectively block checksums.txt
+        // while delivering a tampered archive; that class of attack is
+        // no longer possible.
         progress.report({ message: 'verifying checksum…' });
+        let checksums: Map<string, string>;
         try {
-          const checksums = await downloadChecksums(version);
-          const expectedHash = checksums.get(archiveName);
-          if (expectedHash) {
-            const valid = await verifyChecksum(archiveData, expectedHash);
-            if (!valid) {
-              vscode.window.showErrorMessage(
-                'Specter download failed: SHA256 checksum mismatch. The binary may have been tampered with.',
-                { modal: true },
-              );
-              return null;
-            }
-          }
-        } catch {
-          // Checksum file not available — proceed without verification
+          checksums = await downloadChecksums(version);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          vscode.window.showErrorMessage(
+            `Specter download failed: unable to retrieve checksums.txt for v${version} (${msg}). Refusing to install unverified binary.`,
+            { modal: true },
+          );
+          return null;
+        }
+        const expectedHash = checksums.get(archiveName);
+        if (!expectedHash) {
+          vscode.window.showErrorMessage(
+            `Specter download failed: no checksum entry for ${archiveName} in checksums.txt for v${version}. Refusing to install unverified binary.`,
+            { modal: true },
+          );
+          return null;
+        }
+        const valid = await verifyChecksum(archiveData, expectedHash);
+        if (!valid) {
+          vscode.window.showErrorMessage(
+            'Specter download failed: SHA256 checksum mismatch. The binary may have been tampered with.',
+            { modal: true },
+          );
+          return null;
         }
 
         // 5. Extract binary from archive
@@ -511,6 +546,20 @@ function pushCoverageParseDiagnostics(
     });
     dc.set(uri, vsDiags);
   }
+}
+
+/**
+ * AC-49: curry a rejection handler that logs drift-scan failures to the
+ * Specter Output channel. Replaces `.catch(() => {})` at the two drift
+ * hook sites so the user has somewhere to see the failure.
+ */
+function logDriftFailure(filePath: string): (err: unknown) => void {
+  return (err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    outputChannel?.appendLine(
+      `[${new Date().toISOString()}] drift scan failed for ${filePath}: ${msg}`,
+    );
+  };
 }
 
 function setStatusBarError(tooltip: string): void {
@@ -742,7 +791,7 @@ function registerProviders(ctx: vscode.ExtensionContext): void {
             lenses.push(
               new vscode.CodeLens(new vscode.Range(pos, pos), {
                 title: `$(lightbulb) @ac ${sug.acID} — ${sug.description.slice(0, 50)}…`,
-                command: 'specter.insertAnnotation',
+                command: 'specter._insertAnnotation',
                 arguments: [doc.uri, pos.line, sug.specID, sug.acID],
               }),
             );
@@ -852,7 +901,13 @@ function registerDiagnosticHooks(ctx: vscode.ExtensionContext): void {
               e.document.uri.fsPath,
               diags.map(d => toVscodeDiagnostic(d)),
             );
-          } catch { /* ignore parse failures */ }
+          } catch (err) {
+            // AC-48: route to Output channel instead of silent ignore.
+            const msg = err instanceof Error ? err.message : String(err);
+            outputChannel?.appendLine(
+              `[${new Date().toISOString()}] on-type parse failed for ${e.document.uri.fsPath}: ${msg}`,
+            );
+          }
         }, 400),
       );
     }),
@@ -929,17 +984,18 @@ function registerDiagnosticHooks(ctx: vscode.ExtensionContext): void {
     }),
   );
 
-  // AC-14: Scan for drift when test files are opened or saved
+  // AC-14: Scan for drift when test files are opened or saved.
+  // AC-49 (v1.3.0): route failures to the Output channel, not `.catch(() => {})`.
   ctx.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor(editor => {
-      if (editor) scanForDrift(editor.document).catch(() => {});
+      if (editor) scanForDrift(editor.document).catch(logDriftFailure(editor.document.uri.fsPath));
     }),
   );
   // Also trigger drift scan after save (test file may reference a changed spec)
   ctx.subscriptions.push(
     vscode.workspace.onDidSaveTextDocument(doc => {
       if (!doc.uri.fsPath.endsWith('.spec.yaml')) {
-        scanForDrift(doc).catch(() => {});
+        scanForDrift(doc).catch(logDriftFailure(doc.uri.fsPath));
       }
     }),
   );
@@ -1064,7 +1120,7 @@ function registerCommands(ctx: vscode.ExtensionContext): void {
   // Insert annotation (used by code lens)
   ctx.subscriptions.push(
     vscode.commands.registerCommand(
-      'specter.insertAnnotation',
+      'specter._insertAnnotation',
       async (uri: vscode.Uri, line: number, specID: string, acID: string) => {
         const edit = new vscode.WorkspaceEdit();
         const pos = new vscode.Position(line, 0);
@@ -1079,6 +1135,41 @@ function registerCommands(ctx: vscode.ExtensionContext): void {
   ctx.subscriptions.push(
     vscode.commands.registerCommand('specter.showOutput', () => {
       outputChannel?.show(true);
+    }),
+  );
+
+  // AC-43: Bootstrap specs from source code via `specter reverse`. The
+  // command is the first step of the onboarding walkthrough; prior to
+  // v0.9.1 it was declared in package.json but unregistered, surfacing
+  // as "command not found" when a new user clicked the walkthrough link.
+  // Implementation opens the integrated terminal and prefills the
+  // command so the user can see what's happening, pick a target
+  // directory, and review output. Chosen over silent CLI invocation
+  // because `reverse` needs a source path and human review of the
+  // generated gaps.
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand('specter.runReverse', async () => {
+      if (!binaryPath) {
+        vscode.window.showErrorMessage(
+          'Specter CLI is not available. Run `Specter: Re-download CLI` first.',
+        );
+        return;
+      }
+      const folders = vscode.workspace.workspaceFolders;
+      if (!folders || folders.length === 0) {
+        vscode.window.showErrorMessage(
+          'Open a folder or workspace first, then run Specter: Run Reverse Compiler.',
+        );
+        return;
+      }
+      const folder = folders[0];
+      const terminal = vscode.window.createTerminal({
+        name: 'Specter Reverse',
+        cwd: folder.uri.fsPath,
+      });
+      terminal.show();
+      // Don't execute — let the user pick the source directory.
+      terminal.sendText('specter reverse ', false);
     }),
   );
 
