@@ -17,6 +17,8 @@ go build ./cmd/specter/
 git checkout -b feat/your-feature
 ```
 
+Target the **current working branch**, not `main`. See [Branch workflow](#branch-workflow) below.
+
 ### 2. Write (or Update) the Spec
 
 Every change needs a spec. If you're adding a new check rule, write `specs/your-rule.spec.yaml` first. If you're modifying existing behavior, update the relevant spec in `specs/`.
@@ -68,7 +70,44 @@ See [RELEASE_PLAN.md](specter/docs/RELEASE_PLAN.md) for the full commit conventi
 
 - Title: conventional commit format
 - Body: reference the spec and which ACs are covered
+- **Base branch: the current working branch** (see below), not `main`, unless this is a hotfix for a bug in the shipped release
 - All CI checks must pass
+
+```bash
+# Target the current working branch explicitly — do not rely on the repo default.
+gh pr create --base release/v0.10 --title "..."
+```
+
+## Branch workflow
+
+Specter uses a **release-working-branch** model. Each release cycle has one long-lived branch, typically `release/vX.Y.Z`, that accumulates every feature/fix/doc change until ship time. `main` receives one merge per release.
+
+```
+main
+ │
+ ├── release/v0.10  ← every PR targets this while v0.10 is in flight
+ │    ├── feat/specter-migrate
+ │    ├── fix/some-bug
+ │    └── docs/something
+ │
+ └── hotfix/v0.9.3  ← hotfixes branch from main, merge to main, skip the working branch
+```
+
+### Rules
+
+1. **All feature, fix, and doc PRs target the current working branch.** Not `main`. The current branch name is in [BACKLOG.md](specter/BACKLOG.md)'s header.
+2. **The working branch is named per release** — `release/v0.10`, `release/v0.11`, etc. Created at cycle start; deleted after it merges to `main` and the release is tagged.
+3. **Hotfixes are the exception.** A bug in the shipped release on `main` gets fixed via `hotfix/v0.9.3` (or similar) branched off `main`, PR'd to `main`, merged, and tagged. The in-flight working branch later merges `main` forward to absorb the hotfix.
+4. **Tags happen on `main`** after the working branch merges, never on the working branch itself. A tag = "this commit shipped to users."
+5. **`--base` is explicit** when opening a PR. GitHub's default-base-branch setting stays on `main`; contributors pass `--base release/vX.Y.Z` (or the current working branch name). An incorrectly-targeted PR is the one failure mode this discipline can't catch on its own.
+
+### Why
+
+The v0.9.0 / v0.9.1 / v0.9.2 releases each landed on `main` through ~5 separate PRs apiece. That works, but `git log main` becomes a development log, not a release history — every WIP commit and test iteration is mixed in with the ships. Routing WIP through a working branch keeps `main` a clean trunk of releases, makes "what's in the next release?" answerable from branch state, and reduces force-push risk on shared history.
+
+### When no working branch exists
+
+Between releases — after `main` catches the ship merge and before the next cycle's working branch is created — PRs that can't wait (hotfixes, urgent doc fixes) target `main` directly. This is the only time main accepts a non-working-branch PR.
 
 ## What Makes a Good Contribution
 
