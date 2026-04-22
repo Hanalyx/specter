@@ -14,10 +14,12 @@ The v0.9.0 work made schema drift *visible* via intelligent diagnosis. v0.10 sho
 
 ### Migration tooling
 
-- **`specter migrate` command.** Given specs from an older schema version, apply known-safe rewrites: strip removed fields (`trust_level`), rename renamed fields, update enum values, move root-level blocks under `spec:` (jwtms pattern). Dry-run by default; `--apply` writes changes. Seed with the v0.6.5 `trust_level` removal, the v0.7.0 field renames, and the jwtms v1 shape. See `research/JWTMS_SPECTER_REASSESSMENT_V0.9.md` for the driving design case.
-- **VS Code quick-fix for removed fields.** Lightbulb action on a parse error like `Unknown field 'trust_level'` → "Remove deprecated field." Applies to the one file; `Fix all in workspace` batches across every failing spec. Pairs with `specter migrate` for the CLI path.
-- **Schema-version metadata.** Record the schema version in each spec (`spec.schema_version`) so `specter migrate` can target known old versions instead of inferring from failure patterns. Optional field with sensible default.
-- **`specter show <spec-id>`** — human-readable spec card assembled from existing coverage JSON. Shows tier, coverage %, test files covering each AC, uncovered ACs with descriptions. Closes the "where do I look to verify this spec?" gap for test files without waiting on source-annotation scanning. No new data collection — pure presentation over `specter coverage --json`. Small scope, ~2-3h.
+**CLI surface discipline** (decided 2026-04-21): don't add `specter migrate` or `specter show` as new top-level verbs. Fold into existing commands — the CLI is already at 14 verbs. `doctor` diagnoses drift, `doctor --fix` repairs it. `explain <spec-id>:AC-NN` already renders an AC card; `explain <spec-id>` (no AC suffix) renders a whole-spec card.
+
+- **`specter doctor --fix` (was `specter migrate`).** Given specs from an older schema version, apply known-safe rewrites: strip removed fields (`trust_level`), rename renamed fields, update enum values, move root-level blocks under `spec:` (jwtms pattern). Dry-run by default (current `doctor` behavior is read-only); `--fix` writes changes. Reuses `doctor`'s drift-pattern analysis for what to repair — the diagnose/repair pairing stays under one verb. Seed with the v0.6.5 `trust_level` removal, the v0.7.0 field renames, and the jwtms v1 shape. See `research/JWTMS_SPECTER_REASSESSMENT_V0.9.md` for the driving design case.
+- **VS Code quick-fix for removed fields.** Lightbulb action on a parse error like `Unknown field 'trust_level'` → "Remove deprecated field." Applies to the one file; `Fix all in workspace` batches across every failing spec. Pairs with `specter doctor --fix` for the CLI path.
+- **Schema-version metadata.** Record the schema version in each spec (`spec.schema_version`) so `specter doctor --fix` can target known old versions instead of inferring from failure patterns. Optional field with sensible default.
+- **`specter explain <spec-id>` (was `specter show`).** AC-less invocation of `explain` renders a human-readable spec card: tier, coverage %, test files covering each AC, uncovered ACs with descriptions. Closes the "where do I look to verify this spec?" gap without waiting on source-annotation scanning. Pure presentation over `specter coverage --json`; no new data collection. Small scope, ~2-3h. Extends existing `explain <spec-id>:AC-NN` behavior — no new top-level verb.
 
 ### CI-gated coverage quality (test-results ingestion)
 
@@ -55,7 +57,7 @@ Blocks on test completion (~30s cost for jwtms's 250s integration suite). Unit +
 
 **Design discussion**: the three design tradeoffs (two-stage vs one-stage ingest, JUnit flavor handling, missing-results behavior under `--strict`) are resolved in the bullets above. Flake handling deferred.
 
-**Scope**: ~2 days for the `specter ingest` command with JUnit + go test flavors, `--strict` semantics on coverage, extended results-file schema. Spec bumps: new `spec-ingest`, `spec-coverage` 1.8.0 → 1.9.0.
+**Scope**: ~2 days for the `specter ingest` command with JUnit + go test flavors, `--strict` semantics on coverage, extended results-file schema, plus `doctor --fix` and AC-less `explain`. Spec bumps: new `spec-ingest`; `spec-coverage` 1.8.0 → 1.9.0; `spec-doctor` gets a `--fix` AC; `spec-explain` gets a spec-card-without-AC AC. Net CLI surface: +1 verb (`ingest`), not +3.
 
 ---
 
@@ -63,20 +65,15 @@ Blocks on test completion (~30s cost for jwtms's 250s integration suite). Unit +
 
 The CI gate (`specter sync`) already enforces annotated tests must exist. This phase makes the loop *proactive* rather than reactive — close the spec → test → implement → eval cycle for AI coding assistants.
 
-- **`specter context`** — generates AI-tool-specific instruction files from current specs so the AI reads and respects the spec before generating code:
-  - `specter context --format claude` → updates/creates `CLAUDE.md` with current spec summaries, AC list, tier constraints
-  - `specter context --format cursor` → writes `.cursor/rules` with spec constraints formatted as Cursor rule blocks
-  - `specter context --format copilot` → writes `.github/copilot-instructions.md`
-  - `specter context --format all` — one-pass generation
-  - `specter context --spec <id>` — scope to a single spec for focused AI sessions
-  - Output covers tier, objective, constraints, ACs with descriptions, current coverage status, uncovered ACs highlighted
-  - Idempotent: re-running updates the context section without clobbering manual additions
-  - `specter sync --update-context` flag regenerates context files as part of the sync pipeline
+**CLI surface discipline**: no new top-level verbs. `specter context` folds into `explain --format`; `specter hook install` folds into `init --install-hook`.
 
-- **Pre-push hook integration** — `specter hook install` writes a git pre-push hook that:
+- **`specter explain --format {claude|cursor|copilot|all} --all` (was `specter context`).** Extends `explain` with AI-tool format outputs and a `--all` scope that covers every spec instead of one. Writes/updates `CLAUDE.md`, `.cursor/rules`, or `.github/copilot-instructions.md`. Output covers tier, objective, constraints, ACs with descriptions, current coverage status, uncovered ACs highlighted. Idempotent — re-running updates the context section without clobbering manual additions. `specter sync --update-context` flag regenerates context files as part of the sync pipeline. Rationale: `explain` is already the "describe a spec" verb; format + scope are flags, not a new command.
+
+- **Pre-push hook integration** — `specter init --install-hook` writes a git pre-push hook that:
   - Blocks pushes where implementation files changed but no corresponding `@spec`/`@ac` annotation was added or updated in the diff
   - Reports which specs are affected and which ACs have no test annotation in the changeset
   - Bypass with `git push --no-verify` (documented, discouraged)
+  - Rationale: `init` is the project-bootstrap verb; hook install is one-shot bootstrap, same family as `init --refresh`.
 
 - **`.specter-results.json` test runner adapters** — first-party adapters that write pass/fail results automatically so the pass-rate-aware coverage loop closes end-to-end without manual results-file maintenance:
   - Go: `go test -json | specter results ingest`
