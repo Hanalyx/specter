@@ -357,3 +357,75 @@ func TestCoverage_Table_TruncatesLongSpecIDs(t *testing.T) {
 		t.Errorf("--json output must contain full spec ID, got:\n%s", jsonOut)
 	}
 }
+
+// --- v0.10 CI-gated coverage (--strict) tests ---
+
+// @spec spec-coverage
+// @ac AC-20
+// `specter coverage --strict` without a .specter-results.json must fail with
+// an explanatory stderr message. Silently falling back to annotation-only
+// under --strict would defeat the gate's purpose.
+func TestCoverage_Strict_MissingResultsFile_Fails(t *testing.T) {
+	dir := t.TempDir()
+	writeSpec(t, dir, "alpha.spec.yaml", minimalValidSpec("alpha", 2, "AC-01"))
+
+	out, code := runCLI(t, dir, "coverage", "--strict")
+	if code == 0 {
+		t.Fatalf("expected non-zero exit, got 0; output:\n%s", out)
+	}
+	if !strings.Contains(out, "--strict requires .specter-results.json") {
+		t.Errorf("expected error mentioning `--strict requires .specter-results.json`; got:\n%s", out)
+	}
+}
+
+// @spec spec-coverage
+// @ac AC-19
+// --strict: annotated AC whose result failed is reported as uncovered,
+// even on tier 2/3 (which today's pass-rate-aware logic ignores).
+func TestCoverage_Strict_FailedResultDemotesTier2(t *testing.T) {
+	dir := t.TempDir()
+	writeSpec(t, dir, "svc.spec.yaml", minimalValidSpec("svc", 2, "AC-01"))
+
+	// Annotated test file matching the spec.
+	testDir := filepath.Join(dir, "tests")
+	_ = os.MkdirAll(testDir, 0755)
+	_ = os.WriteFile(filepath.Join(testDir, "svc_test.go"), []byte(
+		"// @spec svc\n// @ac AC-01\nfunc TestX(t *testing.T) {}\n"), 0644)
+
+	// Write a results file marking AC-01 as failed.
+	results := `{"results":[{"spec_id":"svc","ac_id":"AC-01","status":"failed"}]}`
+	_ = os.WriteFile(filepath.Join(dir, ".specter-results.json"), []byte(results), 0644)
+
+	// Non-strict: tier 2 annotation alone counts as covered → passes.
+	out, code := runCLI(t, dir, "coverage", "--tests", "tests/*_test.go")
+	if code != 0 {
+		t.Fatalf("non-strict should pass (tier 2 annotation-only); got exit=%d\n%s", code, out)
+	}
+
+	// Strict: failed result demotes the AC → coverage should fail.
+	strictOut, strictCode := runCLI(t, dir, "coverage", "--strict", "--tests", "tests/*_test.go")
+	if strictCode == 0 {
+		t.Fatalf("strict mode should fail when AC-01's result is failed; got exit=0\n%s", strictOut)
+	}
+}
+
+// @spec spec-coverage
+// @ac AC-19
+// --strict + all-passed results: coverage passes normally.
+func TestCoverage_Strict_AllPassed_Passes(t *testing.T) {
+	dir := t.TempDir()
+	writeSpec(t, dir, "svc.spec.yaml", minimalValidSpec("svc", 2, "AC-01"))
+
+	testDir := filepath.Join(dir, "tests")
+	_ = os.MkdirAll(testDir, 0755)
+	_ = os.WriteFile(filepath.Join(testDir, "svc_test.go"), []byte(
+		"// @spec svc\n// @ac AC-01\nfunc TestX(t *testing.T) {}\n"), 0644)
+
+	results := `{"results":[{"spec_id":"svc","ac_id":"AC-01","status":"passed"}]}`
+	_ = os.WriteFile(filepath.Join(dir, ".specter-results.json"), []byte(results), 0644)
+
+	_, code := runCLI(t, dir, "coverage", "--strict", "--tests", "tests/*_test.go")
+	if code != 0 {
+		t.Errorf("strict with all-passed should exit 0, got %d", code)
+	}
+}
