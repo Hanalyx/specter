@@ -17,6 +17,12 @@ func ParseManifest(yamlContent string) (*Manifest, error) {
 		return nil, fmt.Errorf("system.name is required")
 	}
 
+	// C-22: default schema_version to 1 when absent. Tool-layer code
+	// (doctor --fix) validates whether the declared version is supported.
+	if m.SchemaVersion == 0 {
+		m.SchemaVersion = 1
+	}
+
 	if err := validateTier(m.System.Tier, "system.tier"); err != nil {
 		return nil, err
 	}

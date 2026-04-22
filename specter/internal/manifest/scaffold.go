@@ -24,6 +24,7 @@ func ScaffoldManifest(name, description string, specIDs []string) string {
 // knows why `domains:` is empty.
 func ScaffoldManifestWithContext(name, description string, specIDs []string, candidatesCount int) string {
 	m := Manifest{
+		SchemaVersion: 1,
 		System: SystemConfig{
 			Name:        name,
 			Description: description,
