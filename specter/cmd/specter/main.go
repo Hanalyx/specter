@@ -19,6 +19,7 @@ import (
 	"github.com/Hanalyx/specter/internal/coverage"
 	specdiff "github.com/Hanalyx/specter/internal/diff"
 	"github.com/Hanalyx/specter/internal/manifest"
+	"github.com/Hanalyx/specter/internal/migrate"
 	"github.com/Hanalyx/specter/internal/parser"
 	"github.com/Hanalyx/specter/internal/resolver"
 	"github.com/Hanalyx/specter/internal/reverse"
@@ -1382,175 +1383,257 @@ func runInitTemplate(templateType string, force bool) error {
 //
 // @spec spec-doctor
 func doctorCmd() *cobra.Command {
-	return &cobra.Command{
+	var fix bool
+	var dryRun bool
+	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Run pre-flight project health checks",
-		Long:  "Checks project readiness before running the full sync pipeline. Reports PASS/WARN/FAIL for each check so developers know exactly what needs attention.",
+		Long:  "Checks project readiness before running the full sync pipeline. Reports PASS/WARN/FAIL for each check so developers know exactly what needs attention.\n\nWith --fix, applies known-safe schema-drift rewrites in place (initial table: strip trust_level from pre-v0.6.5 specs). With --fix --dry-run, previews what --fix would do without writing.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			anyFail := false
-
-			// Helper: print an aligned check result line.
-			printCheck := func(name, status, msg string) {
-				fmt.Printf("  %-12s [%s]  %s\n", name, status, msg)
+			if fix {
+				return runDoctorFix(dryRun)
 			}
+			return runDoctorDiagnose()
+		},
+	}
+	cmd.Flags().BoolVar(&fix, "fix", false, "Apply known-safe schema-drift rewrites (see spec-doctor C-10)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "With --fix, print what would be rewritten without modifying files")
+	return cmd
+}
 
-			fmt.Println("specter doctor")
+// runDoctorDiagnose is the original read-only health check path (spec-doctor
+// C-07: doctor without --fix never writes).
+func runDoctorDiagnose() error {
+	return doctorDiagnoseBody()
+}
+
+// runDoctorFix applies known-safe schema-drift rewrites (spec-doctor C-10).
+// When dryRun is true, prints what would change without writing.
+func runDoctorFix(dryRun bool) error {
+	specFiles := discoverSpecs()
+	if len(specFiles) == 0 {
+		fmt.Println("doctor --fix: no changes (no .spec.yaml files found)")
+		return nil
+	}
+
+	var affected []string
+	for _, f := range specFiles {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		result := parser.ParseSpec(string(data))
+		if result.OK {
+			continue // nothing to fix
+		}
+		// Convert parser errors to coverage.ParseErrorEntry for migrate.Apply.
+		var entries []coverage.ParseErrorEntry
+		for _, pe := range result.Errors {
+			entries = append(entries, coverage.ParseErrorEntry{
+				File:    f,
+				Path:    pe.Path,
+				Type:    pe.Type,
+				Message: pe.Message,
+			})
+		}
+		applied, aerr := migrate.Apply(data, entries)
+		if aerr != nil {
+			fmt.Fprintf(os.Stderr, "error: %s: %v\n", f, aerr)
+			continue
+		}
+		if len(applied.Applied) == 0 {
+			continue
+		}
+		if dryRun {
+			fmt.Printf("  would rewrite %s (%s)\n", f, strings.Join(applied.Applied, ", "))
+		} else {
+			if werr := os.WriteFile(f, applied.Content, 0644); werr != nil {
+				fmt.Fprintf(os.Stderr, "error writing %s: %v\n", f, werr)
+				continue
+			}
+			fmt.Printf("  rewrote %s (%s)\n", f, strings.Join(applied.Applied, ", "))
+		}
+		affected = append(affected, f)
+	}
+
+	// C-12: summary.
+	if len(affected) == 0 {
+		fmt.Println("doctor --fix: no changes")
+		return nil
+	}
+	verb := "rewritten"
+	if dryRun {
+		verb = "would be rewritten"
+	}
+	fmt.Printf("\ndoctor --fix: %d file(s) %s\n", len(affected), verb)
+	return nil
+}
+
+// doctorDiagnoseBody is the original doctor implementation extracted from
+// the command RunE so --fix can skip it.
+func doctorDiagnoseBody() error {
+	anyFail := false
+
+	// Helper: print an aligned check result line.
+	printCheck := func(name, status, msg string) {
+		fmt.Printf("  %-12s [%s]  %s\n", name, status, msg)
+	}
+
+	fmt.Println("specter doctor")
+	fmt.Println()
+
+	// C-08: run ALL checks regardless of failures
+
+	// --- Check 1: Manifest presence (C-01, AC-01, AC-02) ---
+	manifestPath, _ := findManifest()
+	if manifestPath != "" {
+		printCheck("manifest", "PASS", "specter.yaml found at "+manifestPath)
+	} else {
+		printCheck("manifest", "WARN", "No specter.yaml found — run `specter init` to scaffold one (optional)")
+	}
+
+	// --- Check 2: .spec.yaml files present (C-02, AC-03) ---
+	specFiles := discoverSpecs()
+	if len(specFiles) == 0 {
+		printCheck("spec-files", "FAIL", "No .spec.yaml files found — create at least one spec to get started")
+		anyFail = true
+	} else {
+		printCheck("spec-files", "PASS", fmt.Sprintf("%d spec file(s) discovered", len(specFiles)))
+	}
+
+	// --- Check 3: All specs parse cleanly (C-03, AC-04) ---
+	parseOK := true
+	parseErrors := 0
+	var allParseErrs []coverage.ParseErrorEntry
+	for _, f := range specFiles {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			parseOK = false
+			parseErrors++
+			allParseErrs = append(allParseErrs, coverage.ParseErrorEntry{File: f, Type: "io", Message: err.Error()})
+			continue
+		}
+		result := parser.ParseSpec(string(data))
+		if !result.OK {
+			parseOK = false
+			parseErrors++
+			for _, pe := range result.Errors {
+				fmt.Printf("    %s: %s\n", f, pe.Message)
+				allParseErrs = append(allParseErrs, coverage.ParseErrorEntry{
+					File: f, Path: pe.Path, Type: pe.Type, Message: pe.Message, Line: pe.Line, Column: pe.Column,
+				})
+			}
+		}
+	}
+	if !parseOK {
+		printCheck("parse", "FAIL", fmt.Sprintf("%d spec file(s) have parse errors (see above)", parseErrors))
+		anyFail = true
+		// AC-09 (spec-doctor v1.1.0): when parse fails, name the
+		// widespread pattern. If the same (type, path) hits every
+		// discovered spec, that's schema drift, not N bugs.
+		patterns := coverage.SummarizeParseErrors(allParseErrs)
+		if len(patterns) > 0 && len(specFiles) > 0 {
+			top := patterns[0]
+			affected := len(top.Files)
 			fmt.Println()
-
-			// C-08: run ALL checks regardless of failures
-
-			// --- Check 1: Manifest presence (C-01, AC-01, AC-02) ---
-			manifestPath, _ := findManifest()
-			if manifestPath != "" {
-				printCheck("manifest", "PASS", "specter.yaml found at "+manifestPath)
-			} else {
-				printCheck("manifest", "WARN", "No specter.yaml found — run `specter init` to scaffold one (optional)")
-			}
-
-			// --- Check 2: .spec.yaml files present (C-02, AC-03) ---
-			specFiles := discoverSpecs()
-			if len(specFiles) == 0 {
-				printCheck("spec-files", "FAIL", "No .spec.yaml files found — create at least one spec to get started")
-				anyFail = true
-			} else {
-				printCheck("spec-files", "PASS", fmt.Sprintf("%d spec file(s) discovered", len(specFiles)))
-			}
-
-			// --- Check 3: All specs parse cleanly (C-03, AC-04) ---
-			parseOK := true
-			parseErrors := 0
-			var allParseErrs []coverage.ParseErrorEntry
-			for _, f := range specFiles {
-				data, err := os.ReadFile(f)
-				if err != nil {
-					parseOK = false
-					parseErrors++
-					allParseErrs = append(allParseErrs, coverage.ParseErrorEntry{File: f, Type: "io", Message: err.Error()})
-					continue
+			fmt.Println("  Pattern analysis:")
+			if affected == len(specFiles) && len(specFiles) > 1 {
+				pathPart := ""
+				if top.Path != "" {
+					pathPart = fmt.Sprintf(" at %q", top.Path)
 				}
-				result := parser.ParseSpec(string(data))
-				if !result.OK {
-					parseOK = false
-					parseErrors++
-					for _, pe := range result.Errors {
-						fmt.Printf("    %s: %s\n", f, pe.Message)
-						allParseErrs = append(allParseErrs, coverage.ParseErrorEntry{
-							File: f, Path: pe.Path, Type: pe.Type, Message: pe.Message, Line: pe.Line, Column: pe.Column,
-						})
+				fmt.Printf("    Every %d discovered spec hit the same failure: [%s]%s.\n", len(specFiles), top.Type, pathPart)
+				fmt.Println("    This pattern is the signature of schema version drift —")
+				fmt.Println("    your specs may have been written against an older Specter")
+				fmt.Println("    schema. Check the spec-parse changelog and migrate each file.")
+			} else {
+				for _, p := range patterns {
+					pathPart := ""
+					if p.Path != "" {
+						pathPart = fmt.Sprintf(" at %q", p.Path)
+					}
+					fmt.Printf("    [%s]%s — %d occurrence(s) across %d file(s)\n", p.Type, pathPart, p.Count, len(p.Files))
+					if len(patterns) > 3 {
+						break
 					}
 				}
 			}
-			if !parseOK {
-				printCheck("parse", "FAIL", fmt.Sprintf("%d spec file(s) have parse errors (see above)", parseErrors))
-				anyFail = true
-				// AC-09 (spec-doctor v1.1.0): when parse fails, name the
-				// widespread pattern. If the same (type, path) hits every
-				// discovered spec, that's schema drift, not N bugs.
-				patterns := coverage.SummarizeParseErrors(allParseErrs)
-				if len(patterns) > 0 && len(specFiles) > 0 {
-					top := patterns[0]
-					affected := len(top.Files)
-					fmt.Println()
-					fmt.Println("  Pattern analysis:")
-					if affected == len(specFiles) && len(specFiles) > 1 {
-						pathPart := ""
-						if top.Path != "" {
-							pathPart = fmt.Sprintf(" at %q", top.Path)
-						}
-						fmt.Printf("    Every %d discovered spec hit the same failure: [%s]%s.\n", len(specFiles), top.Type, pathPart)
-						fmt.Println("    This pattern is the signature of schema version drift —")
-						fmt.Println("    your specs may have been written against an older Specter")
-						fmt.Println("    schema. Check the spec-parse changelog and migrate each file.")
-					} else {
-						for _, p := range patterns {
-							pathPart := ""
-							if p.Path != "" {
-								pathPart = fmt.Sprintf(" at %q", p.Path)
-							}
-							fmt.Printf("    [%s]%s — %d occurrence(s) across %d file(s)\n", p.Type, pathPart, p.Count, len(p.Files))
-							if len(patterns) > 3 {
-								break
-							}
-						}
-					}
-				}
-			} else if len(specFiles) > 0 {
-				printCheck("parse", "PASS", "All specs parse cleanly")
-			} else {
-				printCheck("parse", "WARN", "No specs to parse")
-			}
+		}
+	} else if len(specFiles) > 0 {
+		printCheck("parse", "PASS", "All specs parse cleanly")
+	} else {
+		printCheck("parse", "WARN", "No specs to parse")
+	}
 
-			// --- Check 4: @spec/@ac annotations in test files (C-04, AC-05) ---
-			testFiles := discoverTestFiles("")
-			annotationCount := 0
+	// --- Check 4: @spec/@ac annotations in test files (C-04, AC-05) ---
+	testFiles := discoverTestFiles("")
+	annotationCount := 0
+	for _, f := range testFiles {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		annotations := coverage.ExtractAnnotations(string(data), f)
+		annotationCount += len(annotations)
+	}
+	if annotationCount == 0 {
+		printCheck("annotations", "WARN", "No @spec/@ac annotations found in test files — add annotations to track coverage")
+	} else {
+		printCheck("annotations", "PASS", fmt.Sprintf("%d annotation(s) found across %d test file(s)", annotationCount, len(testFiles)))
+	}
+
+	// --- Check 5: Coverage meets tier thresholds (C-05, AC-06) ---
+	if len(specFiles) > 0 {
+		m, _ := loadManifest()
+		_, specs, hasParseErrors := parseAllSpecs(specFiles)
+		if hasParseErrors {
+			printCheck("coverage", "WARN", "Skipping coverage check — specs have parse errors")
+		} else {
+			var allAnnotations []coverage.AnnotationMatch
 			for _, f := range testFiles {
 				data, err := os.ReadFile(f)
 				if err != nil {
 					continue
 				}
-				annotations := coverage.ExtractAnnotations(string(data), f)
-				annotationCount += len(annotations)
+				allAnnotations = append(allAnnotations, coverage.ExtractAnnotations(string(data), f)...)
 			}
-			if annotationCount == 0 {
-				printCheck("annotations", "WARN", "No @spec/@ac annotations found in test files — add annotations to track coverage")
-			} else {
-				printCheck("annotations", "PASS", fmt.Sprintf("%d annotation(s) found across %d test file(s)", annotationCount, len(testFiles)))
+			thresholds := m.CoverageThresholds()
+			report := coverage.BuildCoverageReport(specs, allAnnotations, thresholds)
+
+			belowThreshold := 0
+			for _, e := range report.Entries {
+				if !e.PassesThreshold {
+					belowThreshold++
+				}
 			}
 
-			// --- Check 5: Coverage meets tier thresholds (C-05, AC-06) ---
-			if len(specFiles) > 0 {
-				m, _ := loadManifest()
-				_, specs, hasParseErrors := parseAllSpecs(specFiles)
-				if hasParseErrors {
-					printCheck("coverage", "WARN", "Skipping coverage check — specs have parse errors")
-				} else {
-					var allAnnotations []coverage.AnnotationMatch
-					for _, f := range testFiles {
-						data, err := os.ReadFile(f)
-						if err != nil {
-							continue
-						}
-						allAnnotations = append(allAnnotations, coverage.ExtractAnnotations(string(data), f)...)
-					}
-					thresholds := m.CoverageThresholds()
-					report := coverage.BuildCoverageReport(specs, allAnnotations, thresholds)
-
-					belowThreshold := 0
-					for _, e := range report.Entries {
-						if !e.PassesThreshold {
-							belowThreshold++
-						}
-					}
-
-					if belowThreshold > 0 {
-						printCheck("coverage", "FAIL", fmt.Sprintf("%d spec(s) below tier coverage threshold", belowThreshold))
-						for _, e := range report.Entries {
-							if !e.PassesThreshold {
-								threshold := thresholds[e.Tier]
-								fmt.Printf("    %s: %.0f%% coverage (T%d requires %d%%)\n",
-									e.SpecID, e.CoveragePct, e.Tier, threshold)
-							}
-						}
-						anyFail = true
-					} else {
-						printCheck("coverage", "PASS", fmt.Sprintf("All %d spec(s) meet coverage thresholds", len(report.Entries)))
+			if belowThreshold > 0 {
+				printCheck("coverage", "FAIL", fmt.Sprintf("%d spec(s) below tier coverage threshold", belowThreshold))
+				for _, e := range report.Entries {
+					if !e.PassesThreshold {
+						threshold := thresholds[e.Tier]
+						fmt.Printf("    %s: %.0f%% coverage (T%d requires %d%%)\n",
+							e.SpecID, e.CoveragePct, e.Tier, threshold)
 					}
 				}
+				anyFail = true
 			} else {
-				printCheck("coverage", "WARN", "No specs to check coverage for")
+				printCheck("coverage", "PASS", fmt.Sprintf("All %d spec(s) meet coverage thresholds", len(report.Entries)))
 			}
-
-			fmt.Println()
-
-			// C-06: exit 0 if all PASS/WARN, exit 1 if any FAIL
-			if anyFail {
-				fmt.Println("Result: FAIL — fix the issues above before running `specter sync`")
-				return errSilent
-			}
-			fmt.Println("Result: OK — project is ready for `specter sync`")
-			return nil
-		},
+		}
+	} else {
+		printCheck("coverage", "WARN", "No specs to check coverage for")
 	}
+
+	fmt.Println()
+
+	// C-06: exit 0 if all PASS/WARN, exit 1 if any FAIL
+	if anyFail {
+		fmt.Println("Result: FAIL — fix the issues above before running `specter sync`")
+		return errSilent
+	}
+	fmt.Println("Result: OK — project is ready for `specter sync`")
+	return nil
 }
 
 // explainCmd shows coverage status and annotation examples for a spec's ACs.
