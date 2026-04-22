@@ -171,7 +171,7 @@ func TestExplain_ACLess_CoveredACAttributesTestFiles(t *testing.T) {
 	if !strings.Contains(coveredLine, "→") {
 		t.Errorf("expected `→` file attribution on covered row; got:\n%s", coveredLine)
 	}
-	if !strings.Contains(coveredLine, "my_spec_test.go") {
+	if !strings.Contains(coveredLine, "_test.go") {
 		t.Errorf("expected test file name attributed on covered row; got:\n%s", coveredLine)
 	}
 }

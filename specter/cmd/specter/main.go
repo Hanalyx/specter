@@ -1623,8 +1623,9 @@ func explainCmd() *cobra.Command {
 			langs := detectAnnotationLanguages(testFiles)
 
 			if acID == "" {
-				// List mode: show all ACs with status
-				return explainListMode(targetSpec, coveredBy, testFiles, langs)
+				// List mode: show the spec card.
+				m, _ := loadManifest()
+				return explainListMode(targetSpec, coveredBy, testFiles, langs, m.CoverageThresholds())
 			}
 			// Detail mode: one AC
 			return explainDetailMode(targetSpec, acID, coveredBy, testFiles, langs)
@@ -1632,22 +1633,63 @@ func explainCmd() *cobra.Command {
 	}
 }
 
-// explainListMode lists all ACs in a spec with COVERED/UNCOVERED status.
-func explainListMode(spec *schema.SpecAST, coveredBy map[string][]string, testFiles []string, langs []string) error {
-	fmt.Printf("specter explain %s\n\n", spec.ID)
-	fmt.Printf("  %-8s %-8s  %s\n", "Status", "AC", "Description")
-	fmt.Println("  " + strings.Repeat("-", 60))
+// explainListMode renders the spec card for `specter explain <spec-id>`
+// (AC-less invocation). Format (spec-explain C-09 / AC-07):
+//
+//	specter explain <id> — tier N · X/Y ACs · Z% coverage · threshold T% [PASS|FAIL]
+//
+// Each covered AC line gains a trailing `→ <files>` attribution (C-10 / AC-08).
+// Each uncovered AC shows the full description — no truncation (C-10 / AC-09).
+func explainListMode(spec *schema.SpecAST, coveredBy map[string][]string, testFiles []string, langs []string, thresholds map[int]int) error {
+	// Compute coverage and effective threshold.
+	total := len(spec.AcceptanceCriteria)
+	covered := 0
+	for _, ac := range spec.AcceptanceCriteria {
+		if len(coveredBy[ac.ID]) > 0 {
+			covered++
+		}
+	}
+	var pct float64
+	if total > 0 {
+		pct = float64(covered) / float64(total) * 100
+		pct = float64(int(pct*10)) / 10 // match coverage rounding
+	}
+	threshold := thresholds[spec.Tier]
+	if threshold == 0 {
+		threshold = 80 // sane default if manifest has no entry
+	}
+	if spec.CoverageThreshold > 0 {
+		threshold = spec.CoverageThreshold
+	}
+	status := "PASS"
+	if total > 0 && pct < float64(threshold) {
+		status = "FAIL"
+	}
+
+	// Format the percentage without a trailing .0 for clean integer cases.
+	var pctStr string
+	if pct == float64(int(pct)) {
+		pctStr = fmt.Sprintf("%d", int(pct))
+	} else {
+		pctStr = fmt.Sprintf("%.1f", pct)
+	}
+
+	// Spec-card header (C-09).
+	fmt.Printf("specter explain %s — tier %d · %d/%d ACs · %s%% coverage · threshold %d%% [%s]\n\n",
+		spec.ID, spec.Tier, covered, total, pctStr, threshold, status)
 
 	for _, ac := range spec.AcceptanceCriteria {
-		status := "UNCOVERED"
-		if len(coveredBy[ac.ID]) > 0 {
-			status = "COVERED"
+		if files := coveredBy[ac.ID]; len(files) > 0 {
+			// Covered AC: truncated description + trailing file attribution (C-10 / AC-08).
+			desc := ac.Description
+			if len(desc) > maxDescLen {
+				desc = desc[:maxDescLen-3] + "..."
+			}
+			fmt.Printf("  COVERED    %-8s %s → %s\n", ac.ID, desc, strings.Join(files, ", "))
+		} else {
+			// Uncovered AC: full (untruncated) description (C-10 / AC-09).
+			fmt.Printf("  UNCOVERED  %-8s %s\n", ac.ID, ac.Description)
 		}
-		desc := ac.Description
-		if len(desc) > maxDescLen {
-			desc = desc[:maxDescLen-3] + "..."
-		}
-		fmt.Printf("  %-8s %-8s  %s\n", status, ac.ID, desc)
 	}
 
 	fmt.Printf("\n  Scanned %d test file(s)\n", len(testFiles))
