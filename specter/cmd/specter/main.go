@@ -173,6 +173,7 @@ func main() {
 	root.AddCommand(explainCmd())
 	root.AddCommand(watchCmd())
 	root.AddCommand(diffCmd())
+	root.AddCommand(ingestCmd())
 	root.AddCommand(feedbackCmd())
 
 	if err := root.Execute(); err != nil {
@@ -635,6 +636,7 @@ func coverageCmd() *cobra.Command {
 	var jsonOutput bool
 	var testsGlob string
 	var failingOnly bool
+	var strict bool
 	cmd := &cobra.Command{
 		Use:   "coverage",
 		Short: "Generate spec-to-test traceability matrix",
@@ -669,7 +671,11 @@ func coverageCmd() *cobra.Command {
 					fmt.Fprintf(os.Stderr, "warn: could not parse .specter-results.json: %v\n", pErr)
 				}
 			}
-			report := coverage.BuildCoverageReportWithResults(specs, allAnnotations, m.CoverageThresholds(), results)
+			report, strictErr := coverage.BuildCoverageReportStrict(specs, allAnnotations, m.CoverageThresholds(), results, strict)
+			if strictErr != nil {
+				fmt.Fprintf(os.Stderr, "error: %s\n", strictErr.Error())
+				return errSilent
+			}
 			report.ParseErrors = parseErrors
 			report.ParseErrorPatterns = coverage.SummarizeParseErrors(parseErrors)
 			report.SpecCandidatesCount = len(files)
@@ -762,6 +768,7 @@ func coverageCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
 	cmd.Flags().StringVar(&testsGlob, "tests", "", "Glob pattern for test files")
 	cmd.Flags().BoolVar(&failingOnly, "failing", false, "Show only specs below 100% coverage in the table (summary header still reflects the full report)")
+	cmd.Flags().BoolVar(&strict, "strict", false, "Require .specter-results.json and treat any non-passed annotated AC as uncovered (all tiers)")
 	return cmd
 }
 

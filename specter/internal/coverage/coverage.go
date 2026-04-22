@@ -6,12 +6,17 @@
 package coverage
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 
 	"github.com/Hanalyx/specter/internal/schema"
 )
+
+// ErrMissingResults is returned by BuildCoverageReportStrict when strict mode
+// is requested with no results file. See C-20 / AC-20.
+var ErrMissingResults = errors.New("--strict requires .specter-results.json — run 'specter ingest' first")
 
 // C-01, C-02: Recognize @spec and @ac in //, #, and * (JSDoc) comments.
 // Anchored to the start of the trimmed line: an annotation must be the sole
@@ -224,12 +229,32 @@ func BuildCoverageReport(specs []schema.SpecAST, annotations []AnnotationMatch, 
 	return BuildCoverageReportWithResults(specs, annotations, thresholds, nil)
 }
 
+// BuildCoverageReportStrict is like BuildCoverageReportWithResults but applies
+// v0.10 --strict semantics across all tiers: any annotated AC whose result
+// status is not "passed" (including "unknown" = no entry) is reported as
+// uncovered. Under strict=true, a nil or empty results file is a hard error.
+//
+// C-19 / C-20 / AC-19 / AC-20.
+func BuildCoverageReportStrict(specs []schema.SpecAST, annotations []AnnotationMatch, thresholds map[int]int, results *ResultsFile, strict bool) (*CoverageReport, error) {
+	if strict && (results == nil || len(results.Results) == 0) {
+		return nil, ErrMissingResults
+	}
+	if !strict {
+		return BuildCoverageReportWithResults(specs, annotations, thresholds, results), nil
+	}
+	return buildCoverageReportCore(specs, annotations, thresholds, results, true), nil
+}
+
 // BuildCoverageReportWithResults is like BuildCoverageReport but additionally
 // enforces pass-rate-aware coverage for Tier 1 specs:
 // a Tier 1 AC is covered only if the annotation exists AND the result entry passed.
 //
 // C-07: Pass-rate-aware coverage for Tier 1
 func BuildCoverageReportWithResults(specs []schema.SpecAST, annotations []AnnotationMatch, thresholds map[int]int, results *ResultsFile) *CoverageReport {
+	return buildCoverageReportCore(specs, annotations, thresholds, results, false)
+}
+
+func buildCoverageReportCore(specs []schema.SpecAST, annotations []AnnotationMatch, thresholds map[int]int, results *ResultsFile, strict bool) *CoverageReport {
 	// Group annotations by spec ID
 	annotBySpec := make(map[string]struct {
 		acIDs map[string]bool
@@ -275,10 +300,14 @@ func BuildCoverageReportWithResults(specs []schema.SpecAST, annotations []Annota
 		for _, id := range allACIDs {
 			annotationExists := ann.acIDs != nil && ann.acIDs[id]
 			var isCovered bool
-			if spec.Tier == 1 {
+			switch {
+			case strict:
+				// C-19: --strict requires annotation AND status=passed, all tiers.
+				isCovered = annotationExists && results.status(spec.ID, id) == "passed"
+			case spec.Tier == 1:
 				// C-07: Tier 1 requires annotation AND passing result
 				isCovered = annotationExists && results.passed(spec.ID, id)
-			} else {
+			default:
 				// Tier 2/3: annotation alone is sufficient
 				isCovered = annotationExists
 			}
