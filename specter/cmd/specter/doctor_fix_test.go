@@ -117,3 +117,82 @@ func TestDoctor_Fix_NoChanges_Exits0(t *testing.T) {
 		t.Errorf("expected `no changes` in output; got:\n%s", out)
 	}
 }
+
+// manifestWithoutSchemaVersion is a pre-v0.10 specter.yaml shape (no
+// schema_version line). doctor --fix should canonicalize it.
+const manifestWithoutSchemaVersion = `system:
+  name: demo
+  tier: 2
+domains:
+  default:
+    tier: 2
+    specs: []
+`
+
+// @ac AC-14
+// doctor --fix on a workspace whose specter.yaml lacks schema_version adds
+// schema_version: 1 at the top. The manifest parses with SchemaVersion=1
+// after the rewrite.
+func TestDoctor_Fix_Canonicalizes_Manifest_AddsSchemaVersion(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "specter.yaml")
+	if err := os.WriteFile(manifestPath, []byte(manifestWithoutSchemaVersion), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, code := runCLI(t, dir, "doctor", "--fix")
+	if code != 0 {
+		t.Fatalf("doctor --fix exited %d", code)
+	}
+	after, _ := os.ReadFile(manifestPath)
+	if !strings.Contains(string(after), "schema_version: 1") {
+		t.Errorf("expected schema_version: 1 in canonicalized manifest; got:\n%s", after)
+	}
+}
+
+// @ac AC-15
+// doctor --fix on a manifest that already declares schema_version leaves
+// the file byte-unchanged (no spurious rewrite).
+func TestDoctor_Fix_Manifest_AlreadyCanonical_IsNoOp(t *testing.T) {
+	dir := t.TempDir()
+	canonical := "schema_version: 1\n" + manifestWithoutSchemaVersion
+	manifestPath := filepath.Join(dir, "specter.yaml")
+	if err := os.WriteFile(manifestPath, []byte(canonical), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, code := runCLI(t, dir, "doctor", "--fix")
+	if code != 0 {
+		t.Fatalf("doctor --fix exited %d", code)
+	}
+	after, _ := os.ReadFile(manifestPath)
+	if string(after) != canonical {
+		t.Errorf("manifest already canonical must be byte-unchanged; got diff:\nbefore:\n%s\nafter:\n%s", canonical, after)
+	}
+}
+
+// @ac AC-16
+// doctor --fix --dry-run on a manifest lacking schema_version prints what
+// would change without writing.
+func TestDoctor_Fix_DryRun_Manifest_DoesNotWrite(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "specter.yaml")
+	if err := os.WriteFile(manifestPath, []byte(manifestWithoutSchemaVersion), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, code := runCLI(t, dir, "doctor", "--fix", "--dry-run")
+	if code != 0 {
+		t.Fatalf("dry-run exit %d; output:\n%s", code, out)
+	}
+	if !strings.Contains(out, "would rewrite") {
+		t.Errorf("expected `would rewrite` on dry-run; got:\n%s", out)
+	}
+	if !strings.Contains(out, "specter.yaml") {
+		t.Errorf("expected specter.yaml to be named in the dry-run output; got:\n%s", out)
+	}
+	after, _ := os.ReadFile(manifestPath)
+	if string(after) != manifestWithoutSchemaVersion {
+		t.Errorf("dry-run must not modify the manifest")
+	}
+}
