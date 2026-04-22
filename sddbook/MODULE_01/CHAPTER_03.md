@@ -801,24 +801,31 @@ function NotificationDropdown({ notifications }) {
 **With constraint "MUST sanitize notification body before rendering":**
 
 ```typescript
-// AI respects the constraint: secure rendering
+// AI respects the constraint: sanitized input, safe preview
 import DOMPurify from "dompurify";
 
 function NotificationDropdown({ notifications }) {
   return (
     <div>
-      {notifications.map((n) => (
-        <div key={n.id}>
-          <p>{n.title}</p>
-          <p>{DOMPurify.sanitize(n.body).slice(0, 50)}</p>
-        </div>
-      ))}
+      {notifications.map((n) => {
+        // Strip all tags to derive a plain-text preview, then truncate.
+        // React then auto-escapes when rendering the preview as text.
+        const preview = DOMPurify.sanitize(n.body, { ALLOWED_TAGS: [] }).slice(0, 50);
+        return (
+          <div key={n.id}>
+            <p>{n.title}</p>
+            <p>{preview}</p>
+          </div>
+        );
+      })}
     </div>
   );
 }
 ```
 
 The constraint transformed the output from insecure to secure. That one line in the spec — `MUST sanitize notification body before rendering` — prevented a potential XSS vulnerability.
+
+Two things worth naming in the fixed version. First, DOMPurify has to do real work: slicing a sanitized *HTML* string as if it were text can cut inside a tag and reintroduce the problem, so we strip tags (`ALLOWED_TAGS: []`) *before* truncating — slicing plain text is safe. Second, the preview is rendered inside `{...}` rather than `dangerouslySetInnerHTML`, so React's built-in escaping is the final line of defense. The AI's "bad" default was structurally unsafe; the "good" version is safe by construction.
 
 ---
 
@@ -1042,8 +1049,8 @@ context:
     no theme system — all styles use Tailwind's default (light) theme.
     User preferences are stored via the preferences API.
   technical_context: >
-    Styling: Tailwind CSS 4.0 with dark mode class strategy
-    (tailwind.config: darkMode: "class").
+    Styling: Tailwind CSS 4.0 with dark mode class strategy,
+    configured in CSS via @custom-variant dark (&:where(.dark, .dark *)).
     State: Zustand for global state.
     Preferences API:
       GET /api/preferences → { theme: "light" | "dark" | "system", ... }

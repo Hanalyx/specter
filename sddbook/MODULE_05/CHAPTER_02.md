@@ -1076,7 +1076,7 @@ Before you begin, make sure you have:
 
 Tutorials are narrative-heavy and pedagogical. They cannot be fully automated. But they can reference spec-generated components to stay current.
 
-```markdown
+````markdown
 <!-- docs/tutorials/build-a-product-catalog.mdx -->
 
 # Tutorial: Build a Product Catalog
@@ -1131,7 +1131,7 @@ for (const product of response.data) {
 }
 ```
 </TutorialStep>
-```
+````
 
 ---
 
