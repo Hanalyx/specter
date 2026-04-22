@@ -2,60 +2,9 @@
 
 Forward-looking roadmap. Items are grouped by target release. Each item is a single sentence of intent plus a link to the design doc or discussion when one exists.
 
-Current shipped version: **v0.9.2** (published to VS Code Marketplace as stable 2026-04-21).
+Current shipped version: **v0.9.2** (published to VS Code Marketplace as stable 2026-04-21). Past release notes live in [CHANGELOG.md](CHANGELOG.md) — this file is forward-only.
 
----
-
-## v0.9.2 — UX polish (shipped)
-
-Published 2026-04-21. Two items from jwtms migration testing; no security or correctness issues.
-
-- **`specter coverage` redesign**: summary header with per-tier breakdown; worst-first sort (failing → partial → 100%, tier desc within each bucket); `--failing` flag to filter the table to sub-100% entries; 40-char truncation for long spec IDs (JSON output unchanged).
-- **`specter init --refresh`**: non-destructive manifest update. Refreshes `domains.default.specs` only; preserves `settings`, `registry`, custom domains, tier overrides. `--dry-run` variant. Mutually exclusive with `--force`.
-- **Marketplace metadata**: added `Other` category and discovery keywords (`spec`, `sdd`, `spec-driven-development`, ...).
-
-Spec bumps: `spec-coverage` 1.7.0→1.8.0, `spec-manifest` 1.5.0→1.6.0.
-
----
-
-## v0.9.1 — Post-audit fixes (shipped)
-
-Published 2026-04-19. Derived from `research/SPECTER_AUDIT_2026-04-19.md`.
-
-- **CRITICAL**: mandatory SHA256 checksum verification on binary download (no silent fallback).
-- **BLOCKERS**: register `specter.runReverse`, remove `specter.openQuickStart` orphan declaration, CI-enforced package.json ↔ extension.ts command parity test.
-- **HIGH**: fresh-install binary resolution, reachable walkthrough, `driftDecorationType` disposal, on-type + drift-scan error surfacing, Go `[]` not `null` emission.
-- **Internal**: `specter.insertAnnotation` → `specter._insertAnnotation` (VS Code community convention for internal commands).
-
-Spec bumps: `spec-coverage` 1.6.0→1.7.0, `spec-vscode` 1.2.0→1.3.0.
-
----
-
-## v0.9.0 — Coherent failure-handling & intelligent diagnosis (shipped)
-
-Published to Marketplace 2026-04-19 as stable. Covers:
-
-- **B1 fix**: `specter coverage --json` always emits a CoverageReport, including on parse failure (new `parse_errors` field). Extension reads this reliably in every state.
-- **H1 fix**: VS Code `specter.runSync` emits an honest completion toast that reflects success vs failure, no more unconditional "Specter sync complete."
-- **H3 fix**: `@ac` hovers in test files populate `coveredByFiles` from the live CoverageReport instead of always rendering as "uncovered."
-- **M8 fix**: annotation extractor respects multi-line string literals (backtick, triple-quote) so `// @spec` inside a template literal is no longer hijacked.
-- **Intelligent drift diagnosis**: `parse_error_patterns` + `spec_candidates_count` let consumers name "every discovered spec hit the same `required` error at `spec.objective`" as schema drift in one sentence. Surfaced in `specter doctor` output and the VS Code sidebar message.
-- **`specter init` discovers existing specs**: populates `domains` from parseable specs; always emits a `domains:` section (fixes silent-exclusion footgun); prints parse-error pattern analysis when specs fail.
-- **VS Code Problems panel plumbing**: parse errors pushed as per-file `vscode.Diagnostic` entries — clickable, positioned at line/column.
-- **Sidebar mixed-render**: passing specs and a "Failed to parse" group render together. Each failing file is a clickable leaf. Previously all-or-nothing.
-- **Click-to-open**: spec nodes and test-file leaves open the underlying file at the reported line.
-- **Honest Insights panel**: parse-failures section + coverage-gaps section; header text reflects true mixed state; file-path headers in parse cards are clickable.
-- **`specter.revealInTree`**: wired end-to-end (previously declared in `package.json` but never registered).
-- **snake_case → camelCase shape conversion**: latent runtime bug where `entry.specID` returned undefined — the VS Code types declared camelCase but the CLI emits snake_case.
-
-Spec bumps: `spec-coverage` 1.4.0→1.6.0, `spec-doctor` 1.0.0→1.1.0, `spec-manifest` 1.4.0→1.5.0, `spec-vscode` 1.1.0→1.2.0.
-
----
-
-## v0.8.x prerequisites / blocking future releases
-
-- **`@vscode/test-electron` headless integration tests.** The release-gate currently relies on a human operator reproducing changes in a live VS Code window. Automating that via `@vscode/test-electron` would let CI spawn a real VS Code instance with the extension loaded against fixture workspaces and assert the sidebar / status bar / output channel behave as expected. Backstops the human gate; does not replace it. About a day of setup.
-- **Go toolchain bump (1.22 → 1.23+).** ✅ Done in v0.8.3. Clears 5 stdlib CVEs under `govulncheck`. Now at Go 1.25.8 + golangci-lint v2.6.2.
+Current working branch: none. v0.9.2 shipped 2026-04-21; we are between release cycles, so PRs target `main` directly per the "between releases" clause of `CONTRIBUTING.md` → Branch workflow. The next working branch (`release/v0.10`) will be created when v0.10 work begins.
 
 ---
 
@@ -104,7 +53,7 @@ Blocks on test completion (~30s cost for jwtms's 250s integration suite). Unit +
 
 **Open design question — flakes.** The proposal to "add `--retry 2` on test jobs" is a workaround that hides legitimate regressions. Better answer (deferred to v0.11): test runners distinguish flakes from deterministic failures in the results file; `--strict` tolerates `flaky`, `--deny-flaky` fails hard on them. Ship v0.10 with only `passed/failed/skipped/errored`; revisit flake handling when real patterns surface from v0.10 usage.
 
-**Design discussion**: see the thread in session notes (2026-04-20) — the three design tradeoffs (two-stage vs one-stage ingest, JUnit flavor handling, missing-results behavior under `--strict`) are resolved in the bullets above. Flake handling deferred.
+**Design discussion**: the three design tradeoffs (two-stage vs one-stage ingest, JUnit flavor handling, missing-results behavior under `--strict`) are resolved in the bullets above. Flake handling deferred.
 
 **Scope**: ~2 days for the `specter ingest` command with JUnit + go test flavors, `--strict` semantics on coverage, extended results-file schema. Spec bumps: new `spec-ingest`, `spec-coverage` 1.8.0 → 1.9.0.
 
@@ -112,7 +61,7 @@ Blocks on test completion (~30s cost for jwtms's 250s integration suite). Unit +
 
 ## v0.11 — AI loop enforcement (candidate)
 
-The CI gate (`specter sync`) already enforces annotated tests must exist. This phase makes the loop *proactive* rather than reactive — close the spec → test → implement → eval cycle for AI coding assistants. Items retrieved from the pre-v0.3 `docs/IMPROVEMENT_ROADMAP.md` (local, gitignored); they were Phase 5 in that doc and remain unshipped.
+The CI gate (`specter sync`) already enforces annotated tests must exist. This phase makes the loop *proactive* rather than reactive — close the spec → test → implement → eval cycle for AI coding assistants.
 
 - **`specter context`** — generates AI-tool-specific instruction files from current specs so the AI reads and respects the spec before generating code:
   - `specter context --format claude` → updates/creates `CLAUDE.md` with current spec summaries, AC list, tier constraints
@@ -129,10 +78,12 @@ The CI gate (`specter sync`) already enforces annotated tests must exist. This p
   - Reports which specs are affected and which ACs have no test annotation in the changeset
   - Bypass with `git push --no-verify` (documented, discouraged)
 
-- **`.specter-results.json` test runner adapters** — first-party adapters that write pass/fail results automatically so the pass-rate-aware coverage loop (already implemented for Tier 1 in v0.4) closes end-to-end without manual results-file maintenance:
+- **`.specter-results.json` test runner adapters** — first-party adapters that write pass/fail results automatically so the pass-rate-aware coverage loop closes end-to-end without manual results-file maintenance:
   - Go: `go test -json | specter results ingest`
   - pytest: `pytest --specter` plugin
   - Jest: `jest-specter` reporter
+
+- **Flake handling** (deferred from v0.10) — `--deny-flaky` flag; runners emit `status: flaky`; `--strict` tolerates flakes by default. Ship when real patterns from v0.10 usage surface.
 
 ---
 
@@ -145,12 +96,31 @@ The CI gate (`specter sync`) already enforces annotated tests must exist. This p
 - **M4** — `spec-doctor` C-08 vs skip-coverage-on-parse-error conflict.
 - **M5** — `spec-explain` annotation examples use inconsistent naming across languages.
 - **M6** — `spec-check` AC-03 structural-conflict detection uses fragile keyword matching.
-- **M7** — `spec-coverage` AC-01 float assertion looser than rounding contract.
+- **M7** — `spec-coverage` AC-01 float assertion looser than the rounding contract.
 - **LOW-tier** — several test-fidelity gaps where tests check *that* something happened but not *what*. Batch into a "test hardening" PR.
 
 ---
 
-## v0.8+ / unscheduled — deferred from earlier proposals
+## Carry-overs from the pre-v0.3 roadmap (still unshipped)
+
+Items from the local `docs/IMPROVEMENT_ROADMAP.md` that haven't landed yet:
+
+- **Developer-friendly parse-error messages.** v0.9.0's pattern analysis names the *shape* of drift at the report level; per-error friendly messages (e.g., "Constraint ID 'c01' is invalid — must match pattern C-01, C-02, etc.") are still raw JSON-Schema paths.
+- **Dangling-reference "did you mean?" suggestions.** `error: "handler-interface" does not exist` should include Levenshtein-distance closest match + a suggested fix path (file + `id:` to create). Kensa's original ask.
+- **`specter reverse` summary report.** After `reverse` runs, print: *"Found 14 constraints, 23 assertions, 5 gaps. 3 files need your attention."* Today the output is raw YAML dumps.
+- **Spec-writing guide links in error output.** Orphan-constraint and unmapped-AC errors should link to the annotation guide / relevant docs.
+
+---
+
+## Infrastructure follow-ups
+
+- **`@vscode/test-electron` headless integration tests.** The release-gate currently relies on a human operator reproducing changes in a live VS Code window. Automating that via `@vscode/test-electron` would let CI spawn a real VS Code instance with the extension loaded against fixture workspaces and assert the sidebar / status bar / output channel behave as expected. Backstops the human gate; does not replace it. About a day of setup.
+- **PR comment integration** (Phase 3 carry-over) — show spec coverage diff in PR comments (AC added/removed, coverage delta by tier). Pairs with the `specter-sync-action`.
+- **Glob patterns in `settings.exclude`** — the exclude list currently matches by directory name only. Extend to support glob patterns so teams can write `- .claude/**` or `- **/worktrees` without enumerating every root-level directory.
+
+---
+
+## Unscheduled — design work needed first
 
 Each needs its own design doc before scheduling:
 
