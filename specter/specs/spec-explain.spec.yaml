@@ -1,7 +1,7 @@
 spec:
   id: spec-explain
-  version: "1.0.0"
-  status: draft
+  version: "1.1.0"
+  status: approved
   tier: 2
 
   context:
@@ -74,6 +74,16 @@ spec:
       type: technical
       enforcement: error
 
+    - id: C-09
+      description: "`specter explain <spec-id>` (AC-less invocation) MUST render a spec-card header line with the spec's tier, AC-covered/AC-total count, coverage percentage, effective threshold, and PASS/FAIL status. Format: `<spec-id> — tier N · X/Y ACs · Z% coverage · threshold T% [PASS|FAIL]`. Rationale: closes the gap between 'list of ACs' and 'which spec am I looking at' — one line tells the developer everything they need to decide whether to act."
+      type: business
+      enforcement: error
+
+    - id: C-10
+      description: "Under AC-less invocation, each COVERED AC line MUST list the covering test file(s) after the description. For UNCOVERED ACs, the full (untruncated) description MUST be shown so the developer can read what behavior is missing. Rationale: a truncated description on an uncovered AC is the wrong optimization — that's the actionable item."
+      type: business
+      enforcement: error
+
   acceptance_criteria:
     - id: AC-01
       description: "`specter explain my-spec` lists all ACs with COVERED or UNCOVERED label"
@@ -136,6 +146,26 @@ spec:
       references_constraints: ["C-04"]
       priority: high
 
+    - id: AC-07
+      description: "`specter explain spec-coverage` run in Specter's own dogfood workspace emits a header line matching the regex `^specter explain spec-coverage — tier \\d+ · \\d+/\\d+ ACs · \\d+(\\.\\d+)?% coverage · threshold \\d+% \\[(PASS|FAIL)\\]$` as the first non-blank line of output. Format is stable for regression pinning."
+      inputs:
+        spec_id: "spec-coverage"
+        workspace: "specter/ dogfood"
+      expected_output:
+        header_regex_match: true
+      references_constraints: ["C-09"]
+      priority: critical
+
+    - id: AC-08
+      description: "For a COVERED AC in the AC-less output, the rendered line MUST include a trailing `→` followed by comma-separated test file path(s) that annotated it. Example: `COVERED  AC-01  ... → cmd/specter/coverage_test.go`. Test file paths come from the same annotation scan already performed."
+      references_constraints: ["C-10"]
+      priority: high
+
+    - id: AC-09
+      description: "For an UNCOVERED AC in the AC-less output, the full description is rendered without the 60-char truncation applied to covered entries (or with a larger, separately-tuned cap). The rationale: uncovered ACs are the developer's action items, and truncating their text defeats the output's purpose."
+      references_constraints: ["C-10"]
+      priority: high
+
   depends_on:
     - spec_id: spec-coverage
       version_range: "^1.0.0"
@@ -145,6 +175,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.1.0"
+      date: "2026-04-22"
+      author: "specter-team"
+      type: minor
+      description: "Add C-09/AC-07 (spec-card header with tier, coverage %, threshold, PASS/FAIL) and C-10/AC-08/AC-09 (per-AC test file attribution for covered entries; full description for uncovered). Extends AC-less `specter explain <spec-id>` from a minimal COVERED/UNCOVERED table to a complete spec card — no new top-level command. Folds what BACKLOG had proposed as `specter show` into the existing explain verb."
     - version: "1.0.0"
       date: "2026-04-14"
       author: "specter-team"
