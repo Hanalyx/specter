@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -127,5 +128,96 @@ func TestExplain_OutputIncludesTestFileCount(t *testing.T) {
 
 	if !strings.Contains(out, "test file") {
 		t.Errorf("expected test file count in output, got:\n%s", out)
+	}
+}
+
+// @ac AC-07
+// AC-less explain MUST render a spec-card header matching the shape
+// `<spec-id> — tier N · X/Y ACs · Z% coverage · threshold T% [PASS|FAIL]`.
+func TestExplain_ACLess_RendersSpecCardHeader(t *testing.T) {
+	dir := setupExplainDir(t, []string{"AC-01"}, "_test.go")
+	out, _ := runCLI(t, dir, "explain", "my-spec")
+
+	// Regex-check the header shape. Leading "specter explain my-spec" is
+	// the existing line; the new addition is everything after the em-dash.
+	headerRE := regexp.MustCompile(
+		`specter explain my-spec — tier \d+ · \d+/\d+ ACs · \d+(\.\d+)?% coverage · threshold \d+% \[(PASS|FAIL)\]`)
+	if !headerRE.MatchString(out) {
+		t.Errorf("expected spec-card header matching regex %q; got:\n%s",
+			headerRE.String(), out)
+	}
+}
+
+// @ac AC-08
+// Covered ACs in AC-less output MUST attribute the test file(s) that
+// covered them.
+func TestExplain_ACLess_CoveredACAttributesTestFiles(t *testing.T) {
+	dir := setupExplainDir(t, []string{"AC-01"}, "_test.go")
+	out, _ := runCLI(t, dir, "explain", "my-spec")
+
+	// The covered row for AC-01 must mention the annotating test file.
+	// The arrow "→" is the convention documented in C-10.
+	lines := strings.Split(out, "\n")
+	var coveredLine string
+	for _, line := range lines {
+		if strings.Contains(line, "COVERED") && strings.Contains(line, "AC-01") {
+			coveredLine = line
+			break
+		}
+	}
+	if coveredLine == "" {
+		t.Fatalf("could not find COVERED AC-01 line; got:\n%s", out)
+	}
+	if !strings.Contains(coveredLine, "→") {
+		t.Errorf("expected `→` file attribution on covered row; got:\n%s", coveredLine)
+	}
+	if !strings.Contains(coveredLine, "my_spec_test.go") {
+		t.Errorf("expected test file name attributed on covered row; got:\n%s", coveredLine)
+	}
+}
+
+// @ac AC-09
+// Uncovered ACs MUST show the full description without 60-char truncation.
+func TestExplain_ACLess_UncoveredACShowsFullDescription(t *testing.T) {
+	dir := t.TempDir()
+	// Build a spec whose AC-02 description is > 60 chars so truncation would
+	// be detectable. minimalValidSpec gives "Test acceptance criterion"
+	// (25 chars) — insufficient. Write a custom spec.
+	longDesc := "A very long acceptance criterion description that deliberately exceeds sixty characters so truncation is observable"
+	specYAML := `spec:
+  id: my-spec
+  version: "1.0.0"
+  status: draft
+  tier: 3
+  context:
+    system: test
+    feature: test
+  objective:
+    summary: test
+  constraints:
+    - id: C-01
+      description: "MUST work"
+      type: technical
+      enforcement: error
+  acceptance_criteria:
+    - id: AC-01
+      description: "Short and covered"
+      references_constraints: ["C-01"]
+      priority: high
+    - id: AC-02
+      description: "` + longDesc + `"
+      references_constraints: ["C-01"]
+      priority: high
+`
+	writeSpec(t, dir, "my-spec.spec.yaml", specYAML)
+	// Cover only AC-01 so AC-02 is the uncovered under test.
+	_ = os.WriteFile(filepath.Join(dir, "my_spec_test.go"),
+		[]byte("// @spec my-spec\n// @ac AC-01\nfunc TestX(t *testing.T) {}\n"), 0644)
+
+	out, _ := runCLI(t, dir, "explain", "my-spec")
+
+	// AC-02 line must contain the FULL long description, not "...".
+	if !strings.Contains(out, longDesc) {
+		t.Errorf("expected full uncovered-AC description in output (not truncated); got:\n%s", out)
 	}
 }
