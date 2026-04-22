@@ -1407,16 +1407,38 @@ func runDoctorDiagnose() error {
 	return doctorDiagnoseBody()
 }
 
-// runDoctorFix applies known-safe schema-drift rewrites (spec-doctor C-10).
-// When dryRun is true, prints what would change without writing.
+// runDoctorFix applies known-safe schema-drift rewrites (spec-doctor C-10)
+// and canonicalizes specter.yaml if needed (C-13). When dryRun is true,
+// prints what would change without writing.
 func runDoctorFix(dryRun bool) error {
+	var affected []string
+
+	// C-13: canonicalize specter.yaml first (add schema_version: 1 if absent).
+	if mPath, _ := findManifest(); mPath != "" {
+		data, err := os.ReadFile(mPath)
+		if err == nil {
+			newContent, added := addSchemaVersionIfMissing(data)
+			if added {
+				if dryRun {
+					fmt.Printf("  would rewrite %s (add-schema-version)\n", mPath)
+				} else {
+					if werr := os.WriteFile(mPath, newContent, 0644); werr != nil {
+						fmt.Fprintf(os.Stderr, "error writing %s: %v\n", mPath, werr)
+					} else {
+						fmt.Printf("  rewrote %s (add-schema-version)\n", mPath)
+					}
+				}
+				affected = append(affected, mPath)
+			}
+		}
+	}
+
 	specFiles := discoverSpecs()
-	if len(specFiles) == 0 {
+	if len(specFiles) == 0 && len(affected) == 0 {
 		fmt.Println("doctor --fix: no changes (no .spec.yaml files found)")
 		return nil
 	}
 
-	var affected []string
 	for _, f := range specFiles {
 		data, err := os.ReadFile(f)
 		if err != nil {
@@ -1467,6 +1489,45 @@ func runDoctorFix(dryRun bool) error {
 	}
 	fmt.Printf("\ndoctor --fix: %d file(s) %s\n", len(affected), verb)
 	return nil
+}
+
+// addSchemaVersionIfMissing prepends `schema_version: 1` to a specter.yaml
+// body when the raw content has no schema_version: line (spec-doctor C-13).
+// Returns (newContent, true) when it added the line, (content, false) when
+// the file already declares the field.
+//
+// Operates on raw bytes rather than re-marshaling to preserve the operator's
+// formatting, key order, and comments. The check is deliberately literal
+// ("^schema_version:" at a line start) — same convention used by
+// TestInit_Scaffold_WritesSchemaVersion1.
+func addSchemaVersionIfMissing(content []byte) ([]byte, bool) {
+	// Already canonical? Scan lines for the key (ignoring comments).
+	for _, line := range strings.Split(string(content), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "schema_version:") {
+			return content, false
+		}
+	}
+
+	// Prepend `schema_version: 1` after any leading comment header so
+	// readers still see the project banner first when present.
+	lines := strings.Split(string(content), "\n")
+	insertAt := 0
+	for insertAt < len(lines) {
+		t := strings.TrimSpace(lines[insertAt])
+		if t == "" || strings.HasPrefix(t, "#") {
+			insertAt++
+			continue
+		}
+		break
+	}
+	out := append([]string{}, lines[:insertAt]...)
+	out = append(out, "schema_version: 1")
+	out = append(out, lines[insertAt:]...)
+	return []byte(strings.Join(out, "\n")), true
 }
 
 // doctorDiagnoseBody is the original doctor implementation extracted from
