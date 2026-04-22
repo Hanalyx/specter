@@ -1,6 +1,6 @@
 spec:
   id: spec-coverage
-  version: "1.8.0"
+  version: "1.9.0"
   status: approved
   tier: 2
 
@@ -125,6 +125,21 @@ spec:
 
     - id: C-18
       description: "In the default table output, spec IDs longer than 40 characters MUST be truncated in the `Spec ID` column with a trailing ellipsis (`…`) so subsequent columns remain aligned. The `--json` output is unaffected — it emits the full spec_id. Rationale: long path-derived IDs (e.g. `app-api-admin-appointments-id-service`) break the table in v0.9.0/v0.9.1; alignment is a legibility prerequisite for the sort + summary work to be useful."
+      type: technical
+      enforcement: error
+
+    - id: C-19
+      description: "`specter coverage --strict` MUST treat any annotated AC as uncovered unless a .specter-results.json entry for that (spec_id, ac_id) exists with status=passed. Applies to ALL tiers, not just Tier 1. A skipped, failed, or errored entry demotes the AC to uncovered regardless of annotation presence. Rationale: a green Specter gate must mean tests actually passed — eval phase enforcement for the SDD loop."
+      type: business
+      enforcement: error
+
+    - id: C-20
+      description: "Under `--strict`, a missing `.specter-results.json` file (or an empty results array) MUST produce a hard failure (non-zero exit, explanatory stderr message `--strict requires .specter-results.json — run 'specter ingest' first`). Rationale: --strict is a contract that test results were verified; no results means the contract can't be satisfied, and silently falling back to annotation-only would defeat the purpose."
+      type: business
+      enforcement: error
+
+    - id: C-21
+      description: "The .specter-results.json schema MUST accept entries with an explicit `status` field whose value is one of {passed, failed, skipped, errored}. For back-compat, entries without `status` but with `passed: true` are treated as status=passed; entries with `passed: false` and no status are treated as status=failed. The coverage package's result-lookup function uses status when present, falls back to passed otherwise."
       type: technical
       enforcement: error
 
@@ -313,7 +328,37 @@ spec:
       references_constraints: ["C-18"]
       priority: medium
 
+    - id: AC-19
+      description: "Given a Tier 2 spec with annotation @ac AC-03 and a .specter-results.json entry {spec_id, AC-03, status: failed}, BuildCoverageReportWithResults under StrictMode=true returns CoverageReport where AC-03 is listed in UncoveredACs (not CoveredACs). Same input under StrictMode=false (non-strict) lists AC-03 as CoveredACs because tier-2 does not pass-rate-check without --strict."
+      inputs:
+        spec: "tier 2, AC-03 annotated, results file: {AC-03, failed}"
+      expected_output:
+        strict_true_uncovered: ["AC-03"]
+        strict_false_covered: ["AC-03"]
+      references_constraints: ["C-19"]
+      priority: critical
+
+    - id: AC-20
+      description: "Under StrictMode=true with an empty or nil ResultsFile, the coverage command MUST return an error (surfaces as exit non-zero). The error message MUST contain the literal string `--strict requires .specter-results.json`. Rationale: silently falling back to annotation-only under --strict defeats the gate's purpose."
+      references_constraints: ["C-20"]
+      priority: critical
+
+    - id: AC-21
+      description: "ParseResultsFile accepts JSON {\"results\":[{\"spec_id\":\"s\",\"ac_id\":\"AC-01\",\"status\":\"failed\"}]} and returns a ResultsFile whose entry has Status=\"failed\" and Passed=false. Given back-compat input {\"results\":[{\"spec_id\":\"s\",\"ac_id\":\"AC-01\",\"passed\":true}]} (no status field), the entry has Status=\"passed\" (derived) and Passed=true. Status and Passed are kept internally consistent."
+      references_constraints: ["C-21"]
+      priority: high
+
+    - id: AC-22
+      description: "The result-lookup function ResultsFile.status(specID, acID) returns `passed` when an entry has status=passed, `failed`/`skipped`/`errored` for matching entries, and `unknown` when no entry exists. Under StrictMode=true, `unknown` and any non-passed status demote the AC to uncovered. Under StrictMode=false, behavior matches today's boolean passed() function."
+      references_constraints: ["C-19", "C-21"]
+      priority: high
+
   changelog:
+    - version: "1.9.0"
+      date: "2026-04-22"
+      author: "specter-team"
+      type: minor
+      description: "Add C-19/AC-19 (--strict treats non-passed annotated ACs as uncovered across all tiers), C-20/AC-20 (missing results file under --strict is a hard fail), C-21/AC-21/AC-22 (extended .specter-results.json status enum with back-compat boolean). Closes the test-quality hole where annotated-but-failing or annotated-but-skipped tests silently counted as covered — eval phase enforcement for the SDD loop. Requires spec-ingest 1.0.0+ to produce results files."
     - version: "1.8.0"
       date: "2026-04-20"
       author: "specter-team"
