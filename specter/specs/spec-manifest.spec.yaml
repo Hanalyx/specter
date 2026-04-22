@@ -1,7 +1,7 @@
 spec:
   id: spec-manifest
-  version: "1.6.0"
-  status: draft
+  version: "1.7.0"
+  status: approved
   tier: 2
 
   context:
@@ -152,6 +152,16 @@ spec:
     - id: C-21
       description: "`--refresh` and `--force` MUST be mutually exclusive. `specter init --refresh --force` MUST exit non-zero with a clear error message naming the conflict. Rationale: `--force` rewrites everything (operator accepts loss); `--refresh` preserves everything except `domains.default.specs` (operator wants a surgical update). Combining them is incoherent and almost always a mistake."
       type: technical
+      enforcement: error
+
+    - id: C-22
+      description: "The Manifest struct MUST accept an optional top-level integer field `schema_version`. ParseManifest accepts YAML with or without the field (absence defaults to 1). Rationale: records the schema draft a project commits to. Lives at the project level (one per repository) rather than on every spec — specs stay content-focused. During v0.x the value is always 1 (pre-1.0 schema is draft; see BACKLOG `Schema stability policy`). Locks to the canonical v1 shape at Specter v1.0.0, after which breaking changes bump the integer."
+      type: technical
+      enforcement: error
+
+    - id: C-23
+      description: "`specter init` (scaffold mode, no `--refresh`) MUST write `schema_version: 1` as the first field in the emitted specter.yaml. `specter init --refresh` MUST leave an existing `schema_version` value unchanged — per C-19 (non-destructive refresh), refresh only touches `domains.default.specs`."
+      type: business
       enforcement: error
 
   acceptance_criteria:
@@ -414,6 +424,39 @@ spec:
       references_constraints: ["C-21"]
       priority: medium
 
+    - id: AC-27
+      description: "ParseManifest given YAML `schema_version: 1\\nname: demo\\ndomains: { default: { specs: [] } }` returns a Manifest with SchemaVersion=1. ParseManifest given the same YAML without the `schema_version` field returns a Manifest with SchemaVersion=1 (default). ParseManifest given `schema_version: 2` (a value not yet recognized) returns SchemaVersion=2 — the parser records the raw value; validation of supported versions happens at the tool layer, not the parse layer."
+      inputs:
+        case_a: "yaml with schema_version: 1"
+        case_b: "yaml without schema_version"
+        case_c: "yaml with schema_version: 2"
+      expected_output:
+        case_a_schema_version: 1
+        case_b_schema_version: 1
+        case_c_schema_version: 2
+      references_constraints: ["C-22"]
+      priority: critical
+
+    - id: AC-28
+      description: "`specter init` (scaffold, no --refresh) in an empty directory produces a specter.yaml whose first non-comment line is `schema_version: 1`. Regex-pinned for format stability."
+      inputs:
+        command: "specter init"
+      expected_output:
+        first_nonempty_line_regex: "^schema_version: 1$"
+      references_constraints: ["C-23"]
+      priority: high
+
+    - id: AC-29
+      description: "`specter init --refresh` on a manifest that declares `schema_version: 1` leaves that line textually unchanged (byte-exact) in the output. A manifest that omits `schema_version` is not retroactively populated by --refresh — refresh is narrow (only `domains.default.specs` is touched, per C-19)."
+      inputs:
+        existing_manifest: "has schema_version: 1, domains.default.specs outdated"
+        command: "specter init --refresh"
+      expected_output:
+        schema_version_line_unchanged: true
+        other_fields_unchanged: true
+      references_constraints: ["C-23"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -423,6 +466,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.7.0"
+      date: "2026-04-22"
+      author: "specter-team"
+      type: minor
+      description: "Add C-22/AC-27 (optional schema_version field on Manifest; default 1), C-23/AC-28/AC-29 (init writes schema_version: 1; refresh preserves). Records the schema version at the project level (specter.yaml) rather than on every spec. During v0.x the value is a placeholder — see BACKLOG `Schema stability policy`; locks canonical at Specter v1.0.0."
     - version: "1.6.0"
       date: "2026-04-20"
       author: "specter-team"
