@@ -1,7 +1,7 @@
 spec:
   id: spec-vscode
-  version: "1.3.0"
-  status: draft
+  version: "1.4.0"
+  status: approved
   tier: 2
 
   context:
@@ -197,6 +197,11 @@ spec:
 
     - id: C-26
       description: "Async and synchronous error paths in editor hooks (onDidChangeTextDocument, onDidSaveTextDocument, onDidChangeActiveTextEditor, hover/completion/codeLens providers, drift scanner) MUST route caught errors to the Specter Output channel with a timestamp and context string, NOT silently discard them. `catch {}`, `catch (_) {}`, and `.catch(() => {})` on promise chains that can hide real failures are prohibited."
+      type: business
+      enforcement: error
+
+    - id: C-27
+      description: "When a Specter parse diagnostic on a .spec.yaml file carries a message matching `Unknown field '<fieldName>'` AND <fieldName> is in the known-removed-fields list (initial v0.10 list: `trust_level`), the extension MUST offer a CodeAction quick-fix titled `Remove deprecated field '<fieldName>'` that, when invoked, deletes the offending line. Applies to the single diagnostic; batch `Fix all` is a future addition. Pairs with `specter doctor --fix` for the CLI path — both do the same repair."
       type: business
       enforcement: error
 
@@ -476,6 +481,24 @@ spec:
       references_constraints: ["C-26"]
       priority: medium
 
+    - id: AC-50
+      description: "The pure helper `matchRemovedFieldDiagnostic(message)` returns the field name when given `Unknown field 'trust_level'` (in the known-removed list), returns null when given `Unknown field 'some_unknown_field'` (not in the list), and returns null when given any non-matching message (e.g. `Missing required field 'id'`). The helper is runtime-free: no VS Code imports."
+      inputs:
+        case_a: "Unknown field 'trust_level'"
+        case_b: "Unknown field 'some_unknown_field'"
+        case_c: "Missing required field 'id'"
+      expected_output:
+        case_a: "trust_level"
+        case_b: null
+        case_c: null
+      references_constraints: ["C-27"]
+      priority: high
+
+    - id: AC-51
+      description: "The extension registers a CodeActionProvider via vscode.languages.registerCodeActionsProvider keyed on the yaml language and producing a `quickfix` kind action. Registration is captured in activation.ts / extension.ts and the static analysis test in __tests__/ asserts the registration exists."
+      references_constraints: ["C-27"]
+      priority: medium
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.1.0"
@@ -494,6 +517,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.4.0"
+      date: "2026-04-22"
+      author: "specter-team"
+      type: minor
+      description: "Add C-27/AC-50/AC-51: CodeAction quick-fix 'Remove deprecated field' for Unknown-field parse diagnostics whose field name matches the known-removed list (initial v0.10: trust_level). Pairs with specter doctor --fix for the CLI path — both perform the same repair."
     - version: "1.3.0"
       date: "2026-04-19"
       author: "specter-team"
