@@ -98,6 +98,11 @@ spec:
       type: business
       enforcement: error
 
+    - id: C-13
+      description: "`specter doctor --fix` MUST canonicalize `specter.yaml` when present: if the file exists on disk but lacks a `schema_version:` line, `--fix` adds `schema_version: 1` at the top (ahead of any other content) and counts the manifest as one rewritten file in the C-12 summary. If `specter.yaml` already has `schema_version:`, the file is byte-unchanged. If `specter.yaml` does not exist, canonicalization is a no-op (`specter init` is the right command for that path). Under `--dry-run`, no write occurs and the summary uses the `would be rewritten` form. Rationale: a pre-v0.10 project upgrading to v0.10 has a manifest without `schema_version`; `doctor --fix` is the natural upgrade path."
+      type: business
+      enforcement: error
+
   acceptance_criteria:
     - id: AC-01
       description: "Project with specter.yaml reports manifest check as PASS"
@@ -225,6 +230,38 @@ spec:
       references_constraints: ["C-12"]
       priority: high
 
+    - id: AC-14
+      description: "`specter doctor --fix` in a workspace whose `specter.yaml` exists but lacks `schema_version` adds `schema_version: 1` at the top of the file. After the command, ParseManifest on the file reports SchemaVersion=1. Other manifest fields are byte-preserved (no reformatting)."
+      inputs:
+        manifest_before: "specter.yaml with system/domains/settings but no schema_version line"
+        command: "specter doctor --fix"
+      expected_output:
+        first_nonempty_nonheader_line: "schema_version: 1"
+        parsed_schema_version: 1
+      references_constraints: ["C-13"]
+      priority: critical
+
+    - id: AC-15
+      description: "`specter doctor --fix` when `specter.yaml` already declares `schema_version:` leaves the file byte-unchanged. No spurious rewrite occurs."
+      inputs:
+        manifest_before: "specter.yaml already carries schema_version: 1"
+        command: "specter doctor --fix"
+      expected_output:
+        file_unchanged_on_disk: true
+      references_constraints: ["C-13"]
+      priority: high
+
+    - id: AC-16
+      description: "`specter doctor --fix --dry-run` in a workspace whose `specter.yaml` lacks `schema_version` prints `would rewrite specter.yaml (add-schema-version)` (or equivalent wording) and leaves the file byte-unchanged. Exit 0."
+      inputs:
+        command: "specter doctor --fix --dry-run"
+      expected_output:
+        stdout_contains: "would rewrite"
+        file_unchanged_on_disk: true
+        exit_code: 0
+      references_constraints: ["C-13", "C-11"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -241,7 +278,7 @@ spec:
       date: "2026-04-22"
       author: "specter-team"
       type: minor
-      description: "Add C-10/AC-10 (--fix applies known-safe schema-drift rewrites; initial table: trust_level strip from v0.6.5 removal), C-11/AC-11 (--fix --dry-run previews without writing), C-12/AC-13 (summary output naming rewrites or `no changes`), AC-12 (doctor without --fix remains read-only, C-07 narrowed to doctor-without-fix). Closes what BACKLOG proposed as `specter migrate` by folding schema migration into the existing doctor verb."
+      description: "Add C-10/AC-10 (--fix applies known-safe schema-drift rewrites; initial table: trust_level strip from v0.6.5 removal), C-11/AC-11 (--fix --dry-run previews without writing), C-12/AC-13 (summary output naming rewrites or `no changes`), AC-12 (doctor without --fix remains read-only, C-07 narrowed to doctor-without-fix), C-13/AC-14/AC-15/AC-16 (--fix canonicalizes specter.yaml by adding schema_version: 1 when absent; byte-unchanged when already present; dry-run previews). Closes what BACKLOG proposed as `specter migrate` by folding schema migration into the existing doctor verb."
     - version: "1.1.0"
       date: "2026-04-19"
       author: "specter-team"
