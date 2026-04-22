@@ -40,6 +40,7 @@ import {
 import { buildConstraintHover, resolveDefinitionTarget } from './navigation';
 import { buildInsightCards, computeInsightsStatus, formatSpecContextForAI, shouldShowWalkthrough } from './insights';
 import { detectDrift, buildDriftHover } from './drift';
+import { matchRemovedFieldDiagnostic } from './quickFix';
 import { SpecterClient } from './client';
 import { detectShellConfig, isPathAlreadyPresent, formatAppendBlock, shouldPromptAddPath } from './shellPath';
 import * as crypto from 'crypto';
@@ -707,6 +708,40 @@ function registerProviders(ctx: vscode.ExtensionContext): void {
         return new vscode.Hover(new vscode.MarkdownString(hover.contents));
       },
     }),
+  );
+
+  // -- CodeAction quick-fix: "Remove deprecated field" for Specter parse
+  // diagnostics naming a field in the known-removed list (AC-50 / AC-51).
+  // Keyed on yaml language so it's available anywhere a .spec.yaml is open.
+  ctx.subscriptions.push(
+    vscode.languages.registerCodeActionsProvider(
+      { language: 'yaml' },
+      {
+        provideCodeActions(doc, _range, context) {
+          const actions: vscode.CodeAction[] = [];
+          for (const diag of context.diagnostics) {
+            if (diag.source !== 'specter') continue;
+            const fieldName = matchRemovedFieldDiagnostic(diag.message);
+            if (!fieldName) continue;
+
+            const fix = new vscode.CodeAction(
+              `Remove deprecated field '${fieldName}'`,
+              vscode.CodeActionKind.QuickFix,
+            );
+            // Delete the entire line of the diagnostic. VS Code ranges
+            // sometimes point at a single char — expand to the full line.
+            const lineRange = doc.lineAt(diag.range.start.line).rangeIncludingLineBreak;
+            fix.edit = new vscode.WorkspaceEdit();
+            fix.edit.delete(doc.uri, lineRange);
+            fix.diagnostics = [diag];
+            fix.isPreferred = true;
+            actions.push(fix);
+          }
+          return actions;
+        },
+      },
+      { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] },
+    ),
   );
 
   // -- Go-to-definition (AC-10)
