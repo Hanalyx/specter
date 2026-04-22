@@ -8,6 +8,16 @@ Current working branch: `release/v0.10` (opened 2026-04-22). Per `CONTRIBUTING.m
 
 ---
 
+## Schema stability policy
+
+The spec schema is considered **draft during v0.x**. `schema_version: 1` is the placeholder value for pre-1.0 projects — the integer does not move during the v0.x series. Breaking schema changes are allowed under the pre-1.0 "no stability promise" convention, and `specter doctor --fix` absorbs them via inference over drift patterns.
+
+**At Specter v1.0.0**, the then-current schema shape becomes the canonical `schema_version: 1` permanently. Subsequent breaking schema changes bump the integer (`2`, `3`, …) and MUST ship a migration path via `doctor --fix`.
+
+Rationale: Specter is a type system for specs. Schema stability is a user-trust contract, and pre-1.0 is the window to iterate freely before making that contract. `schema_version` lives in `specter.yaml` (project-level), not in every spec file — see the v0.10 migration-tooling section.
+
+---
+
 ## v0.10 — Migration tooling + CI-gated coverage quality (candidate)
 
 The v0.9.0 work made schema drift *visible* via intelligent diagnosis. v0.10 should make it *fixable* without hand-editing, and make the coverage gate resistant to two failure modes currently silent: skipped tests counting as covered, and failing-but-annotated tests counting as covered.
