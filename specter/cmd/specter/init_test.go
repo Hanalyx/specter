@@ -197,3 +197,62 @@ domains:
 		t.Errorf("conflict-error path must not modify specter.yaml")
 	}
 }
+
+// @spec spec-manifest
+// @ac AC-28
+// Scaffold mode writes schema_version: 1 as the first non-comment line so
+// downstream tooling (doctor --fix, future migration tools) can rely on its
+// presence without a grep-and-parse dance.
+func TestInit_Scaffold_WritesSchemaVersion1(t *testing.T) {
+	dir := t.TempDir()
+	// Write a minimal spec so `init` has something to discover.
+	writeSpec(t, dir, "alpha.spec.yaml", minimalValidSpec("alpha", 3, "AC-01"))
+
+	_, code := runCLI(t, dir, "init")
+	if code != 0 {
+		t.Fatalf("init exited non-zero")
+	}
+	contents := readManifest(t, dir)
+
+	// Find the first non-empty, non-comment line.
+	var firstLine string
+	for _, line := range strings.Split(contents, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		firstLine = trimmed
+		break
+	}
+	if firstLine != "schema_version: 1" {
+		t.Errorf("first non-comment line = %q, want `schema_version: 1`\nfull manifest:\n%s", firstLine, contents)
+	}
+}
+
+// @spec spec-manifest
+// @ac AC-29
+// `specter init --refresh` must preserve an existing schema_version line
+// byte-exactly. Refresh is narrow: only domains.default.specs changes.
+func TestInit_Refresh_PreservesSchemaVersion(t *testing.T) {
+	dir := t.TempDir()
+	original := `schema_version: 1
+system:
+  name: test
+domains:
+  default:
+    specs:
+      - spec-a
+`
+	writeManifestRaw(t, dir, original)
+	writeSpec(t, dir, "spec-a.spec.yaml", minimalValidSpec("spec-a", 3, "AC-01"))
+
+	_, code := runCLI(t, dir, "init", "--refresh")
+	if code != 0 {
+		t.Fatalf("init --refresh exited non-zero")
+	}
+
+	after := readManifest(t, dir)
+	if !strings.Contains(after, "schema_version: 1") {
+		t.Errorf("refresh dropped schema_version line; after:\n%s", after)
+	}
+}
