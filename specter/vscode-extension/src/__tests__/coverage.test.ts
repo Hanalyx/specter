@@ -47,7 +47,7 @@ const makeEntry = (
 // ---------------------------------------------------------------------------
 
 // @ac AC-05
-describe('buildACDecorations', () => {
+describe('[spec-vscode/AC-05] buildACDecorations', () => {
   it('marks covered ACs with green decoration', () => {
     const decs = buildACDecorations({
       coveredACs: ['AC-01', 'AC-02'],
@@ -92,7 +92,7 @@ describe('buildACDecorations', () => {
 // ---------------------------------------------------------------------------
 
 // @ac AC-11
-describe('buildTreeNodes', () => {
+describe('[spec-vscode/AC-11] buildTreeNodes', () => {
   it('builds a root node per spec file', () => {
     const report: CoverageReport = {
       entries: [
@@ -134,7 +134,7 @@ describe('buildTreeNodes', () => {
 // ---------------------------------------------------------------------------
 
 // @ac AC-12
-describe('formatStatusBar', () => {
+describe('[spec-vscode/AC-12] formatStatusBar', () => {
   it('formats as "Specter: N specs · X% · F failing"', () => {
     const text = formatStatusBar({ totalSpecs: 12, coveragePct: 94, failing: 2 });
     expect(text).toBe('Specter: 12 specs · 94% · 2 failing');
@@ -167,7 +167,7 @@ describe('formatStatusBar', () => {
 // ---------------------------------------------------------------------------
 
 // @ac AC-18
-describe('NotificationRateLimiter', () => {
+describe('[spec-vscode/AC-18] NotificationRateLimiter', () => {
   it('allows the first notification for a spec', () => {
     const limiter = new NotificationRateLimiter({ windowMs: 60_000 });
     expect(limiter.shouldNotify('payment-create-intent')).toBe(true);
@@ -210,7 +210,7 @@ describe('NotificationRateLimiter', () => {
 // ---------------------------------------------------------------------------
 
 // @ac AC-19
-describe('classifyNotification', () => {
+describe('[spec-vscode/AC-19] classifyNotification', () => {
   it('breaking spec change → warning toast', () => {
     const result = classifyNotification({ changeClass: 'breaking' });
     expect(result.kind).toBe('warning-toast');
@@ -239,7 +239,7 @@ describe('classifyNotification', () => {
 // ---------------------------------------------------------------------------
 
 // @ac AC-20
-describe('buildFileDecoration', () => {
+describe('[spec-vscode/AC-20] buildFileDecoration', () => {
   it('returns T1 badge for tier 1 spec', () => {
     const dec = buildFileDecoration(makeEntry('auth', 1, ['AC-01'], [], 100));
     expect(dec.badge).toBe('T1');
@@ -271,7 +271,7 @@ describe('buildFileDecoration', () => {
 // ---------------------------------------------------------------------------
 
 // @ac AC-28
-describe('buildCoverageTreeRoot (v0.8.0) — null report', () => {
+describe('[spec-vscode/AC-28] buildCoverageTreeRoot (v0.8.0) — null report', () => {
   it('returns exactly one message node when the report is null', () => {
     const nodes = buildCoverageTreeRoot(null);
     expect(nodes).toHaveLength(1);
@@ -291,7 +291,7 @@ describe('buildCoverageTreeRoot (v0.8.0) — null report', () => {
 });
 
 // @ac AC-29
-describe('buildCoverageTreeRoot (v0.9.0) — parse errors present', () => {
+describe('[spec-vscode/AC-29] buildCoverageTreeRoot (v0.9.0) — parse errors present', () => {
   it('returns a Failed-to-parse group (not a message) when parseErrors is non-empty', () => {
     const erroredReport: CoverageReport = {
       entries: [],
@@ -334,7 +334,7 @@ describe('buildCoverageTreeRoot (v0.9.0) — parse errors present', () => {
 
 // @spec spec-vscode
 // @ac AC-33
-describe('resolveWorkspacePathPure (v0.9.0) — Coverage tree click-to-open', () => {
+describe('[spec-vscode/AC-33] resolveWorkspacePathPure (v0.9.0) — Coverage tree click-to-open', () => {
   const posixJoin = (a: string, b: string) => (a.endsWith('/') ? a + b : `${a}/${b}`);
   const posixIsAbs = (p: string) => p.startsWith('/');
 
@@ -360,7 +360,7 @@ describe('resolveWorkspacePathPure (v0.9.0) — Coverage tree click-to-open', ()
 
 // @spec spec-vscode
 // @ac AC-31
-describe('formatSyncCompletion (v0.9.0) — honest completion toast', () => {
+describe('[spec-vscode/AC-31] formatSyncCompletion (v0.9.0) — honest completion toast', () => {
   it('returns an info-level "sync complete" message when no folders errored', () => {
     const c = formatSyncCompletion(0);
     expect(c.kind).toBe('info');
@@ -384,7 +384,7 @@ describe('formatSyncCompletion (v0.9.0) — honest completion toast', () => {
 
 // @spec spec-vscode
 // @ac AC-32
-describe('resolveCoveringFiles (v0.9.0) — hover populates from report', () => {
+describe('[spec-vscode/AC-32] resolveCoveringFiles (v0.9.0) — hover populates from report', () => {
   const report: CoverageReport = {
     entries: [
       {
@@ -435,7 +435,7 @@ describe('resolveCoveringFiles (v0.9.0) — hover populates from report', () => 
 
 // @spec spec-vscode
 // @ac AC-38
-describe('matchFileInIndex (v0.9.0) — reveal-in-tree path match', () => {
+describe('[spec-vscode/AC-38] matchFileInIndex (v0.9.0) — reveal-in-tree path match', () => {
   it('returns the value for an exact key match', () => {
     const idx = new Map([['specs/a.spec.yaml', 'A']]);
     expect(matchFileInIndex(idx, 'specs/a.spec.yaml')).toBe('A');
@@ -464,7 +464,7 @@ describe('matchFileInIndex (v0.9.0) — reveal-in-tree path match', () => {
 
 // @spec spec-vscode
 // @ac AC-36
-describe('buildCoverageTreeRoot (v0.9.0) — mixed pass + fail rendering', () => {
+describe('[spec-vscode/AC-36] buildCoverageTreeRoot (v0.9.0) — mixed pass + fail rendering', () => {
   const passingEntry = makeEntry('payments', 1, ['AC-01'], [], 100);
 
   it('renders a Failed-to-parse group alongside spec nodes when both exist', () => {
@@ -534,7 +534,7 @@ describe('buildCoverageTreeRoot (v0.9.0) — mixed pass + fail rendering', () =>
 
 // @spec spec-vscode
 // @ac AC-35
-describe('buildCoverageTreeRoot (v0.9.0) — drift diagnosis', () => {
+describe('[spec-vscode/AC-35] buildCoverageTreeRoot (v0.9.0) — drift diagnosis', () => {
   it('names schema drift in the group label when every discovered spec hit the same pattern', () => {
     const report: CoverageReport = {
       entries: [],
@@ -593,7 +593,7 @@ describe('buildCoverageTreeRoot (v0.9.0) — drift diagnosis', () => {
 
 // @spec spec-vscode
 // @ac AC-30
-describe('buildCoverageTreeRoot (v0.9.0) — no specs yet', () => {
+describe('[spec-vscode/AC-30] buildCoverageTreeRoot (v0.9.0) — no specs yet', () => {
   it('returns a message node distinct from the parse-error state when entries is empty and parseErrors is empty/undefined', () => {
     const noSpecs: CoverageReport = {
       entries: [],

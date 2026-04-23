@@ -28,7 +28,7 @@ const readPkg = () => JSON.parse(fs.readFileSync(PKG_JSON, 'utf-8'));
 // @ac AC-41
 // @ac AC-43
 // @ac AC-44
-describe('command parity (package.json ↔ extension.ts)', () => {
+describe('[spec-vscode/AC-41] command parity (package.json ↔ extension.ts)', () => {
   it('every declared command has a registered handler', () => {
     const pkg = readPkg();
     const declared = new Set<string>(
@@ -94,7 +94,7 @@ describe('command parity (package.json ↔ extension.ts)', () => {
 // ---------------------------------------------------------------------------
 
 // @ac AC-42
-describe('disposables lifecycle', () => {
+describe('[spec-vscode/AC-42] disposables lifecycle', () => {
   it('driftDecorationType is pushed to ctx.subscriptions', () => {
     const src = readSrc();
     // Creation site must exist (sanity check — if the factory call is gone,
@@ -113,7 +113,7 @@ describe('disposables lifecycle', () => {
 
 // @ac AC-45
 // @ac AC-46
-describe('activation control flow', () => {
+describe('[spec-vscode/AC-45] activation control flow', () => {
   it('binary resolution runs before the hasSpecOrManifest early-return', () => {
     // AC-45: commands like specter.runReverse must work in empty workspaces.
     // That requires resolveBinary to run before we short-circuit on
@@ -169,7 +169,7 @@ describe('activation control flow', () => {
 // ---------------------------------------------------------------------------
 
 // @ac AC-47
-describe('binary download integrity', () => {
+describe('[spec-vscode/AC-47] binary download integrity', () => {
   it('does not silently fall back when checksum verification is unavailable', () => {
     // The v0.9.0 code has:
     //   try { ...verify... } catch { /* proceed without verification */ }
@@ -210,7 +210,7 @@ describe('binary download integrity', () => {
 // ---------------------------------------------------------------------------
 
 // @ac AC-48
-describe('on-type parse-error surfacing', () => {
+describe('[spec-vscode/AC-48] on-type parse-error surfacing', () => {
   it('does not silently ignore parse failures in the on-change hook', () => {
     // v0.9.0 has:
     //   } catch { /* ignore parse failures */ }
@@ -222,7 +222,7 @@ describe('on-type parse-error surfacing', () => {
 });
 
 // @ac AC-49
-describe('drift-scan error surfacing', () => {
+describe('[spec-vscode/AC-49] drift-scan error surfacing', () => {
   it('does not silently swallow drift detection failures', () => {
     // v0.9.0 has two sites with `scanForDrift(...).catch(() => {})` — one
     // in onDidChangeActiveTextEditor, one in onDidSaveTextDocument. AC-49

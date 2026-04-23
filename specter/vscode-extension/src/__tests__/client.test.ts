@@ -115,7 +115,7 @@ describeOrSkip('SpecterClient integration (real CLI)', () => {
 
 // @spec spec-vscode
 // @ac AC-04
-describe('snakeToCamelCoverage — shape conversion', () => {
+describe('[spec-vscode/AC-04] snakeToCamelCoverage — shape conversion', () => {
   it('rewrites snake_case keys at every depth', () => {
     const input = {
       entries: [

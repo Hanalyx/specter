@@ -13,7 +13,7 @@ const HOME = '/home/u';
 const BIN = '/home/u/.specter/bin';
 
 // @ac AC-25
-describe('detectShellConfig', () => {
+describe('[spec-vscode/AC-25] detectShellConfig', () => {
   it('resolves bash on Linux to ~/.bashrc', () => {
     const c = detectShellConfig({ shell: '/usr/bin/bash', platform: 'linux', home: HOME }, BIN);
     expect(c).not.toBeNull();
@@ -59,7 +59,7 @@ describe('detectShellConfig', () => {
 });
 
 // @ac AC-26
-describe('isPathAlreadyPresent', () => {
+describe('[spec-vscode/AC-26] isPathAlreadyPresent', () => {
   it('returns false for empty contents', () => {
     expect(isPathAlreadyPresent('', BIN)).toBe(false);
   });
@@ -87,7 +87,7 @@ describe('isPathAlreadyPresent', () => {
 });
 
 // @ac AC-27
-describe('shouldPromptAddPath', () => {
+describe('[spec-vscode/AC-27] shouldPromptAddPath', () => {
   it('returns false when user has opted out', () => {
     expect(shouldPromptAddPath('', BIN, true)).toBe(false);
     expect(shouldPromptAddPath(null, BIN, true)).toBe(false);
@@ -114,7 +114,7 @@ describe('shouldPromptAddPath', () => {
 });
 
 // @ac AC-26
-describe('formatAppendBlock', () => {
+describe('[spec-vscode/AC-26] formatAppendBlock', () => {
   it('includes the Specter marker comment', () => {
     const block = formatAppendBlock('export PATH="X:$PATH"');
     expect(block).toContain(SPECTER_MARKER);

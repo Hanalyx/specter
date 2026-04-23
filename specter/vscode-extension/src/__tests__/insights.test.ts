@@ -66,7 +66,7 @@ const specIndex: SpecIndex = {
 // ---------------------------------------------------------------------------
 
 // @ac AC-13
-describe('buildInsightCards', () => {
+describe('[spec-vscode/AC-13] buildInsightCards', () => {
   it('produces one health card per failing spec', () => {
     const entries = [
       makeEntry('payment-create-intent', 1, ['AC-01'], ['AC-02', 'AC-03'], 100),
@@ -125,7 +125,7 @@ describe('buildInsightCards', () => {
 // ---------------------------------------------------------------------------
 
 // @ac AC-16
-describe('formatSpecContextForAI', () => {
+describe('[spec-vscode/AC-16] formatSpecContextForAI', () => {
   it('includes a ## Spec Contract heading', () => {
     const spec = specIndex.specs['payment-create-intent'];
     const output = formatSpecContextForAI(spec);
@@ -175,7 +175,7 @@ describe('formatSpecContextForAI', () => {
 // ---------------------------------------------------------------------------
 
 // @ac AC-17
-describe('shouldShowWalkthrough', () => {
+describe('[spec-vscode/AC-17] shouldShowWalkthrough', () => {
   it('returns true when the workspace has no .spec.yaml files', () => {
     expect(shouldShowWalkthrough({ specFiles: [] })).toBe(true);
   });
@@ -210,7 +210,7 @@ describe('shouldShowWalkthrough', () => {
 
 // @spec spec-vscode
 // @ac AC-37
-describe('computeInsightsStatus', () => {
+describe('[spec-vscode/AC-37] computeInsightsStatus', () => {
   it('never claims "All specs passing" when parse errors exist', () => {
     const status = computeInsightsStatus({
       parseErrorCount: 5,
@@ -279,7 +279,7 @@ describe('computeInsightsStatus', () => {
 // The pure logic in the Jest-testable layer is the status decision above;
 // this test guards the invariant that AC-39 doesn't regress the AC-37
 // mixed-state shape by silently showing one section.
-describe('Insights status interaction with parse-error clickability (AC-39 guard)', () => {
+describe('[spec-vscode/AC-39] Insights status interaction with parse-error clickability (AC-39 guard)', () => {
   it('parse-errors section is shown iff there are parse errors — so AC-39 headers have a home', () => {
     const withErrors = computeInsightsStatus({
       parseErrorCount: 3, uncoveredCardCount: 0, entryCount: 0, specCandidatesCount: 3,
