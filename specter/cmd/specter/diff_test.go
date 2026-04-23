@@ -150,115 +150,128 @@ func execInDir(dir, name string, args ...string) (string, error) {
 
 // @ac AC-01
 func TestDiff_ParseRefSyntax(t *testing.T) {
-	// AC-01: path@HEAD~1 is parsed as path=the-path, ref=HEAD~1
-	// We test the readSpecAtRef helper directly (package-level function).
-	dir, _, cleanup := setupGitRepo(t, specV1, specV2)
-	defer cleanup()
+	t.Run("spec-diff/AC-01 parse ref syntax", func(t *testing.T) {
+		// AC-01: path@HEAD~1 is parsed as path=the-path, ref=HEAD~1
+		// We test the readSpecAtRef helper directly (package-level function).
+		dir, _, cleanup := setupGitRepo(t, specV1, specV2)
+		defer cleanup()
 
-	// Change to repo dir so git show works
-	orig, _ := os.Getwd()
-	_ = os.Chdir(dir)
-	defer func() { _ = os.Chdir(orig) }()
+		// Change to repo dir so git show works
+		orig, _ := os.Getwd()
+		_ = os.Chdir(dir)
+		defer func() { _ = os.Chdir(orig) }()
 
-	// Reading HEAD (latest commit) should give V2
-	ast, err := readSpecAtRef("spec.yaml@HEAD")
-	if err != nil {
-		t.Fatalf("readSpecAtRef failed: %v", err)
-	}
-	if ast.Version != "2.0.0" {
-		t.Errorf("expected version 2.0.0 from HEAD, got %s", ast.Version)
-	}
+		// Reading HEAD (latest commit) should give V2
+		ast, err := readSpecAtRef("spec.yaml@HEAD")
+		if err != nil {
+			t.Fatalf("readSpecAtRef failed: %v", err)
+		}
+		if ast.Version != "2.0.0" {
+			t.Errorf("expected version 2.0.0 from HEAD, got %s", ast.Version)
+		}
 
-	// Reading HEAD~1 (first commit) should give V1
-	astOld, err := readSpecAtRef("spec.yaml@HEAD~1")
-	if err != nil {
-		t.Fatalf("readSpecAtRef(HEAD~1) failed: %v", err)
-	}
-	if astOld.Version != "1.0.0" {
-		t.Errorf("expected version 1.0.0 from HEAD~1, got %s", astOld.Version)
-	}
+		// Reading HEAD~1 (first commit) should give V1
+		astOld, err := readSpecAtRef("spec.yaml@HEAD~1")
+		if err != nil {
+			t.Fatalf("readSpecAtRef(HEAD~1) failed: %v", err)
+		}
+		if astOld.Version != "1.0.0" {
+			t.Errorf("expected version 1.0.0 from HEAD~1, got %s", astOld.Version)
+		}
+	})
 }
 
 // @ac AC-02
 func TestDiff_AddedAC(t *testing.T) {
-	// AC-02: AC added between revisions appears as +AC-03: <description>
-	dir, _, cleanup := setupGitRepo(t, specV1, specV2)
-	defer cleanup()
+	t.Run("spec-diff/AC-02 added ac", func(t *testing.T) {
+		// AC-02: AC added between revisions appears as +AC-03: <description>
+		dir, _, cleanup := setupGitRepo(t, specV1, specV2)
+		defer cleanup()
 
-	out, code := runCLI(t, dir, "diff", "spec.yaml@HEAD~1", "spec.yaml@HEAD")
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d\noutput:\n%s", code, out)
-	}
-	if !strings.Contains(out, "+AC-03") {
-		t.Errorf("expected +AC-03 in output, got:\n%s", out)
-	}
+		out, code := runCLI(t, dir, "diff", "spec.yaml@HEAD~1", "spec.yaml@HEAD")
+		if code != 0 {
+			t.Fatalf("expected exit 0, got %d\noutput:\n%s", code, out)
+		}
+		if !strings.Contains(out, "+AC-03") {
+			t.Errorf("expected +AC-03 in output, got:\n%s", out)
+		}
+	})
 }
 
 // @ac AC-03
 func TestDiff_RemovedAC(t *testing.T) {
-	// AC-03: AC removed between revisions appears as -AC-02: <description>
-	dir, _, cleanup := setupGitRepo(t, specV1, specV2)
-	defer cleanup()
+	t.Run("spec-diff/AC-03 removed ac", func(t *testing.T) {
+		// AC-03: AC removed between revisions appears as -AC-02: <description>
+		dir, _, cleanup := setupGitRepo(t, specV1, specV2)
+		defer cleanup()
 
-	out, code := runCLI(t, dir, "diff", "spec.yaml@HEAD~1", "spec.yaml@HEAD")
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d\noutput:\n%s", code, out)
-	}
-	if !strings.Contains(out, "-AC-02") {
-		t.Errorf("expected -AC-02 in output, got:\n%s", out)
-	}
+		out, code := runCLI(t, dir, "diff", "spec.yaml@HEAD~1", "spec.yaml@HEAD")
+		if code != 0 {
+			t.Fatalf("expected exit 0, got %d\noutput:\n%s", code, out)
+		}
+		if !strings.Contains(out, "-AC-02") {
+			t.Errorf("expected -AC-02 in output, got:\n%s", out)
+		}
+	})
 }
 
 // @ac AC-04
 func TestDiff_AddedConstraint(t *testing.T) {
-	// AC-04: Constraint added appears as +C-02: <description>
-	dir, _, cleanup := setupGitRepo(t, specV1, specV2)
-	defer cleanup()
+	t.Run("spec-diff/AC-04 added constraint", func(t *testing.T) {
+		// AC-04: Constraint added appears as +C-02: <description>
+		dir, _, cleanup := setupGitRepo(t, specV1, specV2)
+		defer cleanup()
 
-	out, code := runCLI(t, dir, "diff", "spec.yaml@HEAD~1", "spec.yaml@HEAD")
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d\noutput:\n%s", code, out)
-	}
-	if !strings.Contains(out, "+C-02") {
-		t.Errorf("expected +C-02 in output, got:\n%s", out)
-	}
+		out, code := runCLI(t, dir, "diff", "spec.yaml@HEAD~1", "spec.yaml@HEAD")
+		if code != 0 {
+			t.Fatalf("expected exit 0, got %d\noutput:\n%s", code, out)
+		}
+		if !strings.Contains(out, "+C-02") {
+			t.Errorf("expected +C-02 in output, got:\n%s", out)
+		}
+	})
 }
 
 // @ac AC-05
 func TestDiff_DepVersionChange(t *testing.T) {
-	// AC-05: depends_on version_range changed appears as ~depends_on auth: any → ^1.0.0
-	dir, _, cleanup := setupGitRepo(t, specV1, specV2)
-	defer cleanup()
+	t.Run("spec-diff/AC-05 dep version change", func(t *testing.T) {
+		// AC-05: depends_on version_range changed appears as ~depends_on auth: any → ^1.0.0
+		dir, _, cleanup := setupGitRepo(t, specV1, specV2)
+		defer cleanup()
 
-	out, code := runCLI(t, dir, "diff", "spec.yaml@HEAD~1", "spec.yaml@HEAD")
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d\noutput:\n%s", code, out)
-	}
-	if !strings.Contains(out, "depends_on") || !strings.Contains(out, "auth") {
-		t.Errorf("expected dep change for auth in output, got:\n%s", out)
-	}
+		out, code := runCLI(t, dir, "diff", "spec.yaml@HEAD~1", "spec.yaml@HEAD")
+		if code != 0 {
+			t.Fatalf("expected exit 0, got %d\noutput:\n%s", code, out)
+		}
+		if !strings.Contains(out, "depends_on") || !strings.Contains(out, "auth") {
+			t.Errorf("expected dep change for auth in output, got:\n%s", out)
+		}
+	})
 }
 
 // @ac AC-06
 func TestDiff_RemoveACIsBreaking(t *testing.T) {
-	// AC-06: Removing an AC is classified as breaking
-	dir, _, cleanup := setupGitRepo(t, specV1, specV2)
-	defer cleanup()
+	t.Run("spec-diff/AC-06 remove ac is breaking", func(t *testing.T) {
+		// AC-06: Removing an AC is classified as breaking
+		dir, _, cleanup := setupGitRepo(t, specV1, specV2)
+		defer cleanup()
 
-	out, code := runCLI(t, dir, "diff", "spec.yaml@HEAD~1", "spec.yaml@HEAD")
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d\noutput:\n%s", code, out)
-	}
-	if !strings.Contains(out, "breaking") {
-		t.Errorf("expected 'breaking' in output, got:\n%s", out)
-	}
+		out, code := runCLI(t, dir, "diff", "spec.yaml@HEAD~1", "spec.yaml@HEAD")
+		if code != 0 {
+			t.Fatalf("expected exit 0, got %d\noutput:\n%s", code, out)
+		}
+		if !strings.Contains(out, "breaking") {
+			t.Errorf("expected 'breaking' in output, got:\n%s", out)
+		}
+	})
 }
 
 // @ac AC-07
 func TestDiff_AddACIsAdditive(t *testing.T) {
-	// AC-07: Adding an AC is classified as additive.
-	// Use specV1 -> a version with AC-03 added but nothing removed.
-	const specOnlyAdd = `spec:
+	t.Run("spec-diff/AC-07 add ac is additive", func(t *testing.T) {
+		// AC-07: Adding an AC is classified as additive.
+		// Use specV1 -> a version with AC-03 added but nothing removed.
+		const specOnlyAdd = `spec:
   id: example
   version: "1.1.0"
   status: draft
@@ -284,22 +297,24 @@ func TestDiff_AddACIsAdditive(t *testing.T) {
     - id: AC-03
       description: "Third AC"
 `
-	dir, _, cleanup := setupGitRepo(t, specV1, specOnlyAdd)
-	defer cleanup()
+		dir, _, cleanup := setupGitRepo(t, specV1, specOnlyAdd)
+		defer cleanup()
 
-	out, code := runCLI(t, dir, "diff", "spec.yaml@HEAD~1", "spec.yaml@HEAD")
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d\noutput:\n%s", code, out)
-	}
-	if !strings.Contains(out, "additive") {
-		t.Errorf("expected 'additive' in output, got:\n%s", out)
-	}
+		out, code := runCLI(t, dir, "diff", "spec.yaml@HEAD~1", "spec.yaml@HEAD")
+		if code != 0 {
+			t.Fatalf("expected exit 0, got %d\noutput:\n%s", code, out)
+		}
+		if !strings.Contains(out, "additive") {
+			t.Errorf("expected 'additive' in output, got:\n%s", out)
+		}
+	})
 }
 
 // @ac AC-08
 func TestDiff_DescriptionOnlyIsPatch(t *testing.T) {
-	// AC-08: Only description changes is classified as patch
-	const specDescChange = `spec:
+	t.Run("spec-diff/AC-08 description only is patch", func(t *testing.T) {
+		// AC-08: Only description changes is classified as patch
+		const specDescChange = `spec:
   id: example
   version: "1.0.1"
   status: draft
@@ -323,48 +338,53 @@ func TestDiff_DescriptionOnlyIsPatch(t *testing.T) {
     - id: AC-02
       description: "Second AC"
 `
-	dir, _, cleanup := setupGitRepo(t, specV1, specDescChange)
-	defer cleanup()
+		dir, _, cleanup := setupGitRepo(t, specV1, specDescChange)
+		defer cleanup()
 
-	out, code := runCLI(t, dir, "diff", "spec.yaml@HEAD~1", "spec.yaml@HEAD")
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d\noutput:\n%s", code, out)
-	}
-	if !strings.Contains(out, "patch") {
-		t.Errorf("expected 'patch' in output, got:\n%s", out)
-	}
+		out, code := runCLI(t, dir, "diff", "spec.yaml@HEAD~1", "spec.yaml@HEAD")
+		if code != 0 {
+			t.Fatalf("expected exit 0, got %d\noutput:\n%s", code, out)
+		}
+		if !strings.Contains(out, "patch") {
+			t.Errorf("expected 'patch' in output, got:\n%s", out)
+		}
+	})
 }
 
 // @ac AC-09
 func TestDiff_GitShowFailure(t *testing.T) {
-	// AC-09: git show failure exits 1 with a clear error message
-	dir := t.TempDir()
+	t.Run("spec-diff/AC-09 git show failure", func(t *testing.T) {
+		// AC-09: git show failure exits 1 with a clear error message
+		dir := t.TempDir()
 
-	// No git repo, no commits — git show will fail.
-	// Write a spec file on disk for the second arg.
-	if err := os.WriteFile(filepath.Join(dir, "spec.yaml"), []byte(specV1), 0644); err != nil {
-		t.Fatal(err)
-	}
+		// No git repo, no commits — git show will fail.
+		// Write a spec file on disk for the second arg.
+		if err := os.WriteFile(filepath.Join(dir, "spec.yaml"), []byte(specV1), 0644); err != nil {
+			t.Fatal(err)
+		}
 
-	// Initialize git but make no commits so HEAD~1 doesn't exist
-	out, _ := runCLI(t, dir, "diff", "spec.yaml@HEAD~1", "spec.yaml")
-	// Should contain an error about git
-	if !strings.Contains(out, "error") && !strings.Contains(out, "git") {
-		t.Errorf("expected error message about git failure, got:\n%s", out)
-	}
+		// Initialize git but make no commits so HEAD~1 doesn't exist
+		out, _ := runCLI(t, dir, "diff", "spec.yaml@HEAD~1", "spec.yaml")
+		// Should contain an error about git
+		if !strings.Contains(out, "error") && !strings.Contains(out, "git") {
+			t.Errorf("expected error message about git failure, got:\n%s", out)
+		}
+	})
 }
 
 // @ac AC-10 (also covered in internal/diff package, duplicated here for CLI smoke test)
 func TestDiff_NoChanges(t *testing.T) {
-	// AC-10: Two identical specs produce "no changes" output.
-	dir, _, cleanup := setupGitRepo(t, specV1, specV3)
-	defer cleanup()
+	t.Run("spec-diff/AC-10 no changes", func(t *testing.T) {
+		// AC-10: Two identical specs produce "no changes" output.
+		dir, _, cleanup := setupGitRepo(t, specV1, specV3)
+		defer cleanup()
 
-	out, code := runCLI(t, dir, "diff", "spec.yaml@HEAD~1", "spec.yaml@HEAD")
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d\noutput:\n%s", code, out)
-	}
-	if !strings.Contains(out, "no changes") {
-		t.Errorf("expected 'no changes' in output, got:\n%s", out)
-	}
+		out, code := runCLI(t, dir, "diff", "spec.yaml@HEAD~1", "spec.yaml@HEAD")
+		if code != 0 {
+			t.Fatalf("expected exit 0, got %d\noutput:\n%s", code, out)
+		}
+		if !strings.Contains(out, "no changes") {
+			t.Errorf("expected 'no changes' in output, got:\n%s", out)
+		}
+	})
 }

@@ -24,142 +24,150 @@ import (
 
 // @ac AC-01
 func TestWatch_StartupMessageAndInitialRun(t *testing.T) {
-	dir := t.TempDir()
-	writeSpec(t, dir, "my-spec.spec.yaml", minimalValidSpec("my-spec", 3, "AC-01"))
+	t.Run("spec-watch/AC-01 startup message and initial run", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSpec(t, dir, "my-spec.spec.yaml", minimalValidSpec("my-spec", 3, "AC-01"))
 
-	_, lines := startWatch(t, dir)
+		_, lines := startWatch(t, dir)
 
-	// Startup header must appear
-	if !waitForLine(lines, "specter watch", 3*time.Second) {
-		t.Error("expected 'specter watch' header in startup output")
-	}
-	// Initial run must happen before any file changes
-	if !waitForLine(lines, "]", 3*time.Second) {
-		t.Error("expected initial run output (timestamp line) within 3s")
-	}
+		// Startup header must appear
+		if !waitForLine(lines, "specter watch", 3*time.Second) {
+			t.Error("expected 'specter watch' header in startup output")
+		}
+		// Initial run must happen before any file changes
+		if !waitForLine(lines, "]", 3*time.Second) {
+			t.Error("expected initial run output (timestamp line) within 3s")
+		}
+	})
 }
 
 // @ac AC-04
 func TestWatch_RunCycle_OutputFormat(t *testing.T) {
-	dir := t.TempDir()
-	writeSpec(t, dir, "my-spec.spec.yaml", minimalValidSpec("my-spec", 3, "AC-01"))
+	t.Run("spec-watch/AC-04 run cycle output format", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSpec(t, dir, "my-spec.spec.yaml", minimalValidSpec("my-spec", 3, "AC-01"))
 
-	// Capture output by redirecting stdout — test runWatchCycle directly.
-	// We redirect os.Stdout temporarily to capture the output.
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
+		// Capture output by redirecting stdout — test runWatchCycle directly.
+		// We redirect os.Stdout temporarily to capture the output.
+		old := os.Stdout
+		r, w, _ := os.Pipe()
+		os.Stdout = w
 
-	m := manifest.Defaults()
-	origDir, _ := os.Getwd()
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-	runWatchCycle(m)
-	_ = os.Chdir(origDir)
+		m := manifest.Defaults()
+		origDir, _ := os.Getwd()
+		if err := os.Chdir(dir); err != nil {
+			t.Fatal(err)
+		}
+		runWatchCycle(m)
+		_ = os.Chdir(origDir)
 
-	_ = w.Close()
-	os.Stdout = old
+		_ = w.Close()
+		os.Stdout = old
 
-	buf := make([]byte, 4096)
-	n, _ := r.Read(buf)
-	output := string(buf[:n])
+		buf := make([]byte, 4096)
+		n, _ := r.Read(buf)
+		output := string(buf[:n])
 
-	// Must contain [HH:MM:SS] format
-	if !strings.Contains(output, "[") || !strings.Contains(output, "]") {
-		t.Errorf("expected timestamp format [HH:MM:SS] in watch output, got: %q", output)
-	}
-	// Must contain PASS or FAIL
-	if !strings.Contains(output, "PASS") && !strings.Contains(output, "FAIL") && !strings.Contains(output, "WARN") {
-		t.Errorf("expected PASS/FAIL/WARN in watch output, got: %q", output)
-	}
-	// Must contain spec count
-	if !strings.Contains(output, "spec") {
-		t.Errorf("expected spec count in watch output, got: %q", output)
-	}
+		// Must contain [HH:MM:SS] format
+		if !strings.Contains(output, "[") || !strings.Contains(output, "]") {
+			t.Errorf("expected timestamp format [HH:MM:SS] in watch output, got: %q", output)
+		}
+		// Must contain PASS or FAIL
+		if !strings.Contains(output, "PASS") && !strings.Contains(output, "FAIL") && !strings.Contains(output, "WARN") {
+			t.Errorf("expected PASS/FAIL/WARN in watch output, got: %q", output)
+		}
+		// Must contain spec count
+		if !strings.Contains(output, "spec") {
+			t.Errorf("expected spec count in watch output, got: %q", output)
+		}
+	})
 }
 
 // @ac AC-06
 func TestWatch_Debounce_RapidWritesProduceOneRun(t *testing.T) {
-	// AC-06: rapid successive writes within 150ms must produce exactly one run.
-	dir := t.TempDir()
-	writeSpec(t, dir, "my-spec.spec.yaml", minimalValidSpec("my-spec", 3, "AC-01"))
+	t.Run("spec-watch/AC-06 debounce rapid writes produce one run", func(t *testing.T) {
+		// AC-06: rapid successive writes within 150ms must produce exactly one run.
+		dir := t.TempDir()
+		writeSpec(t, dir, "my-spec.spec.yaml", minimalValidSpec("my-spec", 3, "AC-01"))
 
-	_, lines := startWatch(t, dir)
+		_, lines := startWatch(t, dir)
 
-	// Wait for the initial run
-	if !waitForLine(lines, "]", 5*time.Second) {
-		t.Fatal("watch did not produce initial run within 5s")
-	}
+		// Wait for the initial run
+		if !waitForLine(lines, "]", 5*time.Second) {
+			t.Fatal("watch did not produce initial run within 5s")
+		}
 
-	// Fire three rapid writes inside the debounce window
-	specsDir := filepath.Join(dir, "specs")
-	for i := 0; i < 3; i++ {
-		content := minimalValidSpec("my-spec", 3, "AC-01")
-		_ = os.WriteFile(filepath.Join(specsDir, "my-spec.spec.yaml"), []byte(content), 0644)
-		time.Sleep(30 * time.Millisecond) // well within 150ms window
-	}
+		// Fire three rapid writes inside the debounce window
+		specsDir := filepath.Join(dir, "specs")
+		for i := 0; i < 3; i++ {
+			content := minimalValidSpec("my-spec", 3, "AC-01")
+			_ = os.WriteFile(filepath.Join(specsDir, "my-spec.spec.yaml"), []byte(content), 0644)
+			time.Sleep(30 * time.Millisecond) // well within 150ms window
+		}
 
-	// Collect run lines for 600ms — should see at most 2 (one for the debounced
-	// burst, possibly one more if timing is tight). Must NOT see 3.
-	runLines := 0
-	deadline := time.After(600 * time.Millisecond)
-	for {
-		select {
-		case line, ok := <-lines:
-			if !ok {
+		// Collect run lines for 600ms — should see at most 2 (one for the debounced
+		// burst, possibly one more if timing is tight). Must NOT see 3.
+		runLines := 0
+		deadline := time.After(600 * time.Millisecond)
+		for {
+			select {
+			case line, ok := <-lines:
+				if !ok {
+					goto done
+				}
+				if strings.Contains(line, "]") && (strings.Contains(line, "PASS") || strings.Contains(line, "FAIL")) {
+					runLines++
+				}
+			case <-deadline:
 				goto done
 			}
-			if strings.Contains(line, "]") && (strings.Contains(line, "PASS") || strings.Contains(line, "FAIL")) {
-				runLines++
-			}
-		case <-deadline:
-			goto done
 		}
-	}
-done:
-	if runLines >= 3 {
-		t.Errorf("expected debounced to ≤2 runs for 3 rapid writes, got %d", runLines)
-	}
+	done:
+		if runLines >= 3 {
+			t.Errorf("expected debounced to ≤2 runs for 3 rapid writes, got %d", runLines)
+		}
+	})
 }
 
 // @ac AC-07
 func TestWatch_FailRunContinuesLoop(t *testing.T) {
-	// Test that runWatchCycle prints output even on failure (no panic/halt).
-	// A directory with no spec files causes WARN (not panic).
-	dir := t.TempDir()
+	t.Run("spec-watch/AC-07 fail run continues loop", func(t *testing.T) {
+		// Test that runWatchCycle prints output even on failure (no panic/halt).
+		// A directory with no spec files causes WARN (not panic).
+		dir := t.TempDir()
 
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
+		old := os.Stdout
+		r, w, _ := os.Pipe()
+		os.Stdout = w
 
-	m := manifest.Defaults()
-	origDir, _ := os.Getwd()
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-	// Call runWatchCycle twice — must not panic on either call
-	runWatchCycle(m)
-	runWatchCycle(m)
-	_ = os.Chdir(origDir)
-
-	_ = w.Close()
-	os.Stdout = old
-
-	buf := make([]byte, 4096)
-	n, _ := r.Read(buf)
-	output := string(buf[:n])
-
-	// Two runs must both produce output
-	lines := 0
-	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
-		if strings.Contains(line, "[") && strings.Contains(line, "]") {
-			lines++
+		m := manifest.Defaults()
+		origDir, _ := os.Getwd()
+		if err := os.Chdir(dir); err != nil {
+			t.Fatal(err)
 		}
-	}
-	if lines < 2 {
-		t.Errorf("expected 2 run lines (loop continues on FAIL), got %d lines:\n%s", lines, output)
-	}
+		// Call runWatchCycle twice — must not panic on either call
+		runWatchCycle(m)
+		runWatchCycle(m)
+		_ = os.Chdir(origDir)
+
+		_ = w.Close()
+		os.Stdout = old
+
+		buf := make([]byte, 4096)
+		n, _ := r.Read(buf)
+		output := string(buf[:n])
+
+		// Two runs must both produce output
+		lines := 0
+		for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+			if strings.Contains(line, "[") && strings.Contains(line, "]") {
+				lines++
+			}
+		}
+		if lines < 2 {
+			t.Errorf("expected 2 run lines (loop continues on FAIL), got %d lines:\n%s", lines, output)
+		}
+	})
 }
 
 // startWatch starts a watch subprocess in dir and returns the cmd + a channel
@@ -217,86 +225,92 @@ func waitForLine(lines <-chan string, substr string, timeout time.Duration) bool
 
 // @ac AC-02
 func TestWatch_SpecFileChange_TriggersRerun(t *testing.T) {
-	dir := t.TempDir()
-	writeSpec(t, dir, "my-spec.spec.yaml", minimalValidSpec("my-spec", 3, "AC-01"))
+	t.Run("spec-watch/AC-02 spec file change triggers rerun", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSpec(t, dir, "my-spec.spec.yaml", minimalValidSpec("my-spec", 3, "AC-01"))
 
-	cmd, lines := startWatch(t, dir)
+		cmd, lines := startWatch(t, dir)
 
-	// Wait for the initial run output (timestamp line)
-	if !waitForLine(lines, "]", 5*time.Second) {
-		t.Fatal("watch did not produce initial run output within 5s")
-	}
+		// Wait for the initial run output (timestamp line)
+		if !waitForLine(lines, "]", 5*time.Second) {
+			t.Fatal("watch did not produce initial run output within 5s")
+		}
 
-	// Modify the spec file to trigger a re-run
-	time.Sleep(150 * time.Millisecond) // ensure mtime changes
-	newContent := minimalValidSpec("my-spec", 3, "AC-01", "AC-02")
-	specsDir := filepath.Join(dir, "specs")
-	if err := os.WriteFile(filepath.Join(specsDir, "my-spec.spec.yaml"), []byte(newContent), 0644); err != nil {
-		t.Fatal(err)
-	}
+		// Modify the spec file to trigger a re-run
+		time.Sleep(150 * time.Millisecond) // ensure mtime changes
+		newContent := minimalValidSpec("my-spec", 3, "AC-01", "AC-02")
+		specsDir := filepath.Join(dir, "specs")
+		if err := os.WriteFile(filepath.Join(specsDir, "my-spec.spec.yaml"), []byte(newContent), 0644); err != nil {
+			t.Fatal(err)
+		}
 
-	// Wait for a second run output (triggered by file change)
-	if !waitForLine(lines, "]", 3*time.Second) {
-		t.Fatal("watch did not re-run within 3s after spec file change")
-	}
-	_ = cmd // used via t.Cleanup
+		// Wait for a second run output (triggered by file change)
+		if !waitForLine(lines, "]", 3*time.Second) {
+			t.Fatal("watch did not re-run within 3s after spec file change")
+		}
+		_ = cmd // used via t.Cleanup
+	})
 }
 
 // @ac AC-03
 func TestWatch_TestFileChange_TriggersRerun(t *testing.T) {
-	dir := t.TempDir()
-	writeSpec(t, dir, "my-spec.spec.yaml", minimalValidSpec("my-spec", 3, "AC-01"))
+	t.Run("spec-watch/AC-03 test file change triggers rerun", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSpec(t, dir, "my-spec.spec.yaml", minimalValidSpec("my-spec", 3, "AC-01"))
 
-	cmd, lines := startWatch(t, dir)
+		cmd, lines := startWatch(t, dir)
 
-	// Wait for the initial run
-	if !waitForLine(lines, "]", 5*time.Second) {
-		t.Fatal("watch did not produce initial run output within 5s")
-	}
+		// Wait for the initial run
+		if !waitForLine(lines, "]", 5*time.Second) {
+			t.Fatal("watch did not produce initial run output within 5s")
+		}
 
-	// Create a new test file to trigger a re-run
-	time.Sleep(150 * time.Millisecond)
-	testFile := filepath.Join(dir, "new_test.go")
-	if err := os.WriteFile(testFile, []byte("// @spec my-spec\n// @ac AC-01\npackage main\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+		// Create a new test file to trigger a re-run
+		time.Sleep(150 * time.Millisecond)
+		testFile := filepath.Join(dir, "new_test.go")
+		if err := os.WriteFile(testFile, []byte("// @spec my-spec\n// @ac AC-01\npackage main\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
 
-	// Wait for a re-run triggered by the test file creation
-	if !waitForLine(lines, "]", 3*time.Second) {
-		t.Fatal("watch did not re-run within 3s after test file change")
-	}
-	_ = cmd
+		// Wait for a re-run triggered by the test file creation
+		if !waitForLine(lines, "]", 3*time.Second) {
+			t.Fatal("watch did not re-run within 3s after test file change")
+		}
+		_ = cmd
+	})
 }
 
 // @ac AC-05
 func TestWatch_CtrlC_ExitsZero(t *testing.T) {
-	dir := t.TempDir()
-	writeSpec(t, dir, "my-spec.spec.yaml", minimalValidSpec("my-spec", 3, "AC-01"))
+	t.Run("spec-watch/AC-05 ctrl c exits zero", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSpec(t, dir, "my-spec.spec.yaml", minimalValidSpec("my-spec", 3, "AC-01"))
 
-	cmd, lines := startWatch(t, dir)
+		cmd, lines := startWatch(t, dir)
 
-	// Wait for the initial run to confirm watch is up
-	if !waitForLine(lines, "]", 5*time.Second) {
-		t.Fatal("watch did not start within 5s")
-	}
+		// Wait for the initial run to confirm watch is up
+		if !waitForLine(lines, "]", 5*time.Second) {
+			t.Fatal("watch did not start within 5s")
+		}
 
-	// Send SIGINT (same as Ctrl+C)
-	if err := cmd.Process.Signal(os.Interrupt); err != nil {
-		t.Fatalf("send SIGINT: %v", err)
-	}
+		// Send SIGINT (same as Ctrl+C)
+		if err := cmd.Process.Signal(os.Interrupt); err != nil {
+			t.Fatalf("send SIGINT: %v", err)
+		}
 
-	// Wait for the process to exit
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("watch did not exit within 3s after SIGINT")
-	}
+		// Wait for the process to exit
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("watch did not exit within 3s after SIGINT")
+		}
 
-	if cmd.ProcessState.ExitCode() != 0 {
-		t.Errorf("expected exit code 0 after SIGINT, got %d", cmd.ProcessState.ExitCode())
-	}
+		if cmd.ProcessState.ExitCode() != 0 {
+			t.Errorf("expected exit code 0 after SIGINT, got %d", cmd.ProcessState.ExitCode())
+		}
+	})
 }
 
 // modsChanged unit tests (AC-02 / AC-03 coverage for the change detection logic)
@@ -380,28 +394,30 @@ func TestDetectAnnotationLanguages_NoFiles_DefaultsToGo(t *testing.T) {
 // @spec spec-resolve
 // @ac AC-08
 func TestResolve_MermaidOutput(t *testing.T) {
-	dir := t.TempDir()
-	// Write two specs with a dependency
-	writeSpec(t, dir, "dep.spec.yaml", minimalValidSpec("dep", 2, "AC-01"))
-	depender := minimalValidSpec("main-spec", 2, "AC-01")
-	depender += `
+	t.Run("spec-resolve/AC-08 mermaid output", func(t *testing.T) {
+		dir := t.TempDir()
+		// Write two specs with a dependency
+		writeSpec(t, dir, "dep.spec.yaml", minimalValidSpec("dep", 2, "AC-01"))
+		depender := minimalValidSpec("main-spec", 2, "AC-01")
+		depender += `
   depends_on:
     - spec_id: dep
       version_range: "^1.0.0"
       relationship: requires
 `
-	writeSpec(t, dir, "main-spec.spec.yaml", depender)
+		writeSpec(t, dir, "main-spec.spec.yaml", depender)
 
-	out, _ := runCLI(t, dir, "resolve", "--mermaid")
-	if !strings.Contains(out, "graph BT") {
-		t.Errorf("expected 'graph BT' in mermaid output, got:\n%s", out)
-	}
-	if !strings.Contains(out, "dep") {
-		t.Errorf("expected node 'dep' in mermaid output, got:\n%s", out)
-	}
-	if !strings.Contains(out, "main-spec") {
-		t.Errorf("expected node 'main-spec' in mermaid output, got:\n%s", out)
-	}
+		out, _ := runCLI(t, dir, "resolve", "--mermaid")
+		if !strings.Contains(out, "graph BT") {
+			t.Errorf("expected 'graph BT' in mermaid output, got:\n%s", out)
+		}
+		if !strings.Contains(out, "dep") {
+			t.Errorf("expected node 'dep' in mermaid output, got:\n%s", out)
+		}
+		if !strings.Contains(out, "main-spec") {
+			t.Errorf("expected node 'main-spec' in mermaid output, got:\n%s", out)
+		}
+	})
 }
 
 // toCamelCase and sanitizeID unit tests
@@ -431,32 +447,36 @@ func TestSanitizeID(t *testing.T) {
 // @spec spec-resolve
 // @ac AC-08
 func TestResolve_DotOutput_NoPlainEnglishFooter(t *testing.T) {
-	dir := t.TempDir()
-	writeSpec(t, dir, "a.spec.yaml", minimalValidSpec("a", 3, "AC-01"))
+	t.Run("spec-resolve/AC-08 dot output no plain english footer", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSpec(t, dir, "a.spec.yaml", minimalValidSpec("a", 3, "AC-01"))
 
-	out, _ := runCLI(t, dir, "resolve", "--dot")
-	if strings.Contains(out, "No dependency issues") {
-		t.Errorf("resolve --dot stdout must not contain human-readable footer; got:\n%s", out)
-	}
-	if !strings.HasPrefix(strings.TrimSpace(out), "digraph") {
-		t.Errorf("resolve --dot must start with 'digraph', got:\n%s", out)
-	}
-	if !strings.HasSuffix(strings.TrimSpace(out), "}") {
-		t.Errorf("resolve --dot must end with '}', got:\n%s", out)
-	}
+		out, _ := runCLI(t, dir, "resolve", "--dot")
+		if strings.Contains(out, "No dependency issues") {
+			t.Errorf("resolve --dot stdout must not contain human-readable footer; got:\n%s", out)
+		}
+		if !strings.HasPrefix(strings.TrimSpace(out), "digraph") {
+			t.Errorf("resolve --dot must start with 'digraph', got:\n%s", out)
+		}
+		if !strings.HasSuffix(strings.TrimSpace(out), "}") {
+			t.Errorf("resolve --dot must end with '}', got:\n%s", out)
+		}
+	})
 }
 
 // @spec spec-resolve
 // @ac AC-08
 func TestResolve_MermaidOutput_NoPlainEnglishFooter(t *testing.T) {
-	dir := t.TempDir()
-	writeSpec(t, dir, "a.spec.yaml", minimalValidSpec("a", 3, "AC-01"))
+	t.Run("spec-resolve/AC-08 mermaid output no plain english footer", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSpec(t, dir, "a.spec.yaml", minimalValidSpec("a", 3, "AC-01"))
 
-	out, _ := runCLI(t, dir, "resolve", "--mermaid")
-	if strings.Contains(out, "No dependency issues") {
-		t.Errorf("resolve --mermaid stdout must not contain human-readable footer; got:\n%s", out)
-	}
-	if !strings.HasPrefix(strings.TrimSpace(out), "graph BT") {
-		t.Errorf("resolve --mermaid must start with 'graph BT', got:\n%s", out)
-	}
+		out, _ := runCLI(t, dir, "resolve", "--mermaid")
+		if strings.Contains(out, "No dependency issues") {
+			t.Errorf("resolve --mermaid stdout must not contain human-readable footer; got:\n%s", out)
+		}
+		if !strings.HasPrefix(strings.TrimSpace(out), "graph BT") {
+			t.Errorf("resolve --mermaid must start with 'graph BT', got:\n%s", out)
+		}
+	})
 }
