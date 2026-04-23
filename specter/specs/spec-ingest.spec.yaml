@@ -1,6 +1,6 @@
 spec:
   id: spec-ingest
-  version: "1.0.0"
+  version: "1.1.0"
   status: approved
   tier: 1
 
@@ -84,6 +84,16 @@ spec:
       type: business
       enforcement: error
 
+    - id: C-09
+      description: "`specter ingest` MUST emit a single-line summary to stderr on completion, reporting: total test cases scanned, (spec_id, ac_id) pairs extracted, and test cases dropped due to no discoverable annotation. Format: `Scanned N test cases; extracted M (spec_id, ac_id) pairs; dropped K with no runner-visible annotation.` Rationale: operators wiring up --strict for the first time need to see whether ingest found anything; today's `Wrote 0 result entries to .specter-results.json` is too terse to distinguish 'empty test suite' from 'tests lack annotations.'"
+      type: business
+      enforcement: error
+
+    - id: C-10
+      description: "`specter ingest --verbose` MUST extend C-09's summary with per-test-case drop reasons: for each dropped test, a stderr line in the form `  dropped: <test_name> — no (spec_id, ac_id) pair found in name, classname, or output`. Lines are printed in input order. Rationale: when the summary reports many drops, the operator needs to see specific test names to know which to migrate first. Not enabled by default to keep CI logs compact."
+      type: business
+      enforcement: error
+
   depends_on:
     - spec_id: spec-coverage
       version_range: "^1.9.0"
@@ -139,7 +149,27 @@ spec:
       references_constraints: ["C-01", "C-02", "C-06"]
       priority: high
 
+    - id: AC-09
+      description: "`specter ingest --junit fixture.xml` on a fixture with 5 testcases, 2 of which carry annotations, emits to stderr the line `Scanned 5 test cases; extracted 2 (spec_id, ac_id) pairs; dropped 3 with no runner-visible annotation.` and writes 2 entries to the output file. Counts are independent of --output path. A fixture with zero testcases emits `Scanned 0 test cases; extracted 0 (spec_id, ac_id) pairs; dropped 0 with no runner-visible annotation.`"
+      inputs:
+        fixture: "5 testcases, 2 with matching names or annotations"
+      expected_output:
+        stderr_line: "Scanned 5 test cases; extracted 2 (spec_id, ac_id) pairs; dropped 3 with no runner-visible annotation."
+        output_file_entries: 2
+      references_constraints: ["C-09"]
+      priority: high
+
+    - id: AC-10
+      description: "`specter ingest --junit fixture.xml --verbose` on the same 5-testcase fixture emits the C-09 summary PLUS three additional stderr lines, one per dropped testcase, in input order. Each line starts with `  dropped: ` followed by the testcase name and the reason text. Without --verbose, only the summary line is emitted. Rationale: --verbose keeps CI logs compact by default while making diagnostics available on demand."
+      references_constraints: ["C-10"]
+      priority: medium
+
   changelog:
+    - version: "1.1.0"
+      date: "2026-04-23"
+      author: "specter-team"
+      type: minor
+      description: "Add C-09/AC-09 (default scan/extract/drop summary line to stderr on every ingest run) and C-10/AC-10 (--verbose flag emits per-test-case drop reasons). Turns `Wrote 0 result entries` into an actionable diagnostic — Day-1 adopters now see immediately whether the test suite emits runner-visible annotations. Adoption affordance for v0.10 CI-gated coverage."
     - version: "1.0.0"
       date: "2026-04-22"
       author: "specter-team"
