@@ -66,6 +66,8 @@ Specter reads test annotations from two places:
 
 Source comments alone: `coverage` counts it, `--strict` demotes it. Write both forms.
 
+Full rules, per-runner examples, parameterized tests, and troubleshooting: see [`TEST_ANNOTATION_REFERENCE.md`](TEST_ANNOTATION_REFERENCE.md).
+
 ```
 Using this Specter spec as the contract, write [Go/Python/TypeScript] tests
 for every acceptance criterion.

@@ -82,6 +82,11 @@ The CI gate (`specter sync`) already enforces annotated tests must exist. This p
 
 - **Flake handling** (deferred from v0.10) — `--deny-flaky` flag; runners emit `status: flaky`; `--strict` tolerates flakes by default. Ship when real patterns from v0.10 usage surface.
 
+- **Python Convention A gap.** `specter ingest`'s test-name regex `([a-z][a-z0-9-]*[a-z0-9])[/:](AC-\d+)` accepts only `/` or `:` as the separator between spec id and AC id. Python function names can't contain either, so the natural form `def test_user_create_AC_01_brief(...)` does not match — pytest emits the function name as the JUnit title, but ingest drops it. Today's Python users have to use Convention B (runtime `print('// @spec ...')` inside the test body) to get the pair into `.specter-results.json`. This is a real friction point — flagging it rather than leaving it buried in docs. Two directions, both viable, pick after real pytest migration friction surfaces:
+  - **Docs only**: `TEST_ANNOTATION_REFERENCE.md` tells Python users to use Convention B. No code change. Penalty: Python is a second-class `--strict` citizen.
+  - **Regex extension**: accept `_` as a separator, or a specific delimiter like `.` or `__`, so pytest function names can encode the pair directly. Non-trivial — `test_user_create_AC_01` has ambiguous spec-id boundary (`user_create` vs `user-create` vs partial-match). Needs a design doc. Candidate form: require spec-id to carry a `.` delimiter in Python titles (`def test_user_create.AC_01_brief` — invalid Python, so no) or use a class wrapper (`class Test_user_create: def test_AC_01(...)` → JUnit `Test_user_create.test_AC_01` — still no `/` or `:`).
+  - **Status**: blocked pending P2 (`TEST_ANNOTATION_REFERENCE.md`) author's decision. If docs-only is chosen, close this item. If regex extension is chosen, spec-ingest 1.2.0 with C-09 and an AC for the new separator.
+
 ---
 
 ## Audit items still pending (from `research/SPECTER_QUALITY_AUDIT.md`)

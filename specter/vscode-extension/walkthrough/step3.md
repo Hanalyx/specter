@@ -34,7 +34,7 @@ func TestCreateUser(t *testing.T) {
 }
 ```
 
-AC numbers are zero-padded: `AC-01`, not `AC-1`. One test per AC.
+AC numbers are zero-padded: `AC-01`, not `AC-1`. One test per AC. Full rules are in `docs/TEST_ANNOTATION_REFERENCE.md`.
 
 **Completions are automatic** — type `// @spec ` and Specter suggests IDs; type `// @ac ` and completions are scoped to the spec above.
 

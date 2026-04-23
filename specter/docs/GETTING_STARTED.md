@@ -299,6 +299,8 @@ Specter reads test annotations from two places. Both matter.
 
 Source comments alone: `coverage` counts it, `--strict` demotes it. Write both forms and both commands work.
 
+Full rules, per-language examples, parameterized tests, migration recipe, and troubleshooting: see [`TEST_ANNOTATION_REFERENCE.md`](TEST_ANNOTATION_REFERENCE.md).
+
 ### Step 1 — See what's uncovered
 
 ```bash

@@ -194,6 +194,8 @@ Specter reads annotations from two places.
 
 Source comments alone: `coverage` counts it, `--strict` demotes it. Write both forms.
 
+For the full rules (regex contract, zero-padding, one-AC-per-test, per-runner examples, parameterized tests, Python limitation, migration recipe, troubleshooting), see [`TEST_ANNOTATION_REFERENCE.md`](TEST_ANNOTATION_REFERENCE.md).
+
 ```typescript
 // @spec user-registration
 // @ac AC-01
