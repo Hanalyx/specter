@@ -4,7 +4,7 @@ Forward-looking roadmap. Items are grouped by target release. Each item is a sin
 
 Current shipped version: **v0.10.2** (CLI released to GitHub 2026-04-23; VS Code extension v0.10.1 on Marketplace — v0.10.2 VSIX built but held pending further testing). Past release notes live in [CHANGELOG.md](CHANGELOG.md) — this file is forward-only.
 
-Current working branch: `release/v0.10.3` (opened 2026-04-23). The v0.10.3 focus: dogfood `specter coverage --strict` on Specter itself. v0.10.x shipped the mechanical eval gate but Specter's own tests use v0.9-era source-only annotations that `ingest` cannot read — Specter preaches `--strict` it cannot apply to itself. Migrate all 30 test files to Convention A (runner-visible `spec-id/AC-NN` in subtest titles), wire a `make dogfood-strict` target, and make the strict pipeline part of the gate. Per `CONTRIBUTING.md` → Branch workflow, all v0.10.3 PRs target this branch, not `main`.
+Current maintenance branch: `chore/dogfood-strict` (opened 2026-04-23). **Not a release cycle.** Dogfood `specter coverage --strict` on Specter itself — v0.10.x shipped the mechanical eval gate but Specter's own tests use v0.9-era source-only annotations that `ingest` cannot read. Specter preaches `--strict` it cannot apply to itself. Migrate all 30 test files to Convention A (runner-visible `spec-id/AC-NN` in subtest titles), wire a `make dogfood-strict` target, and make the strict pipeline part of the gate. Merges to `main` when done with **no version bump, no tag, no CHANGELOG entry** — the work doesn't change CLI behavior, schema, or the extension. Internal infrastructure only.
 
 ---
 
