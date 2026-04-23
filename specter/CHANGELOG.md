@@ -4,6 +4,43 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 ---
 
+## v0.10.1 — 2026-04-23
+
+**Theme: Fix the docs that taught the wrong convention for `--strict`.**
+
+v0.10.0 shipped `specter coverage --strict`, but every foundational guide still showed the v0.9-era source-only annotation form. Source comments (`// @spec` / `// @ac` above a test function) reach `specter coverage` but are invisible to `specter ingest`, so `--strict` demoted every test that only had source comments. A developer following the official guide wrote tests that demoted with no document to diagnose why. jwtms hit this on first `--strict` run. This patch fixes the foundation.
+
+### Added
+
+#### `docs/TEST_ANNOTATION_REFERENCE.md`
+
+- Authoritative one-page reference for test annotations. The counterpart to `SPEC_SCHEMA_REFERENCE.md`.
+- Two-channel rule (source comments count, runner-visible pair verifies).
+- The extraction regex verbatim from `internal/ingest/annotations.go`.
+- Per-runner sections: Go (`t.Run` subtests), TypeScript (jest/vitest with JUnit reporter), Python (known Convention A gap, Convention B as today's workaround), runtime-log form for any language.
+- Parameterized tests per runner.
+- Migration recipe from v0.9-style source-only, with file-atomic discipline.
+- Common mistakes table (`AC-1` vs `AC-01`, `_` vs `/`, multi-AC tests).
+- Troubleshooting keyed by symptom.
+
+### Changed
+
+- `docs/AI_PROMPTS.md` §3 (Spec → Tests) — teaches both source comments and runner-visible annotations. AI prompt block now asks for `[spec-id/AC-NN]` in test titles.
+- `docs/GETTING_STARTED.md` Phase 4 — same update. TypeScript/Python/Go examples updated. Python encodes the pair in the function name; Go uses `t.Run` subtests.
+- `docs/CLI_REFERENCE.md` coverage `--strict` section — adds the two-channel rule and the runner-visible format rules.
+- `vscode-extension/walkthrough/step3.md` — onboarding walkthrough updated.
+- All four docs cross-link into `TEST_ANNOTATION_REFERENCE.md` rather than duplicating the rules.
+
+### BACKLOG
+
+- Adds v0.11 bullet **Python Convention A gap** — pytest function names can't contain `/` or `:`, so the natural Convention A form doesn't match the ingest regex. Documents two candidate resolutions: docs-only (Python uses Convention B) or regex extension. Blocked on a design call.
+
+### No code changes
+
+CLI and extension runtime unchanged from v0.10.0. This is a docs release — the version bump exists to mark "v0.10.0 shipped with misleading guidance, v0.10.1 corrects it." Extension version bumped from 0.10.0 to 0.10.1 to match.
+
+---
+
 ## v0.10.0 — 2026-04-22
 
 **Theme: CI-gated coverage — test outcome is mechanical.**
