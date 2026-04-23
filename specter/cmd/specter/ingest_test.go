@@ -177,3 +177,113 @@ func TestIngest_Verbose_EmitsPerTestDropReasons(t *testing.T) {
 		t.Errorf("expected drop reason text on at least one line; got:\n%s", verboseOut)
 	}
 }
+
+// --- v0.10.2 multi-file ingest (BUG-2 fix) ---
+
+// @ac AC-11
+// Glob in --junit expands and all matched files merge into one results file.
+func TestIngest_JUnit_GlobExpandsAndMerges(t *testing.T) {
+	dir := t.TempDir()
+	a := `<testsuites><testsuite><testcase name="spec-foo/AC-01 pass a"/></testsuite></testsuites>`
+	b := `<testsuites><testsuite><testcase name="spec-bar/AC-02 pass b"/></testsuite></testsuites>`
+	_ = os.WriteFile(filepath.Join(dir, "junit-a.xml"), []byte(a), 0644)
+	_ = os.WriteFile(filepath.Join(dir, "junit-b.xml"), []byte(b), 0644)
+
+	outPath := filepath.Join(dir, "results.json")
+	_, code := runCLI(t, dir, "ingest", "--junit", "junit-*.xml", "--output", outPath)
+	if code != 0 {
+		t.Fatalf("ingest glob exited non-zero")
+	}
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("results file missing: %v", err)
+	}
+	var parsed struct {
+		Results []struct {
+			SpecID string `json:"spec_id"`
+			ACID   string `json:"ac_id"`
+		} `json:"results"`
+	}
+	_ = json.Unmarshal(data, &parsed)
+	if len(parsed.Results) != 2 {
+		t.Fatalf("expected 2 merged entries from glob, got %d: %s", len(parsed.Results), data)
+	}
+	seen := map[string]bool{}
+	for _, r := range parsed.Results {
+		seen[r.SpecID+"/"+r.ACID] = true
+	}
+	if !seen["spec-foo/AC-01"] || !seen["spec-bar/AC-02"] {
+		t.Errorf("expected spec-foo/AC-01 and spec-bar/AC-02; got: %+v", parsed.Results)
+	}
+}
+
+// @ac AC-11
+// Multiple --junit flags accumulate; StringArrayVar replaces StringVar.
+func TestIngest_JUnit_MultipleFlagsAccumulate(t *testing.T) {
+	dir := t.TempDir()
+	a := `<testsuites><testsuite><testcase name="spec-foo/AC-01 pass"/></testsuite></testsuites>`
+	b := `<testsuites><testsuite><testcase name="spec-bar/AC-02 pass"/></testsuite></testsuites>`
+	aPath := filepath.Join(dir, "junit-a.xml")
+	bPath := filepath.Join(dir, "junit-b.xml")
+	_ = os.WriteFile(aPath, []byte(a), 0644)
+	_ = os.WriteFile(bPath, []byte(b), 0644)
+
+	outPath := filepath.Join(dir, "results.json")
+	_, code := runCLI(t, dir, "ingest", "--junit", aPath, "--junit", bPath, "--output", outPath)
+	if code != 0 {
+		t.Fatalf("ingest with two --junit flags exited non-zero")
+	}
+
+	data, _ := os.ReadFile(outPath)
+	var parsed struct {
+		Results []struct {
+			SpecID string `json:"spec_id"`
+			ACID   string `json:"ac_id"`
+		} `json:"results"`
+	}
+	_ = json.Unmarshal(data, &parsed)
+	if len(parsed.Results) != 2 {
+		t.Fatalf("expected 2 entries from two --junit flags, got %d: %s", len(parsed.Results), data)
+	}
+}
+
+// @ac AC-11
+// Glob matching zero files is a non-zero exit with explanatory stderr.
+func TestIngest_JUnit_GlobNoMatch_ExitsNonZero(t *testing.T) {
+	dir := t.TempDir()
+	out, code := runCLI(t, dir, "ingest", "--junit", "no-such-*.xml")
+	if code == 0 {
+		t.Fatalf("expected non-zero exit for zero-match glob; got:\n%s", out)
+	}
+	if !strings.Contains(out, "no files matched") {
+		t.Errorf("expected stderr 'no files matched'; got:\n%s", out)
+	}
+}
+
+// @ac AC-11
+// Same semantics for --go-test: glob + multiple flags.
+func TestIngest_GoTest_GlobAndMultipleFlags(t *testing.T) {
+	dir := t.TempDir()
+	a := `{"Action":"pass","Package":"p","Test":"TestX/spec-foo/AC-01"}` + "\n"
+	b := `{"Action":"pass","Package":"p","Test":"TestY/spec-bar/AC-02"}` + "\n"
+	_ = os.WriteFile(filepath.Join(dir, "go-a.json"), []byte(a), 0644)
+	_ = os.WriteFile(filepath.Join(dir, "go-b.json"), []byte(b), 0644)
+
+	outPath := filepath.Join(dir, "results.json")
+	_, code := runCLI(t, dir, "ingest", "--go-test", "go-*.json", "--output", outPath)
+	if code != 0 {
+		t.Fatalf("go-test glob exited non-zero")
+	}
+	data, _ := os.ReadFile(outPath)
+	var parsed struct {
+		Results []struct {
+			SpecID string `json:"spec_id"`
+			ACID   string `json:"ac_id"`
+		} `json:"results"`
+	}
+	_ = json.Unmarshal(data, &parsed)
+	if len(parsed.Results) != 2 {
+		t.Fatalf("expected 2 entries from go-test glob, got %d", len(parsed.Results))
+	}
+}
