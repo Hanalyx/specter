@@ -4,6 +4,60 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 ---
 
+## v0.10.2 — 2026-04-23
+
+**Theme: docs/code parity fixes from jwtms Wave 0/1 integration.**
+
+Two bugs surfaced during jwtms `--strict` rollout. Both are small; they ship together.
+
+### Fixed
+
+#### BUG-2 — `specter ingest --junit` and `--go-test` accept globs and repeated flags
+
+The v0.10.0 CHANGELOG claimed `--junit <path>` supports globs. The code used `os.ReadFile` on a single path with `StringVar`, so:
+
+- `specter ingest --junit 'test-results/*.xml'` failed with `open test-results/*.xml: no such file or directory`.
+- `specter ingest --junit a.xml --junit b.xml` silently overwrote — only the last file's results made it into the output.
+
+v0.10.2 implements the documented behavior:
+
+- Paths containing `*`, `?`, or `[...]` are expanded via `filepath.Glob`.
+- `--junit` and `--go-test` flags may be repeated; all specified files are read.
+- Results from all files merge into one output via the existing worst-status-wins rule.
+- A glob matching zero files is now a hard error (`--junit "no-such-*.xml": no files matched`) rather than a silent empty output.
+
+Single-invocation CI patterns now work as documented:
+
+```
+specter ingest --junit 'test-results/*.xml' --output .specter-results.json
+specter ingest --junit unit.xml --junit integration.xml
+specter ingest --go-test 'go-*.json'
+```
+
+spec-ingest 1.1.0 → **1.2.0** (+C-11/AC-11 covering multi-file input).
+
+#### BUG-3 part 1 — `approval_gate` docs parity
+
+`docs/SPEC_SCHEMA_REFERENCE.md` claimed `specter coverage` demotes ACs with `approval_gate: true && approval_date == null`. The embedded JSON schema (the authoritative field definition) and the code both said the opposite — Specter does not enforce approval semantics; teams wire their own PR/CI gates. The human doc was the outlier.
+
+v0.10.2 updates the human doc to match:
+
+- `approval_gate` is metadata. `specter coverage` counts the AC as covered when a matching `@ac` annotation exists, regardless of `approval_gate` or `approval_date`.
+- Teams wire enforcement into their own gates (example: pre-push hook rejecting diffs where any AC has `approval_gate: true && approval_date == null`).
+- `approval_date` is metadata; Specter validates the ISO-8601 format at parse time but does not read the field at runtime.
+
+No code or schema changes. The doc now states what the code actually does.
+
+### Spec bumps
+
+- `spec-ingest`: 1.1.0 → **1.2.0** (+C-11/AC-11 multi-file input).
+
+### Release notes
+
+No CLI behavior regressions from v0.10.1. `specter ingest`'s command surface gains documented behavior it was always supposed to have; no caller that worked under v0.10.1 breaks. VS Code extension runtime unchanged; bumped to 0.10.2 for version alignment.
+
+---
+
 ## v0.10.1 — 2026-04-23
 
 **Theme: Fix the docs that taught the wrong convention for `--strict`.**
