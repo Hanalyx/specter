@@ -217,8 +217,8 @@ An acceptance criterion (AC) is a **testable condition** that defines "done." Ea
 | `gap` | No | `boolean` | Default: `false` | `true` if this AC was identified by gap analysis (no existing test covers it). |
 | `priority` | No | `string` | Enum: `critical`, `high`, `medium`, `low` | Implementation priority. |
 | `notes` | No | `string` | -- | Free-form narrative about edge cases, rationale, or non-obvious implementation details. Rendered in the VS Code `@ac` hover and `specter explain` output. Added in v0.7.0. |
-| `approval_gate` | No | `boolean` | Default: `false` | When `true`, this AC is treated as uncovered by `specter coverage` until `approval_date` is set in the same AC, regardless of whether a matching `@ac` annotation exists. Use for ACs whose correctness can't be verified by an automated test alone and require human sign-off. Added in v0.7.0. |
-| `approval_date` | No | `string` | ISO-8601 date: `YYYY-MM-DD` | Date a human verified this AC. Only meaningful when `approval_gate: true`. Added in v0.7.0. |
+| `approval_gate` | No | `boolean` | Default: `false` | Marks this AC as requiring explicit human approval before it can be considered done. **Specter does not enforce approval semantics** — `specter coverage` counts the AC as covered when a matching `@ac` annotation exists, regardless of whether `approval_gate: true` or `approval_date` is set. Teams wire enforcement into their own PR/CI gates (e.g., a pre-push hook that rejects a diff where any AC has `approval_gate: true && approval_date == null`). Use for ACs whose correctness can't be verified by an automated test alone and require human sign-off. Added in v0.7.0. |
+| `approval_date` | No | `string` | ISO-8601 date: `YYYY-MM-DD` | Date a human verified this AC. Meaningful only in conjunction with `approval_gate: true`. Specter does not read this field — it is metadata for human and CI consumers. Added in v0.7.0. |
 
 ```yaml
 acceptance_criteria:
