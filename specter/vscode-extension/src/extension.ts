@@ -307,7 +307,7 @@ async function resolveBinary(ctx: vscode.ExtensionContext): Promise<string | nul
     } else {
       // Valid binary. Auto-update if CLI version != extension version.
       const cliVersion = getCachedBinaryVersion(resolved);
-      const extVersion = vscode.extensions.getExtension('Hanalyx.specter-vscode')?.packageJSON?.version as string | undefined;
+      const extVersion = vscode.extensions.getExtension('hanalyx.specter-vscode')?.packageJSON?.version as string | undefined;
       if (cliVersion && extVersion && cliVersion !== extVersion) {
         const autoDownload = cfg.get<boolean>('autoDownload', true);
         if (autoDownload) {
