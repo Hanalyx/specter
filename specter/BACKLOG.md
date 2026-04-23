@@ -2,9 +2,9 @@
 
 Forward-looking roadmap. Items are grouped by target release. Each item is a single sentence of intent plus a link to the design doc or discussion when one exists.
 
-Current shipped version: **v0.10.0** (CLI released to GitHub 2026-04-23; VS Code extension not yet published to Marketplace — holding until the v0.10.1 docs patch lands so first-time users read corrected guidance). Past release notes live in [CHANGELOG.md](CHANGELOG.md) — this file is forward-only.
+Current shipped version: **v0.10.1** (CLI released to GitHub 2026-04-23; VS Code extension published to Marketplace 2026-04-23 — v0.10.0 was never published). Past release notes live in [CHANGELOG.md](CHANGELOG.md) — this file is forward-only.
 
-Current working branch: `release/v0.10.1` (opened 2026-04-23). Per `CONTRIBUTING.md` → Branch workflow, all v0.10.1 PRs target this branch, not `main`. `main` receives one merge when v0.10.1 ships. The v0.10.1 focus is a docs-only correction: the pre-v0.10 examples teach `// @spec` / `// @ac` source comments, which `coverage` counts but `ingest` cannot read under `--strict` — a documentation failure that forces every new `--strict` adopter to learn Convention A/B from the explainer rather than the foundational guides.
+Between releases. No working branch open. Per `CONTRIBUTING.md` → Branch workflow, PRs target `main` directly until the v0.11 cycle starts, at which point a new `release/v0.11` branch gets opened and this header is updated to name it.
 
 ---
 
@@ -61,6 +61,18 @@ Blocks on test completion (~30s cost for jwtms's 250s integration suite). Unit +
 
 ---
 
+## v0.10.2 — Docs/code parity + `--junit` glob (candidate)
+
+Bug-fix patch. Two real issues surfaced during jwtms Wave 0/1 `--strict` integration (2026-04-23); both are small and ship together.
+
+- **BUG-2 — `specter ingest --junit` glob and multi-flag support.** `CHANGELOG.md` v0.10.0 claimed "glob supported" for `--junit`; the code (`cmd/specter/ingest.go`) uses `os.ReadFile` on a single path and declares `StringVar`, so globs don't expand and repeated `--junit` flags overwrite. Fix: expand paths with `filepath.Glob` when the input contains wildcards; switch to `StringArrayVar` so multiple `--junit` flags accumulate and merge into one results file. `spec-ingest` adds a constraint + AC covering multi-file input.
+
+- **BUG-3 part 1 — `approval_gate` docs parity.** `docs/SPEC_SCHEMA_REFERENCE.md:220` claimed `specter coverage` demotes gated-but-undated ACs. The embedded JSON schema (`internal/parser/spec-schema.json:319`) says Specter does not enforce approval semantics. The code matches the JSON schema. The human doc is the outlier. Fix: update `SPEC_SCHEMA_REFERENCE.md` to match the JSON schema — `approval_gate` is a metadata field; teams wire it into their own PR/CI gates. Add a parity test that reads the JSON schema's field descriptions and asserts they match the human doc's table.
+
+Scope: ~half a day. No CLI behavior change for end users except the `--junit` glob now working as documented. No spec semantic changes.
+
+---
+
 ## v0.11 — AI loop enforcement (candidate)
 
 The CI gate (`specter sync`) already enforces annotated tests must exist. This phase makes the loop *proactive* rather than reactive — close the spec → test → implement → eval cycle for AI coding assistants.
@@ -80,7 +92,27 @@ The CI gate (`specter sync`) already enforces annotated tests must exist. This p
   - pytest: `pytest --specter` plugin
   - Jest: `jest-specter` reporter
 
+- **`specter check --test` / `-t`** — extend `check` to cross-reference test annotations against parsed specs. The test-side counterpart to today's spec-side cross-reference checks (`orphan_constraint`, `tier_conflict`). Catches the class of bug the v0.10.1 docs patch could only document, not enforce. Adds three diagnostic kinds:
+  - `unknown_spec_ref` — `// @spec foo` in a test file where no spec with id `foo` exists in the workspace.
+  - `unknown_ac_ref` — `// @ac AC-99` where the referenced spec has no AC-99.
+  - `malformed_ac_id` — `// @ac AC-1` (not zero-padded) or `// @ac ac-01` (wrong case).
+
+  Design decisions (confirmed 2026-04-23):
+  - **Opt-in for v0.11.** `check` alone runs today's spec checks unchanged; `check --test` adds the test-annotation pass. Candidate for flipping to always-on in a later version once adoption is smooth.
+  - **Short form `-t` is free** — no existing `check` flag declares a short form.
+  - **One output stream.** Test diagnostics mix into the existing `check` diagnostic stream, differentiated by kind. Summary line aggregates across kinds.
+  - **`specter sync` wiring.** Sync's check phase gets the matching flag so CI can run `sync --strict` including test-annotation checks.
+  - **Spec bump**: `spec-check` gets a new constraint codifying the test-annotation cross-check plus one AC per diagnostic kind.
+
+  Deferred to v0.12 or later: `unreachable_annotation` — detects source-only annotations in a test file whose functions don't carry runner-visible pairs (the jwtms-style situation that `--strict` demotes). Correlating a source-comment scan with test-title parsing requires a real test-file parser per language, not just line regex. Worth doing; not in v0.11 scope.
+
 - **Flake handling** (deferred from v0.10) — `--deny-flaky` flag; runners emit `status: flaky`; `--strict` tolerates flakes by default. Ship when real patterns from v0.10 usage surface.
+
+- **BUG-3 part 2 — `approval_gate` enforcement in `specter coverage`.** Feature decision, not a bug fix. Today `approval_gate: true` is metadata; `specter coverage` does not gate on it. The argument in favor of enforcement is mission-aligned: an AC declaring "cannot be verified mechanically" is exactly the AC that should not count as covered until the human approval is recorded. jwtms has ~83 Tier 1 ACs in the gated-but-undated state; if coverage starts respecting the field, those demote, and that is the correct signal. Open design questions:
+  - **Default behavior.** On by default with announced breaking-change semantics (v0.11 minor bump), or opt-in via `specter coverage --respect-approval-gates` / `settings.respect_approval_gates: true`? Leaning opt-in for v0.11 to avoid surprising existing users, flip to always-on in v0.12+.
+  - **Coupling with `--strict`.** Does `approval_gate: true && approval_date: null` demote always, or only under `--strict`? Leaning always — the gate's meaning is "human approval required," not "human approval required in strict mode."
+  - **New diagnostic kind.** `approval_gate_undated` surfaces under `specter check` so teams see the list before coverage even runs.
+  - **Spec bump.** `spec-coverage` adds a new constraint + AC codifying the semantics. Also updates `SPEC_SCHEMA_REFERENCE.md` and the JSON schema description to reflect the new behavior (reverses the v0.10.2 parity fix — must be coordinated).
 
 - **Python Convention A gap.** `specter ingest`'s test-name regex `([a-z][a-z0-9-]*[a-z0-9])[/:](AC-\d+)` accepts only `/` or `:` as the separator between spec id and AC id. Python function names can't contain either, so the natural form `def test_user_create_AC_01_brief(...)` does not match — pytest emits the function name as the JUnit title, but ingest drops it. Today's Python users have to use Convention B (runtime `print('// @spec ...')` inside the test body) to get the pair into `.specter-results.json`. This is a real friction point — flagging it rather than leaving it buried in docs. Two directions, both viable, pick after real pytest migration friction surfaces:
   - **Docs only**: `TEST_ANNOTATION_REFERENCE.md` tells Python users to use Convention B. No code change. Penalty: Python is a second-class `--strict` citizen.
@@ -119,6 +151,13 @@ Items from the local `docs/IMPROVEMENT_ROADMAP.md` that haven't landed yet:
 - **`@vscode/test-electron` headless integration tests.** The release-gate currently relies on a human operator reproducing changes in a live VS Code window. Automating that via `@vscode/test-electron` would let CI spawn a real VS Code instance with the extension loaded against fixture workspaces and assert the sidebar / status bar / output channel behave as expected. Backstops the human gate; does not replace it. About a day of setup.
 - **PR comment integration** (Phase 3 carry-over) — show spec coverage diff in PR comments (AC added/removed, coverage delta by tier). Pairs with the `specter-sync-action`.
 - **Glob patterns in `settings.exclude`** — the exclude list currently matches by directory name only. Extend to support glob patterns so teams can write `- .claude/**` or `- **/worktrees` without enumerating every root-level directory.
+- **CLI docs parity tests.** Three cases of "docs asserted behavior the code didn't implement" shipped during v0.10.x — BUG-2 (`--junit` glob claim) and BUG-3 (`approval_gate` enforcement claim) among them. Reviewer attention isn't sufficient; the reviewer shares the writer's mental model. Mechanize the check:
+  - Parse the flag table in `docs/CLI_REFERENCE.md` for each command.
+  - Compare against `cobra`'s registered flags on that command at test time.
+  - Fail when they diverge — either the docs mention a flag not registered, or a registered flag isn't documented.
+  - Same discipline for `docs/SPEC_SCHEMA_REFERENCE.md` vs `internal/parser/spec-schema.json` field descriptions.
+  
+  Matches the "parity tests over promises" principle in `specter/CLAUDE.md`. Complements the human docs-review policy in the root CLAUDE.md — policy catches authorial drift, parity tests catch mechanical drift.
 
 ---
 
