@@ -1,6 +1,6 @@
 spec:
   id: spec-ingest
-  version: "1.1.0"
+  version: "1.2.0"
   status: approved
   tier: 1
 
@@ -94,6 +94,11 @@ spec:
       type: business
       enforcement: error
 
+    - id: C-11
+      description: "`specter ingest --junit <path>` MUST accept a glob pattern — `*`, `?`, `[...]` — as the path. When the path matches multiple files, each file is parsed and results merge into the output file via the worst-status-wins rule in C-08. `specter ingest --junit <a> --junit <b>` with multiple `--junit` flags MUST accumulate, not overwrite: all specified files are read and results merge. The same applies to `--go-test`. A glob matching zero files is an error; a glob matching one file behaves as the single-file case. Rationale: CI jobs frequently produce multiple JUnit files (unit + integration + e2e runs); the documented single-invocation pipeline needs multi-file support or operators hand-roll loop-and-merge scripts."
+      type: business
+      enforcement: error
+
   depends_on:
     - spec_id: spec-coverage
       version_range: "^1.9.0"
@@ -164,7 +169,26 @@ spec:
       references_constraints: ["C-10"]
       priority: medium
 
+    - id: AC-11
+      description: "`specter ingest --junit 'junit-*.xml'` on a directory containing `junit-a.xml` (one passed test for spec-foo/AC-01) and `junit-b.xml` (one passed test for spec-bar/AC-02) writes a results file with BOTH entries. `specter ingest --junit junit-a.xml --junit junit-b.xml` produces the same result (two entries merged). A pattern matching zero files exits non-zero with `error: no files matched <pattern>`. A pattern matching one file behaves identically to passing that single path."
+      inputs:
+        dir_contents: "junit-a.xml (spec-foo/AC-01 passed), junit-b.xml (spec-bar/AC-02 passed)"
+        scenario_1_flags: "--junit 'junit-*.xml'"
+        scenario_2_flags: "--junit junit-a.xml --junit junit-b.xml"
+        scenario_3_flags: "--junit 'nonexistent-*.xml'"
+      expected_output:
+        scenario_1: "results file has 2 entries: (spec-foo, AC-01, passed) and (spec-bar, AC-02, passed)"
+        scenario_2: "same as scenario 1"
+        scenario_3: "exit non-zero, stderr contains 'no files matched'"
+      references_constraints: ["C-11", "C-08"]
+      priority: high
+
   changelog:
+    - version: "1.2.0"
+      date: "2026-04-23"
+      author: "specter-team"
+      type: minor
+      description: "Add C-11/AC-11 (--junit and --go-test accept glob patterns and repeated flags, merging results across multiple files). Fixes BUG-2 — CHANGELOG.md v0.10.0 claimed 'glob supported' for --junit but the code used os.ReadFile on a single path with StringVar, so globs didn't expand and repeated flags overwrote. CI jobs producing multiple JUnit files (unit + integration + e2e) now work with a single specter ingest invocation as documented."
     - version: "1.1.0"
       date: "2026-04-23"
       author: "specter-team"
