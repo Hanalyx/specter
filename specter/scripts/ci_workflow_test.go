@@ -67,41 +67,45 @@ func findValidatePRTitleStep(w *ciWorkflow) *struct {
 
 // @ac AC-08
 func TestCIWorkflow_RejectsInvalidPRTitle(t *testing.T) {
-	w := loadCIWorkflow(t)
-	step := findValidatePRTitleStep(w)
-	if step == nil {
-		t.Fatal("no 'Validate PR title' step found in any CI job")
-	}
-
-	// Must guard on pull_request events
-	if !strings.Contains(step.If, "pull_request") {
-		t.Errorf("step must run only on pull_request events, got if: %q", step.If)
-	}
-
-	// Must contain the Conventional Commits regex and exit non-zero on mismatch
-	expectedFragments := []string{
-		"feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert",
-		"exit 1",
-	}
-	for _, frag := range expectedFragments {
-		if !strings.Contains(step.Run, frag) {
-			t.Errorf("validate step must contain %q, got run:\n%s", frag, step.Run)
+	t.Run("spec-commits/AC-08 rejects invalid pr title", func(t *testing.T) {
+		w := loadCIWorkflow(t)
+		step := findValidatePRTitleStep(w)
+		if step == nil {
+			t.Fatal("no 'Validate PR title' step found in any CI job")
 		}
-	}
+
+		// Must guard on pull_request events
+		if !strings.Contains(step.If, "pull_request") {
+			t.Errorf("step must run only on pull_request events, got if: %q", step.If)
+		}
+
+		// Must contain the Conventional Commits regex and exit non-zero on mismatch
+		expectedFragments := []string{
+			"feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert",
+			"exit 1",
+		}
+		for _, frag := range expectedFragments {
+			if !strings.Contains(step.Run, frag) {
+				t.Errorf("validate step must contain %q, got run:\n%s", frag, step.Run)
+			}
+		}
+	})
 }
 
 // @ac AC-09
 func TestCIWorkflow_AcceptsValidPRTitle(t *testing.T) {
-	w := loadCIWorkflow(t)
-	step := findValidatePRTitleStep(w)
-	if step == nil {
-		t.Fatal("no 'Validate PR title' step found in any CI job")
-	}
+	t.Run("spec-commits/AC-09 accepts valid pr title", func(t *testing.T) {
+		w := loadCIWorkflow(t)
+		step := findValidatePRTitleStep(w)
+		if step == nil {
+			t.Fatal("no 'Validate PR title' step found in any CI job")
+		}
 
-	// On the success path, the step must print a confirming line and NOT
-	// exit non-zero. The "echo PR title OK" plus absence of an unconditional
-	// `exit 1` (it's guarded by the regex mismatch) pins this.
-	if !strings.Contains(step.Run, "PR title OK") {
-		t.Errorf("valid-title path must print 'PR title OK', got run:\n%s", step.Run)
-	}
+		// On the success path, the step must print a confirming line and NOT
+		// exit non-zero. The "echo PR title OK" plus absence of an unconditional
+		// `exit 1` (it's guarded by the regex mismatch) pins this.
+		if !strings.Contains(step.Run, "PR title OK") {
+			t.Errorf("valid-title path must print 'PR title OK', got run:\n%s", step.Run)
+		}
+	})
 }

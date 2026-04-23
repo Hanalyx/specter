@@ -55,102 +55,112 @@ func loadAction(t *testing.T) *actionDoc {
 
 // @ac AC-01
 func TestAction_InputsVersionRequiredArgsDefaultsToSync(t *testing.T) {
-	a := loadAction(t)
-	v, ok := a.Inputs["version"]
-	if !ok {
-		t.Fatal("inputs.version missing")
-	}
-	if !v.Required {
-		t.Error("inputs.version must be required")
-	}
-	if v.Default != "" {
-		t.Errorf("inputs.version must have no default, got %q", v.Default)
-	}
-	args, ok := a.Inputs["args"]
-	if !ok {
-		t.Fatal("inputs.args missing")
-	}
-	if args.Required {
-		t.Error("inputs.args must be optional")
-	}
-	if args.Default != "sync" {
-		t.Errorf("inputs.args default must be 'sync', got %q", args.Default)
-	}
+	t.Run("spec-ci-action/AC-01 inputs version required args defaults to sync", func(t *testing.T) {
+		a := loadAction(t)
+		v, ok := a.Inputs["version"]
+		if !ok {
+			t.Fatal("inputs.version missing")
+		}
+		if !v.Required {
+			t.Error("inputs.version must be required")
+		}
+		if v.Default != "" {
+			t.Errorf("inputs.version must have no default, got %q", v.Default)
+		}
+		args, ok := a.Inputs["args"]
+		if !ok {
+			t.Fatal("inputs.args missing")
+		}
+		if args.Required {
+			t.Error("inputs.args must be optional")
+		}
+		if args.Default != "sync" {
+			t.Errorf("inputs.args default must be 'sync', got %q", args.Default)
+		}
+	})
 }
 
 // @ac AC-02
 func TestAction_DownloadURLPattern(t *testing.T) {
-	a := loadAction(t)
-	var joined string
-	for _, s := range a.Runs.Steps {
-		joined += s.Run + "\n"
-	}
-	checks := []string{
-		`https://github.com/Hanalyx/specter/releases/download/v${VERSION}/`,
-		`specter_${VERSION}_${OS}_${ARCH}.tar.gz`,
-	}
-	for _, c := range checks {
-		if !strings.Contains(joined, c) {
-			t.Errorf("expected download pattern fragment %q in run scripts", c)
+	t.Run("spec-ci-action/AC-02 download url pattern", func(t *testing.T) {
+		a := loadAction(t)
+		var joined string
+		for _, s := range a.Runs.Steps {
+			joined += s.Run + "\n"
 		}
-	}
+		checks := []string{
+			`https://github.com/Hanalyx/specter/releases/download/v${VERSION}/`,
+			`specter_${VERSION}_${OS}_${ARCH}.tar.gz`,
+		}
+		for _, c := range checks {
+			if !strings.Contains(joined, c) {
+				t.Errorf("expected download pattern fragment %q in run scripts", c)
+			}
+		}
+	})
 }
 
 // @ac AC-03
 func TestAction_CacheStepKeyedOnOSAndVersion(t *testing.T) {
-	a := loadAction(t)
-	var cacheStep *struct {
-		Uses string
-		With map[string]string
-	}
-	for _, s := range a.Runs.Steps {
-		if strings.HasPrefix(s.Uses, "actions/cache@") {
-			cacheStep = &struct {
-				Uses string
-				With map[string]string
-			}{Uses: s.Uses, With: s.With}
-			break
+	t.Run("spec-ci-action/AC-03 cache step keyed on os and version", func(t *testing.T) {
+		a := loadAction(t)
+		var cacheStep *struct {
+			Uses string
+			With map[string]string
 		}
-	}
-	if cacheStep == nil {
-		t.Fatal("actions/cache step missing")
-	}
-	wantKey := "specter-${{ runner.os }}-${{ inputs.version }}"
-	if cacheStep.With["key"] != wantKey {
-		t.Errorf("cache key must be %q, got %q", wantKey, cacheStep.With["key"])
-	}
+		for _, s := range a.Runs.Steps {
+			if strings.HasPrefix(s.Uses, "actions/cache@") {
+				cacheStep = &struct {
+					Uses string
+					With map[string]string
+				}{Uses: s.Uses, With: s.With}
+				break
+			}
+		}
+		if cacheStep == nil {
+			t.Fatal("actions/cache step missing")
+		}
+		wantKey := "specter-${{ runner.os }}-${{ inputs.version }}"
+		if cacheStep.With["key"] != wantKey {
+			t.Errorf("cache key must be %q, got %q", wantKey, cacheStep.With["key"])
+		}
+	})
 }
 
 // @ac AC-04
 func TestAction_ArchitectureMapping(t *testing.T) {
-	a := loadAction(t)
-	var detect string
-	for _, s := range a.Runs.Steps {
-		if s.ID == "platform" {
-			detect = s.Run
+	t.Run("spec-ci-action/AC-04 architecture mapping", func(t *testing.T) {
+		a := loadAction(t)
+		var detect string
+		for _, s := range a.Runs.Steps {
+			if s.ID == "platform" {
+				detect = s.Run
+			}
 		}
-	}
-	if detect == "" {
-		t.Fatal("platform detection step missing")
-	}
-	if !strings.Contains(detect, "X64)") || !strings.Contains(detect, `ARCH="amd64"`) {
-		t.Error("X64 must map to amd64")
-	}
-	if !strings.Contains(detect, "ARM64)") || !strings.Contains(detect, `ARCH="arm64"`) {
-		t.Error("ARM64 must map to arm64")
-	}
+		if detect == "" {
+			t.Fatal("platform detection step missing")
+		}
+		if !strings.Contains(detect, "X64)") || !strings.Contains(detect, `ARCH="amd64"`) {
+			t.Error("X64 must map to amd64")
+		}
+		if !strings.Contains(detect, "ARM64)") || !strings.Contains(detect, `ARCH="arm64"`) {
+			t.Error("ARM64 must map to arm64")
+		}
+	})
 }
 
 // @ac AC-05
 func TestAction_RunsSpecterWithInputsArgs(t *testing.T) {
-	a := loadAction(t)
-	var found bool
-	for _, s := range a.Runs.Steps {
-		if strings.Contains(s.Run, "specter ${{ inputs.args }}") {
-			found = true
+	t.Run("spec-ci-action/AC-05 runs specter with inputs args", func(t *testing.T) {
+		a := loadAction(t)
+		var found bool
+		for _, s := range a.Runs.Steps {
+			if strings.Contains(s.Run, "specter ${{ inputs.args }}") {
+				found = true
+			}
 		}
-	}
-	if !found {
-		t.Error("expected a run step invoking 'specter ${{ inputs.args }}'")
-	}
+		if !found {
+			t.Error("expected a run step invoking 'specter ${{ inputs.args }}'")
+		}
+	})
 }
