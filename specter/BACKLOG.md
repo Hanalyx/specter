@@ -2,9 +2,9 @@
 
 Forward-looking roadmap. Items are grouped by target release. Each item is a single sentence of intent plus a link to the design doc or discussion when one exists.
 
-Current shipped version: **v0.9.2** (published to VS Code Marketplace as stable 2026-04-21). Past release notes live in [CHANGELOG.md](CHANGELOG.md) — this file is forward-only.
+Current shipped version: **v0.10.0** (CLI released to GitHub 2026-04-23; VS Code extension not yet published to Marketplace — holding until the v0.10.1 docs patch lands so first-time users read corrected guidance). Past release notes live in [CHANGELOG.md](CHANGELOG.md) — this file is forward-only.
 
-Current working branch: `release/v0.10` (opened 2026-04-22). Per `CONTRIBUTING.md` → Branch workflow, all v0.10 PRs target this branch, not `main`. `main` receives one merge when v0.10 ships.
+Current working branch: `release/v0.10.1` (opened 2026-04-23). Per `CONTRIBUTING.md` → Branch workflow, all v0.10.1 PRs target this branch, not `main`. `main` receives one merge when v0.10.1 ships. The v0.10.1 focus is a docs-only correction: the pre-v0.10 examples teach `// @spec` / `// @ac` source comments, which `coverage` counts but `ingest` cannot read under `--strict` — a documentation failure that forces every new `--strict` adopter to learn Convention A/B from the explainer rather than the foundational guides.
 
 ---
 
@@ -81,6 +81,11 @@ The CI gate (`specter sync`) already enforces annotated tests must exist. This p
   - Jest: `jest-specter` reporter
 
 - **Flake handling** (deferred from v0.10) — `--deny-flaky` flag; runners emit `status: flaky`; `--strict` tolerates flakes by default. Ship when real patterns from v0.10 usage surface.
+
+- **Python Convention A gap.** `specter ingest`'s test-name regex `([a-z][a-z0-9-]*[a-z0-9])[/:](AC-\d+)` accepts only `/` or `:` as the separator between spec id and AC id. Python function names can't contain either, so the natural form `def test_user_create_AC_01_brief(...)` does not match — pytest emits the function name as the JUnit title, but ingest drops it. Today's Python users have to use Convention B (runtime `print('// @spec ...')` inside the test body) to get the pair into `.specter-results.json`. This is a real friction point — flagging it rather than leaving it buried in docs. Two directions, both viable, pick after real pytest migration friction surfaces:
+  - **Docs only**: `TEST_ANNOTATION_REFERENCE.md` tells Python users to use Convention B. No code change. Penalty: Python is a second-class `--strict` citizen.
+  - **Regex extension**: accept `_` as a separator, or a specific delimiter like `.` or `__`, so pytest function names can encode the pair directly. Non-trivial — `test_user_create_AC_01` has ambiguous spec-id boundary (`user_create` vs `user-create` vs partial-match). Needs a design doc. Candidate form: require spec-id to carry a `.` delimiter in Python titles (`def test_user_create.AC_01_brief` — invalid Python, so no) or use a class wrapper (`class Test_user_create: def test_AC_01(...)` → JUnit `Test_user_create.test_AC_01` — still no `/` or `:`).
+  - **Status**: blocked pending P2 (`TEST_ANNOTATION_REFERENCE.md`) author's decision. If docs-only is chosen, close this item. If regex extension is chosen, spec-ingest 1.2.0 with C-09 and an AC for the new separator.
 
 ---
 
