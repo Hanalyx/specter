@@ -1,6 +1,6 @@
 spec:
   id: spec-coverage
-  version: "1.8.0"
+  version: "1.10.0"
   status: approved
   tier: 2
 
@@ -126,6 +126,31 @@ spec:
     - id: C-18
       description: "In the default table output, spec IDs longer than 40 characters MUST be truncated in the `Spec ID` column with a trailing ellipsis (`…`) so subsequent columns remain aligned. The `--json` output is unaffected — it emits the full spec_id. Rationale: long path-derived IDs (e.g. `app-api-admin-appointments-id-service`) break the table in v0.9.0/v0.9.1; alignment is a legibility prerequisite for the sort + summary work to be useful."
       type: technical
+      enforcement: error
+
+    - id: C-19
+      description: "`specter coverage --strict` MUST treat any annotated AC as uncovered unless a .specter-results.json entry for that (spec_id, ac_id) exists with status=passed. Applies to ALL tiers, not just Tier 1. A skipped, failed, or errored entry demotes the AC to uncovered regardless of annotation presence. Rationale: a green Specter gate must mean tests actually passed — eval phase enforcement for the SDD loop."
+      type: business
+      enforcement: error
+
+    - id: C-20
+      description: "Under `--strict`, a missing `.specter-results.json` file (or an empty results array) MUST produce a hard failure (non-zero exit, explanatory stderr message `--strict requires .specter-results.json — run 'specter ingest' first`). Rationale: --strict is a contract that test results were verified; no results means the contract can't be satisfied, and silently falling back to annotation-only would defeat the purpose."
+      type: business
+      enforcement: error
+
+    - id: C-21
+      description: "The .specter-results.json schema MUST accept entries with an explicit `status` field whose value is one of {passed, failed, skipped, errored}. For back-compat, entries without `status` but with `passed: true` are treated as status=passed; entries with `passed: false` and no status are treated as status=failed. The coverage package's result-lookup function uses status when present, falls back to passed otherwise."
+      type: technical
+      enforcement: error
+
+    - id: C-22
+      description: "Under `--strict`, when `.specter-results.json` parses successfully but contains zero entries, the coverage command MUST emit a stderr warning BEFORE computing demotions. The warning names the likely cause (`no (spec_id, ac_id) pairs were extracted from test output — tests likely don't carry runner-visible annotations`) and points at the conventions doc (`see docs/explainer/v0.10-ci-gated-coverage.md, Conventions A and B`). Rationale: a results file with zero entries will demote 100% of annotated ACs; that outcome is correct per C-19 but the Day-1 operator experience of silent mass demotion is a pure documentation failure — the tool has the signal to help the operator self-diagnose and must emit it."
+      type: business
+      enforcement: error
+
+    - id: C-23
+      description: "`specter coverage --scope <domain>` narrows `--strict`'s demand set to ACs of specs listed under the named domain in `specter.yaml`. Semantics: (a) ACs in the scoped domain behave per C-19 (must have status=passed entry, else demoted); (b) ACs outside the scoped domain use the pre-strict boolean-passed logic — annotation presence alone counts as coverage regardless of whether a passing entry exists in results; (c) the report includes ALL specs (not filtered), so the operator sees the full workspace, not a shrunken view. `--scope` without `--strict` is an error. `--scope` combines with `--tests <glob>` as AND (both filters apply). Rationale: staged adoption — a 250-spec workspace cannot migrate every test to runner-visible annotations in one wave; `--scope` lets CI enforce `--strict` on one domain per wave while the rest of the workspace continues with v0.9 semantics."
+      type: business
       enforcement: error
 
   depends_on:
@@ -313,7 +338,84 @@ spec:
       references_constraints: ["C-18"]
       priority: medium
 
+    - id: AC-19
+      description: "Given a Tier 2 spec with annotation @ac AC-03 and a .specter-results.json entry {spec_id, AC-03, status: failed}, BuildCoverageReportWithResults under StrictMode=true returns CoverageReport where AC-03 is listed in UncoveredACs (not CoveredACs). Same input under StrictMode=false (non-strict) lists AC-03 as CoveredACs because tier-2 does not pass-rate-check without --strict."
+      inputs:
+        spec: "tier 2, AC-03 annotated, results file: {AC-03, failed}"
+      expected_output:
+        strict_true_uncovered: ["AC-03"]
+        strict_false_covered: ["AC-03"]
+      references_constraints: ["C-19"]
+      priority: critical
+
+    - id: AC-20
+      description: "Under StrictMode=true with a nil ResultsFile (no `.specter-results.json` on disk), the coverage command MUST return an error (surfaces as exit non-zero). The error message MUST contain the literal string `--strict requires .specter-results.json`. Rationale: silently falling back to annotation-only under --strict defeats the gate's purpose. An empty-but-parseable ResultsFile (file exists, `{\"results\":[]}`) is a separate case covered by AC-23 (warn-and-continue) to support staged adoption where zero tests have been migrated yet."
+      references_constraints: ["C-20"]
+      priority: critical
+
+    - id: AC-21
+      description: "ParseResultsFile accepts JSON {\"results\":[{\"spec_id\":\"s\",\"ac_id\":\"AC-01\",\"status\":\"failed\"}]} and returns a ResultsFile whose entry has Status=\"failed\" and Passed=false. Given back-compat input {\"results\":[{\"spec_id\":\"s\",\"ac_id\":\"AC-01\",\"passed\":true}]} (no status field), the entry has Status=\"passed\" (derived) and Passed=true. Status and Passed are kept internally consistent."
+      references_constraints: ["C-21"]
+      priority: high
+
+    - id: AC-22
+      description: "The result-lookup function ResultsFile.status(specID, acID) returns `passed` when an entry has status=passed, `failed`/`skipped`/`errored` for matching entries, and `unknown` when no entry exists. Under StrictMode=true, `unknown` and any non-passed status demote the AC to uncovered. Under StrictMode=false, behavior matches today's boolean passed() function."
+      references_constraints: ["C-19", "C-21"]
+      priority: high
+
+    - id: AC-23
+      description: "Running `specter coverage --strict` against a workspace with `.specter-results.json` containing `{\"results\":[]}` (parseable but empty) MUST emit a stderr line containing `no (spec_id, ac_id) pairs were extracted` and a second line referencing `docs/explainer/v0.10-ci-gated-coverage.md`. The command continues (does not exit early on the warning) so the demotion report still prints. Rationale: warn first, then demote — so the operator sees both signals."
+      inputs:
+        results_file: "{\"results\":[]}"
+        strict_flag: true
+      expected_output:
+        stderr_contains: ["no (spec_id, ac_id) pairs were extracted", "docs/explainer/v0.10-ci-gated-coverage.md"]
+        exit_code: "non-zero if any AC demoted (unchanged from C-19)"
+      references_constraints: ["C-22"]
+      priority: critical
+
+    - id: AC-24
+      description: "Given `specter.yaml` declaring `domains: { approval-gate: { specs: [stripe-charge, stripe-refund] } }` and annotated ACs for all four specs stripe-charge, stripe-refund, user-profile, admin-panel, running `specter coverage --strict --scope approval-gate` demotes stripe-charge and stripe-refund ACs without passing results while leaving user-profile and admin-panel ACs marked covered via annotation presence alone. The printed report includes all four specs."
+      inputs:
+        manifest_domains: "approval-gate: [stripe-charge, stripe-refund]"
+        results_file: "{\"results\":[{\"spec_id\":\"stripe-charge\",\"ac_id\":\"AC-01\",\"status\":\"passed\"}]}"
+        annotated_acs: "stripe-charge: [AC-01, AC-02]; stripe-refund: [AC-01]; user-profile: [AC-01]; admin-panel: [AC-01]"
+        flags: "--strict --scope approval-gate"
+      expected_output:
+        demoted_under_strict: ["stripe-charge/AC-02", "stripe-refund/AC-01"]
+        covered_via_annotation: ["user-profile/AC-01", "admin-panel/AC-01"]
+        report_includes_all_four_specs: true
+      references_constraints: ["C-23"]
+      priority: critical
+
+    - id: AC-25
+      description: "`specter coverage --strict --scope unknown-domain` exits non-zero with stderr message naming the unknown domain and listing the valid domain names from `specter.yaml`. `specter coverage --scope approval-gate` (without `--strict`) also exits non-zero with stderr message `--scope requires --strict`. Rationale: fail-fast on operator mistakes rather than silently applying surprising defaults."
+      inputs:
+        scenario_1: "--strict --scope nonexistent"
+        scenario_2: "--scope approval-gate (no --strict)"
+      expected_output:
+        scenario_1_stderr_contains: ["unknown domain", "nonexistent", "valid domains:"]
+        scenario_2_stderr_contains: ["--scope requires --strict"]
+        exit_code: "non-zero in both"
+      references_constraints: ["C-23"]
+      priority: high
+
+    - id: AC-26
+      description: "`specter coverage --strict --scope <domain> --tests <glob>` applies both filters as AND: annotations are scanned only in files matching the glob, AND demotion under --strict applies only to ACs of specs in the scope domain. An AC covered by a test outside the glob is not scanned; an AC of a spec outside the scope domain uses boolean-passed logic even if its test is inside the glob."
+      references_constraints: ["C-23"]
+      priority: medium
+
   changelog:
+    - version: "1.10.0"
+      date: "2026-04-23"
+      author: "specter-team"
+      type: minor
+      description: "Add C-22/AC-23 (empty-results warning under --strict — warn operator about missing runner-visible annotations BEFORE demotion report), C-23/AC-24/AC-25/AC-26 (--scope <domain> flag narrows --strict demand to one domain for staged adoption, non-scoped specs continue with boolean-passed logic, invalid scope/flag combos fail-fast). Adoption affordances for v0.10 — the eval gate works, but first-time users on a 250-spec workspace hit a Day-1 wave of 100% demotion with no signal about why; these close the documentation-failure gap."
+    - version: "1.9.0"
+      date: "2026-04-22"
+      author: "specter-team"
+      type: minor
+      description: "Add C-19/AC-19 (--strict treats non-passed annotated ACs as uncovered across all tiers), C-20/AC-20 (missing results file under --strict is a hard fail), C-21/AC-21/AC-22 (extended .specter-results.json status enum with back-compat boolean). Closes the test-quality hole where annotated-but-failing or annotated-but-skipped tests silently counted as covered — eval phase enforcement for the SDD loop. Requires spec-ingest 1.0.0+ to produce results files."
     - version: "1.8.0"
       date: "2026-04-20"
       author: "specter-team"

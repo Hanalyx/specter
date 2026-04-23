@@ -357,3 +357,265 @@ func TestCoverage_Table_TruncatesLongSpecIDs(t *testing.T) {
 		t.Errorf("--json output must contain full spec ID, got:\n%s", jsonOut)
 	}
 }
+
+// --- v0.10 CI-gated coverage (--strict) tests ---
+
+// @spec spec-coverage
+// @ac AC-20
+// `specter coverage --strict` without a .specter-results.json must fail with
+// an explanatory stderr message. Silently falling back to annotation-only
+// under --strict would defeat the gate's purpose.
+func TestCoverage_Strict_MissingResultsFile_Fails(t *testing.T) {
+	dir := t.TempDir()
+	writeSpec(t, dir, "alpha.spec.yaml", minimalValidSpec("alpha", 2, "AC-01"))
+
+	out, code := runCLI(t, dir, "coverage", "--strict")
+	if code == 0 {
+		t.Fatalf("expected non-zero exit, got 0; output:\n%s", out)
+	}
+	if !strings.Contains(out, "--strict requires .specter-results.json") {
+		t.Errorf("expected error mentioning `--strict requires .specter-results.json`; got:\n%s", out)
+	}
+}
+
+// @spec spec-coverage
+// @ac AC-19
+// --strict: annotated AC whose result failed is reported as uncovered,
+// even on tier 2/3 (which today's pass-rate-aware logic ignores).
+func TestCoverage_Strict_FailedResultDemotesTier2(t *testing.T) {
+	dir := t.TempDir()
+	writeSpec(t, dir, "svc.spec.yaml", minimalValidSpec("svc", 2, "AC-01"))
+
+	// Annotated test file matching the spec.
+	testDir := filepath.Join(dir, "tests")
+	_ = os.MkdirAll(testDir, 0755)
+	_ = os.WriteFile(filepath.Join(testDir, "svc_test.go"), []byte(
+		"// @spec svc\n// @ac AC-01\nfunc TestX(t *testing.T) {}\n"), 0644)
+
+	// Write a results file marking AC-01 as failed.
+	results := `{"results":[{"spec_id":"svc","ac_id":"AC-01","status":"failed"}]}`
+	_ = os.WriteFile(filepath.Join(dir, ".specter-results.json"), []byte(results), 0644)
+
+	// Non-strict: tier 2 annotation alone counts as covered → passes.
+	out, code := runCLI(t, dir, "coverage", "--tests", "tests/*_test.go")
+	if code != 0 {
+		t.Fatalf("non-strict should pass (tier 2 annotation-only); got exit=%d\n%s", code, out)
+	}
+
+	// Strict: failed result demotes the AC → coverage should fail.
+	strictOut, strictCode := runCLI(t, dir, "coverage", "--strict", "--tests", "tests/*_test.go")
+	if strictCode == 0 {
+		t.Fatalf("strict mode should fail when AC-01's result is failed; got exit=0\n%s", strictOut)
+	}
+}
+
+// @spec spec-coverage
+// @ac AC-19
+// --strict + all-passed results: coverage passes normally.
+func TestCoverage_Strict_AllPassed_Passes(t *testing.T) {
+	dir := t.TempDir()
+	writeSpec(t, dir, "svc.spec.yaml", minimalValidSpec("svc", 2, "AC-01"))
+
+	testDir := filepath.Join(dir, "tests")
+	_ = os.MkdirAll(testDir, 0755)
+	_ = os.WriteFile(filepath.Join(testDir, "svc_test.go"), []byte(
+		"// @spec svc\n// @ac AC-01\nfunc TestX(t *testing.T) {}\n"), 0644)
+
+	results := `{"results":[{"spec_id":"svc","ac_id":"AC-01","status":"passed"}]}`
+	_ = os.WriteFile(filepath.Join(dir, ".specter-results.json"), []byte(results), 0644)
+
+	_, code := runCLI(t, dir, "coverage", "--strict", "--tests", "tests/*_test.go")
+	if code != 0 {
+		t.Errorf("strict with all-passed should exit 0, got %d", code)
+	}
+}
+
+// --- v0.10.0 adoption affordances ---
+
+// @spec spec-coverage
+// @ac AC-23
+// Empty .specter-results.json under --strict must emit a self-diagnosing
+// warning (naming the likely cause + pointing at the conventions doc)
+// BEFORE the demotion report. Without this, a Day-1 operator sees 100%
+// silent demotion with no hint about why.
+func TestCoverage_Strict_EmptyResults_WarnsWithGuidance(t *testing.T) {
+	dir := t.TempDir()
+	writeSpec(t, dir, "svc.spec.yaml", minimalValidSpec("svc", 2, "AC-01"))
+
+	testDir := filepath.Join(dir, "tests")
+	_ = os.MkdirAll(testDir, 0755)
+	_ = os.WriteFile(filepath.Join(testDir, "svc_test.go"), []byte(
+		"// @spec svc\n// @ac AC-01\nfunc TestX(t *testing.T) {}\n"), 0644)
+
+	// Parseable but empty results file.
+	_ = os.WriteFile(filepath.Join(dir, ".specter-results.json"), []byte(`{"results":[]}`), 0644)
+
+	out, _ := runCLI(t, dir, "coverage", "--strict", "--tests", "tests/*_test.go")
+
+	if !strings.Contains(out, "no (spec_id, ac_id) pairs were extracted") {
+		t.Errorf("expected warning naming the cause; got:\n%s", out)
+	}
+	if !strings.Contains(out, "docs/explainer/v0.10-ci-gated-coverage.md") {
+		t.Errorf("expected warning to reference the conventions doc; got:\n%s", out)
+	}
+}
+
+// @spec spec-coverage
+// @ac AC-24
+// --scope narrows --strict's demand set to specs in the named domain.
+// ACs of out-of-scope specs fall back to v0.9 boolean-passed semantics
+// (annotation alone = covered). The report still includes all specs.
+func TestCoverage_Strict_Scope_NarrowsDemandToDomain(t *testing.T) {
+	dir := t.TempDir()
+
+	// specter.yaml with two domains: one in scope, one not.
+	manifest := `system:
+  name: test-system
+  description: "test"
+  tier: 2
+
+domains:
+  approval-gate:
+    tier: 1
+    description: "Financial"
+    specs:
+      - stripe-charge
+  general:
+    tier: 2
+    description: "Rest"
+    specs:
+      - user-profile
+`
+	_ = os.WriteFile(filepath.Join(dir, "specter.yaml"), []byte(manifest), 0644)
+
+	writeSpec(t, dir, "stripe-charge.spec.yaml", minimalValidSpec("stripe-charge", 1, "AC-01", "AC-02"))
+	writeSpec(t, dir, "user-profile.spec.yaml", minimalValidSpec("user-profile", 2, "AC-01"))
+
+	testDir := filepath.Join(dir, "tests")
+	_ = os.MkdirAll(testDir, 0755)
+	_ = os.WriteFile(filepath.Join(testDir, "stripe_test.go"), []byte(
+		"// @spec stripe-charge\n// @ac AC-01\n// @ac AC-02\nfunc TestStripe(t *testing.T) {}\n"), 0644)
+	_ = os.WriteFile(filepath.Join(testDir, "profile_test.go"), []byte(
+		"// @spec user-profile\n// @ac AC-01\nfunc TestProfile(t *testing.T) {}\n"), 0644)
+
+	// Results: stripe-charge/AC-01 passed; AC-02 has no entry (missing).
+	// user-profile has NO results entries at all — but it's outside --scope.
+	results := `{"results":[{"spec_id":"stripe-charge","ac_id":"AC-01","status":"passed"}]}`
+	_ = os.WriteFile(filepath.Join(dir, ".specter-results.json"), []byte(results), 0644)
+
+	out, code := runCLI(t, dir, "coverage", "--strict", "--scope", "approval-gate", "--tests", "tests/*_test.go")
+
+	// stripe-charge/AC-02 must demote (in scope, no passing result) → non-zero exit.
+	if code == 0 {
+		t.Fatalf("expected non-zero (stripe-charge/AC-02 should demote under scope); got 0\n%s", out)
+	}
+
+	// user-profile must appear covered — it's outside --scope, so boolean-passed
+	// logic applies: annotation alone counts as covered.
+	if !strings.Contains(out, "user-profile") {
+		t.Errorf("report should still include out-of-scope user-profile; got:\n%s", out)
+	}
+	// The demotion message for AC-02 should be visible (somewhere in output).
+	if !strings.Contains(out, "AC-02") {
+		t.Errorf("expected demotion report to mention AC-02; got:\n%s", out)
+	}
+}
+
+// @spec spec-coverage
+// @ac AC-25
+// --scope with unknown domain must fail fast with a helpful stderr message.
+// --scope without --strict must also fail fast (no silent degradation).
+func TestCoverage_Scope_FailFast_UnknownAndMissingStrict(t *testing.T) {
+	dir := t.TempDir()
+
+	manifest := `system:
+  name: t
+  description: "t"
+  tier: 2
+
+domains:
+  approval-gate:
+    tier: 1
+    description: "f"
+    specs: [svc]
+`
+	_ = os.WriteFile(filepath.Join(dir, "specter.yaml"), []byte(manifest), 0644)
+	writeSpec(t, dir, "svc.spec.yaml", minimalValidSpec("svc", 2, "AC-01"))
+
+	// Scenario 1: --scope <unknown>
+	out1, code1 := runCLI(t, dir, "coverage", "--strict", "--scope", "nonexistent-domain")
+	if code1 == 0 {
+		t.Errorf("expected non-zero exit on unknown domain; got 0\n%s", out1)
+	}
+	if !strings.Contains(out1, "unknown") || !strings.Contains(out1, "nonexistent-domain") {
+		t.Errorf("expected message naming the unknown domain; got:\n%s", out1)
+	}
+	if !strings.Contains(out1, "approval-gate") {
+		t.Errorf("expected message listing valid domain names; got:\n%s", out1)
+	}
+
+	// Scenario 2: --scope without --strict
+	out2, code2 := runCLI(t, dir, "coverage", "--scope", "approval-gate")
+	if code2 == 0 {
+		t.Errorf("expected non-zero exit when --scope used without --strict; got 0\n%s", out2)
+	}
+	if !strings.Contains(out2, "--scope requires --strict") {
+		t.Errorf("expected `--scope requires --strict` message; got:\n%s", out2)
+	}
+}
+
+// @spec spec-coverage
+// @ac AC-26
+// --scope + --tests combine as AND: annotations scanned only in glob-matching
+// files, AND --strict demand applies only to ACs of specs in scope domain.
+func TestCoverage_Strict_Scope_And_Tests_CombineAsAND(t *testing.T) {
+	dir := t.TempDir()
+
+	manifest := `system:
+  name: t
+  description: "t"
+  tier: 2
+
+domains:
+  approval-gate:
+    tier: 1
+    description: "f"
+    specs: [scoped-spec]
+`
+	_ = os.WriteFile(filepath.Join(dir, "specter.yaml"), []byte(manifest), 0644)
+
+	writeSpec(t, dir, "scoped.spec.yaml", minimalValidSpec("scoped-spec", 2, "AC-01"))
+	writeSpec(t, dir, "other.spec.yaml", minimalValidSpec("other-spec", 2, "AC-01"))
+
+	// Two test dirs: only one is in the --tests glob.
+	inGlob := filepath.Join(dir, "tests", "in")
+	outGlob := filepath.Join(dir, "other-tests")
+	_ = os.MkdirAll(inGlob, 0755)
+	_ = os.MkdirAll(outGlob, 0755)
+
+	// Test file IN glob annotates the in-scope spec.
+	_ = os.WriteFile(filepath.Join(inGlob, "svc_test.go"), []byte(
+		"// @spec scoped-spec\n// @ac AC-01\nfunc TestS(t *testing.T) {}\n"), 0644)
+
+	// Test file OUT of glob annotates other-spec (should not be scanned at all).
+	_ = os.WriteFile(filepath.Join(outGlob, "other_test.go"), []byte(
+		"// @spec other-spec\n// @ac AC-01\nfunc TestO(t *testing.T) {}\n"), 0644)
+
+	// scoped-spec/AC-01 has no passing result → must demote under --strict + in scope.
+	_ = os.WriteFile(filepath.Join(dir, ".specter-results.json"), []byte(`{"results":[]}`), 0644)
+
+	out, code := runCLI(t, dir, "coverage", "--strict", "--scope", "approval-gate", "--tests", "tests/in/*_test.go")
+
+	// In-scope + in-glob → demoted → non-zero exit.
+	if code == 0 {
+		t.Fatalf("expected non-zero (scoped-spec/AC-01 should demote); got 0\n%s", out)
+	}
+
+	// other-spec's test is out of glob — annotation isn't even scanned for it.
+	// The report may still list other-spec (because it exists as a .spec.yaml),
+	// but its ACs should be uncovered-by-no-annotation (not demoted-by-strict).
+	// The diagnostic we care about: scoped-spec must be the one reported demoted.
+	if !strings.Contains(out, "scoped-spec") {
+		t.Errorf("expected scoped-spec to appear in demotion report; got:\n%s", out)
+	}
+}

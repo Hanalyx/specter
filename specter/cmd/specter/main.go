@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"runtime"
 	"runtime/debug"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -173,6 +174,7 @@ func main() {
 	root.AddCommand(explainCmd())
 	root.AddCommand(watchCmd())
 	root.AddCommand(diffCmd())
+	root.AddCommand(ingestCmd())
 	root.AddCommand(feedbackCmd())
 
 	if err := root.Execute(); err != nil {
@@ -635,10 +637,19 @@ func coverageCmd() *cobra.Command {
 	var jsonOutput bool
 	var testsGlob string
 	var failingOnly bool
+	var strict bool
+	var scope string
 	cmd := &cobra.Command{
 		Use:   "coverage",
 		Short: "Generate spec-to-test traceability matrix",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// AC-25: --scope without --strict is an operator mistake.
+			// Fail-fast rather than silently degrading to annotation counting.
+			if scope != "" && !strict {
+				fmt.Fprintln(os.Stderr, "error: --scope requires --strict")
+				return errSilent
+			}
+
 			files := discoverSpecs()
 			inputs, specs, parseErrors, hasErrors := parseAllSpecsDetailed(files)
 
@@ -661,6 +672,28 @@ func coverageCmd() *cobra.Command {
 			}
 
 			m, _ := loadManifest()
+
+			// AC-25: resolve --scope domain to a set of spec IDs.
+			// Unknown domain → fail-fast listing valid names.
+			var scopedSpecs map[string]bool
+			if scope != "" {
+				domain, ok := m.Domains[scope]
+				if !ok {
+					var validNames []string
+					for name := range m.Domains {
+						validNames = append(validNames, name)
+					}
+					sort.Strings(validNames)
+					fmt.Fprintf(os.Stderr, "error: unknown domain %q. valid domains: %s\n",
+						scope, strings.Join(validNames, ", "))
+					return errSilent
+				}
+				scopedSpecs = make(map[string]bool, len(domain.Specs))
+				for _, s := range domain.Specs {
+					scopedSpecs[s] = true
+				}
+			}
+
 			var results *coverage.ResultsFile
 			if data, err := os.ReadFile(".specter-results.json"); err == nil {
 				var pErr error
@@ -669,7 +702,23 @@ func coverageCmd() *cobra.Command {
 					fmt.Fprintf(os.Stderr, "warn: could not parse .specter-results.json: %v\n", pErr)
 				}
 			}
-			report := coverage.BuildCoverageReportWithResults(specs, allAnnotations, m.CoverageThresholds(), results)
+
+			// AC-23 / C-22: under --strict, a parseable-but-empty results
+			// file will demote 100% of annotated ACs. That's correct per
+			// C-19 but silent mass demotion on Day 1 is a documentation
+			// failure — warn the operator about the likely cause (tests
+			// without runner-visible annotations) and point at the
+			// conventions doc BEFORE the report prints.
+			if strict && results != nil && len(results.Results) == 0 {
+				fmt.Fprintln(os.Stderr, "warn: no (spec_id, ac_id) pairs were extracted from test output — tests likely don't carry runner-visible annotations")
+				fmt.Fprintln(os.Stderr, "      see docs/explainer/v0.10-ci-gated-coverage.md, Conventions A and B")
+			}
+
+			report, strictErr := coverage.BuildCoverageReportStrict(specs, allAnnotations, m.CoverageThresholds(), results, strict, scopedSpecs)
+			if strictErr != nil {
+				fmt.Fprintf(os.Stderr, "error: %s\n", strictErr.Error())
+				return errSilent
+			}
 			report.ParseErrors = parseErrors
 			report.ParseErrorPatterns = coverage.SummarizeParseErrors(parseErrors)
 			report.SpecCandidatesCount = len(files)
@@ -762,6 +811,8 @@ func coverageCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
 	cmd.Flags().StringVar(&testsGlob, "tests", "", "Glob pattern for test files")
 	cmd.Flags().BoolVar(&failingOnly, "failing", false, "Show only specs below 100% coverage in the table (summary header still reflects the full report)")
+	cmd.Flags().BoolVar(&strict, "strict", false, "Require .specter-results.json and treat any non-passed annotated AC as uncovered (all tiers)")
+	cmd.Flags().StringVar(&scope, "scope", "", "Narrow --strict demand to specs in the named domain from specter.yaml (specs outside the domain fall back to v0.9 boolean-passed logic). Requires --strict.")
 	return cmd
 }
 

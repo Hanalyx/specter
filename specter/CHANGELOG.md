@@ -4,6 +4,61 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 ---
 
+## v0.10.0 — 2026-04-22
+
+**Theme: CI-gated coverage — test outcome is mechanical.**
+
+v0.9.x made test existence mechanical (`coverage` counts annotated ACs). v0.10 makes test outcome mechanical: `coverage --strict` demotes any annotated AC whose test did not pass. See `docs/explainer/v0.10-ci-gated-coverage.md` for the design rationale.
+
+### Added
+
+#### `specter ingest` (new command)
+
+- Converts test runner output into `.specter-results.json`, the canonical results file `coverage --strict` reads.
+- Flags: `--junit <path>` (JUnit XML, glob supported), `--go-test <path>` (`go test -json` output), `--output <path>` (defaults to `.specter-results.json`).
+- Flavor-specific parsing is isolated here; adding a new runner is a change to `ingest` only. `coverage --strict` stays runner-agnostic.
+- Reads the `(spec_id, ac_id)` pair from runner-visible surfaces — subtest names (`t.Run("spec-foo/AC-03 ...", ...)`) or runtime logs (`t.Log("// @spec ...")` / `t.Log("// @ac ...")`). Source-comment annotations are invisible to `ingest` by design.
+
+#### `specter coverage --strict`
+
+- New flag. When passed, every annotated AC must have a `status: passed` entry in `.specter-results.json`. Anything else (`failed`, `skipped`, `errored`, or no entry) demotes the AC to uncovered.
+- Demotion applies to **all tiers**, not only Tier 1.
+- Missing or empty `.specter-results.json` is a hard error: `--strict requires .specter-results.json — run 'specter ingest' first`. Fails closed so the flag cannot silently degrade to annotation-only behavior.
+
+#### `.specter-results.json` status enum
+
+- Adds `status` field: `passed` | `failed` | `skipped` | `errored`.
+- `errored` is distinct from `failed` — it means the framework itself failed (setup panic, compile error) rather than an assertion.
+- Worst-status-wins when the same `(spec_id, ac_id)` is observed across multiple tests: `errored > failed > skipped > passed`.
+- The boolean `passed` field is retained for pre-1.9.0 consumers; no forced migration.
+
+#### VS Code extension: CLI auto-download defaults to matching version
+
+- `specter.version` config default changed from `"latest"` to `""` (empty). With the empty default, `downloadBinary` reads `ctx.extension.packageJSON.version` and fetches the matching CLI — a v0.10.0 VSIX always pulls v0.10.0 CLI. `"latest"` remains available as an explicit opt-in; pinned semvers (e.g. `"0.9.2"`) still work as before.
+- Why: the GoReleaser workflow creates a GitHub Release on tag push, so the v0.10.0 CLI archive was live on `/releases/latest` before any v0.10.0 extension shipped to the Marketplace. Any v0.9.x extension with `autoDownload: true` then pulled v0.10.0 CLI via the old `"latest"` default, producing split-brain installs (v0.9.2 extension + v0.10.0 CLI). Pinning to the extension's own version closes the gap.
+
+#### Adoption affordances: empty-results warning, `--scope`, `--verbose`
+
+Three diagnostic/staged-adoption features found during v0.10.0 shake-down on jwtms. Without them, `--strict` is technically functional but operationally unusable on a workspace that hasn't migrated every test to runner-visible annotations.
+
+- **`specter coverage --strict` empty-results warning.** When `.specter-results.json` parses cleanly but contains zero entries, the command now emits a stderr warning BEFORE the demotion report: *"no (spec_id, ac_id) pairs were extracted from test output — tests likely don't carry runner-visible annotations"* with a pointer to `docs/explainer/v0.10-ci-gated-coverage.md` (Conventions A and B). Prior behavior silently demoted 100% of annotated ACs with no clue why. (Note: missing file — as opposed to empty file — still errors per the existing AC-20 contract.)
+- **`specter coverage --strict --scope <domain>`.** Narrows `--strict`'s demand set to specs listed under the named domain in `specter.yaml`. Specs outside the domain fall back to v0.9 boolean-passed logic (annotation alone counts for tier 2/3). Enables staged adoption: enforce `--strict` on one domain per wave instead of rewriting every annotated test before CI can pass. `--scope` without `--strict` fails fast. Combines with `--tests` as AND.
+- **`specter ingest` default summary + `--verbose`.** Every run now emits to stderr: *"Scanned N test cases; extracted M (spec_id, ac_id) pairs; dropped K with no runner-visible annotation."* Replaces the terse `Wrote N result entries`. `--verbose` adds a per-case drop reason line for each skipped testcase — off by default to keep CI logs compact.
+
+### Spec bumps
+
+- `spec-coverage`: 1.8.0 → **1.10.0** (+C-19/AC-19 strict demotion all tiers; +C-20/AC-20 missing-results error; +C-21/AC-21/AC-22 status enum w/ back-compat; +C-22/AC-23 empty-results warning; +C-23/AC-24/AC-25/AC-26 `--scope` domain flag)
+- `spec-ingest`: new spec at **1.1.0** (17 ACs covering JUnit/go-test parsing, status derivation, worst-status-wins, output contract; + C-09/AC-09 default scan summary; + C-10/AC-10 `--verbose` per-case drops)
+- `spec-vscode`: 1.3.0 → **1.4.0** (+C-27/AC-50 covering the version-pinning default)
+
+### Out of scope for v0.10
+
+- Flake handling (planned: `status: flaky` + `--deny-flaky` in v0.11).
+- Source-file tracking under `--strict`.
+- VS Code red-dot rendering for failed annotated ACs (fast-follow, not this cut).
+
+---
+
 ## v0.9.2 — 2026-04-20
 
 **Theme: UX polish from jwtms migration testing.**

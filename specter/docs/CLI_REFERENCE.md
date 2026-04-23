@@ -172,7 +172,7 @@ Generate a spec-to-test traceability matrix. Scans test files for `@spec` and `@
 **Synopsis:**
 
 ```
-specter coverage [--json] [--failing] [--tests <glob>]
+specter coverage [--json] [--failing] [--strict] [--scope <domain>] [--tests <glob>]
 ```
 
 **Options:**
@@ -181,6 +181,8 @@ specter coverage [--json] [--failing] [--tests <glob>]
 |--------|---------|-------------|
 | `--json` | — | Output the coverage report as JSON. |
 | `--failing` | — | Show only specs below 100% coverage in the table. Summary header still reflects the full report. When all specs are at 100%, emits a single-line confirmation instead of an empty table. Added in v0.9.2. |
+| `--strict` | — | Require `.specter-results.json` and treat any annotated AC whose status is not `passed` as uncovered, across **all tiers**. Missing file is a hard failure; empty file emits a warning and proceeds. Pairs with `specter ingest`. Added in v0.10. |
+| `--scope <domain>` | — | Narrow `--strict`'s demand to ACs of specs in the named `specter.yaml` domain. Specs outside the domain fall back to v0.9 boolean-passed logic. Enables staged adoption. Requires `--strict`; unknown domain fails fast. Added in v0.10. |
 | `--tests <glob>` | auto-discover | Glob pattern for test files. Default discovers `*.test.ts`, `*.test.js`, `*.test.py`, `*_test.go`, `*_test.py`. |
 
 **Annotation format:**
@@ -754,6 +756,87 @@ spec spec-auth 1.0.0 → 1.1.0 [additive]
 $ specter diff specs/auth.spec.yaml specs/auth.spec.yaml
 spec spec-auth 1.1.0 → 1.1.0: no changes
 ```
+
+---
+
+### `specter ingest`
+
+Convert CI-native test output (JUnit XML, `go test -json`) into `.specter-results.json`, the file `specter coverage --strict` reads to demote annotated-but-failing ACs. Added in v0.10.
+
+**Synopsis:**
+
+```
+specter ingest [--junit <path>] [--go-test <path>] [--output <path>] [--verbose]
+```
+
+At least one of `--junit` or `--go-test` is required. Multiple sources can be combined in one invocation — results are merged (worst status wins per AC).
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--junit <path>` | — | JUnit XML file (vitest, jest, pytest, playwright). |
+| `--go-test <path>` | — | Newline-delimited JSON from `go test -json`. |
+| `--output <path>` | `.specter-results.json` | Where to write the merged results. |
+| `--verbose` | — | Emit one stderr line per dropped testcase (testcases without a recognizable `(spec_id, ac_id)` annotation). Off by default; the summary line is always emitted. |
+
+**Diagnostics:** every run writes to stderr a summary line:
+
+```
+Scanned N test cases; extracted M (spec_id, ac_id) pairs; dropped K with no runner-visible annotation.
+```
+
+If `M` is 0 despite `N` being non-zero, your tests carry annotations only in source comments — those are invisible to `ingest` by design. See the explainer's Conventions A (test title) and B (runtime `t.Log`) for migrating.
+
+**Annotation extraction:**
+
+Each test needs a discoverable `(spec_id, ac_id)` pair or it's dropped silently. Sources in order of preference:
+
+1. **Test name** — `spec-id/AC-NN` or `spec-id:AC-NN` embedded in the test case name.
+2. **Classname** — same pattern, parsed from the JUnit `classname` attribute.
+3. **Test body** — `// @spec <id>` and `// @ac <AC-id>` comments surfaced via `system-out` (JUnit) or `output`-action lines (go test -json).
+
+**Status mapping:**
+
+| Source | Maps to |
+|--------|---------|
+| JUnit `<testcase>` with no children | `passed` |
+| JUnit `<failure>` child | `failed` |
+| JUnit `<skipped>` child | `skipped` |
+| JUnit `<error>` child | `errored` |
+| go test `{"Action":"pass"}` | `passed` |
+| go test `{"Action":"fail"}` | `failed` |
+| go test `{"Action":"skip"}` | `skipped` |
+
+**Worst-status rule:** when the same `(spec_id, ac_id)` is hit by multiple tests, the emitted entry uses the worst observed status: `errored > failed > skipped > passed`. One failing test is sufficient to demote an AC.
+
+**Example (CI):**
+
+```yaml
+# run tests, emit JUnit
+- run: pytest --junitxml=test-results/pytest.xml
+- run: vitest run --reporter=junit > test-results/vitest.xml
+
+# ingest, then gate
+- run: specter ingest --junit 'test-results/*.xml' --output .specter-results.json
+- run: specter coverage --strict
+```
+
+**Example (local):**
+
+```bash
+$ go test -json ./... > /tmp/go-test.json
+$ specter ingest --go-test /tmp/go-test.json
+Wrote 34 result entries to .specter-results.json
+
+$ specter coverage --strict
+Spec Coverage Report — 14 specs · 98% avg coverage
+  Tier 1: 4/4 passing (100%)
+  Tier 2: 9/10 passing (90%)
+...
+```
+
+Pairs with `specter coverage --strict`. Without `ingest`, `--strict` fails with `--strict requires .specter-results.json — run 'specter ingest' first`.
 
 ---
 

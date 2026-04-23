@@ -1,0 +1,177 @@
+spec:
+  id: spec-ingest
+  version: "1.1.0"
+  status: approved
+  tier: 1
+
+  context:
+    system: Specter toolchain
+    feature: Test-results ingestion for CI-gated coverage
+    description: >
+      Consumes CI-native test output formats (JUnit XML, go test -json) and
+      writes .specter-results.json in the shape spec-coverage already reads.
+      Keeps JUnit flavor parsing out of spec-coverage's hot path so the
+      coverage pipeline stays fast and deterministic. The two-stage pipeline
+      (ingest → coverage --strict) closes the test-quality hole where
+      annotated-but-failing or annotated-but-skipped tests silently count as
+      covered.
+    dependencies: []
+    related_specs:
+      - "spec-coverage.spec.yaml"
+    assumptions:
+      - "Test names or classnames carry @spec and @ac annotations, OR test bodies contain // @spec and // @ac comments that the test runner surfaces in the results"
+      - "Test runners emit JUnit XML or go test -json"
+
+  objective:
+    summary: >
+      Read a test-runner output file and emit .specter-results.json mapping
+      (spec_id, ac_id) pairs to status ∈ {passed, failed, skipped, errored}.
+      Enables `specter coverage --strict` to fail the gate when annotated ACs
+      didn't actually pass.
+    scope:
+      includes:
+        - "Parse JUnit XML from vitest, jest, pytest, playwright"
+        - "Parse go test -json newline-delimited output"
+        - "Extract spec_id and ac_id from test names, classnames, or embedded comments"
+        - "Map test result to status enum: passed | failed | skipped | errored"
+        - "Write .specter-results.json with a status field per entry"
+        - "Deterministic, runner-agnostic output"
+      excludes:
+        - "Flake detection (deferred to v0.11)"
+        - "TAP parsing (fast-follow)"
+        - "Test execution (Specter does not run tests)"
+        - "Test selection or filtering"
+        - "Runner-specific metadata (durations, console output)"
+
+  constraints:
+    - id: C-01
+      description: "MUST parse JUnit XML files following the de-facto Surefire schema (<testsuites><testsuite><testcase> with optional <failure>, <error>, <skipped> children). Case-insensitive tag matching. Supports multiple top-level testsuite elements."
+      type: technical
+      enforcement: error
+
+    - id: C-02
+      description: "MUST parse go test -json newline-delimited output — each line is a JSON object with at least {Action, Package, Test}. Actions pass/fail/skip map to passed/failed/skipped; actions run/output/pause/cont are non-terminal and ignored for status determination."
+      type: technical
+      enforcement: error
+
+    - id: C-03
+      description: "MUST extract spec_id and ac_id from one of: (a) test name matching pattern spec-id/AC-NN or spec-id:AC-NN, (b) classname field containing @spec and @ac hints, (c) the test's system-out or failure message body containing // @spec <id> and // @ac <AC-id> comments. First match wins in order (a) → (b) → (c)."
+      type: technical
+      enforcement: error
+
+    - id: C-04
+      description: "A test lacking any discoverable (spec_id, ac_id) pair MUST be silently dropped from the output (not emitted with empty fields, not an error). Rationale: projects in migration will have tests without annotations; ingest must not fail on them."
+      type: technical
+      enforcement: error
+
+    - id: C-05
+      description: "The status enum MUST be exactly one of: `passed`, `failed`, `skipped`, `errored`. No other values are valid. `errored` is distinct from `failed`: errored means the test framework itself failed (setup/teardown crash, panic outside an assertion); failed means an assertion failed."
+      type: business
+      enforcement: error
+
+    - id: C-06
+      description: "MUST NOT depend on any CLI framework — pure functions from []byte to []TestResult and from []TestResult + path to an on-disk results file. cmd/specter/ingest.go is the thin I/O wrapper."
+      type: technical
+      enforcement: error
+
+    - id: C-07
+      description: "The emitted .specter-results.json MUST be backward-compatible with spec-coverage C-07 (pass-rate-aware Tier 1 coverage). The `status` field supplements, not replaces, a derived boolean: status: passed ⇒ passed: true; any other status ⇒ passed: false. Old consumers that read only `passed` continue to work."
+      type: technical
+      enforcement: error
+
+    - id: C-08
+      description: "When the same (spec_id, ac_id) pair appears across multiple test results, the emitted entry MUST use the worst status in order errored > failed > skipped > passed. Rationale: one failing test covering AC-07 is sufficient to demote AC-07; a passing test does not heal a failing sibling."
+      type: business
+      enforcement: error
+
+    - id: C-09
+      description: "`specter ingest` MUST emit a single-line summary to stderr on completion, reporting: total test cases scanned, (spec_id, ac_id) pairs extracted, and test cases dropped due to no discoverable annotation. Format: `Scanned N test cases; extracted M (spec_id, ac_id) pairs; dropped K with no runner-visible annotation.` Rationale: operators wiring up --strict for the first time need to see whether ingest found anything; today's `Wrote 0 result entries to .specter-results.json` is too terse to distinguish 'empty test suite' from 'tests lack annotations.'"
+      type: business
+      enforcement: error
+
+    - id: C-10
+      description: "`specter ingest --verbose` MUST extend C-09's summary with per-test-case drop reasons: for each dropped test, a stderr line in the form `  dropped: <test_name> — no (spec_id, ac_id) pair found in name, classname, or output`. Lines are printed in input order. Rationale: when the summary reports many drops, the operator needs to see specific test names to know which to migrate first. Not enabled by default to keep CI logs compact."
+      type: business
+      enforcement: error
+
+  depends_on:
+    - spec_id: spec-coverage
+      version_range: "^1.9.0"
+      relationship: requires
+
+  acceptance_criteria:
+    - id: AC-01
+      description: "ParseJUnit given a Surefire XML document with one <testcase name='engine-transaction/AC-07 serializes per host'> and no <failure> child returns one TestResult with SpecID='engine-transaction', ACID='AC-07', Status='passed'."
+      references_constraints: ["C-01", "C-03"]
+      priority: critical
+
+    - id: AC-02
+      description: "ParseJUnit given a <testcase> with a <failure> child returns Status='failed'; given a <skipped> child returns Status='skipped'; given an <error> child returns Status='errored'. No child means passed."
+      references_constraints: ["C-01", "C-05"]
+      priority: critical
+
+    - id: AC-03
+      description: "ParseGoTest given `{\"Action\":\"pass\",\"Package\":\"p\",\"Test\":\"TestAuthService/AC-03\"}\\n` returns one TestResult with ACID='AC-03', Status='passed'. SpecID derived from the package path's final component mapping (`auth-service` for `.../auth-service`) or explicit annotation in a preceding output line."
+      references_constraints: ["C-02", "C-03"]
+      priority: critical
+
+    - id: AC-04
+      description: "ParseGoTest actions `pass`, `fail`, `skip` map to statuses `passed`, `failed`, `skipped` respectively. Action `output` with body containing `// @spec foo\\n// @ac AC-NN` is absorbed as annotation context for the current test."
+      references_constraints: ["C-02", "C-05"]
+      priority: high
+
+    - id: AC-05
+      description: "A test whose name, classname, and body contain no spec or AC annotation is silently dropped from ParseJUnit output — the returned slice contains no entry for it, and no error is returned."
+      references_constraints: ["C-04"]
+      priority: high
+
+    - id: AC-06
+      description: "WriteResultsFile given []TestResult with [{spec-a, AC-01, passed}, {spec-a, AC-02, failed}] writes a JSON file whose `results` array has two entries. Each entry carries both a `status` field (new) and a `passed` boolean (back-compat with spec-coverage 1.3.0+). `passed: true` iff `status: passed`."
+      inputs:
+        results: "[{spec-a, AC-01, passed}, {spec-a, AC-02, failed}]"
+      expected_output:
+        file: ".specter-results.json"
+        entries: 2
+        entry_0_passed: true
+        entry_0_status: "passed"
+        entry_1_passed: false
+        entry_1_status: "failed"
+      references_constraints: ["C-07"]
+      priority: critical
+
+    - id: AC-07
+      description: "MergeResults given two TestResult entries for (spec-a, AC-07) — one passed, one failed — returns a single entry with Status='failed'. The worst-status rule (errored > failed > skipped > passed) deterministically resolves conflicts."
+      references_constraints: ["C-08"]
+      priority: high
+
+    - id: AC-08
+      description: "The CLI `specter ingest --junit fixture.xml --output out.json` exits 0 and writes out.json. `specter ingest --go-test fixture.json --output out.json` does the same for go test JSON. Missing input file: exit non-zero with an error on stderr. Missing --output: default to `.specter-results.json`."
+      references_constraints: ["C-01", "C-02", "C-06"]
+      priority: high
+
+    - id: AC-09
+      description: "`specter ingest --junit fixture.xml` on a fixture with 5 testcases, 2 of which carry annotations, emits to stderr the line `Scanned 5 test cases; extracted 2 (spec_id, ac_id) pairs; dropped 3 with no runner-visible annotation.` and writes 2 entries to the output file. Counts are independent of --output path. A fixture with zero testcases emits `Scanned 0 test cases; extracted 0 (spec_id, ac_id) pairs; dropped 0 with no runner-visible annotation.`"
+      inputs:
+        fixture: "5 testcases, 2 with matching names or annotations"
+      expected_output:
+        stderr_line: "Scanned 5 test cases; extracted 2 (spec_id, ac_id) pairs; dropped 3 with no runner-visible annotation."
+        output_file_entries: 2
+      references_constraints: ["C-09"]
+      priority: high
+
+    - id: AC-10
+      description: "`specter ingest --junit fixture.xml --verbose` on the same 5-testcase fixture emits the C-09 summary PLUS three additional stderr lines, one per dropped testcase, in input order. Each line starts with `  dropped: ` followed by the testcase name and the reason text. Without --verbose, only the summary line is emitted. Rationale: --verbose keeps CI logs compact by default while making diagnostics available on demand."
+      references_constraints: ["C-10"]
+      priority: medium
+
+  changelog:
+    - version: "1.1.0"
+      date: "2026-04-23"
+      author: "specter-team"
+      type: minor
+      description: "Add C-09/AC-09 (default scan/extract/drop summary line to stderr on every ingest run) and C-10/AC-10 (--verbose flag emits per-test-case drop reasons). Turns `Wrote 0 result entries` into an actionable diagnostic — Day-1 adopters now see immediately whether the test suite emits runner-visible annotations. Adoption affordance for v0.10 CI-gated coverage."
+    - version: "1.0.0"
+      date: "2026-04-22"
+      author: "specter-team"
+      type: initial
+      description: "Initial spec for test-results ingestion. Closes the test-quality hole in spec→test→implement→eval: CI runners emit JUnit XML or go test -json → specter ingest writes .specter-results.json → specter coverage --strict fails the gate on any non-passed annotated AC."
