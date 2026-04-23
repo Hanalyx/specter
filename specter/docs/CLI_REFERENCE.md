@@ -172,7 +172,7 @@ Generate a spec-to-test traceability matrix. Scans test files for `@spec` and `@
 **Synopsis:**
 
 ```
-specter coverage [--json] [--failing] [--strict] [--tests <glob>]
+specter coverage [--json] [--failing] [--strict] [--scope <domain>] [--tests <glob>]
 ```
 
 **Options:**
@@ -181,7 +181,8 @@ specter coverage [--json] [--failing] [--strict] [--tests <glob>]
 |--------|---------|-------------|
 | `--json` | — | Output the coverage report as JSON. |
 | `--failing` | — | Show only specs below 100% coverage in the table. Summary header still reflects the full report. When all specs are at 100%, emits a single-line confirmation instead of an empty table. Added in v0.9.2. |
-| `--strict` | — | Require `.specter-results.json` and treat any annotated AC whose status is not `passed` as uncovered, across **all tiers**. Missing results file is a hard failure. Pairs with `specter ingest`. Added in v0.10. |
+| `--strict` | — | Require `.specter-results.json` and treat any annotated AC whose status is not `passed` as uncovered, across **all tiers**. Missing file is a hard failure; empty file emits a warning and proceeds. Pairs with `specter ingest`. Added in v0.10. |
+| `--scope <domain>` | — | Narrow `--strict`'s demand to ACs of specs in the named `specter.yaml` domain. Specs outside the domain fall back to v0.9 boolean-passed logic. Enables staged adoption. Requires `--strict`; unknown domain fails fast. Added in v0.10. |
 | `--tests <glob>` | auto-discover | Glob pattern for test files. Default discovers `*.test.ts`, `*.test.js`, `*.test.py`, `*_test.go`, `*_test.py`. |
 
 **Annotation format:**
@@ -765,7 +766,7 @@ Convert CI-native test output (JUnit XML, `go test -json`) into `.specter-result
 **Synopsis:**
 
 ```
-specter ingest [--junit <path>] [--go-test <path>] [--output <path>]
+specter ingest [--junit <path>] [--go-test <path>] [--output <path>] [--verbose]
 ```
 
 At least one of `--junit` or `--go-test` is required. Multiple sources can be combined in one invocation — results are merged (worst status wins per AC).
@@ -777,6 +778,15 @@ At least one of `--junit` or `--go-test` is required. Multiple sources can be co
 | `--junit <path>` | — | JUnit XML file (vitest, jest, pytest, playwright). |
 | `--go-test <path>` | — | Newline-delimited JSON from `go test -json`. |
 | `--output <path>` | `.specter-results.json` | Where to write the merged results. |
+| `--verbose` | — | Emit one stderr line per dropped testcase (testcases without a recognizable `(spec_id, ac_id)` annotation). Off by default; the summary line is always emitted. |
+
+**Diagnostics:** every run writes to stderr a summary line:
+
+```
+Scanned N test cases; extracted M (spec_id, ac_id) pairs; dropped K with no runner-visible annotation.
+```
+
+If `M` is 0 despite `N` being non-zero, your tests carry annotations only in source comments — those are invisible to `ingest` by design. See the explainer's Conventions A (test title) and B (runtime `t.Log`) for migrating.
 
 **Annotation extraction:**
 
