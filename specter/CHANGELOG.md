@@ -4,6 +4,47 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 ---
 
+## v0.10.0 — 2026-04-22
+
+**Theme: CI-gated coverage — test outcome is mechanical.**
+
+v0.9.x made test existence mechanical (`coverage` counts annotated ACs). v0.10 makes test outcome mechanical: `coverage --strict` demotes any annotated AC whose test did not pass. See `docs/explainer/v0.10-ci-gated-coverage.md` for the design rationale.
+
+### Added
+
+#### `specter ingest` (new command)
+
+- Converts test runner output into `.specter-results.json`, the canonical results file `coverage --strict` reads.
+- Flags: `--junit <path>` (JUnit XML, glob supported), `--go-test <path>` (`go test -json` output), `--output <path>` (defaults to `.specter-results.json`).
+- Flavor-specific parsing is isolated here; adding a new runner is a change to `ingest` only. `coverage --strict` stays runner-agnostic.
+- Reads the `(spec_id, ac_id)` pair from runner-visible surfaces — subtest names (`t.Run("spec-foo/AC-03 ...", ...)`) or runtime logs (`t.Log("// @spec ...")` / `t.Log("// @ac ...")`). Source-comment annotations are invisible to `ingest` by design.
+
+#### `specter coverage --strict`
+
+- New flag. When passed, every annotated AC must have a `status: passed` entry in `.specter-results.json`. Anything else (`failed`, `skipped`, `errored`, or no entry) demotes the AC to uncovered.
+- Demotion applies to **all tiers**, not only Tier 1.
+- Missing or empty `.specter-results.json` is a hard error: `--strict requires .specter-results.json — run 'specter ingest' first`. Fails closed so the flag cannot silently degrade to annotation-only behavior.
+
+#### `.specter-results.json` status enum
+
+- Adds `status` field: `passed` | `failed` | `skipped` | `errored`.
+- `errored` is distinct from `failed` — it means the framework itself failed (setup panic, compile error) rather than an assertion.
+- Worst-status-wins when the same `(spec_id, ac_id)` is observed across multiple tests: `errored > failed > skipped > passed`.
+- The boolean `passed` field is retained for pre-1.9.0 consumers; no forced migration.
+
+### Spec bumps
+
+- `spec-coverage`: 1.8.0 → **1.9.0** (+ACs covering `--strict` demotion semantics and missing-results hard error)
+- `spec-ingest`: new spec at **1.0.0** (15 ACs covering JUnit/go-test parsing, status derivation, worst-status-wins, output contract)
+
+### Out of scope for v0.10
+
+- Flake handling (planned: `status: flaky` + `--deny-flaky` in v0.11).
+- Source-file tracking under `--strict`.
+- VS Code red-dot rendering for failed annotated ACs (fast-follow, not this cut).
+
+---
+
 ## v0.9.2 — 2026-04-20
 
 **Theme: UX polish from jwtms migration testing.**
