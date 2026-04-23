@@ -32,10 +32,16 @@ v0.9.x made test existence mechanical (`coverage` counts annotated ACs). v0.10 m
 - Worst-status-wins when the same `(spec_id, ac_id)` is observed across multiple tests: `errored > failed > skipped > passed`.
 - The boolean `passed` field is retained for pre-1.9.0 consumers; no forced migration.
 
+#### VS Code extension: CLI auto-download defaults to matching version
+
+- `specter.version` config default changed from `"latest"` to `""` (empty). With the empty default, `downloadBinary` reads `ctx.extension.packageJSON.version` and fetches the matching CLI — a v0.10.0 VSIX always pulls v0.10.0 CLI. `"latest"` remains available as an explicit opt-in; pinned semvers (e.g. `"0.9.2"`) still work as before.
+- Why: the GoReleaser workflow creates a GitHub Release on tag push, so the v0.10.0 CLI archive was live on `/releases/latest` before any v0.10.0 extension shipped to the Marketplace. Any v0.9.x extension with `autoDownload: true` then pulled v0.10.0 CLI via the old `"latest"` default, producing split-brain installs (v0.9.2 extension + v0.10.0 CLI). Pinning to the extension's own version closes the gap.
+
 ### Spec bumps
 
 - `spec-coverage`: 1.8.0 → **1.9.0** (+ACs covering `--strict` demotion semantics and missing-results hard error)
 - `spec-ingest`: new spec at **1.0.0** (15 ACs covering JUnit/go-test parsing, status derivation, worst-status-wins, output contract)
+- `spec-vscode`: 1.3.0 → **1.4.0** (+C-27/AC-50 covering the version-pinning default)
 
 ### Out of scope for v0.10
 

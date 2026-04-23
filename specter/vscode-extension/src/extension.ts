@@ -332,19 +332,27 @@ async function resolveBinary(ctx: vscode.ExtensionContext): Promise<string | nul
   return downloadBinary(ctx);
 }
 
-async function downloadBinary(_ctx: vscode.ExtensionContext): Promise<string | null> {
+async function downloadBinary(ctx: vscode.ExtensionContext): Promise<string | null> {
   const cfg = vscode.workspace.getConfiguration('specter');
-  const versionSetting = cfg.get<string>('version', 'latest');
+  const versionSetting = cfg.get<string>('version', '');
 
   return vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: 'Downloading Specter CLI…', cancellable: false },
     async (progress) => {
       try {
-        // 1. Resolve version
+        // 1. Resolve version — default pins the CLI to the extension's own
+        // version, so v0.10.0 VSIX always fetches v0.10.0 CLI. 'latest' opts
+        // in to whatever GitHub's /releases/latest points at, and any other
+        // string is treated as a pinned semver.
         progress.report({ message: 'resolving version…' });
-        const version = versionSetting === 'latest'
-          ? await resolveLatestVersion()
-          : versionSetting;
+        let version: string;
+        if (versionSetting === 'latest') {
+          version = await resolveLatestVersion();
+        } else if (versionSetting) {
+          version = versionSetting;
+        } else {
+          version = ctx.extension.packageJSON.version as string;
+        }
 
         // 2. Build download URL
         const dlOpts = { version, os: process.platform, arch: process.arch };

@@ -204,3 +204,17 @@ describe('Specter: Re-download CLI command is declared in package.json', () => {
     expect(found).toBeTruthy();
   });
 });
+
+// @ac AC-50
+describe('specter.version config default (C-27)', () => {
+  it('package.json declares specter.version default as empty string, not "latest"', () => {
+    const pkg = require('../../package.json');
+    const prop = pkg.contributes?.configuration?.properties?.['specter.version'];
+    expect(prop).toBeTruthy();
+    expect(prop.default).toBe('');
+    // Schema drift guard: if a future change reverts to 'latest' as the
+    // default, version skew between the Marketplace extension and the
+    // GoReleaser-produced GitHub Release reappears. Keep the default empty
+    // so downloadBinary reads ctx.extension.packageJSON.version.
+  });
+});
