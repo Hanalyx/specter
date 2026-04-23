@@ -2,12 +2,17 @@
 
 ## Add annotations to your tests
 
-Link test functions to specs with two comment lines — no library, no framework, any language:
+Annotate each test with two things:
+
+1. **Source comments** above the test: `// @spec <id>` and `// @ac AC-NN`. `specter coverage` counts these.
+2. **`<spec-id>/AC-NN` in the test title**. `specter ingest` reads this. `specter coverage --strict` requires it.
+
+Write both. `coverage` works with source comments alone; `--strict` does not.
 
 ```typescript
 // @spec user-create
 // @ac AC-01
-test('valid email and password creates user and returns 201', async () => {
+test('[user-create/AC-01] valid email and password creates user and returns 201', async () => {
   // ...
 });
 ```
@@ -15,17 +20,21 @@ test('valid email and password creates user and returns 201', async () => {
 ```python
 # @spec user-create
 # @ac AC-01
-def test_valid_registration_returns_201(client):
+def test_user_create_AC_01_valid_registration_returns_201(client):
     # ...
 ```
 
 ```go
 // @spec user-create
 // @ac AC-01
-func TestCreateUser_ValidCredentials_Returns201(t *testing.T) {
-    // ...
+func TestCreateUser(t *testing.T) {
+    t.Run("user-create/AC-01 valid credentials returns 201", func(t *testing.T) {
+        // ...
+    })
 }
 ```
+
+AC numbers are zero-padded: `AC-01`, not `AC-1`. One test per AC.
 
 **Completions are automatic** — type `// @spec ` and Specter suggests IDs; type `// @ac ` and completions are scoped to the spec above.
 

@@ -187,24 +187,62 @@ specter coverage [--json] [--failing] [--strict] [--scope <domain>] [--tests <gl
 
 **Annotation format:**
 
+Specter reads annotations from two places.
+
+1. **Source comments** above the test function: `// @spec <id>` and `// @ac AC-NN`. `specter coverage` counts these.
+2. **Test title or runtime log** carrying `<spec-id>/AC-NN`. `specter ingest` reads this. `specter coverage --strict` requires it.
+
+Source comments alone: `coverage` counts it, `--strict` demotes it. Write both forms.
+
 ```typescript
 // @spec user-registration
 // @ac AC-01
-test('valid registration returns 201', () => { ... });
+test('[user-registration/AC-01] valid registration returns 201', () => { ... });
 ```
 
 ```python
 # @spec user-registration
 # @ac AC-01
-def test_valid_registration():
+def test_user_registration_AC_01_valid_returns_201():
     ...
 ```
 
 ```go
 // @spec user-registration
 // @ac AC-01
-func TestValidRegistration(t *testing.T) { ... }
+func TestUserRegistration(t *testing.T) {
+    t.Run("user-registration/AC-01 valid returns 201", func(t *testing.T) {
+        // ...
+    })
+}
 ```
+
+**Rules for runner-visible annotations:**
+
+- Spec id is kebab-case, lowercase: `[a-z][a-z0-9-]*[a-z0-9]`.
+- AC id is zero-padded: `AC-01`, not `AC-1`. Must match the spec's AC id exactly.
+- Separator between spec id and AC id is `/` or `:`.
+- One test (or subtest) covers one `(spec-id, AC-NN)` pair. Do not put two ACs in one test.
+
+**Alternate form — runtime log.** When you can't rename titles (shared naming, snapshot tests, external contracts), emit the pair from inside the test body:
+
+```typescript
+test('rejects zero amount', () => {
+  console.log('// @spec payment-charge');
+  console.log('// @ac AC-03');
+  // assertions
+});
+```
+
+```go
+func TestCharge_ZeroAmount(t *testing.T) {
+    t.Log("// @spec payment-charge")
+    t.Log("// @ac AC-03")
+    // assertions
+}
+```
+
+Pick one form per file. Do not mix title-based and runtime-log forms in the same file.
 
 **Coverage thresholds by tier:**
 

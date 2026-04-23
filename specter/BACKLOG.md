@@ -2,9 +2,9 @@
 
 Forward-looking roadmap. Items are grouped by target release. Each item is a single sentence of intent plus a link to the design doc or discussion when one exists.
 
-Current shipped version: **v0.9.2** (published to VS Code Marketplace as stable 2026-04-21). Past release notes live in [CHANGELOG.md](CHANGELOG.md) — this file is forward-only.
+Current shipped version: **v0.10.0** (CLI released to GitHub 2026-04-23; VS Code extension not yet published to Marketplace — holding until the v0.10.1 docs patch lands so first-time users read corrected guidance). Past release notes live in [CHANGELOG.md](CHANGELOG.md) — this file is forward-only.
 
-Current working branch: `release/v0.10` (opened 2026-04-22). Per `CONTRIBUTING.md` → Branch workflow, all v0.10 PRs target this branch, not `main`. `main` receives one merge when v0.10 ships.
+Current working branch: `release/v0.10.1` (opened 2026-04-23). Per `CONTRIBUTING.md` → Branch workflow, all v0.10.1 PRs target this branch, not `main`. `main` receives one merge when v0.10.1 ships. The v0.10.1 focus is a docs-only correction: the pre-v0.10 examples teach `// @spec` / `// @ac` source comments, which `coverage` counts but `ingest` cannot read under `--strict` — a documentation failure that forces every new `--strict` adopter to learn Convention A/B from the explainer rather than the foundational guides.
 
 ---
 

@@ -292,7 +292,12 @@ When both commands exit cleanly with no errors, Phase 3 is complete.
 
 ## Phase 4 — Write Tests Against the Specs
 
-Specter tracks coverage by scanning your test files for `@spec` and `@ac` annotations. These are plain comments — no library required, no framework dependency.
+Specter reads test annotations from two places. Both matter.
+
+1. **Source comments**: `// @spec <spec-id>` and `// @ac AC-NN` above the test function. Read by `specter coverage`.
+2. **Runner-visible annotation**: the `<spec-id>/AC-NN` pair in the test title, or a `console.log('// @spec ...')` inside the test body. Read by `specter ingest` into `.specter-results.json`. Required by `specter coverage --strict`.
+
+Source comments alone: `coverage` counts it, `--strict` demotes it. Write both forms and both commands work.
 
 ### Step 1 — See what's uncovered
 
@@ -327,25 +332,29 @@ Here is a Specter spec:
 
 [paste the spec]
 
-Write tests for this spec in [TypeScript/Jest | Python/pytest | Go testing].
+Write tests in [TypeScript/Jest | Python/pytest | Go testing].
 
-Requirements:
-1. Each test MUST start with these annotation comments:
+Rules:
+1. One test per AC.
+2. The test title carries [spec-id/AC-NN]:
+   TypeScript:  it('[spec-id/AC-NN] brief description', () => { ... })
+   Python:      def test_spec_id_AC_NN_brief(...): ...
+   Go:          t.Run("spec-id/AC-NN brief description", ...)
+   AC-NN is zero-padded: AC-01, not AC-1.
+3. Above each test, add:
    // @spec [spec-id]
-   // @ac [AC-id]
-2. One test function per AC
-3. Test name should describe the AC behavior clearly
-4. Use [your test framework/mocks] for the implementation
-5. Tests should be runnable — use realistic inputs from the spec's `inputs` fields
+   // @ac [AC-NN]
+4. Use [your test framework/mocks].
+5. Tests are runnable. Use realistic inputs from the spec's `inputs` fields.
 
 Return only the test code.
 ```
 
-**TypeScript/Jest example:**
+**TypeScript/Jest:**
 ```typescript
 // @spec user-create
 // @ac AC-01
-test('valid email and password creates user and returns 201 with JWT', async () => {
+test('[user-create/AC-01] valid email and password creates user and returns 201 with JWT', async () => {
   const res = await request(app).post('/users').send({
     email: 'alice@example.com',
     password: 'correct-horse-battery',
@@ -356,7 +365,7 @@ test('valid email and password creates user and returns 201 with JWT', async () 
 
 // @spec user-create
 // @ac AC-02
-test('invalid email format returns 400', async () => {
+test('[user-create/AC-02] invalid email format returns 400', async () => {
   const res = await request(app).post('/users').send({
     email: 'not-an-email',
     password: 'correct-horse-battery',
@@ -366,11 +375,11 @@ test('invalid email format returns 400', async () => {
 });
 ```
 
-**Python/pytest example:**
+**Python/pytest** — Python function names can't contain `/` or `[`. Encode the pair in the function name. `specter ingest` reads the function name as the test title.
 ```python
 # @spec user-create
 # @ac AC-01
-def test_valid_registration_returns_201(client):
+def test_user_create_AC_01_valid_registration_returns_201(client):
     response = client.post('/users', json={
         'email': 'alice@example.com',
         'password': 'correct-horse-battery'
@@ -380,7 +389,7 @@ def test_valid_registration_returns_201(client):
 
 # @spec user-create
 # @ac AC-02
-def test_invalid_email_returns_400(client):
+def test_user_create_AC_02_invalid_email_returns_400(client):
     response = client.post('/users', json={
         'email': 'not-an-email',
         'password': 'correct-horse-battery'
@@ -388,27 +397,28 @@ def test_invalid_email_returns_400(client):
     assert response.status_code == 400
 ```
 
-**Go example:**
+**Go** — use `t.Run` so each AC has its own runner-visible subtest title. `specter ingest` reads subtest names from `go test -json` output.
 ```go
 // @spec user-create
 // @ac AC-01
-func TestCreateUser_ValidCredentials_Returns201(t *testing.T) {
-    body := `{"email":"alice@example.com","password":"correct-horse-battery"}`
-    rec := httptest.NewRecorder()
-    req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(body))
-    handler.ServeHTTP(rec, req)
-    assert.Equal(t, http.StatusCreated, rec.Code)
-    assert.Contains(t, rec.Body.String(), "token")
-}
-
-// @spec user-create
 // @ac AC-02
-func TestCreateUser_InvalidEmail_Returns400(t *testing.T) {
-    body := `{"email":"not-an-email","password":"correct-horse-battery"}`
-    rec := httptest.NewRecorder()
-    req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(body))
-    handler.ServeHTTP(rec, req)
-    assert.Equal(t, http.StatusBadRequest, rec.Code)
+func TestCreateUser(t *testing.T) {
+    t.Run("user-create/AC-01 valid credentials returns 201 with JWT", func(t *testing.T) {
+        body := `{"email":"alice@example.com","password":"correct-horse-battery"}`
+        rec := httptest.NewRecorder()
+        req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(body))
+        handler.ServeHTTP(rec, req)
+        assert.Equal(t, http.StatusCreated, rec.Code)
+        assert.Contains(t, rec.Body.String(), "token")
+    })
+
+    t.Run("user-create/AC-02 invalid email returns 400", func(t *testing.T) {
+        body := `{"email":"not-an-email","password":"correct-horse-battery"}`
+        rec := httptest.NewRecorder()
+        req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(body))
+        handler.ServeHTTP(rec, req)
+        assert.Equal(t, http.StatusBadRequest, rec.Code)
+    })
 }
 ```
 

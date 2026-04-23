@@ -57,21 +57,55 @@ Be direct — flag problems, don't just validate.
 
 ## 3. Spec → Tests
 
-Once the spec is reviewed and approved. Tests are derived directly from the ACs — no guessing, no scope creep.
+Run this after the spec is reviewed and approved. Tests come from the ACs directly. No guessing, no scope creep.
+
+Specter reads test annotations from two places:
+
+- **Source comments**: `// @spec <id>` and `// @ac AC-NN` above the test. Read by `specter coverage`.
+- **Test title or runtime log**: the `<spec-id>/AC-NN` pair visible in the test runner output. Read by `specter ingest`. Required by `specter coverage --strict`.
+
+Source comments alone: `coverage` counts it, `--strict` demotes it. Write both forms.
 
 ```
 Using this Specter spec as the contract, write [Go/Python/TypeScript] tests
 for every acceptance criterion.
 
 Rules:
-- Each test function must have // @spec [spec-id] and // @ac [AC-id] annotations
-- One test function per AC minimum
-- Tests must be executable — no pseudocode, no TODOs
-- Cover both the happy path and the error cases defined in the spec
-- Do not test anything not described in the spec
+- One test function per AC. No multi-AC tests — each test runner entry
+  maps to one (spec, AC) pair under --strict.
+- The test title carries [spec-id/AC-NN]:
+    TypeScript:  it('[spec-id/AC-NN] brief description', () => { ... })
+    Python:      def test_spec_id_AC_NN_brief_description(...): ...
+    Go:          t.Run("spec-id/AC-NN brief description", func(t *testing.T) { ... })
+  AC-NN is zero-padded: AC-01, not AC-1. Spec-id and AC-NN match the spec.
+- Add source comments above the test function:
+    // @spec [spec-id]
+    // @ac [AC-NN]
+- Tests are executable. No pseudocode, no TODOs.
+- Cover happy path and error cases from the spec.
+- Do not test anything outside the spec.
 
 [paste spec]
 ```
+
+**Alternate form — runtime log.** When you can't rename titles (shared naming, snapshot tests, external contracts), emit the pair at runtime from inside the test body:
+
+```typescript
+test('rejects zero amount', () => {
+  console.log('// @spec payment-charge');
+  console.log('// @ac AC-03');
+  // assertions
+});
+```
+```go
+func TestCharge_ZeroAmount(t *testing.T) {
+    t.Log("// @spec payment-charge")
+    t.Log("// @ac AC-03")
+    // assertions
+}
+```
+
+Pick one form per file. Do not mix title-based and runtime-log forms in the same file.
 
 ---
 
@@ -125,9 +159,11 @@ I want to build [feature]. My intent:
 [non-obvious decisions]
 
 Do the following in order:
-1. Write a complete `.spec.yaml` (status: draft)
-2. Write [language] tests for every AC with @spec/@ac annotations
-3. Implement the feature so the tests pass
+1. Write a complete `.spec.yaml` (status: draft).
+2. Write [language] tests for every AC. One test per AC. Test title carries
+   `[spec-id/AC-NN]`. Add `// @spec` and `// @ac` comments above the test.
+   See section 3 for the exact form.
+3. Implement the feature so the tests pass.
 
 After step 1, pause and show me the spec. I will review it before you proceed
 to step 2. Do not write tests or code until I approve the spec.
