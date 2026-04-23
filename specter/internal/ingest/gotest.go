@@ -30,6 +30,15 @@ type goTestEvent struct {
 //
 // Tests without annotations are silently dropped (C-04).
 func ParseGoTest(data []byte) ([]TestResult, error) {
+	results, _, _, err := ParseGoTestStats(data)
+	return results, err
+}
+
+// ParseGoTestStats is like ParseGoTest but also returns the total number of
+// completed testcases (pass/fail/skip actions) and the names of testcases
+// dropped for lacking a (spec_id, ac_id) annotation. Powers the CLI summary
+// (C-09) and --verbose per-case output (C-10).
+func ParseGoTestStats(data []byte) (results []TestResult, scanned int, dropped []string, err error) {
 	// Per-test annotation context accumulated from output-action lines.
 	type pending struct {
 		specFromOutput string
@@ -37,11 +46,7 @@ func ParseGoTest(data []byte) ([]TestResult, error) {
 	}
 	state := make(map[string]*pending) // key: Package+"\x00"+Test
 
-	var results []TestResult
-
 	scanner := bufio.NewScanner(bytes.NewReader(data))
-	// go test -json can emit lines longer than the default 64KB buffer for
-	// tests that dump large diagnostics; bump generously.
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 
 	for scanner.Scan() {
@@ -50,13 +55,10 @@ func ParseGoTest(data []byte) ([]TestResult, error) {
 			continue
 		}
 		var ev goTestEvent
-		if err := json.Unmarshal(line, &ev); err != nil {
-			// Malformed line: tolerate (go test -json occasionally leaks
-			// non-JSON noise under certain build errors).
+		if jErr := json.Unmarshal(line, &ev); jErr != nil {
 			continue
 		}
 		if ev.Test == "" {
-			// Package-level events (build results, coverage summary) ignored.
 			continue
 		}
 		key := ev.Package + "\x00" + ev.Test
@@ -79,8 +81,8 @@ func ParseGoTest(data []byte) ([]TestResult, error) {
 			}
 
 		case "pass", "fail", "skip":
+			scanned++
 			specID, acID := "", ""
-			// Prefer annotation in test name, fall back to output context.
 			if m := testNameAnnotation.FindStringSubmatch(ev.Test); m != nil {
 				specID = m[1]
 				acID = m[2]
@@ -89,6 +91,7 @@ func ParseGoTest(data []byte) ([]TestResult, error) {
 				acID = p.acFromOutput
 			}
 			if specID == "" || acID == "" {
+				dropped = append(dropped, ev.Test)
 				delete(state, key)
 				continue // C-04: silent drop
 			}
@@ -102,7 +105,7 @@ func ParseGoTest(data []byte) ([]TestResult, error) {
 		}
 	}
 
-	return results, nil
+	return results, scanned, dropped, nil
 }
 
 func actionToStatus(action string) Status {

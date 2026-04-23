@@ -24,7 +24,7 @@ func TestStrictMode_FailedResultDemotesAllTiers(t *testing.T) {
 	}
 
 	// strict=false → today's behavior, AC-03 counted as covered (tier 2)
-	nonStrict, err := BuildCoverageReportStrict([]schema.SpecAST{spec}, anns, checker.CoverageThresholdByTier, results, false)
+	nonStrict, err := BuildCoverageReportStrict([]schema.SpecAST{spec}, anns, checker.CoverageThresholdByTier, results, false, nil)
 	if err != nil {
 		t.Fatalf("non-strict returned error: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestStrictMode_FailedResultDemotesAllTiers(t *testing.T) {
 	}
 
 	// strict=true → AC-03 uncovered regardless of tier
-	strict, err := BuildCoverageReportStrict([]schema.SpecAST{spec}, anns, checker.CoverageThresholdByTier, results, true)
+	strict, err := BuildCoverageReportStrict([]schema.SpecAST{spec}, anns, checker.CoverageThresholdByTier, results, true, nil)
 	if err != nil {
 		t.Fatalf("strict returned error: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestStrictMode_SkippedResultIsUncovered(t *testing.T) {
 	results := &ResultsFile{
 		Results: []ResultEntry{{SpecID: "svc", ACID: "AC-01", Status: "skipped"}},
 	}
-	report, _ := BuildCoverageReportStrict([]schema.SpecAST{spec}, anns, checker.CoverageThresholdByTier, results, true)
+	report, _ := BuildCoverageReportStrict([]schema.SpecAST{spec}, anns, checker.CoverageThresholdByTier, results, true, nil)
 	if len(report.Entries[0].UncoveredACs) != 1 {
 		t.Errorf("skipped under strict should be uncovered, got %+v", report.Entries[0])
 	}
@@ -66,7 +66,7 @@ func TestStrictMode_MissingResultsFile_IsHardFail(t *testing.T) {
 		{File: "t.go", SpecID: "svc", ACIDs: []string{"AC-01"}},
 	}
 
-	_, err := BuildCoverageReportStrict([]schema.SpecAST{spec}, anns, checker.CoverageThresholdByTier, nil, true)
+	_, err := BuildCoverageReportStrict([]schema.SpecAST{spec}, anns, checker.CoverageThresholdByTier, nil, true, nil)
 	if err == nil {
 		t.Fatal("strict=true with nil results must return an error")
 	}
@@ -74,17 +74,20 @@ func TestStrictMode_MissingResultsFile_IsHardFail(t *testing.T) {
 		t.Errorf("error message must mention `--strict requires .specter-results.json`, got: %v", err)
 	}
 
-	// Same check for empty results (non-nil but zero entries).
-	_, err = BuildCoverageReportStrict([]schema.SpecAST{spec}, anns, checker.CoverageThresholdByTier, &ResultsFile{}, true)
-	if err == nil {
-		t.Fatal("strict=true with empty results must return an error")
+	// v1.10.0 / AC-23: empty parseable results (non-nil, zero entries) no
+	// longer errors — proceeds with demotion; the CLI layer emits a
+	// self-diagnosing warning. Supports staged adoption where zero tests
+	// have been migrated to runner-visible annotations yet.
+	_, err = BuildCoverageReportStrict([]schema.SpecAST{spec}, anns, checker.CoverageThresholdByTier, &ResultsFile{}, true, nil)
+	if err != nil {
+		t.Fatalf("strict=true with empty (non-nil) results must succeed (warn-and-continue is CLI-layer); got: %v", err)
 	}
 }
 
 // @ac AC-20
 // Confirm the error is distinguishable (sentinel or wrapped).
 func TestStrictMode_MissingResultsError_IsErrMissingResults(t *testing.T) {
-	_, err := BuildCoverageReportStrict(nil, nil, checker.CoverageThresholdByTier, nil, true)
+	_, err := BuildCoverageReportStrict(nil, nil, checker.CoverageThresholdByTier, nil, true, nil)
 	if !errors.Is(err, ErrMissingResults) {
 		t.Errorf("expected errors.Is(err, ErrMissingResults), got: %v", err)
 	}

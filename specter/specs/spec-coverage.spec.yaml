@@ -349,7 +349,7 @@ spec:
       priority: critical
 
     - id: AC-20
-      description: "Under StrictMode=true with an empty or nil ResultsFile, the coverage command MUST return an error (surfaces as exit non-zero). The error message MUST contain the literal string `--strict requires .specter-results.json`. Rationale: silently falling back to annotation-only under --strict defeats the gate's purpose."
+      description: "Under StrictMode=true with a nil ResultsFile (no `.specter-results.json` on disk), the coverage command MUST return an error (surfaces as exit non-zero). The error message MUST contain the literal string `--strict requires .specter-results.json`. Rationale: silently falling back to annotation-only under --strict defeats the gate's purpose. An empty-but-parseable ResultsFile (file exists, `{\"results\":[]}`) is a separate case covered by AC-23 (warn-and-continue) to support staged adoption where zero tests have been migrated yet."
       references_constraints: ["C-20"]
       priority: critical
 

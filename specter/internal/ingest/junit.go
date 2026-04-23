@@ -47,46 +47,64 @@ type junitResult struct {
 // ParseJUnit parses a JUnit XML document and returns TestResults for every
 // testcase that carries a recognizable (spec, AC) annotation. C-01, C-03, C-04.
 func ParseJUnit(data []byte) ([]TestResult, error) {
+	results, _, _, err := ParseJUnitStats(data)
+	return results, err
+}
+
+// ParseJUnitStats is like ParseJUnit but also returns the total number of
+// testcases scanned and the names of testcases dropped for lacking a
+// (spec_id, ac_id) annotation. Powers `Scanned N; extracted M; dropped K`
+// summary (C-09) and --verbose per-case output (C-10).
+func ParseJUnitStats(data []byte) (results []TestResult, scanned int, dropped []string, err error) {
 	var root struct {
 		XMLName xml.Name
 		Suites  []junitSuite `xml:"testsuite"`
 	}
 
-	// Try as <testsuites> root first, then fall back to bare <testsuite>.
-	if err := xml.Unmarshal(data, &root); err == nil && len(root.Suites) > 0 {
-		return collectFromSuites(root.Suites), nil
+	if xmlErr := xml.Unmarshal(data, &root); xmlErr == nil && len(root.Suites) > 0 {
+		results, scanned, dropped = collectFromSuitesStats(root.Suites)
+		return results, scanned, dropped, nil
 	}
 
-	// Fallback: single <testsuite> at the root.
 	var single junitSuite
-	if err := xml.Unmarshal(data, &single); err != nil {
-		return nil, fmt.Errorf("parse junit: %w", err)
+	if xmlErr := xml.Unmarshal(data, &single); xmlErr != nil {
+		return nil, 0, nil, fmt.Errorf("parse junit: %w", xmlErr)
 	}
 	if len(single.TestCase) > 0 {
-		return collectFromSuites([]junitSuite{single}), nil
+		results, scanned, dropped = collectFromSuitesStats([]junitSuite{single})
+		return results, scanned, dropped, nil
 	}
 
-	return nil, nil
+	return nil, 0, nil, nil
 }
 
 func collectFromSuites(suites []junitSuite) []TestResult {
-	var results []TestResult
+	r, _, _ := collectFromSuitesStats(suites)
+	return r
+}
+
+func collectFromSuitesStats(suites []junitSuite) (results []TestResult, scanned int, dropped []string) {
 	for _, s := range suites {
 		for _, tc := range s.TestCase {
+			scanned++
 			if r, ok := testResultFromCase(tc); ok {
 				results = append(results, r)
+			} else {
+				dropped = append(dropped, tc.Name)
 			}
 		}
-		// Nested suites.
 		for _, ns := range s.Nested {
 			for _, tc := range ns.TestCase {
+				scanned++
 				if r, ok := testResultFromCase(tc); ok {
 					results = append(results, r)
+				} else {
+					dropped = append(dropped, tc.Name)
 				}
 			}
 		}
 	}
-	return results
+	return results, scanned, dropped
 }
 
 func testResultFromCase(tc junitTC) (TestResult, bool) {
