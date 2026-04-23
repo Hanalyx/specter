@@ -39,135 +39,149 @@ func depVersioned(id, vr string) schema.DependencyRef {
 
 // @ac AC-01
 func TestLinearDependencies(t *testing.T) {
-	g := ResolveSpecs([]SpecInput{
-		{Spec: makeSpec("a", withDeps(dep("b"))), File: "a.spec.yaml"},
-		{Spec: makeSpec("b", withDeps(dep("c"))), File: "b.spec.yaml"},
-		{Spec: makeSpec("c"), File: "c.spec.yaml"},
-	})
+	t.Run("spec-resolve/AC-01 linear dependencies", func(t *testing.T) {
+		g := ResolveSpecs([]SpecInput{
+			{Spec: makeSpec("a", withDeps(dep("b"))), File: "a.spec.yaml"},
+			{Spec: makeSpec("b", withDeps(dep("c"))), File: "b.spec.yaml"},
+			{Spec: makeSpec("c"), File: "c.spec.yaml"},
+		})
 
-	if len(g.Nodes) != 3 {
-		t.Errorf("expected 3 nodes, got %d", len(g.Nodes))
-	}
-	if len(g.Edges) != 2 {
-		t.Errorf("expected 2 edges, got %d", len(g.Edges))
-	}
-	if len(g.Diagnostics) != 0 {
-		t.Errorf("expected 0 diagnostics, got %d", len(g.Diagnostics))
-	}
-	if len(g.TopologicalOrder) != 3 {
-		t.Errorf("expected 3 in topo order, got %d", len(g.TopologicalOrder))
-	}
+		if len(g.Nodes) != 3 {
+			t.Errorf("expected 3 nodes, got %d", len(g.Nodes))
+		}
+		if len(g.Edges) != 2 {
+			t.Errorf("expected 2 edges, got %d", len(g.Edges))
+		}
+		if len(g.Diagnostics) != 0 {
+			t.Errorf("expected 0 diagnostics, got %d", len(g.Diagnostics))
+		}
+		if len(g.TopologicalOrder) != 3 {
+			t.Errorf("expected 3 in topo order, got %d", len(g.TopologicalOrder))
+		}
+	})
 }
 
 // @ac AC-02
 func TestTwoNodeCycle(t *testing.T) {
-	g := ResolveSpecs([]SpecInput{
-		{Spec: makeSpec("a", withDeps(dep("b"))), File: "a.spec.yaml"},
-		{Spec: makeSpec("b", withDeps(dep("a"))), File: "b.spec.yaml"},
-	})
+	t.Run("spec-resolve/AC-02 two node cycle", func(t *testing.T) {
+		g := ResolveSpecs([]SpecInput{
+			{Spec: makeSpec("a", withDeps(dep("b"))), File: "a.spec.yaml"},
+			{Spec: makeSpec("b", withDeps(dep("a"))), File: "b.spec.yaml"},
+		})
 
-	found := false
-	for _, d := range g.Diagnostics {
-		if d.Kind == "circular_dependency" {
-			found = true
+		found := false
+		for _, d := range g.Diagnostics {
+			if d.Kind == "circular_dependency" {
+				found = true
+			}
 		}
-	}
-	if !found {
-		t.Error("expected circular_dependency diagnostic")
-	}
-	if len(g.TopologicalOrder) != 0 {
-		t.Error("expected empty topo order when cycles exist")
-	}
+		if !found {
+			t.Error("expected circular_dependency diagnostic")
+		}
+		if len(g.TopologicalOrder) != 0 {
+			t.Error("expected empty topo order when cycles exist")
+		}
+	})
 }
 
 // @ac AC-03
 func TestDanglingReference(t *testing.T) {
-	g := ResolveSpecs([]SpecInput{
-		{Spec: makeSpec("a", withDeps(dep("nonexistent"))), File: "a.spec.yaml"},
-	})
+	t.Run("spec-resolve/AC-03 dangling reference", func(t *testing.T) {
+		g := ResolveSpecs([]SpecInput{
+			{Spec: makeSpec("a", withDeps(dep("nonexistent"))), File: "a.spec.yaml"},
+		})
 
-	found := false
-	for _, d := range g.Diagnostics {
-		if d.Kind == "dangling_reference" && d.MissingDep == "nonexistent" {
-			found = true
+		found := false
+		for _, d := range g.Diagnostics {
+			if d.Kind == "dangling_reference" && d.MissingDep == "nonexistent" {
+				found = true
+			}
 		}
-	}
-	if !found {
-		t.Error("expected dangling_reference diagnostic")
-	}
+		if !found {
+			t.Error("expected dangling_reference diagnostic")
+		}
+	})
 }
 
 // @ac AC-04
 func TestVersionMismatch(t *testing.T) {
-	g := ResolveSpecs([]SpecInput{
-		{Spec: makeSpec("a", withDeps(depVersioned("b", "^1.0.0"))), File: "a.spec.yaml"},
-		{Spec: makeSpec("b", withVersion("2.0.0")), File: "b.spec.yaml"},
-	})
+	t.Run("spec-resolve/AC-04 version mismatch", func(t *testing.T) {
+		g := ResolveSpecs([]SpecInput{
+			{Spec: makeSpec("a", withDeps(depVersioned("b", "^1.0.0"))), File: "a.spec.yaml"},
+			{Spec: makeSpec("b", withVersion("2.0.0")), File: "b.spec.yaml"},
+		})
 
-	found := false
-	for _, d := range g.Diagnostics {
-		if d.Kind == "version_mismatch" {
-			found = true
+		found := false
+		for _, d := range g.Diagnostics {
+			if d.Kind == "version_mismatch" {
+				found = true
+			}
 		}
-	}
-	if !found {
-		t.Error("expected version_mismatch diagnostic")
-	}
+		if !found {
+			t.Error("expected version_mismatch diagnostic")
+		}
+	})
 }
 
 // @ac AC-05
 func TestNoDependencies(t *testing.T) {
-	g := ResolveSpecs([]SpecInput{
-		{Spec: makeSpec("a"), File: "a.spec.yaml"},
-		{Spec: makeSpec("b"), File: "b.spec.yaml"},
-	})
+	t.Run("spec-resolve/AC-05 no dependencies", func(t *testing.T) {
+		g := ResolveSpecs([]SpecInput{
+			{Spec: makeSpec("a"), File: "a.spec.yaml"},
+			{Spec: makeSpec("b"), File: "b.spec.yaml"},
+		})
 
-	if len(g.Edges) != 0 {
-		t.Errorf("expected 0 edges, got %d", len(g.Edges))
-	}
-	if len(g.Diagnostics) != 0 {
-		t.Errorf("expected 0 diagnostics, got %d", len(g.Diagnostics))
-	}
+		if len(g.Edges) != 0 {
+			t.Errorf("expected 0 edges, got %d", len(g.Edges))
+		}
+		if len(g.Diagnostics) != 0 {
+			t.Errorf("expected 0 diagnostics, got %d", len(g.Diagnostics))
+		}
+	})
 }
 
 // @ac AC-06
 func TestThreeNodeCycle(t *testing.T) {
-	g := ResolveSpecs([]SpecInput{
-		{Spec: makeSpec("a", withDeps(dep("b"))), File: "a.spec.yaml"},
-		{Spec: makeSpec("b", withDeps(dep("c"))), File: "b.spec.yaml"},
-		{Spec: makeSpec("c", withDeps(dep("a"))), File: "c.spec.yaml"},
-	})
+	t.Run("spec-resolve/AC-06 three node cycle", func(t *testing.T) {
+		g := ResolveSpecs([]SpecInput{
+			{Spec: makeSpec("a", withDeps(dep("b"))), File: "a.spec.yaml"},
+			{Spec: makeSpec("b", withDeps(dep("c"))), File: "b.spec.yaml"},
+			{Spec: makeSpec("c", withDeps(dep("a"))), File: "c.spec.yaml"},
+		})
 
-	found := false
-	for _, d := range g.Diagnostics {
-		if d.Kind == "circular_dependency" {
-			found = true
+		found := false
+		for _, d := range g.Diagnostics {
+			if d.Kind == "circular_dependency" {
+				found = true
+			}
 		}
-	}
-	if !found {
-		t.Error("expected circular_dependency diagnostic")
-	}
+		if !found {
+			t.Error("expected circular_dependency diagnostic")
+		}
+	})
 }
 
 // @ac AC-07
 func TestDuplicateIDs(t *testing.T) {
-	g := ResolveSpecs([]SpecInput{
-		{Spec: makeSpec("user-auth"), File: "file1.spec.yaml"},
-		{Spec: makeSpec("user-auth"), File: "file2.spec.yaml"},
-	})
+	t.Run("spec-resolve/AC-07 duplicate ids", func(t *testing.T) {
+		g := ResolveSpecs([]SpecInput{
+			{Spec: makeSpec("user-auth"), File: "file1.spec.yaml"},
+			{Spec: makeSpec("user-auth"), File: "file2.spec.yaml"},
+		})
 
-	found := false
-	for _, d := range g.Diagnostics {
-		if d.Kind == "duplicate_id" {
-			found = true
+		found := false
+		for _, d := range g.Diagnostics {
+			if d.Kind == "duplicate_id" {
+				found = true
+			}
 		}
-	}
-	if !found {
-		t.Error("expected duplicate_id diagnostic")
-	}
-	if len(g.Nodes) != 1 {
-		t.Errorf("expected 1 node (first wins), got %d", len(g.Nodes))
-	}
+		if !found {
+			t.Error("expected duplicate_id diagnostic")
+		}
+		if len(g.Nodes) != 1 {
+			t.Errorf("expected 1 node (first wins), got %d", len(g.Nodes))
+		}
+	})
 }
 
 func TestValidVersionRange(t *testing.T) {
@@ -183,55 +197,59 @@ func TestValidVersionRange(t *testing.T) {
 
 // @ac AC-09
 func TestDanglingReferenceIncludesSuggestion(t *testing.T) {
-	// "handler-interfac" is one character off from "handler-interface"
-	g := ResolveSpecs([]SpecInput{
-		{Spec: makeSpec("a", withDeps(dep("handler-interfac"))), File: "a.spec.yaml"},
-		{Spec: makeSpec("handler-interface"), File: "handler-interface.spec.yaml"},
-	})
+	t.Run("spec-resolve/AC-09 dangling reference includes suggestion", func(t *testing.T) {
+		// "handler-interfac" is one character off from "handler-interface"
+		g := ResolveSpecs([]SpecInput{
+			{Spec: makeSpec("a", withDeps(dep("handler-interfac"))), File: "a.spec.yaml"},
+			{Spec: makeSpec("handler-interface"), File: "handler-interface.spec.yaml"},
+		})
 
-	var dr *Diagnostic
-	for i := range g.Diagnostics {
-		if g.Diagnostics[i].Kind == "dangling_reference" {
-			dr = &g.Diagnostics[i]
-			break
+		var dr *Diagnostic
+		for i := range g.Diagnostics {
+			if g.Diagnostics[i].Kind == "dangling_reference" {
+				dr = &g.Diagnostics[i]
+				break
+			}
 		}
-	}
-	if dr == nil {
-		t.Fatal("expected dangling_reference diagnostic")
-	}
-	if len(dr.Suggestions) == 0 {
-		t.Error("expected at least one suggestion")
-	}
-	found := false
-	for _, s := range dr.Suggestions {
-		if s == "handler-interface" {
-			found = true
+		if dr == nil {
+			t.Fatal("expected dangling_reference diagnostic")
 		}
-	}
-	if !found {
-		t.Errorf("expected 'handler-interface' in suggestions, got %v", dr.Suggestions)
-	}
-	if dr.SuggestedFixPath == "" {
-		t.Error("expected SuggestedFixPath to be set")
-	}
+		if len(dr.Suggestions) == 0 {
+			t.Error("expected at least one suggestion")
+		}
+		found := false
+		for _, s := range dr.Suggestions {
+			if s == "handler-interface" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected 'handler-interface' in suggestions, got %v", dr.Suggestions)
+		}
+		if dr.SuggestedFixPath == "" {
+			t.Error("expected SuggestedFixPath to be set")
+		}
+	})
 }
 
 // @ac AC-09
 func TestDanglingReferenceNoSuggestionWhenFarOff(t *testing.T) {
-	// "xyz-totally-different" is far from "handler-interface"
-	g := ResolveSpecs([]SpecInput{
-		{Spec: makeSpec("a", withDeps(dep("xyz-totally-different"))), File: "a.spec.yaml"},
-		{Spec: makeSpec("handler-interface"), File: "handler-interface.spec.yaml"},
-	})
+	t.Run("spec-resolve/AC-09 dangling reference no suggestion when far off", func(t *testing.T) {
+		// "xyz-totally-different" is far from "handler-interface"
+		g := ResolveSpecs([]SpecInput{
+			{Spec: makeSpec("a", withDeps(dep("xyz-totally-different"))), File: "a.spec.yaml"},
+			{Spec: makeSpec("handler-interface"), File: "handler-interface.spec.yaml"},
+		})
 
-	for _, d := range g.Diagnostics {
-		if d.Kind == "dangling_reference" {
-			// suggestions may be empty for very distant strings — that's correct
-			if len(d.Suggestions) > 0 {
-				t.Logf("suggestions present but string is far: %v (acceptable)", d.Suggestions)
+		for _, d := range g.Diagnostics {
+			if d.Kind == "dangling_reference" {
+				// suggestions may be empty for very distant strings — that's correct
+				if len(d.Suggestions) > 0 {
+					t.Logf("suggestions present but string is far: %v (acceptable)", d.Suggestions)
+				}
+				return
 			}
-			return
 		}
-	}
-	t.Error("expected dangling_reference diagnostic")
+		t.Error("expected dangling_reference diagnostic")
+	})
 }

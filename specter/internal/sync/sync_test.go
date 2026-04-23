@@ -44,36 +44,41 @@ func testFileContent(specID string, acIDs ...string) string {
 
 // @ac AC-01
 func TestAllPhasesPass(t *testing.T) {
-	result := RunSync(SyncInput{
-		SpecFiles: []FileContent{{Path: "a.spec.yaml", Content: validSpecYAML("a", 2, "")}},
-		TestFiles: []FileContent{{Path: "a.test.ts", Content: testFileContent("a", "AC-01")}},
-	})
+	t.Run("spec-sync/AC-01 all phases pass", func(t *testing.T) {
+		result := RunSync(SyncInput{
+			SpecFiles: []FileContent{{Path: "a.spec.yaml", Content: validSpecYAML("a", 2, "")}},
+			TestFiles: []FileContent{{Path: "a.test.ts", Content: testFileContent("a", "AC-01")}},
+		})
 
-	if !result.Passed {
-		t.Errorf("expected pass, got fail at %s", result.StoppedAt)
-	}
-	if len(result.Phases) != 4 {
-		t.Errorf("expected 4 phases, got %d", len(result.Phases))
-	}
+		if !result.Passed {
+			t.Errorf("expected pass, got fail at %s", result.StoppedAt)
+		}
+		if len(result.Phases) != 4 {
+			t.Errorf("expected 4 phases, got %d", len(result.Phases))
+		}
+	})
 }
 
 // @ac AC-02
 func TestParseErrorStopsPipeline(t *testing.T) {
-	result := RunSync(SyncInput{
-		SpecFiles: []FileContent{{Path: "bad.yaml", Content: "not: valid: yaml: {{{"}},
-	})
+	t.Run("spec-sync/AC-02 parse error stops pipeline", func(t *testing.T) {
+		result := RunSync(SyncInput{
+			SpecFiles: []FileContent{{Path: "bad.yaml", Content: "not: valid: yaml: {{{"}},
+		})
 
-	if result.Passed {
-		t.Error("expected failure")
-	}
-	if result.StoppedAt != "parse" {
-		t.Errorf("expected stopped at parse, got %s", result.StoppedAt)
-	}
+		if result.Passed {
+			t.Error("expected failure")
+		}
+		if result.StoppedAt != "parse" {
+			t.Errorf("expected stopped at parse, got %s", result.StoppedAt)
+		}
+	})
 }
 
 // @ac AC-03
 func TestDanglingDepStopsAtResolve(t *testing.T) {
-	yaml := `spec:
+	t.Run("spec-sync/AC-03 dangling dep stops at resolve", func(t *testing.T) {
+		yaml := `spec:
   id: broken
   version: "1.0.0"
   status: approved
@@ -93,21 +98,23 @@ func TestDanglingDepStopsAtResolve(t *testing.T) {
     - spec_id: nonexistent
       relationship: requires
 `
-	result := RunSync(SyncInput{
-		SpecFiles: []FileContent{{Path: "broken.yaml", Content: yaml}},
-	})
+		result := RunSync(SyncInput{
+			SpecFiles: []FileContent{{Path: "broken.yaml", Content: yaml}},
+		})
 
-	if result.Passed {
-		t.Error("expected failure")
-	}
-	if result.StoppedAt != "resolve" {
-		t.Errorf("expected stopped at resolve, got %s", result.StoppedAt)
-	}
+		if result.Passed {
+			t.Error("expected failure")
+		}
+		if result.StoppedAt != "resolve" {
+			t.Errorf("expected stopped at resolve, got %s", result.StoppedAt)
+		}
+	})
 }
 
 // @ac AC-04
 func TestCheckErrorsFail(t *testing.T) {
-	yaml := `spec:
+	t.Run("spec-sync/AC-04 check errors fail", func(t *testing.T) {
+		yaml := `spec:
   id: strict
   version: "1.0.0"
   status: approved
@@ -126,32 +133,35 @@ func TestCheckErrorsFail(t *testing.T) {
       description: "test"
       references_constraints: ["C-01"]
 `
-	result := RunSync(SyncInput{
-		SpecFiles: []FileContent{{Path: "strict.yaml", Content: yaml}},
-		TestFiles: []FileContent{{Path: "strict.test.ts", Content: testFileContent("strict", "AC-01")}},
-	})
+		result := RunSync(SyncInput{
+			SpecFiles: []FileContent{{Path: "strict.yaml", Content: yaml}},
+			TestFiles: []FileContent{{Path: "strict.test.ts", Content: testFileContent("strict", "AC-01")}},
+		})
 
-	if result.Passed {
-		t.Error("expected failure due to Tier 1 orphan")
-	}
-	if result.StoppedAt != "check" {
-		t.Errorf("expected stopped at check, got %s", result.StoppedAt)
-	}
+		if result.Passed {
+			t.Error("expected failure due to Tier 1 orphan")
+		}
+		if result.StoppedAt != "check" {
+			t.Errorf("expected stopped at check, got %s", result.StoppedAt)
+		}
+	})
 }
 
 // @ac AC-05
 func TestCoverageBelowThresholdFails(t *testing.T) {
-	result := RunSync(SyncInput{
-		SpecFiles: []FileContent{{Path: "critical.yaml", Content: validSpecYAML("critical", 1, "")}},
-		TestFiles: nil, // 0% coverage
-	})
+	t.Run("spec-sync/AC-05 coverage below threshold fails", func(t *testing.T) {
+		result := RunSync(SyncInput{
+			SpecFiles: []FileContent{{Path: "critical.yaml", Content: validSpecYAML("critical", 1, "")}},
+			TestFiles: nil, // 0% coverage
+		})
 
-	if result.Passed {
-		t.Error("expected failure due to Tier 1 at 0% coverage")
-	}
-	if result.StoppedAt != "coverage" {
-		t.Errorf("expected stopped at coverage, got %s", result.StoppedAt)
-	}
+		if result.Passed {
+			t.Error("expected failure due to Tier 1 at 0% coverage")
+		}
+		if result.StoppedAt != "coverage" {
+			t.Errorf("expected stopped at coverage, got %s", result.StoppedAt)
+		}
+	})
 }
 
 func TestMultiSpecPipeline(t *testing.T) {
@@ -173,65 +183,69 @@ func TestMultiSpecPipeline(t *testing.T) {
 
 // @ac AC-06
 func TestOnlyPhase_Coverage_ContinuesDespiteResolveError(t *testing.T) {
-	// Spec with a dangling reference — resolve will fail
-	specWithDanglingRef := validSpecYAML("a", 2, "nonexistent-spec")
+	t.Run("spec-sync/AC-06 only phase coverage continues despite resolve error", func(t *testing.T) {
+		// Spec with a dangling reference — resolve will fail
+		specWithDanglingRef := validSpecYAML("a", 2, "nonexistent-spec")
 
-	result := RunSync(SyncInput{
-		SpecFiles: []FileContent{{Path: "a.yaml", Content: specWithDanglingRef}},
-		TestFiles: []FileContent{{Path: "a.test.ts", Content: testFileContent("a", "AC-01")}},
-		OnlyPhase: "coverage",
-	})
+		result := RunSync(SyncInput{
+			SpecFiles: []FileContent{{Path: "a.yaml", Content: specWithDanglingRef}},
+			TestFiles: []FileContent{{Path: "a.test.ts", Content: testFileContent("a", "AC-01")}},
+			OnlyPhase: "coverage",
+		})
 
-	// All four phases should have been attempted
-	phaseNames := make(map[string]bool)
-	for _, p := range result.Phases {
-		phaseNames[p.Phase] = true
-	}
-	for _, required := range []string{"parse", "resolve", "check", "coverage"} {
-		if !phaseNames[required] {
-			t.Errorf("expected phase %q to be recorded, got phases: %v", required, result.Phases)
+		// All four phases should have been attempted
+		phaseNames := make(map[string]bool)
+		for _, p := range result.Phases {
+			phaseNames[p.Phase] = true
 		}
-	}
-
-	// resolve failed but we continued — coverage is what determines Passed
-	resolvePhase := ""
-	for _, p := range result.Phases {
-		if p.Phase == "resolve" {
-			if p.Passed {
-				resolvePhase = "passed"
-			} else {
-				resolvePhase = "failed"
+		for _, required := range []string{"parse", "resolve", "check", "coverage"} {
+			if !phaseNames[required] {
+				t.Errorf("expected phase %q to be recorded, got phases: %v", required, result.Phases)
 			}
 		}
-	}
-	if resolvePhase != "failed" {
-		t.Errorf("expected resolve to fail, got %q", resolvePhase)
-	}
+
+		// resolve failed but we continued — coverage is what determines Passed
+		resolvePhase := ""
+		for _, p := range result.Phases {
+			if p.Phase == "resolve" {
+				if p.Passed {
+					resolvePhase = "passed"
+				} else {
+					resolvePhase = "failed"
+				}
+			}
+		}
+		if resolvePhase != "failed" {
+			t.Errorf("expected resolve to fail, got %q", resolvePhase)
+		}
+	})
 }
 
 // @ac AC-07
 func TestOnlyPhase_Check_ContinuesDespiteParseError(t *testing.T) {
-	result := RunSync(SyncInput{
-		SpecFiles: []FileContent{
-			{Path: "valid.yaml", Content: validSpecYAML("valid", 2, "")},
-			{Path: "bad.yaml", Content: "not: valid: yaml: at: all"},
-		},
-		TestFiles: nil,
-		OnlyPhase: "check",
-	})
+	t.Run("spec-sync/AC-07 only phase check continues despite parse error", func(t *testing.T) {
+		result := RunSync(SyncInput{
+			SpecFiles: []FileContent{
+				{Path: "valid.yaml", Content: validSpecYAML("valid", 2, "")},
+				{Path: "bad.yaml", Content: "not: valid: yaml: at: all"},
+			},
+			TestFiles: nil,
+			OnlyPhase: "check",
+		})
 
-	// check phase should be reached (may pass with 0 diagnostics on the valid spec)
-	phaseNames := make(map[string]bool)
-	for _, p := range result.Phases {
-		phaseNames[p.Phase] = true
-	}
-	if !phaseNames["check"] {
-		t.Errorf("expected check phase to be reached, got phases: %v", result.Phases)
-	}
-	// pipeline should NOT have stopped at parse
-	if result.StoppedAt == "parse" {
-		t.Error("expected pipeline not to stop at parse in --only check mode")
-	}
+		// check phase should be reached (may pass with 0 diagnostics on the valid spec)
+		phaseNames := make(map[string]bool)
+		for _, p := range result.Phases {
+			phaseNames[p.Phase] = true
+		}
+		if !phaseNames["check"] {
+			t.Errorf("expected check phase to be reached, got phases: %v", result.Phases)
+		}
+		// pipeline should NOT have stopped at parse
+		if result.StoppedAt == "parse" {
+			t.Error("expected pipeline not to stop at parse in --only check mode")
+		}
+	})
 }
 
 func TestOnlyPhase_Parse_StopsAfterParse(t *testing.T) {
