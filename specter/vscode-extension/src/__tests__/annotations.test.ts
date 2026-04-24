@@ -53,7 +53,7 @@ const specIndex: SpecIndex = {
 // ---------------------------------------------------------------------------
 
 // @ac AC-07
-describe('buildSpecCompletions', () => {
+describe('[spec-vscode/AC-07] buildSpecCompletions', () => {
   it('returns completion items for all specs in the index', () => {
     const items = buildSpecCompletions(specIndex, '/project/src/payments/handler.test.ts');
     const ids = items.map(i => i.insertText);
@@ -79,7 +79,7 @@ describe('buildSpecCompletions', () => {
 // ---------------------------------------------------------------------------
 
 // @ac AC-08
-describe('buildACCompletions', () => {
+describe('[spec-vscode/AC-08] buildACCompletions', () => {
   it('returns AC IDs from the spec referenced by the nearest @spec annotation', () => {
     const fileContent = `
 // @spec payment-create-intent
@@ -112,7 +112,7 @@ function testCreateIntent() {}
 
 // @spec spec-vscode
 // @ac AC-09
-describe('buildAnnotationHover', () => {
+describe('[spec-vscode/AC-09] buildAnnotationHover', () => {
   it('shows the full AC description on hover over @ac AC-01', () => {
     const hover = buildAnnotationHover(specIndex, 'payment-create-intent', 'AC-01', {
       coveredByFiles: ['src/payments/create_test.go'],
@@ -152,7 +152,7 @@ describe('buildAnnotationHover', () => {
 
 // @spec spec-vscode
 // @ac AC-15
-describe('buildQuickFix', () => {
+describe('[spec-vscode/AC-15] buildQuickFix', () => {
   it('inserts @spec and @ac lines above the function', () => {
     const fix = buildQuickFix({
       specID: 'payment-create-intent',
@@ -181,7 +181,7 @@ describe('buildQuickFix', () => {
 
 // @spec spec-vscode
 // @ac AC-21
-describe('suggestACsForFunction', () => {
+describe('[spec-vscode/AC-21] suggestACsForFunction', () => {
   it('returns top-2 AC suggestions for a function body', () => {
     const suggestions = suggestACsForFunction(
       specIndex,
@@ -215,7 +215,7 @@ describe('suggestACsForFunction', () => {
 // ---------------------------------------------------------------------------
 
 // @ac AC-08
-describe('findNearestSpecAnnotation', () => {
+describe('[spec-vscode/AC-08] findNearestSpecAnnotation', () => {
   it('finds the @spec annotation nearest above the given line', () => {
     const content = [
       '// @spec auth-verify-token',

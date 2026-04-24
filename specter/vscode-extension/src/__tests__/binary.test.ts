@@ -24,7 +24,7 @@ const mockWhich = (name: string): string | null => null;
 // ---------------------------------------------------------------------------
 
 // @ac AC-02
-describe('resolveBinaryPath', () => {
+describe('[spec-vscode/AC-02] resolveBinaryPath', () => {
   it('returns workspace setting path when specter.binaryPath is set and file exists', () => {
     const fs = { ...mockFs, exists: (p: string) => p === '/custom/specter' };
     const result = resolveBinaryPath({
@@ -85,7 +85,7 @@ describe('resolveBinaryPath', () => {
 });
 
 // @ac AC-02
-describe('buildDownloadUrl', () => {
+describe('[spec-vscode/AC-02] buildDownloadUrl', () => {
   it('constructs GitHub Releases URL for linux-amd64', () => {
     const url = buildDownloadUrl({ version: '0.5.0', os: 'linux', arch: 'amd64' });
     expect(url).toContain('specter_0.5.0_linux_amd64.tar.gz');
@@ -115,7 +115,7 @@ describe('buildDownloadUrl', () => {
 });
 
 // @ac AC-23
-describe('isBinaryFile', () => {
+describe('[spec-vscode/AC-23] isBinaryFile', () => {
   function writeTmp(contents: Buffer): string {
     const p = path.join(os.tmpdir(), `specter-binary-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     fs.writeFileSync(p, contents);
@@ -158,7 +158,7 @@ describe('isBinaryFile', () => {
 });
 
 // @ac AC-02
-describe('verifyChecksum', () => {
+describe('[spec-vscode/AC-02] verifyChecksum', () => {
   it('returns true when SHA256 of content matches expected checksum', async () => {
     // Minimal smoke test — real checksum verification uses crypto.subtle
     const content = Buffer.from('specter binary content');
@@ -183,7 +183,7 @@ describe('verifyChecksum', () => {
 
 // @spec spec-vscode
 // @ac AC-24
-describe('Specter: Re-download CLI command is declared in package.json', () => {
+describe('[spec-vscode/AC-24] Specter: Re-download CLI command is declared in package.json', () => {
   // AC-24 pins the presence of the user-facing recovery command. The status-
   // bar error transition itself is vscode-runtime-coupled and exercised by
   // client.test.ts (which invokes the real CLI against a fixture workspace
@@ -206,7 +206,7 @@ describe('Specter: Re-download CLI command is declared in package.json', () => {
 });
 
 // @ac AC-50
-describe('specter.version config default (C-27)', () => {
+describe('[spec-vscode/AC-50] specter.version config default (C-27)', () => {
   it('package.json declares specter.version default as empty string, not "latest"', () => {
     const pkg = require('../../package.json');
     const prop = pkg.contributes?.configuration?.properties?.['specter.version'];

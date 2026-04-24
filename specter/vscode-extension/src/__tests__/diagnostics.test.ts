@@ -33,7 +33,7 @@ const checkDiagnostic: SpecterCheckDiagnostic = {
 // ---------------------------------------------------------------------------
 
 // @ac AC-03
-describe('debounce timing', () => {
+describe('[spec-vscode/AC-03] debounce timing', () => {
   it('on-type trigger invokes parse command, not check or coverage', () => {
     const invocations: string[] = [];
     const trigger = buildTrigger({ onInvoke: (cmd) => invocations.push(cmd) });
@@ -58,7 +58,7 @@ describe('debounce timing', () => {
 
 // @ac AC-03
 // @ac AC-04
-describe('buildDiagnostics', () => {
+describe('[spec-vscode/AC-03] buildDiagnostics', () => {
   it('maps a parse error to a VS Code diagnostic with correct severity and range', () => {
     const diags = buildDiagnostics({ parseErrors: [parseError], checkDiagnostics: [] });
     expect(diags).toHaveLength(1);
@@ -90,7 +90,7 @@ describe('buildDiagnostics', () => {
 // ---------------------------------------------------------------------------
 
 // @ac AC-04
-describe('DiagnosticReplacer', () => {
+describe('[spec-vscode/AC-04] DiagnosticReplacer', () => {
   it('replaces all diagnostics for a URI atomically (set, not append)', () => {
     const store: Map<string, any[]> = new Map();
     const replacer = new DiagnosticReplacer({
@@ -138,7 +138,7 @@ describe('DiagnosticReplacer', () => {
 // ---------------------------------------------------------------------------
 
 // @ac AC-04
-describe('shouldRunCoverageForFile', () => {
+describe('[spec-vscode/AC-04] shouldRunCoverageForFile', () => {
   it('returns the spec IDs found in @spec annotations in a test file', () => {
     const content = `
 // @spec payment-create-intent
@@ -165,7 +165,7 @@ function testVerifyToken() {}
 
 // @spec spec-vscode
 // @ac AC-34
-describe('buildCoverageParseDiagnostics', () => {
+describe('[spec-vscode/AC-34] buildCoverageParseDiagnostics', () => {
   it('groups one diagnostic per error and keys by file', () => {
     const errors: CoverageParseError[] = [
       { file: 'specs/a.spec.yaml', type: 'required', path: 'spec.objective', message: 'missing', line: 5, column: 3 },

@@ -20,6 +20,11 @@ specter-windows-*
 # Test coverage
 coverage.out
 
+# Dogfood-strict pipeline artifacts (generated per-run by make dogfood-strict)
+.specter-results.json
+.specter-go-results.json
+vscode-extension/junit.xml
+
 # Claude Code instructions
 CLAUDE.md
 

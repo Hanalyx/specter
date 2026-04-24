@@ -56,7 +56,7 @@ const diffOutputPatch = {
 // ---------------------------------------------------------------------------
 
 // @ac AC-14
-describe('detectDrift', () => {
+describe('[spec-vscode/AC-14] detectDrift', () => {
   it('returns no drift when spec file hash matches the annotation baseline', () => {
     const baseline: DriftBaseline = {
       specID: 'payment-create-intent',
@@ -139,7 +139,7 @@ describe('detectDrift', () => {
 });
 
 // @ac AC-14
-describe('buildDriftHover', () => {
+describe('[spec-vscode/AC-14] buildDriftHover', () => {
   it('shows the AC description at baseline and at HEAD', () => {
     const hover = buildDriftHover({
       specID: 'payment-create-intent',
@@ -198,7 +198,7 @@ describe('buildDriftHover', () => {
 });
 
 // @ac AC-14
-describe('DriftBaseline', () => {
+describe('[spec-vscode/AC-14] DriftBaseline', () => {
   it('is a plain serializable object (no class instances or Promises)', () => {
     const baseline: DriftBaseline = {
       specID: 'payment-create-intent',

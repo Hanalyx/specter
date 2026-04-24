@@ -13,9 +13,10 @@ import (
 
 // @ac AC-08
 func TestIngest_JUnit_WritesResultsFile(t *testing.T) {
-	dir := t.TempDir()
-	junitPath := filepath.Join(dir, "junit.xml")
-	junit := `<?xml version="1.0" encoding="UTF-8"?>
+	t.Run("spec-ingest/AC-08 junit writes results file", func(t *testing.T) {
+		dir := t.TempDir()
+		junitPath := filepath.Join(dir, "junit.xml")
+		junit := `<?xml version="1.0" encoding="UTF-8"?>
 <testsuites>
   <testsuite>
     <testcase name="svc/AC-01 passes"/>
@@ -24,78 +25,85 @@ func TestIngest_JUnit_WritesResultsFile(t *testing.T) {
     </testcase>
   </testsuite>
 </testsuites>`
-	if err := os.WriteFile(junitPath, []byte(junit), 0644); err != nil {
-		t.Fatal(err)
-	}
+		if err := os.WriteFile(junitPath, []byte(junit), 0644); err != nil {
+			t.Fatal(err)
+		}
 
-	outPath := filepath.Join(dir, ".specter-results.json")
-	_, code := runCLI(t, dir, "ingest", "--junit", junitPath, "--output", outPath)
-	if code != 0 {
-		t.Fatalf("ingest exited non-zero (want 0)")
-	}
+		outPath := filepath.Join(dir, ".specter-results.json")
+		_, code := runCLI(t, dir, "ingest", "--junit", junitPath, "--output", outPath)
+		if code != 0 {
+			t.Fatalf("ingest exited non-zero (want 0)")
+		}
 
-	data, err := os.ReadFile(outPath)
-	if err != nil {
-		t.Fatalf("results file not written: %v", err)
-	}
+		data, err := os.ReadFile(outPath)
+		if err != nil {
+			t.Fatalf("results file not written: %v", err)
+		}
 
-	var parsed struct {
-		Results []struct {
-			SpecID string `json:"spec_id"`
-			ACID   string `json:"ac_id"`
-			Status string `json:"status"`
-		} `json:"results"`
-	}
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		t.Fatalf("results file invalid JSON: %v\n%s", err, data)
-	}
-	if len(parsed.Results) != 2 {
-		t.Fatalf("expected 2 entries, got %d", len(parsed.Results))
-	}
+		var parsed struct {
+			Results []struct {
+				SpecID string `json:"spec_id"`
+				ACID   string `json:"ac_id"`
+				Status string `json:"status"`
+			} `json:"results"`
+		}
+		if err := json.Unmarshal(data, &parsed); err != nil {
+			t.Fatalf("results file invalid JSON: %v\n%s", err, data)
+		}
+		if len(parsed.Results) != 2 {
+			t.Fatalf("expected 2 entries, got %d", len(parsed.Results))
+		}
+	})
 }
 
 // @ac AC-08
 func TestIngest_DefaultOutputPath(t *testing.T) {
-	dir := t.TempDir()
-	junitPath := filepath.Join(dir, "junit.xml")
-	junit := `<testsuites><testsuite><testcase name="s/AC-01"/></testsuite></testsuites>`
-	_ = os.WriteFile(junitPath, []byte(junit), 0644)
+	t.Run("spec-ingest/AC-08 default output path", func(t *testing.T) {
+		dir := t.TempDir()
+		junitPath := filepath.Join(dir, "junit.xml")
+		junit := `<testsuites><testsuite><testcase name="s/AC-01"/></testsuite></testsuites>`
+		_ = os.WriteFile(junitPath, []byte(junit), 0644)
 
-	// No --output flag: default to .specter-results.json in the working dir.
-	_, code := runCLI(t, dir, "ingest", "--junit", junitPath)
-	if code != 0 {
-		t.Fatalf("ingest exited non-zero")
-	}
-	if _, err := os.Stat(filepath.Join(dir, ".specter-results.json")); err != nil {
-		t.Errorf("default output file missing: %v", err)
-	}
+		// No --output flag: default to .specter-results.json in the working dir.
+		_, code := runCLI(t, dir, "ingest", "--junit", junitPath)
+		if code != 0 {
+			t.Fatalf("ingest exited non-zero")
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".specter-results.json")); err != nil {
+			t.Errorf("default output file missing: %v", err)
+		}
+	})
 }
 
 // @ac AC-08
 func TestIngest_MissingInputFile_ExitsNonZero(t *testing.T) {
-	dir := t.TempDir()
-	_, code := runCLI(t, dir, "ingest", "--junit", filepath.Join(dir, "does-not-exist.xml"))
-	if code == 0 {
-		t.Errorf("expected non-zero exit for missing input file")
-	}
+	t.Run("spec-ingest/AC-08 missing input file exits non zero", func(t *testing.T) {
+		dir := t.TempDir()
+		_, code := runCLI(t, dir, "ingest", "--junit", filepath.Join(dir, "does-not-exist.xml"))
+		if code == 0 {
+			t.Errorf("expected non-zero exit for missing input file")
+		}
+	})
 }
 
 // @ac AC-03
 // go test -json flavor end-to-end.
 func TestIngest_GoTest_WritesResultsFile(t *testing.T) {
-	dir := t.TempDir()
-	goJSON := filepath.Join(dir, "go-test.json")
-	content := `{"Action":"pass","Package":"p","Test":"TestX/svc/AC-03"}` + "\n"
-	_ = os.WriteFile(goJSON, []byte(content), 0644)
+	t.Run("spec-ingest/AC-03 go test writes results file", func(t *testing.T) {
+		dir := t.TempDir()
+		goJSON := filepath.Join(dir, "go-test.json")
+		content := `{"Action":"pass","Package":"p","Test":"TestX/svc/AC-03"}` + "\n"
+		_ = os.WriteFile(goJSON, []byte(content), 0644)
 
-	out := filepath.Join(dir, ".specter-results.json")
-	_, code := runCLI(t, dir, "ingest", "--go-test", goJSON, "--output", out)
-	if code != 0 {
-		t.Fatalf("ingest go-test exited non-zero")
-	}
-	if _, err := os.Stat(out); err != nil {
-		t.Errorf("output file not written: %v", err)
-	}
+		out := filepath.Join(dir, ".specter-results.json")
+		_, code := runCLI(t, dir, "ingest", "--go-test", goJSON, "--output", out)
+		if code != 0 {
+			t.Fatalf("ingest go-test exited non-zero")
+		}
+		if _, err := os.Stat(out); err != nil {
+			t.Errorf("output file not written: %v", err)
+		}
+	})
 }
 
 // --- v0.10.0 adoption affordances ---
@@ -105,10 +113,11 @@ func TestIngest_GoTest_WritesResultsFile(t *testing.T) {
 // pairs; dropped K with no runner-visible annotation." Turns the ingest
 // black box into something the operator can act on immediately.
 func TestIngest_EmitsScanSummary(t *testing.T) {
-	dir := t.TempDir()
-	junitPath := filepath.Join(dir, "junit.xml")
-	// 5 testcases: 2 annotated (svc/AC-01, svc/AC-02), 3 bare titles.
-	junit := `<?xml version="1.0" encoding="UTF-8"?>
+	t.Run("spec-ingest/AC-09 emits scan summary", func(t *testing.T) {
+		dir := t.TempDir()
+		junitPath := filepath.Join(dir, "junit.xml")
+		// 5 testcases: 2 annotated (svc/AC-01, svc/AC-02), 3 bare titles.
+		junit := `<?xml version="1.0" encoding="UTF-8"?>
 <testsuites><testsuite>
   <testcase name="svc/AC-01 passes"/>
   <testcase name="svc/AC-02 fails"><failure/></testcase>
@@ -116,66 +125,71 @@ func TestIngest_EmitsScanSummary(t *testing.T) {
   <testcase name="another bare title"/>
   <testcase name="third bare title"/>
 </testsuite></testsuites>`
-	_ = os.WriteFile(junitPath, []byte(junit), 0644)
+		_ = os.WriteFile(junitPath, []byte(junit), 0644)
 
-	out, code := runCLI(t, dir, "ingest", "--junit", junitPath)
-	if code != 0 {
-		t.Fatalf("ingest exited non-zero: %s", out)
-	}
+		out, code := runCLI(t, dir, "ingest", "--junit", junitPath)
+		if code != 0 {
+			t.Fatalf("ingest exited non-zero: %s", out)
+		}
 
-	expected := "Scanned 5 test cases; extracted 2 (spec_id, ac_id) pairs; dropped 3 with no runner-visible annotation."
-	if !strings.Contains(out, expected) {
-		t.Errorf("expected summary line:\n  %s\ngot:\n%s", expected, out)
-	}
+		expected := "Scanned 5 test cases; extracted 2 (spec_id, ac_id) pairs; dropped 3 with no runner-visible annotation."
+		if !strings.Contains(out, expected) {
+			t.Errorf("expected summary line:\n  %s\ngot:\n%s", expected, out)
+		}
+	})
 }
 
 // @ac AC-09
 // Zero-testcase fixture still emits the summary line with zeros. Counts
 // must be independent of the fixture shape — empty is a valid result.
 func TestIngest_EmitsScanSummary_EmptyFixture(t *testing.T) {
-	dir := t.TempDir()
-	junitPath := filepath.Join(dir, "junit.xml")
-	junit := `<?xml version="1.0" encoding="UTF-8"?><testsuites><testsuite></testsuite></testsuites>`
-	_ = os.WriteFile(junitPath, []byte(junit), 0644)
+	t.Run("spec-ingest/AC-09 emits scan summary empty fixture", func(t *testing.T) {
+		dir := t.TempDir()
+		junitPath := filepath.Join(dir, "junit.xml")
+		junit := `<?xml version="1.0" encoding="UTF-8"?><testsuites><testsuite></testsuite></testsuites>`
+		_ = os.WriteFile(junitPath, []byte(junit), 0644)
 
-	out, _ := runCLI(t, dir, "ingest", "--junit", junitPath)
-	expected := "Scanned 0 test cases; extracted 0 (spec_id, ac_id) pairs; dropped 0 with no runner-visible annotation."
-	if !strings.Contains(out, expected) {
-		t.Errorf("expected summary line for empty fixture:\n  %s\ngot:\n%s", expected, out)
-	}
+		out, _ := runCLI(t, dir, "ingest", "--junit", junitPath)
+		expected := "Scanned 0 test cases; extracted 0 (spec_id, ac_id) pairs; dropped 0 with no runner-visible annotation."
+		if !strings.Contains(out, expected) {
+			t.Errorf("expected summary line for empty fixture:\n  %s\ngot:\n%s", expected, out)
+		}
+	})
 }
 
 // @ac AC-10
 // --verbose adds one stderr line per dropped testcase. Without --verbose,
 // only the summary line is emitted; with it, per-case drop reasons follow.
 func TestIngest_Verbose_EmitsPerTestDropReasons(t *testing.T) {
-	dir := t.TempDir()
-	junitPath := filepath.Join(dir, "junit.xml")
-	junit := `<?xml version="1.0" encoding="UTF-8"?>
+	t.Run("spec-ingest/AC-10 verbose emits per test drop reasons", func(t *testing.T) {
+		dir := t.TempDir()
+		junitPath := filepath.Join(dir, "junit.xml")
+		junit := `<?xml version="1.0" encoding="UTF-8"?>
 <testsuites><testsuite>
   <testcase name="svc/AC-01 passes"/>
   <testcase name="bare title one"/>
   <testcase name="bare title two"/>
 </testsuite></testsuites>`
-	_ = os.WriteFile(junitPath, []byte(junit), 0644)
+		_ = os.WriteFile(junitPath, []byte(junit), 0644)
 
-	// Without --verbose: only the summary, no per-case lines.
-	plainOut, _ := runCLI(t, dir, "ingest", "--junit", junitPath)
-	if strings.Contains(plainOut, "  dropped:") {
-		t.Errorf("without --verbose, per-case drop lines should be absent; got:\n%s", plainOut)
-	}
+		// Without --verbose: only the summary, no per-case lines.
+		plainOut, _ := runCLI(t, dir, "ingest", "--junit", junitPath)
+		if strings.Contains(plainOut, "  dropped:") {
+			t.Errorf("without --verbose, per-case drop lines should be absent; got:\n%s", plainOut)
+		}
 
-	// With --verbose: per-case drop lines for each of the 2 dropped cases.
-	verboseOut, _ := runCLI(t, dir, "ingest", "--junit", junitPath, "--verbose")
-	if !strings.Contains(verboseOut, "  dropped: bare title one") {
-		t.Errorf("expected per-case drop line for `bare title one`; got:\n%s", verboseOut)
-	}
-	if !strings.Contains(verboseOut, "  dropped: bare title two") {
-		t.Errorf("expected per-case drop line for `bare title two`; got:\n%s", verboseOut)
-	}
-	if !strings.Contains(verboseOut, "no (spec_id, ac_id) pair found") {
-		t.Errorf("expected drop reason text on at least one line; got:\n%s", verboseOut)
-	}
+		// With --verbose: per-case drop lines for each of the 2 dropped cases.
+		verboseOut, _ := runCLI(t, dir, "ingest", "--junit", junitPath, "--verbose")
+		if !strings.Contains(verboseOut, "  dropped: bare title one") {
+			t.Errorf("expected per-case drop line for `bare title one`; got:\n%s", verboseOut)
+		}
+		if !strings.Contains(verboseOut, "  dropped: bare title two") {
+			t.Errorf("expected per-case drop line for `bare title two`; got:\n%s", verboseOut)
+		}
+		if !strings.Contains(verboseOut, "no (spec_id, ac_id) pair found") {
+			t.Errorf("expected drop reason text on at least one line; got:\n%s", verboseOut)
+		}
+	})
 }
 
 // --- v0.10.2 multi-file ingest (BUG-2 fix) ---
@@ -183,107 +197,115 @@ func TestIngest_Verbose_EmitsPerTestDropReasons(t *testing.T) {
 // @ac AC-11
 // Glob in --junit expands and all matched files merge into one results file.
 func TestIngest_JUnit_GlobExpandsAndMerges(t *testing.T) {
-	dir := t.TempDir()
-	a := `<testsuites><testsuite><testcase name="spec-foo/AC-01 pass a"/></testsuite></testsuites>`
-	b := `<testsuites><testsuite><testcase name="spec-bar/AC-02 pass b"/></testsuite></testsuites>`
-	_ = os.WriteFile(filepath.Join(dir, "junit-a.xml"), []byte(a), 0644)
-	_ = os.WriteFile(filepath.Join(dir, "junit-b.xml"), []byte(b), 0644)
+	t.Run("spec-ingest/AC-11 junit glob expands and merges", func(t *testing.T) {
+		dir := t.TempDir()
+		a := `<testsuites><testsuite><testcase name="spec-foo/AC-01 pass a"/></testsuite></testsuites>`
+		b := `<testsuites><testsuite><testcase name="spec-bar/AC-02 pass b"/></testsuite></testsuites>`
+		_ = os.WriteFile(filepath.Join(dir, "junit-a.xml"), []byte(a), 0644)
+		_ = os.WriteFile(filepath.Join(dir, "junit-b.xml"), []byte(b), 0644)
 
-	outPath := filepath.Join(dir, "results.json")
-	_, code := runCLI(t, dir, "ingest", "--junit", "junit-*.xml", "--output", outPath)
-	if code != 0 {
-		t.Fatalf("ingest glob exited non-zero")
-	}
+		outPath := filepath.Join(dir, "results.json")
+		_, code := runCLI(t, dir, "ingest", "--junit", "junit-*.xml", "--output", outPath)
+		if code != 0 {
+			t.Fatalf("ingest glob exited non-zero")
+		}
 
-	data, err := os.ReadFile(outPath)
-	if err != nil {
-		t.Fatalf("results file missing: %v", err)
-	}
-	var parsed struct {
-		Results []struct {
-			SpecID string `json:"spec_id"`
-			ACID   string `json:"ac_id"`
-		} `json:"results"`
-	}
-	_ = json.Unmarshal(data, &parsed)
-	if len(parsed.Results) != 2 {
-		t.Fatalf("expected 2 merged entries from glob, got %d: %s", len(parsed.Results), data)
-	}
-	seen := map[string]bool{}
-	for _, r := range parsed.Results {
-		seen[r.SpecID+"/"+r.ACID] = true
-	}
-	if !seen["spec-foo/AC-01"] || !seen["spec-bar/AC-02"] {
-		t.Errorf("expected spec-foo/AC-01 and spec-bar/AC-02; got: %+v", parsed.Results)
-	}
+		data, err := os.ReadFile(outPath)
+		if err != nil {
+			t.Fatalf("results file missing: %v", err)
+		}
+		var parsed struct {
+			Results []struct {
+				SpecID string `json:"spec_id"`
+				ACID   string `json:"ac_id"`
+			} `json:"results"`
+		}
+		_ = json.Unmarshal(data, &parsed)
+		if len(parsed.Results) != 2 {
+			t.Fatalf("expected 2 merged entries from glob, got %d: %s", len(parsed.Results), data)
+		}
+		seen := map[string]bool{}
+		for _, r := range parsed.Results {
+			seen[r.SpecID+"/"+r.ACID] = true
+		}
+		if !seen["spec-foo/AC-01"] || !seen["spec-bar/AC-02"] {
+			t.Errorf("expected spec-foo/AC-01 and spec-bar/AC-02; got: %+v", parsed.Results)
+		}
+	})
 }
 
 // @ac AC-11
 // Multiple --junit flags accumulate; StringArrayVar replaces StringVar.
 func TestIngest_JUnit_MultipleFlagsAccumulate(t *testing.T) {
-	dir := t.TempDir()
-	a := `<testsuites><testsuite><testcase name="spec-foo/AC-01 pass"/></testsuite></testsuites>`
-	b := `<testsuites><testsuite><testcase name="spec-bar/AC-02 pass"/></testsuite></testsuites>`
-	aPath := filepath.Join(dir, "junit-a.xml")
-	bPath := filepath.Join(dir, "junit-b.xml")
-	_ = os.WriteFile(aPath, []byte(a), 0644)
-	_ = os.WriteFile(bPath, []byte(b), 0644)
+	t.Run("spec-ingest/AC-11 junit multiple flags accumulate", func(t *testing.T) {
+		dir := t.TempDir()
+		a := `<testsuites><testsuite><testcase name="spec-foo/AC-01 pass"/></testsuite></testsuites>`
+		b := `<testsuites><testsuite><testcase name="spec-bar/AC-02 pass"/></testsuite></testsuites>`
+		aPath := filepath.Join(dir, "junit-a.xml")
+		bPath := filepath.Join(dir, "junit-b.xml")
+		_ = os.WriteFile(aPath, []byte(a), 0644)
+		_ = os.WriteFile(bPath, []byte(b), 0644)
 
-	outPath := filepath.Join(dir, "results.json")
-	_, code := runCLI(t, dir, "ingest", "--junit", aPath, "--junit", bPath, "--output", outPath)
-	if code != 0 {
-		t.Fatalf("ingest with two --junit flags exited non-zero")
-	}
+		outPath := filepath.Join(dir, "results.json")
+		_, code := runCLI(t, dir, "ingest", "--junit", aPath, "--junit", bPath, "--output", outPath)
+		if code != 0 {
+			t.Fatalf("ingest with two --junit flags exited non-zero")
+		}
 
-	data, _ := os.ReadFile(outPath)
-	var parsed struct {
-		Results []struct {
-			SpecID string `json:"spec_id"`
-			ACID   string `json:"ac_id"`
-		} `json:"results"`
-	}
-	_ = json.Unmarshal(data, &parsed)
-	if len(parsed.Results) != 2 {
-		t.Fatalf("expected 2 entries from two --junit flags, got %d: %s", len(parsed.Results), data)
-	}
+		data, _ := os.ReadFile(outPath)
+		var parsed struct {
+			Results []struct {
+				SpecID string `json:"spec_id"`
+				ACID   string `json:"ac_id"`
+			} `json:"results"`
+		}
+		_ = json.Unmarshal(data, &parsed)
+		if len(parsed.Results) != 2 {
+			t.Fatalf("expected 2 entries from two --junit flags, got %d: %s", len(parsed.Results), data)
+		}
+	})
 }
 
 // @ac AC-11
 // Glob matching zero files is a non-zero exit with explanatory stderr.
 func TestIngest_JUnit_GlobNoMatch_ExitsNonZero(t *testing.T) {
-	dir := t.TempDir()
-	out, code := runCLI(t, dir, "ingest", "--junit", "no-such-*.xml")
-	if code == 0 {
-		t.Fatalf("expected non-zero exit for zero-match glob; got:\n%s", out)
-	}
-	if !strings.Contains(out, "no files matched") {
-		t.Errorf("expected stderr 'no files matched'; got:\n%s", out)
-	}
+	t.Run("spec-ingest/AC-11 junit glob no match exits non zero", func(t *testing.T) {
+		dir := t.TempDir()
+		out, code := runCLI(t, dir, "ingest", "--junit", "no-such-*.xml")
+		if code == 0 {
+			t.Fatalf("expected non-zero exit for zero-match glob; got:\n%s", out)
+		}
+		if !strings.Contains(out, "no files matched") {
+			t.Errorf("expected stderr 'no files matched'; got:\n%s", out)
+		}
+	})
 }
 
 // @ac AC-11
 // Same semantics for --go-test: glob + multiple flags.
 func TestIngest_GoTest_GlobAndMultipleFlags(t *testing.T) {
-	dir := t.TempDir()
-	a := `{"Action":"pass","Package":"p","Test":"TestX/spec-foo/AC-01"}` + "\n"
-	b := `{"Action":"pass","Package":"p","Test":"TestY/spec-bar/AC-02"}` + "\n"
-	_ = os.WriteFile(filepath.Join(dir, "go-a.json"), []byte(a), 0644)
-	_ = os.WriteFile(filepath.Join(dir, "go-b.json"), []byte(b), 0644)
+	t.Run("spec-ingest/AC-11 go test glob and multiple flags", func(t *testing.T) {
+		dir := t.TempDir()
+		a := `{"Action":"pass","Package":"p","Test":"TestX/spec-foo/AC-01"}` + "\n"
+		b := `{"Action":"pass","Package":"p","Test":"TestY/spec-bar/AC-02"}` + "\n"
+		_ = os.WriteFile(filepath.Join(dir, "go-a.json"), []byte(a), 0644)
+		_ = os.WriteFile(filepath.Join(dir, "go-b.json"), []byte(b), 0644)
 
-	outPath := filepath.Join(dir, "results.json")
-	_, code := runCLI(t, dir, "ingest", "--go-test", "go-*.json", "--output", outPath)
-	if code != 0 {
-		t.Fatalf("go-test glob exited non-zero")
-	}
-	data, _ := os.ReadFile(outPath)
-	var parsed struct {
-		Results []struct {
-			SpecID string `json:"spec_id"`
-			ACID   string `json:"ac_id"`
-		} `json:"results"`
-	}
-	_ = json.Unmarshal(data, &parsed)
-	if len(parsed.Results) != 2 {
-		t.Fatalf("expected 2 entries from go-test glob, got %d", len(parsed.Results))
-	}
+		outPath := filepath.Join(dir, "results.json")
+		_, code := runCLI(t, dir, "ingest", "--go-test", "go-*.json", "--output", outPath)
+		if code != 0 {
+			t.Fatalf("go-test glob exited non-zero")
+		}
+		data, _ := os.ReadFile(outPath)
+		var parsed struct {
+			Results []struct {
+				SpecID string `json:"spec_id"`
+				ACID   string `json:"ac_id"`
+			} `json:"results"`
+		}
+		_ = json.Unmarshal(data, &parsed)
+		if len(parsed.Results) != 2 {
+			t.Fatalf("expected 2 entries from go-test glob, got %d", len(parsed.Results))
+		}
+	})
 }

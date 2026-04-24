@@ -10,7 +10,7 @@ import * as path from 'path';
 // ---------------------------------------------------------------------------
 
 // @ac AC-01
-describe('shouldActivate', () => {
+describe('[spec-vscode/AC-01] shouldActivate', () => {
   it('returns true when specter.yaml exists in workspace root', () => {
     const workspaceFiles = ['/project/specter.yaml', '/project/src/main.go'];
     expect(shouldActivate(workspaceFiles)).toBe(true);
@@ -42,7 +42,7 @@ describe('shouldActivate', () => {
 // ---------------------------------------------------------------------------
 
 // @ac AC-01
-describe('resolveManifestPath', () => {
+describe('[spec-vscode/AC-01] resolveManifestPath', () => {
   const mockFsExistsAt = (manifestPath: string) =>
     (p: string) => p === manifestPath;
 
@@ -106,7 +106,7 @@ describe('resolveManifestPath', () => {
 // ---------------------------------------------------------------------------
 
 // @ac AC-22
-describe('createClientKey', () => {
+describe('[spec-vscode/AC-22] createClientKey', () => {
   it('produces distinct keys for different workspace folders', () => {
     const key1 = createClientKey('/workspace/project-a');
     const key2 = createClientKey('/workspace/project-b');
@@ -128,7 +128,7 @@ describe('createClientKey', () => {
 
 // @spec spec-vscode
 // @ac AC-40
-describe('isSpecFilePath', () => {
+describe('[spec-vscode/AC-40] isSpecFilePath', () => {
   it('accepts a double-extension .spec.yaml file', () => {
     expect(isSpecFilePath('/project/specs/auth.spec.yaml')).toBe(true);
   });

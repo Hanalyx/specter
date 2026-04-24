@@ -64,7 +64,7 @@ const specIndex: SpecIndex = {
 // ---------------------------------------------------------------------------
 
 // @ac AC-06
-describe('buildConstraintHover', () => {
+describe('[spec-vscode/AC-06] buildConstraintHover', () => {
   it('shows the constraint description on hover over a constraint ID', () => {
     const hover = buildConstraintHover(specIndex, 'payment-create-intent', 'C-01', {
       coveredACIDs: ['AC-01'],
@@ -125,7 +125,7 @@ describe('buildConstraintHover', () => {
 // ---------------------------------------------------------------------------
 
 // @ac AC-10
-describe('resolveDefinitionTarget', () => {
+describe('[spec-vscode/AC-10] resolveDefinitionTarget', () => {
   it('resolves a spec_id in depends_on to the target .spec.yaml file path', () => {
     const target = resolveDefinitionTarget(specIndex, {
       kind: 'spec_id',

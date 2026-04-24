@@ -20,10 +20,12 @@ func validSpec() SpecAST {
 
 // @ac AC-18 (v0.7.0 — internal enum validators)
 func TestValidateEnums_ValidSpec(t *testing.T) {
-	s := validSpec()
-	if err := s.ValidateEnums(); err != nil {
-		t.Fatalf("valid spec should pass ValidateEnums, got: %v", err)
-	}
+	t.Run("spec-parse/AC-18 validate enums valid spec", func(t *testing.T) {
+		s := validSpec()
+		if err := s.ValidateEnums(); err != nil {
+			t.Fatalf("valid spec should pass ValidateEnums, got: %v", err)
+		}
+	})
 }
 
 func TestValidateEnums_InvalidStatus(t *testing.T) {

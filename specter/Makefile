@@ -84,6 +84,24 @@ dogfood: build
 	./$(BINARY) coverage
 	./$(BINARY) sync
 
+# Mechanical eval gate — Specter dogfoods its own --strict on itself.
+# Runs go test -json and jest (with jest-junit reporter), feeds both
+# streams into specter ingest, then runs specter coverage --strict.
+# Every annotated AC must have a passing test result or the gate fails.
+# Artifacts (.specter-results.json, junit.xml) are gitignored.
+dogfood-strict: build
+	@echo "--- Go tests → go test -json ---"
+	go test -json ./... 2>/dev/null > .specter-go-results.json || true
+	@echo ""
+	@echo "--- VS Code extension tests → jest + jest-junit ---"
+	cd vscode-extension && npm test
+	@echo ""
+	@echo "--- specter ingest (merge both streams) ---"
+	./$(BINARY) ingest --go-test .specter-go-results.json --junit vscode-extension/junit.xml --output .specter-results.json
+	@echo ""
+	@echo "--- specter coverage --strict ---"
+	./$(BINARY) coverage --strict
+
 # Full pre-release gate — run this before every release
 prerelease: check test-race vulncheck dogfood
 	@echo ""
