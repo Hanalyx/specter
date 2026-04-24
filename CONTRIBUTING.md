@@ -75,7 +75,8 @@ See [RELEASE_PLAN.md](specter/docs/RELEASE_PLAN.md) for the full commit conventi
 
 ```bash
 # Target the current working branch explicitly — do not rely on the repo default.
-gh pr create --base release/v0.10 --title "..."
+# Check specter/BACKLOG.md's header for the current branch name.
+gh pr create --base release/vX.Y.Z --title "..."
 ```
 
 ## Branch workflow
@@ -85,13 +86,15 @@ Specter uses a **release-working-branch** model. Each release cycle has one long
 ```
 main
  │
- ├── release/v0.10  ← every PR targets this while v0.10 is in flight
- │    ├── feat/specter-migrate
+ ├── release/vX.Y.Z  ← every PR targets this while the cycle is in flight
+ │    ├── feat/some-feature
  │    ├── fix/some-bug
  │    └── docs/something
  │
- └── hotfix/v0.9.3  ← hotfixes branch from main, merge to main, skip the working branch
+ └── hotfix/vA.B.C  ← hotfixes branch from main, merge to main, skip the working branch
 ```
+
+Between releases, `main` is the only branch and PRs target `main` directly. Maintenance-only branches (such as the `chore/dogfood-strict` internal refactor that shipped 2026-04-24) use `chore/<name>` naming and merge without a version bump.
 
 ### Rules
 

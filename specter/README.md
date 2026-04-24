@@ -297,9 +297,10 @@ specter/
 ## Development
 
 ```bash
-make check      # go vet + go test + go build — the CI gate
-make dogfood    # run specter against its own specs
-make build-all  # cross-compile for linux/darwin/windows
+make check           # go vet + go test + go build — the CI gate
+make dogfood         # run specter against its own specs (annotation-counting gate)
+make dogfood-strict  # mechanical eval gate: go test -json + jest → specter ingest → coverage --strict
+make build-all       # cross-compile for linux/darwin/windows
 ```
 
 Every package in `internal/` is a pure function — no I/O, no CLI dependencies.

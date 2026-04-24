@@ -24,7 +24,7 @@ CI building the VSIX is not the same as VS Code loading it. The v0.6.5 → v0.6.
 
 ### 3. Reload, then open a known-working test workspace
 
-The `specter/` repo itself is a good choice (14 dogfood specs). The Coverage sidebar should populate with real entries, not the empty-state message.
+The `specter/` repo itself is a good choice (15 dogfood specs as of v0.10.0, after `spec-ingest` was added). The Coverage sidebar should populate with real entries, not the empty-state message.
 
 ### 4. Reload, then open a known-failing test workspace
 

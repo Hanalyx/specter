@@ -2,9 +2,11 @@
 
 Forward-looking roadmap. Items are grouped by target release. Each item is a single sentence of intent plus a link to the design doc or discussion when one exists.
 
-Current shipped version: **v0.10.2** (CLI released to GitHub 2026-04-23; VS Code extension v0.10.1 on Marketplace — v0.10.2 VSIX built but held pending further testing). Past release notes live in [CHANGELOG.md](CHANGELOG.md) — this file is forward-only.
+Current shipped version: **v0.10.2** (CLI released to GitHub 2026-04-23; VS Code extension v0.10.2 shipped to Marketplace 2026-04-24). Past release notes live in [CHANGELOG.md](CHANGELOG.md) — this file is forward-only.
 
-Current maintenance branch: `chore/dogfood-strict` (opened 2026-04-23). **Not a release cycle.** Dogfood `specter coverage --strict` on Specter itself — v0.10.x shipped the mechanical eval gate but Specter's own tests use v0.9-era source-only annotations that `ingest` cannot read. Specter preaches `--strict` it cannot apply to itself. Migrate all 30 test files to Convention A (runner-visible `spec-id/AC-NN` in subtest titles), wire a `make dogfood-strict` target, and make the strict pipeline part of the gate. Merges to `main` when done with **no version bump, no tag, no CHANGELOG entry** — the work doesn't change CLI behavior, schema, or the extension. Internal infrastructure only.
+Between releases. No working branch open. Per `CONTRIBUTING.md` → Branch workflow, PRs target `main` directly until the v0.11 cycle starts, at which point a new `release/v0.11` branch gets opened and this header is updated to name it.
+
+The `chore/dogfood-strict` maintenance branch merged to `main` on 2026-04-24 (PR #66) — internal-only, no version bump. Specter now dogfoods `specter coverage --strict` on its own tests via `make dogfood-strict`: 15/15 specs mechanically verified across 214 (spec_id, ac_id) pairs from Go + TypeScript test runners.
 
 ---
 
