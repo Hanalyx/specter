@@ -108,11 +108,32 @@ The CI gate (`specter sync`) already enforces annotated tests must exist. This p
 
 - **Flake handling** (deferred from v0.10) — `--deny-flaky` flag; runners emit `status: flaky`; `--strict` tolerates flakes by default. Ship when real patterns from v0.10 usage surface.
 
-- **BUG-3 part 2 — `approval_gate` enforcement in `specter coverage`.** Feature decision, not a bug fix. Today `approval_gate: true` is metadata; `specter coverage` does not gate on it. The argument in favor of enforcement is mission-aligned: an AC declaring "cannot be verified mechanically" is exactly the AC that should not count as covered until the human approval is recorded. jwtms has ~83 Tier 1 ACs in the gated-but-undated state; if coverage starts respecting the field, those demote, and that is the correct signal. Open design questions:
-  - **Default behavior.** On by default with announced breaking-change semantics (v0.11 minor bump), or opt-in via `specter coverage --respect-approval-gates` / `settings.respect_approval_gates: true`? Leaning opt-in for v0.11 to avoid surprising existing users, flip to always-on in v0.12+.
-  - **Coupling with `--strict`.** Does `approval_gate: true && approval_date: null` demote always, or only under `--strict`? Leaning always — the gate's meaning is "human approval required," not "human approval required in strict mode."
-  - **New diagnostic kind.** `approval_gate_undated` surfaces under `specter check` so teams see the list before coverage even runs.
-  - **Spec bump.** `spec-coverage` adds a new constraint + AC codifying the semantics. Also updates `SPEC_SCHEMA_REFERENCE.md` and the JSON schema description to reflect the new behavior (reverses the v0.10.2 parity fix — must be coordinated).
+- **`settings.strictness` — first-class strictness level.** Resolves two pending design gaps on the same axis: (a) the exit-code semantics of `--strict` (chore/dogfood-strict Agent 2 finding — a single broken test on a 26-AC tier 2 spec demotes the AC but still passes the tier-80% threshold and exits 0, surprising operators who expect "strict" to mean zero-tolerance), and (b) BUG-3 part 2 (`approval_gate` enforcement — the same question of "should a declared-but-unsatisfied condition fail the build?").
+
+  Today "strictness" is implicit and spread across three places: the `--strict` CLI flag, tier coverage thresholds, and `approval_gate`/`approval_date` metadata. Make it explicit in `specter.yaml`:
+
+  ```yaml
+  settings:
+    strictness: threshold    # annotation | threshold | zero-tolerance (default: threshold)
+  ```
+
+  Three levels with defined semantics:
+  - **`annotation`**: pre-v0.10 behavior. Count `// @ac` annotations only; ignore `.specter-results.json`. `--strict` CLI flag rejected with clear error. For new adopters mid-migration.
+  - **`threshold`** (default, matches today's v0.10.x `--strict`): demote ACs whose tests didn't pass, then apply tier thresholds. Spec passes if above threshold after demotion. `approval_gate` is metadata, not enforced.
+  - **`zero-tolerance`**: any annotated AC without `status: passed` causes non-zero exit, regardless of coverage percentage or tier threshold. `approval_gate: true && approval_date == null` also causes non-zero exit. For CI-strict adopters and mature codebases.
+
+  **CLI interaction**: `--strict` remains a shortcut for `--strictness threshold` (today's meaning). A new `--strictness <level>` flag overrides the YAML per-invocation. Backwards-compatible.
+
+  **Why this design shape rather than "just raise the threshold":** coverage threshold and strictness are semantically different. Coverage = "how much of the spec needs tests"; strictness = "how rigorously are those tests verified." A team can reasonably want 100% coverage with loose strictness (mid-migration) or 50% coverage with zero-tolerance (mature Tier 1 specs). Conflating them via threshold-only conflates two different intentions and doesn't express `approval_gate` at all.
+
+  **Adoption ladder**: teams progress `annotation` → `threshold` → `zero-tolerance` as confidence grows. The level is explicit in `specter.yaml` so new contributors see what CI actually enforces.
+
+  **Spec bumps**:
+  - `spec-manifest` gains the `settings.strictness` field with enum validation (one new C + one AC).
+  - `spec-coverage` adds constraints for each level's semantics plus exit-code contract (three new C + three new AC, roughly).
+  - Replaces the "BUG-3 part 2 — approval_gate enforcement" entry that used to live here; both gaps fold under strictness.
+
+  **Open questions to resolve in design doc, not backlog**: what to do with `coverage_threshold` overrides when strictness is `zero-tolerance` (does per-spec threshold still matter?); whether `--strict` CLI flag should be deprecated in favor of `--strictness`; whether `sync` phase pipes the strictness level through to `coverage` automatically.
 
 - **Python Convention A gap.** `specter ingest`'s test-name regex `([a-z][a-z0-9-]*[a-z0-9])[/:](AC-\d+)` accepts only `/` or `:` as the separator between spec id and AC id. Python function names can't contain either, so the natural form `def test_user_create_AC_01_brief(...)` does not match — pytest emits the function name as the JUnit title, but ingest drops it. Today's Python users have to use Convention B (runtime `print('// @spec ...')` inside the test body) to get the pair into `.specter-results.json`. This is a real friction point — flagging it rather than leaving it buried in docs. Two directions, both viable, pick after real pytest migration friction surfaces:
   - **Docs only**: `TEST_ANNOTATION_REFERENCE.md` tells Python users to use Convention B. No code change. Penalty: Python is a second-class `--strict` citizen.
