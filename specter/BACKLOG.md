@@ -83,7 +83,18 @@ The CI gate (`specter sync`) already enforces annotated tests must exist. This p
 
 - **`specter explain` v0.11 bundle.** Extends the existing `explain <spec-id>` / `explain <spec-id>:AC-NN` verb with three new surfaces plus an AI-consumable output format. One verb, coherent design. No new top-level commands.
 
-  **1. AI context export** — `specter explain --format {claude|cursor|copilot|all} --all` writes `CLAUDE.md`, `.cursor/rules`, or `.github/copilot-instructions.md`. Output covers tier, objective, constraints, ACs with descriptions, current coverage status, uncovered ACs highlighted. Idempotent (fenced `<!-- specter:begin --> ... <!-- specter:end -->` block preserves developer-authored content outside the fence). Closes the `spec → AI` link in the SDD loop — the AI receives spec context on every session by default instead of relying on the human to copy-paste. Was `specter context` in earlier drafts; folded into `explain` because format + scope are flags, not a new verb.
+  **1. AI context export** — `specter explain --format {claude|cursor|copilot|codex|gemini|all} --all` writes the tool-specific instruction file for each target:
+
+  | Format | Target file | Tool |
+  |---|---|---|
+  | `claude` | `CLAUDE.md` | Claude Code |
+  | `cursor` | `.cursor/rules/` (directory of rule files) | Cursor |
+  | `copilot` | `.github/copilot-instructions.md` | GitHub Copilot |
+  | `codex` | `AGENTS.md` | OpenAI Codex (AGENTS.md is the cross-agent standard also read by other tools) |
+  | `gemini` | `GEMINI.md` | Google Gemini Code Assist / Gemini CLI |
+  | `all` | all of the above in one pass | every tool |
+
+  Output covers tier, objective, constraints, ACs with descriptions, current coverage status, uncovered ACs highlighted. Idempotent (fenced `<!-- specter:begin --> ... <!-- specter:end -->` block preserves developer-authored content outside the fence). Closes the `spec → AI` link in the SDD loop — the AI receives spec context on every session by default instead of relying on the human to copy-paste. Was `specter context` in earlier drafts; folded into `explain` because format + scope are flags, not a new verb. **Implementation note**: target-file paths for `codex` and `gemini` should be verified against current tool conventions at implementation time (the AI-tooling ecosystem's file-name standards are still stabilizing; check the tools' current docs before hardcoding paths).
 
   **2. Schema reference** — `specter explain schema` renders the spec-file JSON Schema to the terminal, generated from `internal/parser/spec-schema.json` (the authoritative source). `specter explain schema --field <name>` (or `-f`) shows details for one field with examples. Supports dot-path lookup (`spec.acceptance_criteria.approval_gate`) and bare shorthand (`approval_gate`); ambiguous shorthand shows all matches. Generated-from-schema approach chosen over rendering `docs/SPEC_SCHEMA_REFERENCE.md` directly: the JSON Schema is the binary's authoritative enforcement source, so the CLI description is guaranteed to match `specter parse` behavior. BUG-3 part 1 was exactly this kind of drift — hand-written markdown saying something the code didn't do. Over time, `SPEC_SCHEMA_REFERENCE.md` becomes a companion doc with examples and tutorials rather than the reference itself.
 
