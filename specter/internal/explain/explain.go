@@ -110,19 +110,32 @@ func RenderSchemaField(schemaJSON []byte, fieldPath string) (string, error) {
 
 // walkSchema traverses a JSON schema document and returns a flat list of all
 // fields with dotted paths. Handles nested objects, arrays (descending into
-// items), and propagates required/default/enum metadata.
+// items), and `$ref` references resolved against the root's `$defs` (or any
+// JSON pointer). A max-depth guard prevents runaway recursion on cyclic refs.
 func walkSchema(schemaJSON []byte) ([]SchemaField, error) {
 	var root map[string]interface{}
 	if err := json.Unmarshal(schemaJSON, &root); err != nil {
 		return nil, fmt.Errorf("parse schema: %w", err)
 	}
 	var fields []SchemaField
-	walkObject(root, "", &fields)
+	walkObject(root, root, "", 0, &fields)
 	sort.Slice(fields, func(i, j int) bool { return fields[i].Path < fields[j].Path })
 	return fields, nil
 }
 
-func walkObject(node map[string]interface{}, prefix string, out *[]SchemaField) {
+const walkMaxDepth = 10
+
+func walkObject(node, root map[string]interface{}, prefix string, depth int, out *[]SchemaField) {
+	if depth > walkMaxDepth {
+		return
+	}
+	// Resolve $ref before anything else so the resolved target drives the walk.
+	if ref, ok := node["$ref"].(string); ok {
+		if resolved := resolveRef(root, ref); resolved != nil {
+			walkObject(resolved, root, prefix, depth+1, out)
+		}
+		return
+	}
 	// Resolve required set at this level.
 	required := map[string]bool{}
 	if reqs, ok := node["required"].([]interface{}); ok {
@@ -142,18 +155,28 @@ func walkObject(node map[string]interface{}, prefix string, out *[]SchemaField) 
 		if prefix != "" {
 			path = prefix + "." + name
 		}
+		// If this property is a $ref, resolve before extracting metadata.
+		target := sub
+		if ref, ok := sub["$ref"].(string); ok {
+			if resolved := resolveRef(root, ref); resolved != nil {
+				target = resolved
+			}
+		}
 		field := SchemaField{
 			Path:     path,
-			Type:     typeOf(sub),
+			Type:     typeOf(target),
 			Required: required[name],
 		}
-		if desc, ok := sub["description"].(string); ok {
+		if desc, ok := target["description"].(string); ok {
+			field.Description = desc
+		} else if desc, ok := sub["description"].(string); ok {
+			// Fallback: description may sit alongside the $ref, not inside it.
 			field.Description = desc
 		}
-		if def, ok := sub["default"]; ok {
+		if def, ok := target["default"]; ok {
 			field.Default = fmt.Sprintf("%v", def)
 		}
-		if enum, ok := sub["enum"].([]interface{}); ok {
+		if enum, ok := target["enum"].([]interface{}); ok {
 			for _, e := range enum {
 				field.Enum = append(field.Enum, fmt.Sprintf("%v", e))
 			}
@@ -163,13 +186,35 @@ func walkObject(node map[string]interface{}, prefix string, out *[]SchemaField) 
 		// Descend: object → properties; array → items.
 		switch field.Type {
 		case "object":
-			walkObject(sub, path, out)
+			walkObject(target, root, path, depth+1, out)
 		case "array":
-			if items, ok := sub["items"].(map[string]interface{}); ok {
-				walkObject(items, path+".items", out)
+			if items, ok := target["items"].(map[string]interface{}); ok {
+				walkObject(items, root, path+".items", depth+1, out)
 			}
 		}
 	}
+}
+
+// resolveRef follows a JSON pointer (e.g., "#/$defs/constraint") from root.
+// Returns nil if the reference cannot be followed.
+func resolveRef(root map[string]interface{}, ref string) map[string]interface{} {
+	if !strings.HasPrefix(ref, "#/") {
+		return nil
+	}
+	parts := strings.Split(ref[2:], "/")
+	var current interface{} = root
+	for _, part := range parts {
+		m, ok := current.(map[string]interface{})
+		if !ok {
+			return nil
+		}
+		current = m[part]
+	}
+	resolved, ok := current.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	return resolved
 }
 
 func typeOf(node map[string]interface{}) string {

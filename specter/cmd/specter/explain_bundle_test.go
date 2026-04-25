@@ -36,7 +36,7 @@ func TestExplainAnnotation_PrintsReference(t *testing.T) {
 
 // @ac AC-08
 func TestExplainSchema_FullReference(t *testing.T) {
-	t.Run("spec-explain/AC-08 schema reference enumerates top-level fields", func(t *testing.T) {
+	t.Run("spec-explain/AC-08 schema reference enumerates top-level and $ref-resolved fields", func(t *testing.T) {
 		dir := t.TempDir()
 		out, code := runCLI(t, dir, "explain", "schema")
 
@@ -44,7 +44,6 @@ func TestExplainSchema_FullReference(t *testing.T) {
 			t.Fatalf("expected exit 0, got %d; output:\n%s", code, out)
 		}
 		// Every required top-level spec field from the embedded JSON schema must appear.
-		// These are declared as required in internal/parser/spec-schema.json.
 		requiredFields := []string{
 			"id",
 			"version",
@@ -59,6 +58,37 @@ func TestExplainSchema_FullReference(t *testing.T) {
 			if !strings.Contains(out, field) {
 				t.Errorf("expected schema reference to contain field %q, got:\n%s", field, out)
 			}
+		}
+		// Guard against $ref regression: items-level fields must appear.
+		// spec.acceptance_criteria.items.approval_gate is the canonical example
+		// named in C-11's description and in the help text — if walkSchema fails
+		// to resolve $ref, these paths silently disappear.
+		refGatedPaths := []string{
+			"spec.acceptance_criteria.items.approval_gate",
+			"spec.constraints.items.id",
+		}
+		for _, path := range refGatedPaths {
+			if !strings.Contains(out, path) {
+				t.Errorf("expected $ref-resolved path %q in schema reference (walkSchema must follow $ref into $defs), got output of %d bytes", path, len(out))
+			}
+		}
+	})
+}
+
+// @ac AC-08
+func TestExplainSchema_FieldPath_RefResolved(t *testing.T) {
+	t.Run("spec-explain/AC-08 schema field lookup resolves through $ref into $defs", func(t *testing.T) {
+		dir := t.TempDir()
+		out, code := runCLI(t, dir, "explain", "schema", "spec.acceptance_criteria.items.approval_gate")
+
+		if code != 0 {
+			t.Fatalf("expected exit 0 for $ref-gated field lookup, got %d; output:\n%s", code, out)
+		}
+		if !strings.Contains(out, "boolean") {
+			t.Errorf("expected type 'boolean' in approval_gate detail, got:\n%s", out)
+		}
+		if !strings.Contains(strings.ToLower(out), "approval") {
+			t.Errorf("expected 'approval' in the description, got:\n%s", out)
 		}
 	})
 }
