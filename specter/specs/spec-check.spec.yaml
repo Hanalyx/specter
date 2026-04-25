@@ -1,6 +1,6 @@
 spec:
   id: spec-check
-  version: "1.1.0"
+  version: "1.2.0"
   status: approved
   tier: 1
 
@@ -25,7 +25,8 @@ spec:
     summary: >
       Perform structural type-checking across the spec dependency graph.
       Detect orphan constraints, structural conflicts between connected specs,
-      and breaking changes between spec versions.
+      breaking changes between spec versions, and (opt-in) test-annotation
+      references that do not match any parsed spec.
     scope:
       includes:
         - "Orphan constraint detection (constraints not referenced by any AC)"
@@ -33,11 +34,13 @@ spec:
         - "Breaking change detection (compare current spec to previous version)"
         - "Tier-aware severity (Tier 1 = error, Tier 3 = warning)"
         - "Diagnostic output with spec ID, constraint ID, and explanation"
+        - "Test-annotation cross-reference (opt-in via --test / -t): scan test files, flag @spec and @ac references that do not match any parsed spec"
       excludes:
         - "Semantic conflict detection (AI-assisted, Phase 8)"
         - "Gap detection (uncovered input paths, Phase 8)"
         - "Cross-project analysis"
         - "Auto-fixing or auto-resolution of conflicts"
+        - "Source-only annotation detection — deferred to v0.12 `unreachable_annotation`"
 
   constraints:
     - id: C-01
@@ -77,6 +80,11 @@ spec:
 
     - id: C-08
       description: "MUST support warn_on_draft mode (CheckOptions.WarnOnDraft=true) that emits a warning diagnostic for every spec with status: draft"
+      type: technical
+      enforcement: error
+
+    - id: C-09
+      description: "MUST support opt-in test-annotation cross-reference mode (`check --test` / `-t`) that scans test files for `@spec <id>` and `@ac AC-NN` source comments, and emits diagnostics for references that do not match any parsed spec; diagnostic kinds are `unknown_spec_ref` (no spec with that id), `unknown_ac_ref` (spec exists but AC id is not declared), and `malformed_ac_id` (AC id does not match `^AC-\\d{2,}$`)"
       type: technical
       enforcement: error
 
@@ -175,7 +183,60 @@ spec:
       references_constraints: ["C-08"]
       priority: high
 
+    - id: AC-09
+      description: "`specter check --test` on a workspace whose test file carries `// @spec bogus-spec` (no such spec exists) emits one `unknown_spec_ref` diagnostic naming the offending spec id and the test file"
+      inputs:
+        test_file: "contains '// @spec bogus-spec'"
+        workspace_specs: "no spec with id bogus-spec"
+      expected_output:
+        diagnostic_kind: "unknown_spec_ref"
+        contains_spec_id: "bogus-spec"
+        contains_file_path: true
+        exit_code_nonzero: true
+      references_constraints: ["C-09"]
+      priority: critical
+
+    - id: AC-10
+      description: "`specter check --test` on a workspace where a test file carries `// @spec real-spec` + `// @ac AC-99` but real-spec declares no AC-99 emits one `unknown_ac_ref` diagnostic"
+      inputs:
+        test_file: "contains '// @spec real-spec' and '// @ac AC-99'"
+        workspace_specs: "real-spec declares AC-01 only"
+      expected_output:
+        diagnostic_kind: "unknown_ac_ref"
+        contains_ac_id: "AC-99"
+        contains_spec_id: "real-spec"
+        exit_code_nonzero: true
+      references_constraints: ["C-09"]
+      priority: critical
+
+    - id: AC-11
+      description: "`specter check --test` on a test file carrying malformed AC ids (`// @ac AC-1` or `// @ac ac-01`) emits `malformed_ac_id` diagnostics for each"
+      inputs:
+        test_file: "contains '// @ac AC-1' and '// @ac ac-01'"
+      expected_output:
+        diagnostic_kind: "malformed_ac_id"
+        malformed_count: 2
+        exit_code_nonzero: true
+      references_constraints: ["C-09"]
+      priority: high
+
+    - id: AC-12
+      description: "`specter sync --strict` routes strict mode through to the check phase, including the `check --test` cross-reference pass; a workspace with an unknown_spec_ref fails `sync --strict`"
+      inputs:
+        test_file: "contains '// @spec bogus-spec'"
+        invocation: "specter sync --strict"
+      expected_output:
+        sync_phase_check_fails: true
+        exit_code_nonzero: true
+      references_constraints: ["C-09"]
+      priority: high
+
   changelog:
+    - version: "1.2.0"
+      date: "2026-04-25"
+      author: "specter-team"
+      type: minor
+      description: "Add C-09 and AC-09..AC-12 — opt-in test-annotation cross-reference (`check --test` / `-t`). Three diagnostic kinds: unknown_spec_ref, unknown_ac_ref, malformed_ac_id. `sync --strict` routes the flag through so CI catches broken test annotations."
     - version: "1.1.0"
       date: "2026-04-14"
       author: "specter-team"
