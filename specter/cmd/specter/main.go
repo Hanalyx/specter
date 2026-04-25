@@ -897,7 +897,7 @@ func syncCmd() *cobra.Command {
 				CheckOpts:            checkOpts,
 				OnlyPhase:            onlyPhase,
 				Results:              results,
-				CheckTestAnnotations: strict, // spec-check C-09/AC-12: sync --strict routes through
+				CheckTestAnnotations: strict || m.Settings.Strict, // spec-check C-09/AC-12: sync --strict (or settings.strict) routes through
 			})
 
 			if jsonOutput {

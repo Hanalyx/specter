@@ -29,11 +29,16 @@ import (
 // internal/coverage's extraction regexes — the checker wants the raw @ac
 // value to classify malformed vs. unknown, whereas coverage wants only the
 // strictly-parsable AC ids.
+//
+// tacLooseAcRE catches near-attempts: `\d+\w*` extends past the digit run so
+// suffixed forms like `AC-1A` still flag as malformed instead of slipping
+// past both regexes silently. Anchoring on a digit keeps prose words like
+// "acceleration" from falsely matching.
 var (
 	tacSpecRefRE  = regexp.MustCompile(`^\s*(?://|#|\*)\s*@spec\s+([\w-]+)`)
 	tacAcRefRE    = regexp.MustCompile(`^\s*(?://|#|\*)\s*@ac\s+(.+)`)
 	tacStrictAcRE = regexp.MustCompile(`^AC-\d{2,}$`)
-	tacLooseAcRE  = regexp.MustCompile(`(?i)\bac[-_]?\d+\b`)
+	tacLooseAcRE  = regexp.MustCompile(`(?i)\bac[-_]?\d+\w*\b`)
 )
 
 // CheckTestAnnotations scans test-file contents and returns diagnostics for
@@ -72,8 +77,29 @@ func scanFileAnnotations(path, content string, validACs map[string]map[string]bo
 	var diags []CheckDiagnostic
 	currentSpec := ""
 
+	// Multi-line string state. Annotations appearing inside a backtick template
+	// literal (TS/JS/Go raw string) or a Python triple-quoted string are
+	// payload, not real annotations — skip them. Mirrors the scanner in
+	// internal/coverage.ExtractAnnotations.
+	var inBacktick, inTripleDouble, inTripleSingle bool
+
 	for lineIdx, line := range strings.Split(content, "\n") {
 		lineNum := lineIdx + 1
+		lineStartsInString := inBacktick || inTripleDouble || inTripleSingle
+
+		trimmed := strings.TrimSpace(line)
+		isCommentLine := !lineStartsInString && (strings.HasPrefix(trimmed, "//") ||
+			strings.HasPrefix(trimmed, "#") ||
+			strings.HasPrefix(trimmed, "*"))
+
+		if !isCommentLine {
+			// Update string state on non-comment lines, then move on. Real
+			// annotations only live in comment lines.
+			inBacktick, inTripleDouble, inTripleSingle = updateMultilineStringState(
+				line, inBacktick, inTripleDouble, inTripleSingle,
+			)
+			continue
+		}
 
 		if m := tacSpecRefRE.FindStringSubmatch(line); len(m) > 1 {
 			currentSpec = m[1]
@@ -133,4 +159,92 @@ func scanFileAnnotations(path, content string, validACs map[string]map[string]bo
 		}
 	}
 	return diags
+}
+
+// updateMultilineStringState mirrors internal/coverage.updateMultilineStringState.
+// Duplicated rather than imported because internal/coverage already imports
+// internal/checker (cycle). BACKLOG candidate: extract to internal/textscan.
+func updateMultilineStringState(line string, inBacktick, inTripleDouble, inTripleSingle bool) (bool, bool, bool) {
+	inSingle := false
+	inDouble := false
+	n := len(line)
+	for i := 0; i < n; {
+		if inBacktick {
+			if line[i] == '\\' && i+1 < n {
+				i += 2
+				continue
+			}
+			if line[i] == '`' {
+				inBacktick = false
+			}
+			i++
+			continue
+		}
+		if inTripleDouble {
+			if i+2 < n && line[i] == '"' && line[i+1] == '"' && line[i+2] == '"' {
+				inTripleDouble = false
+				i += 3
+				continue
+			}
+			i++
+			continue
+		}
+		if inTripleSingle {
+			if i+2 < n && line[i] == '\'' && line[i+1] == '\'' && line[i+2] == '\'' {
+				inTripleSingle = false
+				i += 3
+				continue
+			}
+			i++
+			continue
+		}
+		if inSingle {
+			if line[i] == '\\' && i+1 < n {
+				i += 2
+				continue
+			}
+			if line[i] == '\'' {
+				inSingle = false
+			}
+			i++
+			continue
+		}
+		if inDouble {
+			if line[i] == '\\' && i+1 < n {
+				i += 2
+				continue
+			}
+			if line[i] == '"' {
+				inDouble = false
+			}
+			i++
+			continue
+		}
+		if i+1 < n && line[i] == '/' && line[i+1] == '/' {
+			return inBacktick, inTripleDouble, inTripleSingle
+		}
+		if line[i] == '#' {
+			return inBacktick, inTripleDouble, inTripleSingle
+		}
+		if i+2 < n && line[i] == '"' && line[i+1] == '"' && line[i+2] == '"' {
+			inTripleDouble = true
+			i += 3
+			continue
+		}
+		if i+2 < n && line[i] == '\'' && line[i+1] == '\'' && line[i+2] == '\'' {
+			inTripleSingle = true
+			i += 3
+			continue
+		}
+		switch line[i] {
+		case '`':
+			inBacktick = true
+		case '"':
+			inDouble = true
+		case '\'':
+			inSingle = true
+		}
+		i++
+	}
+	return inBacktick, inTripleDouble, inTripleSingle
 }

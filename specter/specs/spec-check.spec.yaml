@@ -84,7 +84,7 @@ spec:
       enforcement: error
 
     - id: C-09
-      description: "MUST support opt-in test-annotation cross-reference mode (`check --test` / `-t`) that scans test files for `@spec <id>` and `@ac AC-NN` source comments, and emits diagnostics for references that do not match any parsed spec; diagnostic kinds are `unknown_spec_ref` (no spec with that id), `unknown_ac_ref` (spec exists but AC id is not declared), and `malformed_ac_id` (AC id does not match `^AC-\\d{2,}$`)"
+      description: "MUST support opt-in test-annotation cross-reference mode (`check --test` / `-t`) that scans test files for `@spec <id>` and `@ac AC-NN` source comments, and emits diagnostics for references that do not resolve. Diagnostic kinds: `unknown_spec_ref` (no spec with that id), `unknown_ac_ref` (spec exists but AC id is not declared), `malformed_ac_id` (AC id fails `^AC-\\d{2,}$`). Scanner skips lines inside multi-line string literals (TS/JS template, Python triple-quote) — annotations there are payload. Cascade rule: when `@spec` is unknown, child `@ac` lines under it are not separately checked. Ordering rule: `@ac` lines before any `@spec` are not checked. Repeat `@ac` mentions of the same id emit one diagnostic per occurrence (no dedup)."
       type: technical
       enforcement: error
 
