@@ -81,39 +81,47 @@ The CI gate (`specter sync`) already enforces annotated tests must exist. This p
 
 **CLI surface discipline**: no new top-level verbs. `specter context` folds into `explain --format`; `specter hook install` folds into `init --install-hook`.
 
-- **`specter explain` v0.11 bundle.** Extends the existing `explain <spec-id>` / `explain <spec-id>:AC-NN` verb with three new surfaces plus an AI-consumable output format. One verb, coherent design. No new top-level commands.
+- **`specter explain` v0.11 bundle (terminal-output only).** Extends the existing `explain <spec-id>` / `explain <spec-id>:AC-NN` verb with three new read-only surfaces. **`explain` writes to stdout only — never to files.** File-writing for AI tooling lives on `init --ai <tool>` (separate bullet below).
 
-  **1. AI context export** — `specter explain --format {claude|cursor|copilot|codex|gemini} --all` writes the tool-specific instruction file for the chosen target:
+  **Verb discipline**: every `specter explain *` command prints to terminal. No `--format <tool>` flag that writes to disk. Developers who want to capture output redirect with shell (`> file.md`). Earlier drafts of this BACKLOG entry overloaded `explain` with file-writing — that violated the read-only semantics of the verb and the "one verb, one concern" CLI discipline. Reverted before implementation.
 
-  | Format | Target file | Tool |
-  |---|---|---|
-  | `claude` | `CLAUDE.md` | Claude Code |
-  | `cursor` | `.cursor/rules/` (directory of rule files) | Cursor |
-  | `copilot` | `.github/copilot-instructions.md` | GitHub Copilot |
-  | `codex` | `AGENTS.md` | OpenAI Codex (AGENTS.md is the cross-agent standard also read by other tools) |
-  | `gemini` | `GEMINI.md` | Google Gemini Code Assist / Gemini CLI |
+  **1. Schema reference** — `specter explain schema` prints the spec-file JSON Schema in human-readable form, generated from `internal/parser/spec-schema.json` (authoritative source). `specter explain schema --field <name>` (or `-f`) shows details for one field with examples. Supports dot-path lookup (`spec.acceptance_criteria.approval_gate`) and bare shorthand (`approval_gate`); ambiguous shorthand shows all matches. Generated-from-schema approach chosen over rendering `docs/SPEC_SCHEMA_REFERENCE.md` directly: the JSON Schema is the binary's authoritative enforcement source, so the CLI description is guaranteed to match `specter parse` behavior. BUG-3 part 1 was exactly this kind of drift. Over time, `SPEC_SCHEMA_REFERENCE.md` becomes a companion doc with examples and tutorials rather than the reference itself.
 
-  One target per invocation. Teams that use multiple AI tools run the command once per format (e.g. via a `make ai-context` target or CI step). Multi-target via repeated `--format` flag is left as an implementation choice; not specified here. The deliberate single-target shape avoids hidden multi-file writes that surprise operators and keeps the `--format` flag's semantics simple (one flag, one file).
+  **2. Annotation reference** — `specter explain annotation` prints `docs/TEST_ANNOTATION_REFERENCE.md` (embedded via `//go:embed`) through a markdown-to-terminal renderer with pagination for long output. No field-lookup subcommand — the doc is prose-first, not field-structured; developers who want a specific section pipe to `grep`. Ships the existing hand-written reference to the terminal unchanged.
 
-  Output covers tier, objective, constraints, ACs with descriptions, current coverage status, uncovered ACs highlighted. Idempotent (fenced `<!-- specter:begin --> ... <!-- specter:end -->` block preserves developer-authored content outside the fence). Closes the `spec → AI` link in the SDD loop — the AI receives spec context on every session by default instead of relying on the human to copy-paste. Was `specter context` in earlier drafts; folded into `explain` because format + scope are flags, not a new verb. **Implementation note**: target-file paths for `codex` and `gemini` should be verified against current tool conventions at implementation time (the AI-tooling ecosystem's file-name standards are still stabilizing; check the tools' current docs before hardcoding paths).
+  **3. AC-less spec card** — `specter explain <spec-id>` (no AC suffix) renders a human-readable spec card: tier, coverage %, test files covering each AC, uncovered ACs with descriptions. Closes the "where do I look to verify this spec?" gap. Pure presentation over `specter coverage --json`; no new data collection. Already implemented on parked branch `feat/explain-spec-card` (4 commits) — needs rebase + merge.
 
-  **2. Schema reference** — `specter explain schema` renders the spec-file JSON Schema to the terminal, generated from `internal/parser/spec-schema.json` (the authoritative source). `specter explain schema --field <name>` (or `-f`) shows details for one field with examples. Supports dot-path lookup (`spec.acceptance_criteria.approval_gate`) and bare shorthand (`approval_gate`); ambiguous shorthand shows all matches. Generated-from-schema approach chosen over rendering `docs/SPEC_SCHEMA_REFERENCE.md` directly: the JSON Schema is the binary's authoritative enforcement source, so the CLI description is guaranteed to match `specter parse` behavior. BUG-3 part 1 was exactly this kind of drift — hand-written markdown saying something the code didn't do. Over time, `SPEC_SCHEMA_REFERENCE.md` becomes a companion doc with examples and tutorials rather than the reference itself.
+  **Parity test** (carries over from earlier draft): `specter explain schema` stdout for each field must include the field's JSON Schema `description` verbatim. CI fails if a refactor drops a field description. Complements the CLI-docs parity tests in Infrastructure follow-ups.
 
-  **3. Annotation reference** — `specter explain annotation` renders `docs/TEST_ANNOTATION_REFERENCE.md` (embedded via `//go:embed`) through a markdown-to-terminal renderer with pagination for long output. No field-lookup subcommand — the doc is prose-first, not field-structured; developers who want a specific section pipe to `grep`. Ships the existing hand-written reference to the terminal unchanged.
+  **Scope estimate**: `explain annotation` is half a day (embed + markdown render). `explain schema` is 2-3 days (schema walker, type/default inference, field-path lookup, example rendering). AC-less spec card is parked, mostly done. Total ~3-4 days excluding the parked branch's rebase work.
 
-  **4. `--format` extension for schema + annotation** — both `specter explain schema` and `specter explain annotation` accept the same `--format {claude|cursor|copilot|codex|gemini}` flag. `specter explain --all --format claude` emits the workspace specs to `CLAUDE.md`; `specter explain schema --format claude` appends the schema reference to the same file (or its dedicated section); `specter explain annotation --format claude` appends the annotation reference. Three commands per tool, but each is a single explicit write — AI assistants end up with the complete context (specs + schema + annotations) without `--format all` quietly fanning writes across five different files.
+- **`init` family additions — v0.11 scope.** Project-bootstrap commands that write project state. Both bullets below extend the existing `init` verb:
 
-  **`specter sync --update-context` flag** regenerates context files as part of the sync pipeline — keeps them honest when specs change.
-
-  **Parity test**: `specter explain schema` output for each field must include the field's JSON Schema `description` verbatim. CI fails if a refactor drops a field description. Complements the CLI-docs parity tests in Infrastructure follow-ups — catches drift between the binary's enforcement and the binary's explanation.
-
-  **Scope estimate**: `explain annotation` is half a day (embed + markdown render). `explain schema` is 2-3 days (schema walker, type/default inference, field-path lookup, example rendering). `--format {claude|cursor|copilot|codex|gemini}` on the three surfaces is another day once the core infrastructure exists. Total ~1 week, shared design surface across all items.
-
-- **Pre-push hook integration** — `specter init --install-hook` writes a git pre-push hook that:
-  - Blocks pushes where implementation files changed but no corresponding `@spec`/`@ac` annotation was added or updated in the diff
-  - Reports which specs are affected and which ACs have no test annotation in the changeset
-  - Bypass with `git push --no-verify` (documented, discouraged)
+  **`specter init --install-hook`** — writes a git pre-push hook that:
+  - Blocks pushes where implementation files changed but no corresponding `@spec`/`@ac` annotation was added or updated in the diff.
+  - Reports which specs are affected and which ACs have no test annotation in the changeset.
+  - Bypass with `git push --no-verify` (documented, discouraged).
   - Rationale: `init` is the project-bootstrap verb; hook install is one-shot bootstrap, same family as `init --refresh`.
+
+  **`specter init --ai <tool>`** — writes a small (~30 line), stable AI-assistant instruction file telling the AI HOW to use this project's SDD discipline:
+
+  | `--ai <tool>` | Target file |
+  |---|---|
+  | `claude` | `CLAUDE.md` |
+  | `cursor` | `.cursor/rules/specter.md` |
+  | `copilot` | `.github/copilot-instructions.md` |
+  | `codex` | `AGENTS.md` |
+  | `gemini` | `GEMINI.md` |
+
+  One target per invocation. Teams using multiple AI tools run the command once per `<tool>`. **Implementation note**: target-file paths and instruction-file conventions for each tool are still stabilizing across the AI-tooling ecosystem; verify against each tool's current docs before hardcoding paths.
+
+  **What the file contains** (intentionally NOT spec content): a project guide telling the AI how to interact with Specter — where specs live, how to read them on demand (`specter explain <spec-id>`, `specter explain schema`, `specter explain annotation`), the test-annotation conventions, the strictness level configured in `specter.yaml`, the make targets for the gate. Stable across spec edits — file changes only when project config changes (manifest edits, strictness change, etc.). Idempotent fenced `<!-- specter:begin --> ... <!-- specter:end -->` block preserves developer-authored content outside the fence.
+
+  **Why it doesn't dump spec content**: a 249-spec workspace would produce a 10000-line CLAUDE.md, churn on every spec edit, and consume AI context budget reserved for the actual task. The AI doesn't need full spec content pre-loaded — it needs to know specs EXIST, WHERE they live, and HOW to read them on demand. The `specter explain <spec-id>` shell-out from inside an AI session is fast and produces current content, not a stale snapshot.
+
+  **Open design question — what makes instructions actually get followed?** Subject of dedicated research before implementation. Current AI tooling has multiple persistence patterns: instruction files (CLAUDE.md, AGENTS.md, etc.) loaded at session start, plus `memory.md` and similar mechanisms for "always top of mind" reinforcement. Effective phrasing (imperative vs descriptive), section ordering, and reinforcement strategies need empirical testing before the file's final shape is decided. Multi-agent research scheduled.
+
+  **Scope estimate**: `init --install-hook` is 1-2 days (Go template for the hook, `init` flag plumbing, integration test). `init --ai <tool>` is 2-3 days once the instruction-file design is settled (template per tool, manifest readback, idempotency markers, integration test). The instruction-file design phase is itself ~half a week of research + draft + multi-agent review.
 
 - **`.specter-results.json` test runner adapters** — first-party adapters that write pass/fail results automatically so the pass-rate-aware coverage loop closes end-to-end without manual results-file maintenance:
   - Go: `go test -json | specter results ingest`
