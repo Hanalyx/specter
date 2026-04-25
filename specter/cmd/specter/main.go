@@ -545,6 +545,7 @@ func checkCmd() *cobra.Command {
 	var jsonOutput bool
 	var tierOverride int
 	var strict bool
+	var testAnnotations bool
 	cmd := &cobra.Command{
 		Use:   "check",
 		Short: "Run type-checking rules across the spec graph",
@@ -581,8 +582,33 @@ func checkCmd() *cobra.Command {
 
 			result := checker.CheckSpecs(graph, opts)
 
-			// Tier conflict warnings (C-14)
+			// C-09: opt-in test-annotation cross-reference.
 			_, specs, _ := parseAllSpecs(files)
+			if testAnnotations {
+				testFiles := discoverTestFiles("")
+				contents := make(map[string]string, len(testFiles))
+				for _, path := range testFiles {
+					data, err := os.ReadFile(path)
+					if err != nil {
+						continue
+					}
+					contents[path] = string(data)
+				}
+				taDiags := checker.CheckTestAnnotations(contents, specs)
+				result.Diagnostics = append(result.Diagnostics, taDiags...)
+				for _, d := range taDiags {
+					switch d.Severity {
+					case "error":
+						result.Summary.Errors++
+					case "warning":
+						result.Summary.Warnings++
+					case "info":
+						result.Summary.Info++
+					}
+				}
+			}
+
+			// Tier conflict warnings (C-14)
 			tierConflicts := manifest.CheckTierConflicts(specs, m)
 
 			if jsonOutput {
@@ -630,6 +656,7 @@ func checkCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
 	cmd.Flags().IntVar(&tierOverride, "tier", 0, "Override tier enforcement level")
 	cmd.Flags().BoolVar(&strict, "strict", false, "Treat warnings as errors (also set via settings.strict in specter.yaml)")
+	cmd.Flags().BoolVarP(&testAnnotations, "test", "t", false, "Cross-reference test-file @spec/@ac annotations against parsed specs")
 	return cmd
 }
 
@@ -864,12 +891,13 @@ func syncCmd() *cobra.Command {
 			}
 
 			result := specsync.RunSync(specsync.SyncInput{
-				SpecFiles:  specContents,
-				TestFiles:  testContents,
-				Thresholds: m.CoverageThresholds(),
-				CheckOpts:  checkOpts,
-				OnlyPhase:  onlyPhase,
-				Results:    results,
+				SpecFiles:            specContents,
+				TestFiles:            testContents,
+				Thresholds:           m.CoverageThresholds(),
+				CheckOpts:            checkOpts,
+				OnlyPhase:            onlyPhase,
+				Results:              results,
+				CheckTestAnnotations: strict, // spec-check C-09/AC-12: sync --strict routes through
 			})
 
 			if jsonOutput {
