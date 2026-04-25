@@ -176,6 +176,7 @@ func main() {
 	root.AddCommand(diffCmd())
 	root.AddCommand(ingestCmd())
 	root.AddCommand(feedbackCmd())
+	root.AddCommand(prePushCheckCmd())
 
 	if err := root.Execute(); err != nil {
 		// errSilent is our sentinel for "command already printed diagnostics
@@ -1190,18 +1191,38 @@ func loadManifest() (*manifest.Manifest, string) {
 
 func initCmd() *cobra.Command {
 	var (
-		name     string
-		force    bool
-		template string
-		refresh  bool
-		dryRun   bool
+		name        string
+		force       bool
+		template    string
+		refresh     bool
+		dryRun      bool
+		installHook bool
+		aiTool      string
 	)
 
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize a specter.yaml project manifest",
-		Long:  "Scaffold a specter.yaml file from existing .spec.yaml files in the current directory. Groups all specs into a default domain with sensible settings.\n\nWith --template, creates a draft .spec.yaml file instead of specter.yaml.\n\nWith --refresh, updates only domains.default.specs in an existing manifest; preserves every other field.",
+		Long:  "Scaffold a specter.yaml file from existing .spec.yaml files in the current directory. Groups all specs into a default domain with sensible settings.\n\nWith --template, creates a draft .spec.yaml file instead of specter.yaml.\n\nWith --refresh, updates only domains.default.specs in an existing manifest; preserves every other field.\n\nWith --install-hook, writes a git pre-push hook that blocks pushes lacking @spec/@ac annotation deltas.\n\nWith --ai <tool>, writes an AI assistant instruction file for the given tool (claude, codex, cursor, copilot, gemini).",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// --install-hook and --ai are different write targets; combining
+			// them silently would skip the second flag (early return). Reject
+			// the combination explicitly so users see the conflict.
+			if installHook && aiTool != "" {
+				fmt.Fprintln(os.Stderr, "error: --install-hook and --ai are different write targets and cannot be combined; run them in separate invocations.")
+				return errSilent
+			}
+
+			// --install-hook: write the git pre-push hook.
+			if installHook {
+				return runInitInstallHook()
+			}
+
+			// --ai <tool>: write the per-tool AI instruction file.
+			if aiTool != "" {
+				return runInitAI(aiTool)
+			}
+
 			// --template: create a spec file, not specter.yaml
 			if template != "" {
 				return runInitTemplate(template, force)
@@ -1297,8 +1318,139 @@ func initCmd() *cobra.Command {
 	cmd.Flags().StringVar(&template, "template", "", "Create a spec file from a template (api-endpoint, service, auth, data-model)")
 	cmd.Flags().BoolVar(&refresh, "refresh", false, "Update domains.default.specs in an existing specter.yaml from the current on-disk spec list; preserves all other fields")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "With --refresh, print the proposed change to stdout without writing the file")
+	cmd.Flags().BoolVar(&installHook, "install-hook", false, "Install a git pre-push hook that blocks pushes lacking @spec/@ac annotation deltas")
+	cmd.Flags().StringVar(&aiTool, "ai", "", "Write an AI assistant instruction file for the named tool (claude, codex, cursor, copilot, gemini)")
 
 	return cmd
+}
+
+// runInitInstallHook implements `specter init --install-hook` (C-22 / AC-27..29).
+// Writes .git/hooks/pre-push with mode 0755, wrapping the hook script in a
+// fenced region so re-runs replace only the Specter-managed body.
+func runInitInstallHook() error {
+	hookDir := filepath.Join(".git", "hooks")
+	if _, err := os.Stat(".git"); err != nil {
+		fmt.Fprintln(os.Stderr, "error: .git directory not found. Run `specter init --install-hook` from a git repository root.")
+		return errSilent
+	}
+	if err := os.MkdirAll(hookDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "error creating %s: %v\n", hookDir, err)
+		return errSilent
+	}
+
+	hookPath := filepath.Join(hookDir, "pre-push")
+	existing := ""
+	if data, err := os.ReadFile(hookPath); err == nil {
+		existing = string(data)
+	}
+
+	// PrePushHookScript() returns the full fenced template (shebang + markers
+	// + body). Extract the body so ReplaceFencedRegion adds exactly one set
+	// of markers around it. Hook uses shell-comment markers — HTML-comment
+	// markers would be a syntax error in sh.
+	hookMarkers := manifest.ShellMarkers("v1")
+	hookBody := extractFencedBody(manifest.PrePushHookScript(), hookMarkers)
+	body, err := manifest.ReplaceFencedRegion(existing, hookMarkers, hookBody)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error rendering hook: %v\n", err)
+		return errSilent
+	}
+	// Ensure the file starts with a shebang. ReplaceFencedRegion preserves
+	// out-of-fence content, so a previously-written shebang survives; if
+	// existing was empty we need to prepend.
+	if !strings.HasPrefix(body, "#!") {
+		body = "#!/bin/sh\n" + body
+	}
+
+	if err := os.WriteFile(hookPath, []byte(body), 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "error writing %s: %v\n", hookPath, err)
+		return errSilent
+	}
+	// WriteFile preserves the requested mode on creation but not on overwrite
+	// of an existing file — chmod explicitly to ensure executable.
+	if err := os.Chmod(hookPath, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "error chmod %s: %v\n", hookPath, err)
+		return errSilent
+	}
+
+	fmt.Printf("Installed git pre-push hook at %s\n", hookPath)
+	fmt.Println("Hook blocks pushes that change implementation files without @spec/@ac annotation deltas.")
+	fmt.Println("Bypass with: git push --no-verify")
+	return nil
+}
+
+// runInitAI implements `specter init --ai <tool>` (C-23 / AC-30..36).
+// Writes the per-tool instruction file with the v0.11 fenced template.
+func runInitAI(tool string) error {
+	target, err := manifest.AITargetPath(tool)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return errSilent
+	}
+
+	// AC-36: claude with existing AGENTS.md uses @AGENTS.md import instead of inlining.
+	hasAgentsMd := false
+	if tool == "claude" {
+		if _, err := os.Stat("AGENTS.md"); err == nil {
+			hasAgentsMd = true
+		}
+	}
+
+	rendered, err := manifest.RenderAIInstructions(tool, hasAgentsMd)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return errSilent
+	}
+
+	// If the target already exists, replace only the fenced region; preserve
+	// out-of-fence content byte-for-byte (AC-35).
+	existing := ""
+	if data, err := os.ReadFile(target); err == nil {
+		existing = string(data)
+	}
+	// Extract the body from the freshly-rendered template (which is fully
+	// fenced with markdown markers) and apply it via ReplaceFencedRegion to
+	// the existing file.
+	mdMarkers := manifest.MarkdownMarkers("v1")
+	body := extractFencedBody(rendered, mdMarkers)
+	final, err := manifest.ReplaceFencedRegion(existing, mdMarkers, body)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return errSilent
+	}
+
+	// Create parent dir if needed (AC-32 / AC-33).
+	if dir := filepath.Dir(target); dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			fmt.Fprintf(os.Stderr, "error creating %s: %v\n", dir, err)
+			return errSilent
+		}
+	}
+
+	if err := os.WriteFile(target, []byte(final), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "error writing %s: %v\n", target, err)
+		return errSilent
+	}
+
+	fmt.Printf("Wrote %s instruction file at %s (%d bytes)\n", tool, target, len(final))
+	if tool == "claude" && hasAgentsMd {
+		fmt.Println("Detected existing AGENTS.md — CLAUDE.md uses @AGENTS.md import to avoid duplicating the template.")
+	}
+	return nil
+}
+
+// extractFencedBody pulls the in-fence body out of a freshly-rendered template,
+// stripping the begin/end markers so the body can be re-applied via
+// ReplaceFencedRegion to a target that may already have its own out-of-fence
+// content.
+func extractFencedBody(fenced string, markers manifest.FencedMarkers) string {
+	bIdx := strings.Index(fenced, markers.Begin)
+	eIdx := strings.Index(fenced, markers.End)
+	if bIdx < 0 || eIdx < 0 || eIdx < bIdx {
+		return fenced
+	}
+	body := fenced[bIdx+len(markers.Begin) : eIdx]
+	return strings.Trim(body, "\n")
 }
 
 // runInitRefresh implements `specter init --refresh` (C-17 through C-21).
