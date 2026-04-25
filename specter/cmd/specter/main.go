@@ -176,6 +176,7 @@ func main() {
 	root.AddCommand(diffCmd())
 	root.AddCommand(ingestCmd())
 	root.AddCommand(feedbackCmd())
+	root.AddCommand(prePushCheckCmd())
 
 	if err := root.Execute(); err != nil {
 		// errSilent is our sentinel for "command already printed diagnostics
