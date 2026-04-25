@@ -35,12 +35,13 @@ type SyncResult struct {
 
 // SyncInput provides spec and test file contents.
 type SyncInput struct {
-	SpecFiles  []FileContent // [filepath, content]
-	TestFiles  []FileContent
-	Thresholds map[int]int           // optional coverage thresholds by tier; nil uses defaults
-	CheckOpts  *checker.CheckOptions // optional check options (strict, warn_on_draft)
-	OnlyPhase  string                // C-05: if set, run prerequisites without halting then run this phase
-	Results    *coverage.ResultsFile // optional: pass-rate-aware coverage for Tier 1
+	SpecFiles            []FileContent // [filepath, content]
+	TestFiles            []FileContent
+	Thresholds           map[int]int           // optional coverage thresholds by tier; nil uses defaults
+	CheckOpts            *checker.CheckOptions // optional check options (strict, warn_on_draft)
+	OnlyPhase            string                // C-05: if set, run prerequisites without halting then run this phase
+	Results              *coverage.ResultsFile // optional: pass-rate-aware coverage for Tier 1
+	CheckTestAnnotations bool                  // spec-check C-09: run CheckTestAnnotations in the check phase (opt-in; `sync --strict` sets this)
 }
 
 type FileContent struct {
@@ -134,6 +135,27 @@ func RunSync(input SyncInput) *SyncResult {
 
 	// Phase 3: Check
 	checkResult := checker.CheckSpecs(graph, input.CheckOpts)
+
+	// spec-check C-09: opt-in test-annotation cross-reference pass.
+	if input.CheckTestAnnotations {
+		contents := make(map[string]string, len(input.TestFiles))
+		for _, f := range input.TestFiles {
+			contents[f.Path] = f.Content
+		}
+		taDiags := checker.CheckTestAnnotations(contents, specs)
+		checkResult.Diagnostics = append(checkResult.Diagnostics, taDiags...)
+		for _, d := range taDiags {
+			switch d.Severity {
+			case "error":
+				checkResult.Summary.Errors++
+			case "warning":
+				checkResult.Summary.Warnings++
+			case "info":
+				checkResult.Summary.Info++
+			}
+		}
+	}
+
 	result.CheckResult = checkResult
 
 	if checkResult.Summary.Errors > 0 {
