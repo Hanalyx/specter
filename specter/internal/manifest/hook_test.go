@@ -14,11 +14,11 @@ import (
 func TestShouldBlockPush_ImplOnly_Blocks(t *testing.T) {
 	t.Run("spec-manifest/AC-28 impl-only diff blocks push", func(t *testing.T) {
 		diff := PushDiffSummary{
-			ImplFilesChanged:   []string{"internal/foo/bar.go"},
-			TestFilesChanged:   nil,
-			DocFilesChanged:    nil,
-			SpecFilesChanged:   nil,
-			AnnotationDelta:    false,
+			ImplFilesChanged: []string{"internal/foo/bar.go"},
+			TestFilesChanged: nil,
+			DocFilesChanged:  nil,
+			SpecFilesChanged: nil,
+			AnnotationDelta:  false,
 		}
 		if !ShouldBlockPush(diff) {
 			t.Errorf("expected impl-only diff to block, did not")
