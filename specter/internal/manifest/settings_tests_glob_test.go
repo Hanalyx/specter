@@ -16,7 +16,7 @@ func TestParseManifest_TestsGlob_StringForm(t *testing.T) {
 			t.Fatalf("ParseManifest: %v", err)
 		}
 		want := []string{"tests/**/*.py"}
-		if !reflect.DeepEqual(m.Settings.TestsGlob, want) {
+		if !reflect.DeepEqual([]string(m.Settings.TestsGlob), want) {
 			t.Errorf("TestsGlob = %v, want %v", m.Settings.TestsGlob, want)
 		}
 	})
@@ -31,7 +31,7 @@ func TestParseManifest_TestsGlob_ListForm(t *testing.T) {
 			t.Fatalf("ParseManifest: %v", err)
 		}
 		want := []string{"tests/**/*.py", "integration/**/*.py"}
-		if !reflect.DeepEqual(m.Settings.TestsGlob, want) {
+		if !reflect.DeepEqual([]string(m.Settings.TestsGlob), want) {
 			t.Errorf("TestsGlob = %v, want %v", m.Settings.TestsGlob, want)
 		}
 	})

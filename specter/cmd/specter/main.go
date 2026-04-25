@@ -640,6 +640,7 @@ func coverageCmd() *cobra.Command {
 	var failingOnly bool
 	var strict bool
 	var scope string
+	var strictnessFlag string
 	cmd := &cobra.Command{
 		Use:   "coverage",
 		Short: "Generate spec-to-test traceability matrix",
@@ -662,7 +663,19 @@ func coverageCmd() *cobra.Command {
 				specFileByID[in.Spec.ID] = in.File
 			}
 
-			testFiles := discoverTestFiles(testsGlob)
+			m, _ := loadManifest()
+
+			// C-25: when --tests is unset, fall back to settings.tests_glob.
+			// First entry wins for the discoverTestFiles call (it accepts a single
+			// glob); the manifest can carry multiple but we use the first as the
+			// primary discovery hint. discoverTestFiles falls back to walking "."
+			// when its argument is empty.
+			effectiveTestsGlob := testsGlob
+			if effectiveTestsGlob == "" && len(m.Settings.TestsGlob) > 0 {
+				effectiveTestsGlob = m.Settings.TestsGlob[0]
+			}
+
+			testFiles := discoverTestFiles(effectiveTestsGlob)
 			var allAnnotations []coverage.AnnotationMatch
 			for _, f := range testFiles {
 				data, err := os.ReadFile(f)
@@ -672,7 +685,34 @@ func coverageCmd() *cobra.Command {
 				allAnnotations = append(allAnnotations, coverage.ExtractAnnotations(string(data), f)...)
 			}
 
-			m, _ := loadManifest()
+			// Resolve effective strictness: CLI flag overrides manifest setting.
+			effectiveStrictness := m.Settings.Strictness
+			if strictnessFlag != "" {
+				effectiveStrictness = strictnessFlag
+			}
+			if effectiveStrictness == "" {
+				effectiveStrictness = "threshold"
+			}
+
+			// C-24: --strict combined with strictness=annotation is incoherent
+			// (annotation mode is for new adopters; strict requires runner-visible
+			// annotations). Fail-fast with a clear message.
+			if strict && effectiveStrictness == "annotation" {
+				fmt.Fprintln(os.Stderr, "error: --strict requires settings.strictness >= threshold; current strictness is annotation")
+				fmt.Fprintln(os.Stderr, "       set settings.strictness to 'threshold' or 'zero-tolerance' in specter.yaml, or pass --strictness <level>")
+				return errSilent
+			}
+
+			// C-27: empty test discovery under --strict surfaces a warning.
+			// Under zero-tolerance, the warning becomes a hard error.
+			if strict && len(allAnnotations) == 0 {
+				fmt.Fprintln(os.Stderr, "warn: no test files contained @spec/@ac annotations — coverage will report 0% for every spec")
+				fmt.Fprintln(os.Stderr, "      set settings.tests_glob in specter.yaml or pass --tests <glob>")
+				if effectiveStrictness == "zero-tolerance" {
+					fmt.Fprintln(os.Stderr, "error: zero-tolerance strictness requires at least one annotated test file")
+					return errSilent
+				}
+			}
 
 			// AC-25: resolve --scope domain to a set of spec IDs.
 			// Unknown domain → fail-fast listing valid names.
@@ -803,6 +843,39 @@ func coverageCmd() *cobra.Command {
 				fmt.Printf("  run: specter explain %s:%s\n", w.DependsOn, w.UncoveredACs[0])
 			}
 
+			// C-25 / AC-28: zero-tolerance fails on any non-passed annotated AC,
+			// regardless of whether the spec's tier-coverage % met its threshold.
+			// Exit code 2 distinguishes strictness violation from threshold failure.
+			//
+			// C-26 / AC-29: zero-tolerance also fails on approval_gate=true with
+			// unset approval_date. Exit code 3 distinguishes approval-gate violation.
+			if effectiveStrictness == "zero-tolerance" {
+				if results != nil {
+					nonPassed := 0
+					for _, r := range results.Results {
+						if r.Status != "" && r.Status != "passed" {
+							nonPassed++
+						}
+					}
+					if nonPassed > 0 {
+						fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d annotated AC(s) did not pass\n", nonPassed)
+						os.Exit(2)
+					}
+				}
+				gateViolations := 0
+				for _, s := range specs {
+					for _, ac := range s.AcceptanceCriteria {
+						if ac.ApprovalGate && ac.ApprovalDate == "" {
+							gateViolations++
+						}
+					}
+				}
+				if gateViolations > 0 {
+					fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d AC(s) carry approval_gate=true with unset approval_date\n", gateViolations)
+					os.Exit(3)
+				}
+			}
+
 			if report.Summary.Failing > 0 {
 				return errSilent
 			}
@@ -814,6 +887,7 @@ func coverageCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&failingOnly, "failing", false, "Show only specs below 100% coverage in the table (summary header still reflects the full report)")
 	cmd.Flags().BoolVar(&strict, "strict", false, "Require .specter-results.json and treat any non-passed annotated AC as uncovered (all tiers)")
 	cmd.Flags().StringVar(&scope, "scope", "", "Narrow --strict demand to specs in the named domain from specter.yaml (specs outside the domain fall back to v0.9 boolean-passed logic). Requires --strict.")
+	cmd.Flags().StringVar(&strictnessFlag, "strictness", "", "Override settings.strictness in specter.yaml (annotation | threshold | zero-tolerance)")
 	return cmd
 }
 
