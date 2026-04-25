@@ -81,7 +81,7 @@ spec:
       enforcement: error
 
     - id: C-09
-      description: "MUST print the test-annotation reference to stdout when invoked as `specter explain annotation`; content covers both Convention A (runner-visible spec-id/AC-NN in test title) and Convention B (source comments only)"
+      description: "MUST print the test-annotation reference to stdout when invoked as `specter explain annotation`; content covers Convention A (runner-visible spec-id/AC-NN in the test title), Convention B (runner-visible spec-id/AC-NN via runtime log output), and the source-comment annotations (`// @spec`, `// @ac`) that pair with either convention"
       type: technical
       enforcement: error
 
