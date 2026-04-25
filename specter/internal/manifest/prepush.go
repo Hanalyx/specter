@@ -58,11 +58,11 @@ func ParsePushSpecs(r io.Reader) ([]PushSpec, error) {
 	return specs, nil
 }
 
-// annotationLineRE matches an `@spec ` or `@ac ` reference anywhere on a
-// line. Lines beginning with `+` or `-` (added or removed) in unified
-// diff output count as annotation delta; lines beginning with `+++` or
-// `---` are file headers and don't.
-var annotationLineRE = regexp.MustCompile(`@spec\s|@ac\s`)
+// annotationLineRE matches a real `@spec` or `@ac` annotation — i.e. one
+// preceded by a source-comment marker (`//`, `#`, or `*`). Prose mentions
+// like "fixes the @spec foo issue" no longer count, since the AC-28 gate
+// is about test-annotation deltas, not arbitrary text containing @spec.
+var annotationLineRE = regexp.MustCompile(`(?://|#|\*)\s*@(?:spec|ac)\s`)
 
 // HasAnnotationDelta reports whether the unified-diff output contains any
 // added or removed line carrying `@spec ` or `@ac `. Pure scan over the

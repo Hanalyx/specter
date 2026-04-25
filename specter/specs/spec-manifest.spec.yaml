@@ -155,7 +155,7 @@ spec:
       enforcement: error
 
     - id: C-22
-      description: "`specter init --install-hook` MUST write a `.git/hooks/pre-push` shell script (mode 0755) that blocks pushes whose diff changes implementation files but adds or updates no `@spec` / `@ac` annotations. The hook MUST exit 0 on changes that include either an annotation delta or only doc/spec/test files; MUST exit non-zero with a clear message otherwise; and MUST be bypassable via `git push --no-verify`. The hook script body is wrapped in `<!-- specter:begin v1 --> ... <!-- specter:end -->` markers so future re-runs replace only the fenced region."
+      description: "`specter init --install-hook` MUST write a `.git/hooks/pre-push` shell script (mode 0755) that blocks pushes whose diff changes implementation files but adds or updates no `@spec` / `@ac` annotations. The hook MUST exit 0 on changes that include either an annotation delta or only doc/spec/test files; MUST exit non-zero with a clear message otherwise; and MUST be bypassable via `git push --no-verify`. The hook script body is wrapped in shell-comment markers `# specter:begin v1` / `# specter:end` (HTML-comment markers would be invalid shell syntax — `<!--` parses as a redirection token), and re-runs replace only the fenced region. The installed hook MUST parse cleanly under `sh -n`."
       type: technical
       enforcement: error
 

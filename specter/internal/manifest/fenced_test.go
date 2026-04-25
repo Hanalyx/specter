@@ -18,7 +18,7 @@ func TestFencedRegion_ReplaceFenced_PreservesOutOfFence(t *testing.T) {
 			"# Trailing user content\nMore of the user's notes.\n"
 		newBody := "fresh body line 1\nfresh body line 2"
 
-		got, err := ReplaceFencedRegion(original, "v1", newBody)
+		got, err := ReplaceFencedRegion(original, MarkdownMarkers("v1"), newBody)
 		if err != nil {
 			t.Fatalf("ReplaceFencedRegion: %v", err)
 		}
@@ -43,7 +43,7 @@ func TestFencedRegion_NoExistingFence_AppendsFenced(t *testing.T) {
 		original := "# Pre-existing user content\n"
 		newBody := "specter body"
 
-		got, err := ReplaceFencedRegion(original, "v1", newBody)
+		got, err := ReplaceFencedRegion(original, MarkdownMarkers("v1"), newBody)
 		if err != nil {
 			t.Fatalf("ReplaceFencedRegion: %v", err)
 		}
@@ -65,7 +65,7 @@ func TestFencedRegion_NoExistingFence_AppendsFenced(t *testing.T) {
 // Empty input: write the fenced region as-is.
 func TestFencedRegion_EmptyInput_WritesFencedOnly(t *testing.T) {
 	t.Run("spec-manifest/fenced empty input writes only fence", func(t *testing.T) {
-		got, err := ReplaceFencedRegion("", "v1", "body")
+		got, err := ReplaceFencedRegion("", MarkdownMarkers("v1"), "body")
 		if err != nil {
 			t.Fatalf("ReplaceFencedRegion: %v", err)
 		}
@@ -82,7 +82,7 @@ func TestFencedRegion_EmptyInput_WritesFencedOnly(t *testing.T) {
 func TestFencedRegion_UnterminatedFence_ReturnsError(t *testing.T) {
 	t.Run("spec-manifest/fenced unterminated marker errors out", func(t *testing.T) {
 		original := "<!-- specter:begin v1 -->\nbody"
-		_, err := ReplaceFencedRegion(original, "v1", "new")
+		_, err := ReplaceFencedRegion(original, MarkdownMarkers("v1"), "new")
 		if err == nil {
 			t.Fatal("expected error for unterminated fence, got nil")
 		}

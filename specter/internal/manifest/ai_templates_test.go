@@ -91,19 +91,21 @@ func TestRenderAIInstructions_Codex_InlineBody(t *testing.T) {
 }
 
 // AC-33: copilot body capped at 4096 bytes for the code-review surface.
+// Guard is enforced by RenderAIInstructions returning an error if the body
+// exceeds CopilotMaxBytes — not by happenstance of body length.
 func TestRenderAIInstructions_Copilot_Capped4KB(t *testing.T) {
 	t.Run("spec-manifest/AC-33 copilot body capped at 4KB", func(t *testing.T) {
 		got, err := RenderAIInstructions("copilot", false)
 		if err != nil {
 			t.Fatalf("RenderAIInstructions copilot: %v", err)
 		}
-		if len(got) > 4096 {
-			t.Errorf("expected copilot body ≤ 4096 bytes, got %d bytes", len(got))
+		if len(got) > CopilotMaxBytes {
+			t.Errorf("expected copilot body ≤ %d bytes, got %d bytes", CopilotMaxBytes, len(got))
 		}
-		// Even with truncation, the load-bearing rule (read spec before code)
-		// must survive — that's the priority guidance.
+		// Load-bearing rule (read spec before code) must survive even at
+		// the size limit — that's the priority guidance.
 		if !strings.Contains(got, "specter explain") {
-			t.Errorf("expected truncated copilot body to retain `specter explain` reference, got:\n%s", got)
+			t.Errorf("expected copilot body to retain `specter explain` reference, got:\n%s", got)
 		}
 	})
 }

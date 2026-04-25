@@ -42,8 +42,11 @@ func ShouldBlockPush(diff PushDiffSummary) bool {
 }
 
 // PrePushHookScript returns the shell script body written to
-// .git/hooks/pre-push. Wrapped in <!-- specter:begin v1 --> / <!-- specter:end -->
-// markers so re-running `init --install-hook` replaces only the fenced region.
+// .git/hooks/pre-push. Wrapped in shell-comment markers
+// (`# specter:begin v1` / `# specter:end`) so re-running `init --install-hook`
+// replaces only the fenced region. HTML-comment markers (used in the AI
+// instruction files) would be invalid shell syntax — `<!--` parses as a
+// `<` redirection and would cause every push to fail with a syntax error.
 //
 // The script delegates classification to `specter pre-push-check`, which
 // reads git's pre-push stdin format (one line per ref) and exits non-zero
@@ -67,11 +70,14 @@ fi
 
 specter pre-push-check "$@"
 `
+	markers := ShellMarkers("v1")
 	var b strings.Builder
 	b.WriteString("#!/bin/sh\n")
-	b.WriteString("<!-- specter:begin v1 -->\n")
+	b.WriteString(markers.Begin)
+	b.WriteString("\n")
 	b.WriteString(body)
-	b.WriteString("<!-- specter:end -->\n")
+	b.WriteString(markers.End)
+	b.WriteString("\n")
 	return b.String()
 }
 

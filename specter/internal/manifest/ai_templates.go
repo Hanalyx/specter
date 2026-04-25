@@ -151,9 +151,18 @@ func aiClaudeImportBody() string {
 canonical project preflight, Convention A examples, and validation gate.)`
 }
 
+// CopilotMaxBytes is the hard cap on the rendered Copilot instruction file.
+// Copilot's code-review surface reads only the first 4KB of its instructions
+// file; anything beyond is silently dropped, including load-bearing rules.
+const CopilotMaxBytes = 4096
+
 // RenderAIInstructions returns the full fenced-region body for one tool.
 // hasAgentsMd is consulted only for tool="claude" (AC-36): present means
 // emit the @AGENTS.md import; absent means inline the full body.
+//
+// AC-33 guard: if the rendered copilot body exceeds CopilotMaxBytes, this
+// function returns an error rather than silently shipping a truncated file.
+// Future template growth must be paired with copilot-specific trimming.
 func RenderAIInstructions(tool string, hasAgentsMd bool) (string, error) {
 	if _, err := AITargetPath(tool); err != nil {
 		return "", err
@@ -169,5 +178,12 @@ func RenderAIInstructions(tool string, hasAgentsMd bool) (string, error) {
 		body = AIInstructionBody()
 	}
 
-	return ReplaceFencedRegion("", "v1", body)
+	rendered, err := ReplaceFencedRegion("", MarkdownMarkers("v1"), body)
+	if err != nil {
+		return "", err
+	}
+	if tool == "copilot" && len(rendered) > CopilotMaxBytes {
+		return "", fmt.Errorf("copilot body is %d bytes, exceeds the %d-byte cap; trim aiCopilotBody before merge", len(rendered), CopilotMaxBytes)
+	}
+	return rendered, nil
 }

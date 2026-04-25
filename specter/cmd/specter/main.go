@@ -1205,6 +1205,14 @@ func initCmd() *cobra.Command {
 		Short: "Initialize a specter.yaml project manifest",
 		Long:  "Scaffold a specter.yaml file from existing .spec.yaml files in the current directory. Groups all specs into a default domain with sensible settings.\n\nWith --template, creates a draft .spec.yaml file instead of specter.yaml.\n\nWith --refresh, updates only domains.default.specs in an existing manifest; preserves every other field.\n\nWith --install-hook, writes a git pre-push hook that blocks pushes lacking @spec/@ac annotation deltas.\n\nWith --ai <tool>, writes an AI assistant instruction file for the given tool (claude, codex, cursor, copilot, gemini).",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// --install-hook and --ai are different write targets; combining
+			// them silently would skip the second flag (early return). Reject
+			// the combination explicitly so users see the conflict.
+			if installHook && aiTool != "" {
+				fmt.Fprintln(os.Stderr, "error: --install-hook and --ai are different write targets and cannot be combined; run them in separate invocations.")
+				return errSilent
+			}
+
 			// --install-hook: write the git pre-push hook.
 			if installHook {
 				return runInitInstallHook()
@@ -1338,9 +1346,11 @@ func runInitInstallHook() error {
 
 	// PrePushHookScript() returns the full fenced template (shebang + markers
 	// + body). Extract the body so ReplaceFencedRegion adds exactly one set
-	// of markers around it.
-	hookBody := extractFencedBody(manifest.PrePushHookScript())
-	body, err := manifest.ReplaceFencedRegion(existing, "v1", hookBody)
+	// of markers around it. Hook uses shell-comment markers — HTML-comment
+	// markers would be a syntax error in sh.
+	hookMarkers := manifest.ShellMarkers("v1")
+	hookBody := extractFencedBody(manifest.PrePushHookScript(), hookMarkers)
+	body, err := manifest.ReplaceFencedRegion(existing, hookMarkers, hookBody)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error rendering hook: %v\n", err)
 		return errSilent
@@ -1399,9 +1409,11 @@ func runInitAI(tool string) error {
 		existing = string(data)
 	}
 	// Extract the body from the freshly-rendered template (which is fully
-	// fenced) and apply it via ReplaceFencedRegion to the existing file.
-	body := extractFencedBody(rendered)
-	final, err := manifest.ReplaceFencedRegion(existing, "v1", body)
+	// fenced with markdown markers) and apply it via ReplaceFencedRegion to
+	// the existing file.
+	mdMarkers := manifest.MarkdownMarkers("v1")
+	body := extractFencedBody(rendered, mdMarkers)
+	final, err := manifest.ReplaceFencedRegion(existing, mdMarkers, body)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return errSilent
@@ -1431,15 +1443,13 @@ func runInitAI(tool string) error {
 // stripping the begin/end markers so the body can be re-applied via
 // ReplaceFencedRegion to a target that may already have its own out-of-fence
 // content.
-func extractFencedBody(fenced string) string {
-	const begin = "<!-- specter:begin v1 -->"
-	const end = "<!-- specter:end -->"
-	bIdx := strings.Index(fenced, begin)
-	eIdx := strings.Index(fenced, end)
+func extractFencedBody(fenced string, markers manifest.FencedMarkers) string {
+	bIdx := strings.Index(fenced, markers.Begin)
+	eIdx := strings.Index(fenced, markers.End)
 	if bIdx < 0 || eIdx < 0 || eIdx < bIdx {
 		return fenced
 	}
-	body := fenced[bIdx+len(begin) : eIdx]
+	body := fenced[bIdx+len(markers.Begin) : eIdx]
 	return strings.Trim(body, "\n")
 }
 

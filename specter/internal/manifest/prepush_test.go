@@ -134,6 +134,19 @@ func TestHasAnnotationDelta_ContextLineIgnored(t *testing.T) {
 	})
 }
 
+// Prose mentions of @spec / @ac in non-comment-context (e.g., commit message
+// text in a diff, doc prose) must NOT count as an annotation delta. Otherwise
+// any commit whose message mentions an annotation could bypass the gate.
+func TestHasAnnotationDelta_ProseMentionIgnored(t *testing.T) {
+	t.Run("spec-manifest/AC-28 HasAnnotationDelta ignores prose mentions of @spec", func(t *testing.T) {
+		// Added line is plain text (no comment marker before @spec).
+		diff := "+++ b/CHANGELOG.md\n+fixes the @spec foo bug\n+see @ac AC-01 for details\n"
+		if HasAnnotationDelta(diff) {
+			t.Errorf("expected prose mentions not to count as annotation delta, got true")
+		}
+	})
+}
+
 func TestHasAnnotationDelta_DiffHeaderIgnored(t *testing.T) {
 	t.Run("spec-manifest/AC-28 HasAnnotationDelta ignores +++/--- diff headers", func(t *testing.T) {
 		// The +++ b/foo.go header isn't an added line of code; must not

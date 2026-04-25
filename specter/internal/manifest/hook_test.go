@@ -64,20 +64,25 @@ func TestShouldBlockPush_TestsOnly_Allows(t *testing.T) {
 	})
 }
 
-// AC-27: hook script content shape — must contain the fenced markers and
-// invoke the specter pre-push helper.
+// AC-27: hook script content shape — must contain shell-comment fenced
+// markers (HTML-comment markers would be invalid shell syntax) and invoke
+// the specter pre-push helper.
 func TestPrePushHookScript_ContainsFencedMarkers(t *testing.T) {
-	t.Run("spec-manifest/AC-27 hook script wrapped in fenced markers", func(t *testing.T) {
+	t.Run("spec-manifest/AC-27 hook script wrapped in shell-comment markers", func(t *testing.T) {
 		script := PrePushHookScript()
 
 		if !strings.HasPrefix(script, "#!") {
 			t.Errorf("expected shebang at top of hook script, got:\n%s", script)
 		}
-		if !strings.Contains(script, "<!-- specter:begin v1 -->") {
-			t.Errorf("expected begin marker in hook, got:\n%s", script)
+		if !strings.Contains(script, "# specter:begin v1") {
+			t.Errorf("expected shell-comment begin marker in hook, got:\n%s", script)
 		}
-		if !strings.Contains(script, "<!-- specter:end -->") {
-			t.Errorf("expected end marker in hook, got:\n%s", script)
+		if !strings.Contains(script, "# specter:end") {
+			t.Errorf("expected shell-comment end marker in hook, got:\n%s", script)
+		}
+		// HTML-comment markers must NOT be present — they would break sh parsing.
+		if strings.Contains(script, "<!--") {
+			t.Errorf("hook must not contain HTML-comment markers (invalid shell syntax), got:\n%s", script)
 		}
 		if !strings.Contains(script, "specter") {
 			t.Errorf("expected hook to reference specter binary, got:\n%s", script)
