@@ -1,25 +1,28 @@
 spec:
   id: spec-explain
-  version: "1.0.0"
+  version: "1.1.0"
   status: draft
   tier: 2
 
   context:
     system: Specter toolchain
-    feature: AC coverage explainer
+    feature: AC coverage explainer + on-demand reference
     description: >
-      An interactive diagnostic command that tells developers exactly how to annotate
-      a test for an uncovered acceptance criterion. Bridges the gap between a failing
-      coverage check and the code change that fixes it. Part of the authoring loop:
-      draft → check → explain → annotate → recheck.
+      A read-only diagnostic verb with four surfaces: coverage-aware spec/AC explanation
+      (original 1.0.0 behavior), test-annotation reference (annotation), schema field
+      reference (schema), and a human-readable spec card (AC-less spec-id). All surfaces
+      write to stdout only; file-writing for AI tooling lives on `init --ai <tool>`.
+      Part of the authoring loop: draft → check → explain → annotate → recheck.
     related_specs:
       - "spec-coverage"
       - "spec-parse"
+      - "spec-manifest"
 
   objective:
     summary: >
-      Given a spec ID and optional AC ID, show coverage status and ready-to-paste
-      annotation examples so a developer can cover an uncovered AC in one step.
+      Given a spec ID, AC ID, or a reference keyword (annotation | schema), print the
+      matching diagnostic or reference content to stdout so a developer or AI assistant
+      can cover an uncovered AC or look up schema / annotation syntax in one step.
     scope:
       includes:
         - "Look up a spec by ID from parsed specs"
@@ -28,6 +31,9 @@ spec:
         - "Show which test files cover a specific AC"
         - "Show which test files were scanned"
         - "Exit 1 if spec ID not found"
+        - "Print the test-annotation reference on `explain annotation`"
+        - "Print the schema field reference on `explain schema` (full) or `explain schema <field-path>` (single field)"
+        - "Print a human-readable spec card on `explain <spec-id>` with tier, coverage %, and per-AC test-file list"
       excludes:
         - "Writing or modifying any files"
         - "Running the full sync pipeline"
@@ -71,6 +77,26 @@ spec:
 
     - id: C-08
       description: "MUST detect annotation language from test file extensions: .go → Go comment, .py → Python comment, .ts/.tsx/.js/.jsx → JS comment; default to Go/generic if no test files found"
+      type: technical
+      enforcement: error
+
+    - id: C-09
+      description: "MUST print the test-annotation reference to stdout when invoked as `specter explain annotation`; content covers Convention A (runner-visible spec-id/AC-NN in the test title), Convention B (runner-visible spec-id/AC-NN via runtime log output), and the source-comment annotations (`// @spec`, `// @ac`) that pair with either convention"
+      type: technical
+      enforcement: error
+
+    - id: C-10
+      description: "MUST print the full schema field reference to stdout when invoked as `specter explain schema`, enumerating every field declared in the embedded JSON schema with type, default, and description"
+      type: technical
+      enforcement: error
+
+    - id: C-11
+      description: "MUST print single-field detail to stdout when invoked as `specter explain schema <field-path>` (e.g., `spec.acceptance_criteria.items.approval_gate`); exit non-zero on unknown path with a 'did you mean?' suggestion when similarity is within Levenshtein distance 3"
+      type: technical
+      enforcement: error
+
+    - id: C-12
+      description: "MUST print a human-readable spec card to stdout when invoked as `specter explain <spec-id>` with no AC suffix; card contains tier, current coverage percentage, and per-AC test-file list"
       type: technical
       enforcement: error
 
@@ -136,6 +162,50 @@ spec:
       references_constraints: ["C-04"]
       priority: high
 
+    - id: AC-07
+      description: "`specter explain annotation` output contains both a 'Convention A' section (with runner-visible `t.Run(\"spec-id/AC-NN ...\", ...)` example) and a 'Convention B' section (with source comments `// @spec` and `// @ac`)"
+      inputs:
+        invocation: "specter explain annotation"
+      expected_output:
+        contains_convention_a: true
+        contains_convention_b: true
+        exit_code: 0
+      references_constraints: ["C-09"]
+      priority: high
+
+    - id: AC-08
+      description: "`specter explain schema` output enumerates every top-level field declared in the embedded JSON schema at `internal/parser/spec-schema.json`"
+      inputs:
+        invocation: "specter explain schema"
+      expected_output:
+        enumerates_all_schema_fields: true
+        exit_code: 0
+      references_constraints: ["C-10"]
+      priority: high
+
+    - id: AC-09
+      description: "`specter explain schema <invalid-path>` exits non-zero with 'unknown field path'; when similarity is within Levenshtein 3, output contains a 'did you mean?' suggestion"
+      inputs:
+        invocation: "specter explain schema spec.accptance_criteria"
+      expected_output:
+        exit_code_nonzero: true
+        error_contains: "unknown field path"
+        contains_did_you_mean: true
+      references_constraints: ["C-11"]
+      priority: high
+
+    - id: AC-10
+      description: "`specter explain <spec-id>` (no AC suffix) renders a spec card containing tier, current coverage percentage, and per-AC test-file list"
+      inputs:
+        invocation: "specter explain my-spec"
+      expected_output:
+        contains_tier: true
+        contains_coverage_percent: true
+        contains_per_ac_files: true
+        exit_code: 0
+      references_constraints: ["C-12"]
+      priority: high
+
   depends_on:
     - spec_id: spec-coverage
       version_range: "^1.0.0"
@@ -145,6 +215,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.1.0"
+      date: "2026-04-25"
+      author: "specter-team"
+      type: minor
+      description: "v0.11 explain bundle — three new read-only surfaces (annotation, schema, AC-less spec card). Terminal output only; file-writing for AI tooling lives on init --ai <tool>. Adds C-09..C-12 and AC-07..AC-10."
     - version: "1.0.0"
       date: "2026-04-14"
       author: "specter-team"
