@@ -49,16 +49,17 @@ func setupBareGitRepo(t *testing.T) string {
 	return dir
 }
 
-// runCLIWithStdin runs the specter binary with the given stdin and args from
-// the given dir. Returns stdout+stderr combined and exit code.
+// runCLIWithStdin runs the specter CLI with the given stdin and args from
+// the given dir. Uses the self-invocation pattern (see cli_test.go's runCLI):
+// re-invokes the test binary with SPECTER_TEST=1 so the test process acts
+// as the CLI. This avoids needing a pre-built ./bin/specter at test time —
+// CI runs `go test` before `go build`, so a hardcoded path to the built
+// binary fails with "no such file or directory".
 func runCLIWithStdin(t *testing.T, dir, stdin string, args ...string) (string, int) {
 	t.Helper()
-	bin, err := filepath.Abs(filepath.Join("..", "..", "bin", "specter"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command(bin, args...)
+	cmd := exec.Command(os.Args[0], args...)
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "SPECTER_TEST=1")
 	cmd.Stdin = strings.NewReader(stdin)
 	out, err := cmd.CombinedOutput()
 	code := 0
