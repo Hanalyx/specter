@@ -265,7 +265,7 @@ async function resolveBinary(ctx: vscode.ExtensionContext): Promise<string | nul
     workspaceSetting,
     which: name => {
       try {
-        const out = require('child_process').execSync(`which ${name}`, { encoding: 'utf8' });
+        const out = require('child_process').execFileSync('which', [name], { encoding: 'utf8' });
         return (out as string).trim() || null;
       } catch { return null; }
     },
@@ -980,9 +980,20 @@ function registerDiagnosticHooks(ctx: vscode.ExtensionContext): void {
                   ...(notification.actions ?? []),
                 );
                 if (choice === 'View Diff') {
-                  const terminal = vscode.window.createTerminal('Specter Diff');
-                  terminal.sendText(`specter diff ${doc.uri.fsPath}@HEAD ${doc.uri.fsPath}`);
-                  terminal.show();
+                  const fsPath = doc.uri.fsPath;
+                  // Reject paths containing shell-active characters before
+                  // they reach `terminal.sendText`. The terminal runs the
+                  // user's shell, so an unquoted path with `;`, `|`, `$`,
+                  // backticks, etc. would execute as separate commands.
+                  if (/[\s;|&$`'"\\<>(){}*?!#]/.test(fsPath)) {
+                    vscode.window.showWarningMessage(
+                      `Specter: cannot run diff on a path containing shell metacharacters: ${path.basename(fsPath)}`,
+                    );
+                  } else {
+                    const terminal = vscode.window.createTerminal('Specter Diff');
+                    terminal.sendText(`specter diff ${fsPath}@HEAD ${fsPath}`);
+                    terminal.show();
+                  }
                 }
               }
             }
