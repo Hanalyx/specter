@@ -52,7 +52,7 @@ const maxDescLen = 50
 // nothing. Explains where specter looked and what to try next — users often
 // keep specs in a non-default directory and need the hint.
 func noSpecsMessage() string {
-	m, _ := loadManifest()
+	m, _, _ := loadManifest()
 	searched := m.SpecsDir()
 	if searched == "" || searched == "." {
 		searched = "current directory and subdirectories"
@@ -268,7 +268,7 @@ func discoverSpecs(patterns ...string) []string {
 		return patterns
 	}
 	// Load manifest to honor settings.exclude and specs_dir.
-	m, _ := loadManifest()
+	m, _, _ := loadManifest()
 	excludeNames := make(map[string]bool)
 	for _, e := range m.ExcludePatterns() {
 		excludeNames[e] = true
@@ -300,14 +300,8 @@ func discoverSpecs(patterns ...string) []string {
 }
 
 func discoverTestFiles(glob string) []string {
-	// If an explicit glob is provided, use filepath.Glob to resolve it directly.
 	if glob != "" {
-		matches, err := filepath.Glob(glob)
-		if err == nil && len(matches) > 0 {
-			return matches
-		}
-		// Glob matched nothing or errored — fall through to default walk so the
-		// caller gets a useful result rather than silent empty output.
+		return globMatchWalk(glob)
 	}
 
 	// Default: walk the repo for all recognized test file suffixes.
@@ -571,7 +565,11 @@ func checkCmd() *cobra.Command {
 				return errSilent
 			}
 
-			m, _ := loadManifest()
+			m, _, mErr := loadManifest()
+			if mErr != nil {
+				fmt.Fprintln(os.Stderr, "error:", mErr)
+				return errSilent
+			}
 			opts := &checker.CheckOptions{
 				Strict:      strict || m.Settings.Strict,
 				WarnOnDraft: m.Settings.WarnOnDraft,
@@ -663,19 +661,34 @@ func coverageCmd() *cobra.Command {
 				specFileByID[in.Spec.ID] = in.File
 			}
 
-			m, _ := loadManifest()
-
-			// C-25: when --tests is unset, fall back to settings.tests_glob.
-			// First entry wins for the discoverTestFiles call (it accepts a single
-			// glob); the manifest can carry multiple but we use the first as the
-			// primary discovery hint. discoverTestFiles falls back to walking "."
-			// when its argument is empty.
-			effectiveTestsGlob := testsGlob
-			if effectiveTestsGlob == "" && len(m.Settings.TestsGlob) > 0 {
-				effectiveTestsGlob = m.Settings.TestsGlob[0]
+			m, _, mErr := loadManifest()
+			if mErr != nil {
+				fmt.Fprintln(os.Stderr, "error:", mErr)
+				return errSilent
 			}
 
-			testFiles := discoverTestFiles(effectiveTestsGlob)
+			// C-25: when --tests is unset, fall back to settings.tests_glob.
+			// Manifest may carry multiple globs as a list; iterate and union
+			// the matches (deduped). Empty manifest list + no --tests falls
+			// through to discoverTestFiles("") which walks "." for known
+			// test-file extensions.
+			var testFiles []string
+			switch {
+			case testsGlob != "":
+				testFiles = discoverTestFiles(testsGlob)
+			case len(m.Settings.TestsGlob) > 0:
+				seen := map[string]bool{}
+				for _, g := range m.Settings.TestsGlob {
+					for _, f := range discoverTestFiles(g) {
+						if !seen[f] {
+							seen[f] = true
+							testFiles = append(testFiles, f)
+						}
+					}
+				}
+			default:
+				testFiles = discoverTestFiles("")
+			}
 			var allAnnotations []coverage.AnnotationMatch
 			for _, f := range testFiles {
 				data, err := os.ReadFile(f)
@@ -683,6 +696,17 @@ func coverageCmd() *cobra.Command {
 					continue
 				}
 				allAnnotations = append(allAnnotations, coverage.ExtractAnnotations(string(data), f)...)
+			}
+
+			// Validate the CLI flag against the same enum as settings.strictness.
+			// Reject typos at the flag layer rather than silently falling
+			// through (the same class GH #76 closes for the manifest).
+			if strictnessFlag != "" {
+				validStrictness := map[string]bool{"annotation": true, "threshold": true, "zero-tolerance": true}
+				if !validStrictness[strictnessFlag] {
+					fmt.Fprintf(os.Stderr, "error: --strictness %q is not a valid value (allowed: annotation, threshold, zero-tolerance)\n", strictnessFlag)
+					return errSilent
+				}
 			}
 
 			// Resolve effective strictness: CLI flag overrides manifest setting.
@@ -923,7 +947,11 @@ func syncCmd() *cobra.Command {
 				testContents = append(testContents, specsync.FileContent{Path: f, Content: string(data)})
 			}
 
-			m, _ := loadManifest()
+			m, _, mErr := loadManifest()
+			if mErr != nil {
+				fmt.Fprintln(os.Stderr, "error:", mErr)
+				return errSilent
+			}
 			checkOpts := &checker.CheckOptions{
 				Strict:      strict || m.Settings.Strict,
 				WarnOnDraft: m.Settings.WarnOnDraft,
@@ -1246,21 +1274,26 @@ func findManifest() (manifestPath string, projectRoot string) {
 	return "", ""
 }
 
-func loadManifest() (*manifest.Manifest, string) {
+// loadManifest finds and parses the nearest specter.yaml. Always returns a
+// non-nil Manifest — Defaults() if no file exists or parse fails — so library
+// helpers (noSpecsMessage, discoverSpecs) can safely deref. Returns a non-nil
+// error when a manifest IS present but fails to parse; RunE handlers must
+// check the error and fail-fast (per GH #76 — silent fallback to Defaults()
+// on parse error swallowed every typo'd settings key).
+func loadManifest() (*manifest.Manifest, string, error) {
 	path, root := findManifest()
 	if path == "" {
-		return manifest.Defaults(), ""
+		return manifest.Defaults(), "", nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return manifest.Defaults(), ""
+		return manifest.Defaults(), "", fmt.Errorf("read %s: %w", path, err)
 	}
 	m, err := manifest.ParseManifest(string(data))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: invalid specter.yaml: %v (using defaults)\n", err)
-		return manifest.Defaults(), ""
+		return manifest.Defaults(), "", fmt.Errorf("invalid %s: %w", path, err)
 	}
-	return m, root
+	return m, root, nil
 }
 
 func initCmd() *cobra.Command {
@@ -1769,7 +1802,11 @@ func doctorCmd() *cobra.Command {
 
 			// --- Check 5: Coverage meets tier thresholds (C-05, AC-06) ---
 			if len(specFiles) > 0 {
-				m, _ := loadManifest()
+				m, _, mErr := loadManifest()
+				if mErr != nil {
+					fmt.Fprintln(os.Stderr, "error:", mErr)
+					return errSilent
+				}
 				_, specs, hasParseErrors := parseAllSpecs(specFiles)
 				if hasParseErrors {
 					printCheck("coverage", "WARN", "Skipping coverage check — specs have parse errors")
@@ -2048,7 +2085,11 @@ func watchCmd() *cobra.Command {
 		Short: "Re-run sync pipeline on file changes",
 		Long:  "Watches .spec.yaml and test files for changes and re-runs the full sync pipeline. Press Ctrl+C to stop.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			m, _ := loadManifest()
+			m, _, mErr := loadManifest()
+			if mErr != nil {
+				fmt.Fprintln(os.Stderr, "error:", mErr)
+				return errSilent
+			}
 
 			specsDir := m.SpecsDir()
 			fmt.Printf("specter watch\n\n")

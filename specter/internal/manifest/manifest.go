@@ -199,7 +199,8 @@ func Defaults() *Manifest {
 			Name: "",
 		},
 		Settings: Settings{
-			SpecsDir: "specs",
+			SpecsDir:   "specs",
+			Strictness: "threshold",
 			Coverage: CoverageConfig{
 				Tier1: 100,
 				Tier2: 80,

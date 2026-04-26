@@ -72,6 +72,55 @@ func TestCoverageStrictness_ZeroTolerance_FailsOnNonPassedAC(t *testing.T) {
 	})
 }
 
+// @ac AC-29
+func TestCoverageStrictness_ZeroTolerance_FailsOnApprovalGate(t *testing.T) {
+	t.Run("spec-coverage/AC-29 zero-tolerance fails on approval_gate=true with unset approval_date (exit 3)", func(t *testing.T) {
+		dir := t.TempDir()
+		writeManifestWithStrictness(t, dir, "zero-tolerance")
+
+		// Spec carries approval_gate=true on AC-01 with no approval_date.
+		// Build it inline because minimalValidSpec doesn't emit gate metadata.
+		specBody := `spec:
+  id: gated-spec
+  version: "1.0.0"
+  status: approved
+  tier: 3
+  context: { system: x, feature: x }
+  objective: { summary: x }
+  constraints:
+    - id: C-01
+      description: "MUST do thing"
+      type: technical
+      enforcement: error
+  acceptance_criteria:
+    - id: AC-01
+      description: "Thing happens"
+      approval_gate: true
+      references_constraints: ["C-01"]
+      priority: high
+`
+		if err := os.WriteFile(filepath.Join(dir, "gated.spec.yaml"), []byte(specBody), 0644); err != nil {
+			t.Fatal(err)
+		}
+		// Annotate the AC so the empty-discovery gate doesn't fire.
+		testFile := "// @spec gated-spec\n// @ac AC-01\nfunc TestGated(t *testing.T) {}\n"
+		if err := os.WriteFile(filepath.Join(dir, "gated_test.go"), []byte(testFile), 0644); err != nil {
+			t.Fatal(err)
+		}
+		// Results: AC-01 passed (so the strictness check at exit 2 is satisfied).
+		// Approval-gate violation should still trigger exit 3.
+		results := `{"results": [{"spec_id": "gated-spec", "ac_id": "AC-01", "status": "passed", "test_name": "TestGated"}]}`
+		if err := os.WriteFile(filepath.Join(dir, ".specter-results.json"), []byte(results), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		_, code := runCLI(t, dir, "coverage", "--strict")
+		if code != 3 {
+			t.Errorf("expected exit code 3 for approval_gate violation under zero-tolerance, got %d", code)
+		}
+	})
+}
+
 // @ac AC-30
 func TestCoverageStrictness_EmptyTestDiscovery_WarnsThenFailsUnderZeroTolerance(t *testing.T) {
 	t.Run("spec-coverage/AC-30 empty test discovery warns under threshold, errors under zero-tolerance", func(t *testing.T) {
