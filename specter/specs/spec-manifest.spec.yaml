@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "1.6.0"
+  version: "1.7.0"
   status: draft
   tier: 2
 
@@ -151,6 +151,16 @@ spec:
 
     - id: C-21
       description: "`--refresh` and `--force` MUST be mutually exclusive. `specter init --refresh --force` MUST exit non-zero with a clear error message naming the conflict. Rationale: `--force` rewrites everything (operator accepts loss); `--refresh` preserves everything except `domains.default.specs` (operator wants a surgical update). Combining them is incoherent and almost always a mistake."
+      type: technical
+      enforcement: error
+
+    - id: C-22
+      description: "`specter init --install-hook` MUST write a `.git/hooks/pre-push` shell script (mode 0755) that blocks pushes whose diff changes implementation files but adds or updates no `@spec` / `@ac` annotations. The hook MUST exit 0 on changes that include either an annotation delta or only doc/spec/test files; MUST exit non-zero with a clear message otherwise; and MUST be bypassable via `git push --no-verify`. The hook script body is wrapped in shell-comment markers `# specter:begin v1` / `# specter:end` (HTML-comment markers would be invalid shell syntax — `<!--` parses as a redirection token), and re-runs replace only the fenced region. The installed hook MUST parse cleanly under `sh -n`."
+      type: technical
+      enforcement: error
+
+    - id: C-23
+      description: "`specter init --ai <tool>` MUST write a per-tool AI instruction file with a `<!-- specter:begin v1 --> ... <!-- specter:end -->` fenced region containing the v0.11 instruction template (preflight, Convention A, validation gate, on-demand explain references). The fenced region's tool-target path is: `claude` → `CLAUDE.md`, `codex` → `AGENTS.md`, `cursor` → `.cursor/rules/specter.md`, `copilot` → `.github/copilot-instructions.md` (body capped at 4KB), `gemini` → `GEMINI.md`. Re-runs MUST replace only the fenced region; out-of-fence content is preserved byte-for-byte. `--ai claude` checks for an existing `AGENTS.md` and writes `@AGENTS.md` import directive instead of inlining the body when one exists."
       type: technical
       enforcement: error
 
@@ -414,6 +424,116 @@ spec:
       references_constraints: ["C-21"]
       priority: medium
 
+    - id: AC-27
+      description: "`specter init --install-hook` in a workspace whose `.git/` directory exists writes `.git/hooks/pre-push` and chmods it to 0755 (executable). Re-running the same command in-place replaces only the fenced region; content outside the markers is preserved byte-for-byte."
+      inputs:
+        command: "specter init --install-hook"
+      expected_output:
+        file_written: ".git/hooks/pre-push"
+        mode: "0755"
+        idempotent_re_run: true
+      references_constraints: ["C-22"]
+      priority: critical
+
+    - id: AC-28
+      description: "Pre-push hook installed by `init --install-hook` exits non-zero on a diff containing implementation file changes (`*.go`, `*.ts`, etc.) with no corresponding `@spec` / `@ac` annotation delta in the same diff. Diff containing only doc/spec/test changes (or any annotation delta) exits 0."
+      inputs:
+        diff_with_impl_only: "internal/foo/bar.go modified, no @spec/@ac change"
+        diff_with_annotation_delta: "test file gained `// @ac AC-05`"
+      expected_output:
+        impl_only_exit_code: "non-zero"
+        annotation_delta_exit_code: 0
+      references_constraints: ["C-22"]
+      priority: critical
+
+    - id: AC-29
+      description: "`git push --no-verify` bypasses the installed pre-push hook entirely and pushes successfully even on a diff that the hook would otherwise reject."
+      inputs:
+        diff: "implementation change with no annotation delta"
+        invocation: "git push --no-verify"
+      expected_output:
+        push_succeeds: true
+        hook_was_skipped: true
+      references_constraints: ["C-22"]
+      priority: high
+
+    - id: AC-30
+      description: "`specter init --ai claude` in a workspace with no AGENTS.md writes `CLAUDE.md` containing the inline v0.11 instruction body wrapped in fenced markers."
+      inputs:
+        command: "specter init --ai claude"
+        workspace_has_agents_md: false
+      expected_output:
+        file_written: "CLAUDE.md"
+        body_is_inline: true
+        fenced_markers_present: true
+      references_constraints: ["C-23"]
+      priority: critical
+
+    - id: AC-31
+      description: "`specter init --ai codex` writes `AGENTS.md` containing the v0.11 instruction body wrapped in fenced markers."
+      inputs:
+        command: "specter init --ai codex"
+      expected_output:
+        file_written: "AGENTS.md"
+        fenced_markers_present: true
+      references_constraints: ["C-23"]
+      priority: critical
+
+    - id: AC-32
+      description: "`specter init --ai cursor` writes `.cursor/rules/specter.md` (creating the parent directory if needed) containing the v0.11 instruction body wrapped in fenced markers."
+      inputs:
+        command: "specter init --ai cursor"
+      expected_output:
+        file_written: ".cursor/rules/specter.md"
+        parent_dir_created: true
+        fenced_markers_present: true
+      references_constraints: ["C-23"]
+      priority: critical
+
+    - id: AC-33
+      description: "`specter init --ai copilot` writes `.github/copilot-instructions.md` (creating the parent directory if needed) with the body capped at 4096 bytes (Copilot's code-review limit). Truncation, if needed, preserves the most-load-bearing rules at the top."
+      inputs:
+        command: "specter init --ai copilot"
+      expected_output:
+        file_written: ".github/copilot-instructions.md"
+        body_size_le_4096_bytes: true
+      references_constraints: ["C-23"]
+      priority: high
+
+    - id: AC-34
+      description: "`specter init --ai gemini` writes `GEMINI.md` containing the v0.11 instruction body wrapped in fenced markers."
+      inputs:
+        command: "specter init --ai gemini"
+      expected_output:
+        file_written: "GEMINI.md"
+        fenced_markers_present: true
+      references_constraints: ["C-23"]
+      priority: critical
+
+    - id: AC-35
+      description: "Re-running `specter init --ai <tool>` in a workspace where the target file has been edited outside the fenced region replaces only the content between the markers; user-authored content outside the markers is preserved byte-for-byte."
+      inputs:
+        first_run: "specter init --ai codex"
+        user_edit: "appended user notes after </specter:end>"
+        second_run: "specter init --ai codex"
+      expected_output:
+        out_of_fence_content_preserved: true
+        in_fence_content_replaced: true
+      references_constraints: ["C-23"]
+      priority: critical
+
+    - id: AC-36
+      description: "`specter init --ai claude` in a workspace where `AGENTS.md` already exists writes `CLAUDE.md` whose fenced body is `@AGENTS.md` (Claude's import directive) plus an empty `## Claude-specific notes` section, NOT the inline instruction body. This avoids duplicating the instruction template across both files."
+      inputs:
+        workspace_has_agents_md: true
+        command: "specter init --ai claude"
+      expected_output:
+        file_written: "CLAUDE.md"
+        fenced_body_contains: "@AGENTS.md"
+        fenced_body_omits_inline_template: true
+      references_constraints: ["C-23"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -423,6 +543,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.7.0"
+      date: "2026-04-25"
+      author: "specter-team"
+      type: minor
+      description: "v0.11 init bundle. Add C-22/AC-27..29 for `init --install-hook`: writes a git pre-push hook that blocks pushes with implementation diffs lacking @spec/@ac annotation deltas. Add C-23/AC-30..36 for `init --ai <tool>`: writes per-tool AI instruction file (claude/codex/cursor/copilot/gemini) with idempotent fenced markers so re-runs preserve out-of-fence content. Both use the `<!-- specter:begin v1 --> ... <!-- specter:end -->` block format. Closes the v0.10.x docs/code drift class by giving the AI a concise project guide that asks Specter for spec content on demand instead of dumping it pre-loaded."
     - version: "1.6.0"
       date: "2026-04-20"
       author: "specter-team"
