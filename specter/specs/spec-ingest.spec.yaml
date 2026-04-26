@@ -1,6 +1,6 @@
 spec:
   id: spec-ingest
-  version: "1.2.0"
+  version: "1.3.0"
   status: approved
   tier: 1
 
@@ -99,6 +99,11 @@ spec:
       type: business
       enforcement: error
 
+    - id: C-12
+      description: "The body-text annotation extractor used to scan JUnit `<system-out>` content (Convention B) MUST accept three comment markers as the leading prefix: `//` (Go / TS / JS), `#` (Python / shell), and `*` (JSDoc). The regex MUST mirror the source-file scanner in `internal/coverage` (which already accepts all three) so cross-language Convention B output flows through ingest cleanly. Closes the Python adoption gap reported in GH #79: a pytest user who writes `print('# @spec my-spec')` (or uses an autouse-fixture marker that emits `# @spec ...` lines) gets the same ingest behavior as a Go user writing `t.Log(\"// @spec my-spec\")`."
+      type: technical
+      enforcement: error
+
   depends_on:
     - spec_id: spec-coverage
       version_range: "^1.9.0"
@@ -183,7 +188,23 @@ spec:
       references_constraints: ["C-11", "C-08"]
       priority: high
 
+    - id: AC-12
+      description: "Given a JUnit testcase whose `<system-out>` contains `# @spec my-spec` and `# @ac AC-01` on separate lines (the natural pytest pattern with `print()` calls), ingest extracts `(my-spec, AC-01)` identically to how it handles `// @spec my-spec` and `// @ac AC-01` (Go pattern) or `* @spec my-spec` and `* @ac AC-01` (JSDoc pattern). All three comment markers behave identically; the choice is whichever matches the test runner's natural language."
+      inputs:
+        scenario_python: "<system-out># @spec my-spec\\n# @ac AC-01</system-out>"
+        scenario_go: "<system-out>// @spec my-spec\\n// @ac AC-01</system-out>"
+        scenario_jsdoc: "<system-out>* @spec my-spec\\n* @ac AC-01</system-out>"
+      expected_output:
+        all_three_extract_same_pair: "(my-spec, AC-01)"
+      references_constraints: ["C-12"]
+      priority: critical
+
   changelog:
+    - version: "1.3.0"
+      date: "2026-04-25"
+      author: "specter-team"
+      type: minor
+      description: "Add C-12/AC-12: ingest body-text annotation extractor accepts `//`, `#`, and `*` comment markers — mirroring the source-file scanner already in internal/coverage. Closes GH #79's cheap fix: pytest users can write `print('# @spec ...')` from inside a test (or via an autouse-fixture marker pattern) and ingest extracts the (spec_id, ac_id) pair identically to a Go test's `t.Log('// @spec ...')`. Cross-language Convention B output now flows through ingest cleanly."
     - version: "1.2.0"
       date: "2026-04-23"
       author: "specter-team"
