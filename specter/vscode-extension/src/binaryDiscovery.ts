@@ -127,10 +127,35 @@ function normaliseOS(platform: string): string {
 }
 
 /**
+ * Strict semver validation for version strings used in download URLs.
+ * Accepts MAJOR.MINOR.PATCH with an optional pre-release suffix
+ * (alphanumerics, dots, hyphens). The literal string "latest" is NOT
+ * valid here — callers must resolve "latest" via resolveLatestVersion()
+ * before passing the version into URL construction.
+ *
+ * Anything outside this shape is rejected with an Error. Without this
+ * guard, an attacker-controlled `specter.version` setting (e.g. via a
+ * malicious workspace's `.vscode/settings.json`) could inject path
+ * separators or query strings into the download URL and redirect to a
+ * different repo on the same host, bypassing TLS and checksum verification.
+ */
+const VALID_VERSION = /^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/;
+
+export function validateVersion(version: string): void {
+  if (typeof version !== 'string' || !VALID_VERSION.test(version)) {
+    throw new Error(
+      `invalid specter version ${JSON.stringify(version)}: ` +
+      `expected MAJOR.MINOR.PATCH (e.g. "0.10.2") or "latest"`,
+    );
+  }
+}
+
+/**
  * Returns the archive file name for a given version / os / arch triple.
  * Matches goreleaser's naming template: specter_{version}_{os}_{arch}.tar.gz
  */
 export function assetName(opts: DownloadUrlOptions): string {
+  validateVersion(opts.version);
   const goOS   = normaliseOS(opts.os);
   const goArch = normaliseArch(opts.arch);
   const ext    = goOS === 'windows' ? '.zip' : '.tar.gz';
@@ -143,6 +168,7 @@ export function assetName(opts: DownloadUrlOptions): string {
  * string (e.g. "0.6.0"), NOT "latest".
  */
 export function buildDownloadUrl(opts: DownloadUrlOptions): string {
+  validateVersion(opts.version);
   return `https://github.com/Hanalyx/specter/releases/download/v${opts.version}/${assetName(opts)}`;
 }
 
@@ -285,6 +311,7 @@ export async function verifyChecksum(content: Buffer, expectedHex: string): Prom
  * filename → sha256 hex string.  goreleaser format: `<sha256>  <filename>`.
  */
 export async function downloadChecksums(version: string): Promise<Map<string, string>> {
+  validateVersion(version);
   const url = `https://github.com/Hanalyx/specter/releases/download/v${version}/checksums.txt`;
   const data = await httpsGet(url);
   const map = new Map<string, string>();
