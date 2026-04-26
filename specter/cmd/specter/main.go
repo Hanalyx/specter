@@ -52,7 +52,7 @@ const maxDescLen = 50
 // nothing. Explains where specter looked and what to try next — users often
 // keep specs in a non-default directory and need the hint.
 func noSpecsMessage() string {
-	m, _ := loadManifest()
+	m, _, _ := loadManifest()
 	searched := m.SpecsDir()
 	if searched == "" || searched == "." {
 		searched = "current directory and subdirectories"
@@ -268,7 +268,7 @@ func discoverSpecs(patterns ...string) []string {
 		return patterns
 	}
 	// Load manifest to honor settings.exclude and specs_dir.
-	m, _ := loadManifest()
+	m, _, _ := loadManifest()
 	excludeNames := make(map[string]bool)
 	for _, e := range m.ExcludePatterns() {
 		excludeNames[e] = true
@@ -300,14 +300,8 @@ func discoverSpecs(patterns ...string) []string {
 }
 
 func discoverTestFiles(glob string) []string {
-	// If an explicit glob is provided, use filepath.Glob to resolve it directly.
 	if glob != "" {
-		matches, err := filepath.Glob(glob)
-		if err == nil && len(matches) > 0 {
-			return matches
-		}
-		// Glob matched nothing or errored — fall through to default walk so the
-		// caller gets a useful result rather than silent empty output.
+		return globMatchWalk(glob)
 	}
 
 	// Default: walk the repo for all recognized test file suffixes.
@@ -571,7 +565,11 @@ func checkCmd() *cobra.Command {
 				return errSilent
 			}
 
-			m, _ := loadManifest()
+			m, _, mErr := loadManifest()
+			if mErr != nil {
+				fmt.Fprintln(os.Stderr, "error:", mErr)
+				return errSilent
+			}
 			opts := &checker.CheckOptions{
 				Strict:      strict || m.Settings.Strict,
 				WarnOnDraft: m.Settings.WarnOnDraft,
@@ -640,6 +638,7 @@ func coverageCmd() *cobra.Command {
 	var failingOnly bool
 	var strict bool
 	var scope string
+	var strictnessFlag string
 	cmd := &cobra.Command{
 		Use:   "coverage",
 		Short: "Generate spec-to-test traceability matrix",
@@ -662,7 +661,34 @@ func coverageCmd() *cobra.Command {
 				specFileByID[in.Spec.ID] = in.File
 			}
 
-			testFiles := discoverTestFiles(testsGlob)
+			m, _, mErr := loadManifest()
+			if mErr != nil {
+				fmt.Fprintln(os.Stderr, "error:", mErr)
+				return errSilent
+			}
+
+			// C-25: when --tests is unset, fall back to settings.tests_glob.
+			// Manifest may carry multiple globs as a list; iterate and union
+			// the matches (deduped). Empty manifest list + no --tests falls
+			// through to discoverTestFiles("") which walks "." for known
+			// test-file extensions.
+			var testFiles []string
+			switch {
+			case testsGlob != "":
+				testFiles = discoverTestFiles(testsGlob)
+			case len(m.Settings.TestsGlob) > 0:
+				seen := map[string]bool{}
+				for _, g := range m.Settings.TestsGlob {
+					for _, f := range discoverTestFiles(g) {
+						if !seen[f] {
+							seen[f] = true
+							testFiles = append(testFiles, f)
+						}
+					}
+				}
+			default:
+				testFiles = discoverTestFiles("")
+			}
 			var allAnnotations []coverage.AnnotationMatch
 			for _, f := range testFiles {
 				data, err := os.ReadFile(f)
@@ -672,7 +698,45 @@ func coverageCmd() *cobra.Command {
 				allAnnotations = append(allAnnotations, coverage.ExtractAnnotations(string(data), f)...)
 			}
 
-			m, _ := loadManifest()
+			// Validate the CLI flag against the same enum as settings.strictness.
+			// Reject typos at the flag layer rather than silently falling
+			// through (the same class GH #76 closes for the manifest).
+			if strictnessFlag != "" {
+				validStrictness := map[string]bool{"annotation": true, "threshold": true, "zero-tolerance": true}
+				if !validStrictness[strictnessFlag] {
+					fmt.Fprintf(os.Stderr, "error: --strictness %q is not a valid value (allowed: annotation, threshold, zero-tolerance)\n", strictnessFlag)
+					return errSilent
+				}
+			}
+
+			// Resolve effective strictness: CLI flag overrides manifest setting.
+			effectiveStrictness := m.Settings.Strictness
+			if strictnessFlag != "" {
+				effectiveStrictness = strictnessFlag
+			}
+			if effectiveStrictness == "" {
+				effectiveStrictness = "threshold"
+			}
+
+			// C-24: --strict combined with strictness=annotation is incoherent
+			// (annotation mode is for new adopters; strict requires runner-visible
+			// annotations). Fail-fast with a clear message.
+			if strict && effectiveStrictness == "annotation" {
+				fmt.Fprintln(os.Stderr, "error: --strict requires settings.strictness >= threshold; current strictness is annotation")
+				fmt.Fprintln(os.Stderr, "       set settings.strictness to 'threshold' or 'zero-tolerance' in specter.yaml, or pass --strictness <level>")
+				return errSilent
+			}
+
+			// C-27: empty test discovery under --strict surfaces a warning.
+			// Under zero-tolerance, the warning becomes a hard error.
+			if strict && len(allAnnotations) == 0 {
+				fmt.Fprintln(os.Stderr, "warn: no test files contained @spec/@ac annotations — coverage will report 0% for every spec")
+				fmt.Fprintln(os.Stderr, "      set settings.tests_glob in specter.yaml or pass --tests <glob>")
+				if effectiveStrictness == "zero-tolerance" {
+					fmt.Fprintln(os.Stderr, "error: zero-tolerance strictness requires at least one annotated test file")
+					return errSilent
+				}
+			}
 
 			// AC-25: resolve --scope domain to a set of spec IDs.
 			// Unknown domain → fail-fast listing valid names.
@@ -803,6 +867,39 @@ func coverageCmd() *cobra.Command {
 				fmt.Printf("  run: specter explain %s:%s\n", w.DependsOn, w.UncoveredACs[0])
 			}
 
+			// C-25 / AC-28: zero-tolerance fails on any non-passed annotated AC,
+			// regardless of whether the spec's tier-coverage % met its threshold.
+			// Exit code 2 distinguishes strictness violation from threshold failure.
+			//
+			// C-26 / AC-29: zero-tolerance also fails on approval_gate=true with
+			// unset approval_date. Exit code 3 distinguishes approval-gate violation.
+			if effectiveStrictness == "zero-tolerance" {
+				if results != nil {
+					nonPassed := 0
+					for _, r := range results.Results {
+						if r.Status != "" && r.Status != "passed" {
+							nonPassed++
+						}
+					}
+					if nonPassed > 0 {
+						fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d annotated AC(s) did not pass\n", nonPassed)
+						os.Exit(2)
+					}
+				}
+				gateViolations := 0
+				for _, s := range specs {
+					for _, ac := range s.AcceptanceCriteria {
+						if ac.ApprovalGate && ac.ApprovalDate == "" {
+							gateViolations++
+						}
+					}
+				}
+				if gateViolations > 0 {
+					fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d AC(s) carry approval_gate=true with unset approval_date\n", gateViolations)
+					os.Exit(3)
+				}
+			}
+
 			if report.Summary.Failing > 0 {
 				return errSilent
 			}
@@ -814,6 +911,7 @@ func coverageCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&failingOnly, "failing", false, "Show only specs below 100% coverage in the table (summary header still reflects the full report)")
 	cmd.Flags().BoolVar(&strict, "strict", false, "Require .specter-results.json and treat any non-passed annotated AC as uncovered (all tiers)")
 	cmd.Flags().StringVar(&scope, "scope", "", "Narrow --strict demand to specs in the named domain from specter.yaml (specs outside the domain fall back to v0.9 boolean-passed logic). Requires --strict.")
+	cmd.Flags().StringVar(&strictnessFlag, "strictness", "", "Override settings.strictness in specter.yaml (annotation | threshold | zero-tolerance)")
 	return cmd
 }
 
@@ -849,7 +947,11 @@ func syncCmd() *cobra.Command {
 				testContents = append(testContents, specsync.FileContent{Path: f, Content: string(data)})
 			}
 
-			m, _ := loadManifest()
+			m, _, mErr := loadManifest()
+			if mErr != nil {
+				fmt.Fprintln(os.Stderr, "error:", mErr)
+				return errSilent
+			}
 			checkOpts := &checker.CheckOptions{
 				Strict:      strict || m.Settings.Strict,
 				WarnOnDraft: m.Settings.WarnOnDraft,
@@ -1172,21 +1274,26 @@ func findManifest() (manifestPath string, projectRoot string) {
 	return "", ""
 }
 
-func loadManifest() (*manifest.Manifest, string) {
+// loadManifest finds and parses the nearest specter.yaml. Always returns a
+// non-nil Manifest — Defaults() if no file exists or parse fails — so library
+// helpers (noSpecsMessage, discoverSpecs) can safely deref. Returns a non-nil
+// error when a manifest IS present but fails to parse; RunE handlers must
+// check the error and fail-fast (per GH #76 — silent fallback to Defaults()
+// on parse error swallowed every typo'd settings key).
+func loadManifest() (*manifest.Manifest, string, error) {
 	path, root := findManifest()
 	if path == "" {
-		return manifest.Defaults(), ""
+		return manifest.Defaults(), "", nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return manifest.Defaults(), ""
+		return manifest.Defaults(), "", fmt.Errorf("read %s: %w", path, err)
 	}
 	m, err := manifest.ParseManifest(string(data))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: invalid specter.yaml: %v (using defaults)\n", err)
-		return manifest.Defaults(), ""
+		return manifest.Defaults(), "", fmt.Errorf("invalid %s: %w", path, err)
 	}
-	return m, root
+	return m, root, nil
 }
 
 func initCmd() *cobra.Command {
@@ -1711,7 +1818,11 @@ func doctorCmd() *cobra.Command {
 
 			// --- Check 5: Coverage meets tier thresholds (C-05, AC-06) ---
 			if len(specFiles) > 0 {
-				m, _ := loadManifest()
+				m, _, mErr := loadManifest()
+				if mErr != nil {
+					fmt.Fprintln(os.Stderr, "error:", mErr)
+					return errSilent
+				}
 				_, specs, hasParseErrors := parseAllSpecs(specFiles)
 				if hasParseErrors {
 					printCheck("coverage", "WARN", "Skipping coverage check — specs have parse errors")
@@ -1990,7 +2101,11 @@ func watchCmd() *cobra.Command {
 		Short: "Re-run sync pipeline on file changes",
 		Long:  "Watches .spec.yaml and test files for changes and re-runs the full sync pipeline. Press Ctrl+C to stop.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			m, _ := loadManifest()
+			m, _, mErr := loadManifest()
+			if mErr != nil {
+				fmt.Fprintln(os.Stderr, "error:", mErr)
+				return errSilent
+			}
 
 			specsDir := m.SpecsDir()
 			fmt.Printf("specter watch\n\n")
