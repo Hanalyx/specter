@@ -10,9 +10,15 @@ import "regexp"
 // Spec IDs are kebab-case, ACs are the canonical AC-NN form.
 var testNameAnnotation = regexp.MustCompile(`([a-z][a-z0-9-]*[a-z0-9])[/:](AC-\d+)`)
 
-// // @spec <id>  and  // @ac <id>  anywhere in a text body.
-var bodySpecAnnotation = regexp.MustCompile(`//\s*@spec\s+([a-z][a-z0-9-]*[a-z0-9])`)
-var bodyACAnnotation = regexp.MustCompile(`//\s*@ac\s+(AC-\d+)`)
+// `// @spec <id>` / `# @spec <id>` / `* @spec <id>` (and likewise for @ac)
+// anywhere in a text body. Mirrors the source-file scanner in
+// internal/coverage so cross-language Convention B output (pytest's
+// `print('# @spec ...')`, JSDoc-style `* @spec ...`, Go's `t.Log('// @spec ...')`)
+// flows through ingest identically. Closes GH #79.
+//
+// C-12: three comment markers — //, #, * — are equivalent at the body layer.
+var bodySpecAnnotation = regexp.MustCompile(`(?://|#|\*)\s*@spec\s+([a-z][a-z0-9-]*[a-z0-9])`)
+var bodyACAnnotation = regexp.MustCompile(`(?://|#|\*)\s*@ac\s+(AC-\d+)`)
 
 // extractAnnotations returns (specID, acID) discovered from any of the three
 // sources. First hit wins: test-name pattern → classname pattern → body text.
