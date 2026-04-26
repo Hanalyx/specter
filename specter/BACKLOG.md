@@ -2,9 +2,11 @@
 
 Forward-looking roadmap. Items are grouped by target release. Each item is a single sentence of intent plus a link to the design doc or discussion when one exists.
 
-Current shipped version: **v0.10.2** (CLI released to GitHub 2026-04-23; VS Code extension v0.10.2 shipped to Marketplace 2026-04-24). Past release notes live in [CHANGELOG.md](CHANGELOG.md) — this file is forward-only.
+Current shipped version: **v0.11.0** (CLI released to GitHub 2026-04-26; VS Code extension v0.11.0 VSIX built and pending Marketplace publish). Past release notes live in [CHANGELOG.md](CHANGELOG.md) — this file is forward-only.
 
-Current working branch: **`release/v0.11`** (opened 2026-04-25). All feature / fix / doc PRs target `release/v0.11`, not `main`, until the cycle merges. See `CONTRIBUTING.md` → Branch workflow. Cycle plan: `V0_11_PLAN.md`.
+Between releases. No working branch open. Per `CONTRIBUTING.md` → Branch workflow, PRs target `main` directly until the v0.12 cycle starts, at which point a new `release/v0.12` branch will open and this header will be updated to name it.
+
+The v0.11 cycle delivered five features (explain bundle, check --test, init --install-hook + --ai, settings.strictness + tests_glob), four GH-issue closures (#75, #76, #78, #79), seven security hardening items folded in pre-release, and a CI gates pass. See `CHANGELOG.md` v0.11.0 entry and `docs/explainer/v0.11-ai-loop-discipline.md` for the full walkthrough.
 
 The `chore/dogfood-strict` maintenance branch merged to `main` on 2026-04-24 (PR #66) — internal-only, no version bump. Specter now dogfoods `specter coverage --strict` on its own tests via `make dogfood-strict`: 15/15 specs mechanically verified across 214 (spec_id, ac_id) pairs from Go + TypeScript test runners.
 
@@ -275,6 +277,28 @@ v0.11 delivers lever (1) and lever (2) via the instruction file. v0.12 delivers 
   **Scope estimate**: 3-4 days. Most of the cost is in the session-scoped tracker — the hook script itself is small, but validating it survives across sessions, works inside git worktrees, and doesn't leak `/tmp` state requires integration testing with a real Claude Code instance.
 
 - **`unreachable_annotation` — source-only annotation detection.** Deferred from v0.11's `specter check --test` for the right reason: correlating `// @spec` / `// @ac` source comments with runner-visible test names requires a real per-language test-file parser, not line regex. Candidate for v0.12 once `check --test` has baked. Closes the last class of silent coverage miss the v0.10.1 docs patch could only warn about.
+
+### Post-v0.11.0 triage (issues opened against v0.11.0)
+
+- **GH #93 — `specter doctor` no-manifest discovery mismatch.** Pre-existing since v0.9.0. Fix in v0.12 alongside `feat/doctor-fix` (--fix canonicalization) so doctor's discovery path matches `specter parse`'s recursive-from-cwd fallback.
+- **GH #94 — strictness=zero-tolerance + approval_gate enforcement.** Reporter claims AC-29 doesn't fire end-to-end despite the v0.11 unit test passing. Awaiting repro details. Potential v0.11.1 hotfix.
+- **GH #95 — `check --test` false positive on multi-`@spec` test files.** Confirmed-class regression. Today's scanner treats latest-`@spec` as parent context for following `@ac` lines; should validate each `@ac` against the union of all declared specs in the file. Likely v0.11.1 hotfix candidate.
+- **GH #77 — language-aware `specter explain`.** Per `V0_12_PYTHON_FOLLOWUP_PLAN.md` Item 1.
+- **GH #80 — source-only diagnostic hint under `--strict`.** Per `V0_12_PYTHON_FOLLOWUP_PLAN.md` Item 2.
+
+### Post-v0.11.0 feature requests (deferred to v0.13+)
+
+- **GH #96 — `specter migrate` for non-Specter dialects.** Substantial feature; pluggable `--from=<dialect>` registry + `map.yaml` field mapping. JWTMS migration would be the driving case (1900 ACs, 515 constraints). v0.13+.
+- **GH #97 — `generated_from.source_files` plural array.** Small schema enhancement matching the existing `test_files` shape. Doctor canonicalization for migration. v0.12 candidate.
+- **GH #98 — AC-level lifecycle `status` field.** Schema addition for product-stage tracking. Overlaps with `approval_gate` semantics; needs design. v0.13+.
+- **GH #99 — spec-level coverage inference from `generated_from.test_files`.** Adoption affordance for migrated specs that haven't been annotation-backfilled. Non-strict mode only; strict still requires annotations. v0.13.
+- **GH #100 — `spec.kind: audit-matrix` for cross-cutting coverage specs.** Polymorphic spec shape; needs schema-stability work first. v0.14+.
+- **GH #101 — `specter doctor --diff <baseline>`.** DX improvement for iterative migration work. Pairs with `feat/doctor-fix` in v0.12.
+
+### Stable-pricing follow-ups deferred from the v0.11 cycle
+
+- **VS Code extension v0.11.0 Marketplace publish.** VSIX is built at `vscode-extension/specter-vscode-0.11.0.vsix`; awaits manual `RELEASING.md` gate (install + verify + sign-off) and `vsce publish`. Recommend `--pre-release` first given the C1/C2/H1/H2 fixes are user-facing.
+- **`chore/v0.12-security-hardening` pre-staged branch (local-only).** Bundles M1, M2, M4, M5, M6, M7, M8 from the v0.11 pre-release agent review: input size caps, webview CSP, GHA SHA pinning, sigstore signing + SBOM via goreleaser, `release.yml` Tier 3 gating, jest-junit ^17 bump. Will land as a single `chore/v0.12-security-hardening` PR (or split per-concern) when the v0.12 cycle starts.
 
 ---
 
