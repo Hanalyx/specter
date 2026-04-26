@@ -819,6 +819,20 @@ func coverageCmd() *cobra.Command {
 				report.Entries[i].SpecFile = specFileByID[report.Entries[i].SpecID]
 			}
 
+			// GH #94 — under zero-tolerance, demote ACs that violate the
+			// approval_gate contract (approval_gate: true with unset
+			// approval_date) so the report reflects the same enforcement
+			// signal the exit code carries. v0.11.0 fired the exit code but
+			// left the report unchanged; the user-visible PASS/FAIL cell
+			// stayed identical between threshold and zero-tolerance.
+			//
+			// Demotion shape: move the AC from CoveredACs to UncoveredACs,
+			// recompute CoveragePct + PassesThreshold per entry, recompute
+			// Summary.Passing / Summary.Failing.
+			if effectiveStrictness == "zero-tolerance" {
+				demoteApprovalGateViolations(report, specs)
+			}
+
 			// C-10: --json emits the report in every state, including when
 			// parse failed. Downstream consumers (VS Code extension) branch on
 			// ParseErrors vs Entries to decide what to render. Exit code, not
@@ -1589,6 +1603,77 @@ func runInitAI(tool string) error {
 		fmt.Println("Detected existing AGENTS.md — CLAUDE.md uses @AGENTS.md import to avoid duplicating the template.")
 	}
 	return nil
+}
+
+// demoteApprovalGateViolations is the v0.11.1 fix for GH #94. Under
+// strictness=zero-tolerance, an AC with approval_gate: true and unset
+// approval_date is a demotion — it must show up in the report as
+// uncovered, not just trigger the exit-3 code path. Walks the report
+// in place: moves violating ACs from CoveredACs to UncoveredACs,
+// recomputes per-entry CoveragePct + PassesThreshold, and recomputes
+// Summary.Passing / Summary.Failing.
+//
+// v0.11.0 emitted the exit code but left the report identical to
+// threshold mode — operator-visible report stayed PASS while the run
+// exited 3. This function aligns the report with the exit signal.
+func demoteApprovalGateViolations(report *coverage.CoverageReport, specs []schema.SpecAST) {
+	// Build (specID → set of AC IDs to demote) from the spec AST.
+	violations := make(map[string]map[string]bool)
+	for i := range specs {
+		s := &specs[i]
+		var demoted map[string]bool
+		for _, ac := range s.AcceptanceCriteria {
+			if ac.ApprovalGate && ac.ApprovalDate == "" {
+				if demoted == nil {
+					demoted = make(map[string]bool)
+				}
+				demoted[ac.ID] = true
+			}
+		}
+		if demoted != nil {
+			violations[s.ID] = demoted
+		}
+	}
+	if len(violations) == 0 {
+		return
+	}
+
+	// Walk report entries and demote.
+	report.Summary.Passing = 0
+	report.Summary.Failing = 0
+	for i := range report.Entries {
+		e := &report.Entries[i]
+		demoted := violations[e.SpecID]
+		if demoted == nil {
+			if e.PassesThreshold {
+				report.Summary.Passing++
+			} else {
+				report.Summary.Failing++
+			}
+			continue
+		}
+		var keptCovered []string
+		for _, acID := range e.CoveredACs {
+			if demoted[acID] {
+				e.UncoveredACs = append(e.UncoveredACs, acID)
+				continue
+			}
+			keptCovered = append(keptCovered, acID)
+		}
+		e.CoveredACs = keptCovered
+		if e.TotalACs > 0 {
+			e.CoveragePct = float64(len(e.CoveredACs)) * 100 / float64(e.TotalACs)
+		} else {
+			e.CoveragePct = 0
+		}
+		// PassesThreshold uses the per-tier threshold the entry was built with.
+		e.PassesThreshold = int(e.CoveragePct) >= e.Threshold
+		if e.PassesThreshold {
+			report.Summary.Passing++
+		} else {
+			report.Summary.Failing++
+		}
+	}
 }
 
 // extractFencedBody pulls the in-fence body out of a freshly-rendered template,
