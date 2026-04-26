@@ -19,6 +19,7 @@ import (
 	"github.com/Hanalyx/specter/internal/checker"
 	"github.com/Hanalyx/specter/internal/coverage"
 	specdiff "github.com/Hanalyx/specter/internal/diff"
+	"github.com/Hanalyx/specter/internal/explain"
 	"github.com/Hanalyx/specter/internal/manifest"
 	"github.com/Hanalyx/specter/internal/parser"
 	"github.com/Hanalyx/specter/internal/resolver"
@@ -1770,12 +1771,48 @@ func doctorCmd() *cobra.Command {
 // @spec spec-explain
 func explainCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "explain <spec-id>[:<ac-id>]",
-		Short: "Show annotation examples for a spec's acceptance criteria",
-		Long:  "Explains how to annotate tests to cover a spec's ACs. Run `specter explain <spec-id>` to list all ACs, or `specter explain <spec-id>:<ac-id>` for details on one.",
-		Args:  cobra.ExactArgs(1),
+		Use:   "explain <spec-id>[:<ac-id>] | annotation | schema [<field-path>]",
+		Short: "Read-only diagnostic surfaces: AC coverage, annotation reference, schema reference",
+		Long: "Read-only verb with four surfaces:\n" +
+			"  explain <spec-id>[:<ac-id>]  show AC coverage and annotation examples (default)\n" +
+			"  explain annotation           print the test-annotation reference\n" +
+			"  explain schema               print the full schema field reference\n" +
+			"  explain schema <field-path>  print detail on one field (e.g., spec.acceptance_criteria.items.approval_gate)\n",
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Parse argument: "spec-id" or "spec-id:AC-NN"
+			// Dispatch on first arg: reference keyword or spec-id.
+			switch args[0] {
+			case "annotation":
+				if len(args) != 1 {
+					return fmt.Errorf("explain annotation takes no arguments")
+				}
+				fmt.Print(explain.AnnotationReference())
+				return nil
+			case "schema":
+				schemaJSON, err := parser.SchemaBytes()
+				if err != nil {
+					return fmt.Errorf("load schema: %w", err)
+				}
+				if len(args) == 1 {
+					out, err := explain.RenderSchemaReference(schemaJSON)
+					if err != nil {
+						return err
+					}
+					fmt.Print(out)
+					return nil
+				}
+				out, err := explain.RenderSchemaField(schemaJSON, args[1])
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "error:", err.Error())
+					return errSilent
+				}
+				fmt.Print(out)
+				return nil
+			}
+			// Default: spec-id[:AC-NN] form. Exactly one arg required.
+			if len(args) != 1 {
+				return fmt.Errorf("explain %s takes no second argument", args[0])
+			}
 			arg := args[0]
 			specID := arg
 			acID := ""
@@ -1844,22 +1881,38 @@ func explainCmd() *cobra.Command {
 	}
 }
 
-// explainListMode lists all ACs in a spec with COVERED/UNCOVERED status.
+// explainListMode renders the spec card: tier, coverage %, and per-AC status
+// with the test file(s) covering each AC.
 func explainListMode(spec *schema.SpecAST, coveredBy map[string][]string, testFiles []string, langs []string) error {
+	covered := 0
+	total := len(spec.AcceptanceCriteria)
+	for _, ac := range spec.AcceptanceCriteria {
+		if len(coveredBy[ac.ID]) > 0 {
+			covered++
+		}
+	}
+	pct := 0
+	if total > 0 {
+		pct = (covered * 100) / total
+	}
+
 	fmt.Printf("specter explain %s\n\n", spec.ID)
-	fmt.Printf("  %-8s %-8s  %s\n", "Status", "AC", "Description")
-	fmt.Println("  " + strings.Repeat("-", 60))
+	fmt.Printf("  Tier: %d    Coverage: %d%% (%d/%d ACs)\n\n", spec.Tier, pct, covered, total)
+	fmt.Printf("  %-8s %-8s  %-40s  %s\n", "Status", "AC", "Description", "Test files")
+	fmt.Println("  " + strings.Repeat("-", 90))
 
 	for _, ac := range spec.AcceptanceCriteria {
 		status := "UNCOVERED"
+		files := ""
 		if len(coveredBy[ac.ID]) > 0 {
 			status = "COVERED"
+			files = strings.Join(coveredBy[ac.ID], ", ")
 		}
 		desc := ac.Description
 		if len(desc) > maxDescLen {
 			desc = desc[:maxDescLen-3] + "..."
 		}
-		fmt.Printf("  %-8s %-8s  %s\n", status, ac.ID, desc)
+		fmt.Printf("  %-8s %-8s  %-40s  %s\n", status, ac.ID, desc, files)
 	}
 
 	fmt.Printf("\n  Scanned %d test file(s)\n", len(testFiles))
