@@ -8,7 +8,7 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 **Theme: AI loop discipline + adoption hardening.**
 
-Five new features close order-of-operations gaps. Four GH issues closed from real adopter friction. Full walkthrough in `docs/explainer/v0.11-ai-loop-discipline.md`.
+Five new features close order-of-operations gaps; four GH issues from real adopter friction are fixed (#75, #76, #78, #79 cheap fix). Full walkthrough in `docs/explainer/v0.11-ai-loop-discipline.md`.
 
 ### Added
 
@@ -62,7 +62,7 @@ Five tools, one command per tool:
 
 Body wrapped in `<!-- specter:begin v1 -->` / `<!-- specter:end -->` markers. Re-runs replace only the fenced region; out-of-fence content preserved byte-for-byte.
 
-Body teaches the AI to (1) read the spec before writing code, (2) use Convention A annotations with good/bad examples, (3) run `make dogfood-strict` before declaring work done, (4) ask Specter for spec content on demand via `specter explain` rather than from a pre-loaded snapshot.
+Body teaches the AI to (1) read the spec before writing code, (2) use Convention A annotations with good/bad examples, (3) run `make dogfood-strict` before declaring work done, (4) call `specter explain` for spec content on demand.
 
 `--ai claude` checks for an existing `AGENTS.md` and writes `@AGENTS.md` import directive instead of inlining the body, avoiding duplication.
 
@@ -98,7 +98,7 @@ settings:
 
 Used when `--tests` is unset. Supports `**` (recursive). List form unions matches.
 
-Spec: `spec-manifest` C-25, AC-39.
+Spec: `spec-manifest` C-25, AC-39. Closes GH #78.
 
 ### Fixed
 
@@ -133,8 +133,7 @@ Spec: `spec-ingest` 1.2.0 → 1.3.0 (C-12, AC-12).
 
 ### Changed
 
-- `specter.yaml` parsing is now strict about unknown keys at the top level and under `settings:`. Existing manifests with typos that were silently ignored will start failing. Error messages include did-you-mean suggestions when the offending key is close to a valid one.
-- `loadManifest()` (internal) now returns an error when an existing `specter.yaml` fails to parse, rather than silently falling back to defaults. Library helpers (`noSpecsMessage`, `discoverSpecs`) tolerate missing manifests; RunE handlers fail-fast on invalid ones.
+- `loadManifest()` (internal) now returns an error when an existing `specter.yaml` fails to parse, rather than silently falling back to defaults. Library helpers (`noSpecsMessage`, `discoverSpecs`) tolerate missing manifests; RunE handlers fail-fast on invalid ones. Combined with the unknown-key rejection above, every typo in `specter.yaml` now surfaces at parse time.
 - `discoverTestFiles` no longer falls through to walking `.` when an explicit glob matches zero files. The empty result is surfaced (and warned about) instead of hidden behind a noisy walk.
 - `specter coverage --strict` exit codes: 0 (pass), 2 (strictness violation under zero-tolerance), 3 (approval-gate violation under zero-tolerance), errSilent (tier-threshold failure under threshold mode).
 
