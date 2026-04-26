@@ -11,12 +11,16 @@ import "regexp"
 var testNameAnnotation = regexp.MustCompile(`([a-z][a-z0-9-]*[a-z0-9])[/:](AC-\d+)`)
 
 // `// @spec <id>` / `# @spec <id>` / `* @spec <id>` (and likewise for @ac)
-// anywhere in a text body. Mirrors the source-file scanner in
-// internal/coverage so cross-language Convention B output (pytest's
+// anywhere in a text body. Accepts the same three markers as the source-file
+// scanner in internal/coverage so cross-language Convention B output (pytest's
 // `print('# @spec ...')`, JSDoc-style `* @spec ...`, Go's `t.Log('// @spec ...')`)
 // flows through ingest identically. Closes GH #79.
 //
-// C-12: three comment markers — //, #, * — are equivalent at the body layer.
+// Differs from the source-file scanner in two pre-existing ways C-12 preserves:
+// (a) unanchored — JUnit <system-out> is free-form text, so requiring `^\s*`
+// would miss annotations embedded in surrounding runner output; (b) strict
+// kebab-case spec-id (`[a-z][a-z0-9-]*[a-z0-9]`) where the source scanner uses
+// `[\w-]+`. First-occurrence wins when multiple matches appear.
 var bodySpecAnnotation = regexp.MustCompile(`(?://|#|\*)\s*@spec\s+([a-z][a-z0-9-]*[a-z0-9])`)
 var bodyACAnnotation = regexp.MustCompile(`(?://|#|\*)\s*@ac\s+(AC-\d+)`)
 
