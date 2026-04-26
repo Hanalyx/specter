@@ -20,6 +20,14 @@ import (
 // branches and as the local sha for deleted branches.
 const ZeroSha = "0000000000000000000000000000000000000000"
 
+// validShaRE constrains LocalSha and RemoteSha to git's canonical 40-char
+// lowercase hex form. Without this guard, a sha-shaped token from stdin
+// could carry a leading `--` and flow into `git diff --name-only X..Y`
+// as a flag rather than a ref. Refer to the pre-push hook contract: git
+// emits 40-char hex (or all-zeros sentinel) on every line; anything else
+// is malformed input and we reject it.
+var validShaRE = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
 // PushSpec describes one ref being pushed, parsed from a single line of
 // git's pre-push stdin format: `local_ref local_sha remote_ref remote_sha`.
 type PushSpec struct {
@@ -32,7 +40,8 @@ type PushSpec struct {
 // ParsePushSpecs reads git's pre-push stdin (one line per ref, four
 // space-separated tokens) and returns the parsed specs in order.
 // Empty input returns an empty slice with nil error. Malformed lines
-// (wrong token count) return an error.
+// (wrong token count, or sha fields not matching the canonical 40-char
+// hex form) return an error.
 func ParsePushSpecs(r io.Reader) ([]PushSpec, error) {
 	var specs []PushSpec
 	scanner := bufio.NewScanner(r)
@@ -44,6 +53,14 @@ func ParsePushSpecs(r io.Reader) ([]PushSpec, error) {
 		tokens := strings.Fields(line)
 		if len(tokens) != 4 {
 			return nil, fmt.Errorf("pre-push line must have 4 fields (local_ref local_sha remote_ref remote_sha), got %d: %q", len(tokens), line)
+		}
+		// Reject sha fields that don't match git's 40-char hex form.
+		// This is the canonical input shape from `git push`'s stdin.
+		if !validShaRE.MatchString(tokens[1]) {
+			return nil, fmt.Errorf("pre-push line has malformed local_sha %q (expected 40-char hex)", tokens[1])
+		}
+		if !validShaRE.MatchString(tokens[3]) {
+			return nil, fmt.Errorf("pre-push line has malformed remote_sha %q (expected 40-char hex)", tokens[3])
 		}
 		specs = append(specs, PushSpec{
 			LocalRef:  tokens[0],

@@ -1329,8 +1329,24 @@ func initCmd() *cobra.Command {
 // fenced region so re-runs replace only the Specter-managed body.
 func runInitInstallHook() error {
 	hookDir := filepath.Join(".git", "hooks")
-	if _, err := os.Stat(".git"); err != nil {
-		fmt.Fprintln(os.Stderr, "error: .git directory not found. Run `specter init --install-hook` from a git repository root.")
+	// Use Lstat (not Stat) so a symlinked `.git` is detected. A workspace
+	// where `.git` is a symlink to an attacker-chosen path could redirect
+	// the hook write to that path, dropping mode-0755 attacker-controlled
+	// shell into an arbitrary location. Refuse to write through symlinks.
+	info, err := os.Lstat(".git")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error: .git not found. Run `specter init --install-hook` from a git repository root.")
+		return errSilent
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		fmt.Fprintln(os.Stderr, "error: .git is a symlink; refusing to install hook through a symlink. Resolve the link or run from the actual repository root.")
+		return errSilent
+	}
+	if !info.IsDir() {
+		// `.git` can be a regular file in worktrees (it contains `gitdir: <path>`).
+		// Worktree support is intentionally out of scope for the v0.11 hook
+		// installer — refuse rather than guess, with a clear pointer.
+		fmt.Fprintln(os.Stderr, "error: .git is not a directory (looks like a git worktree); install the hook from the primary working tree.")
 		return errSilent
 	}
 	if err := os.MkdirAll(hookDir, 0755); err != nil {

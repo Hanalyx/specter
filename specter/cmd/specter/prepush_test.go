@@ -148,7 +148,7 @@ func TestPrePushCheck_DeletedBranch_Allows(t *testing.T) {
 	t.Run("spec-manifest/AC-28 pre-push-check skips deleted-branch refs", func(t *testing.T) {
 		dir := setupBareGitRepo(t)
 		// Deleted branch: local sha = ZeroSha. Nothing to inspect.
-		stdin := "refs/heads/gone 0000000000000000000000000000000000000000 refs/heads/gone abc\n"
+		stdin := "refs/heads/gone 0000000000000000000000000000000000000000 refs/heads/gone aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
 		_, code := runCLIWithStdin(t, dir, stdin, "pre-push-check")
 
 		if code != 0 {

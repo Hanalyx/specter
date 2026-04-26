@@ -12,9 +12,21 @@ import (
 // "local_ref local_sha remote_ref remote_sha"). ParsePushSpecs must handle
 // the common cases: single ref, multiple refs, new branch (remote sha is
 // ZeroSha), deleted branch (local sha is ZeroSha), and trailing whitespace.
+//
+// Test inputs use 40-char hex shas matching git's canonical pre-push stdin
+// format. Earlier tests used abbreviated forms (`abc123`, `aaa`); those are
+// not what git actually emits and are now rejected by ParsePushSpecs's
+// validShaRE guard (added to defeat flag-injection via crafted shas).
+const (
+	sha40A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	sha40B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	sha40C = "cccccccccccccccccccccccccccccccccccccccc"
+	sha40D = "dddddddddddddddddddddddddddddddddddddddd"
+)
+
 func TestParsePushSpecs_SingleRef(t *testing.T) {
 	t.Run("spec-manifest/AC-28 ParsePushSpecs single ref", func(t *testing.T) {
-		input := "refs/heads/main abc123 refs/heads/main def456\n"
+		input := "refs/heads/main " + sha40A + " refs/heads/main " + sha40B + "\n"
 		specs, err := ParsePushSpecs(strings.NewReader(input))
 		if err != nil {
 			t.Fatal(err)
@@ -22,7 +34,7 @@ func TestParsePushSpecs_SingleRef(t *testing.T) {
 		if len(specs) != 1 {
 			t.Fatalf("expected 1 spec, got %d", len(specs))
 		}
-		if specs[0].LocalRef != "refs/heads/main" || specs[0].LocalSha != "abc123" {
+		if specs[0].LocalRef != "refs/heads/main" || specs[0].LocalSha != sha40A {
 			t.Errorf("got %+v", specs[0])
 		}
 	})
@@ -30,7 +42,8 @@ func TestParsePushSpecs_SingleRef(t *testing.T) {
 
 func TestParsePushSpecs_MultipleRefs(t *testing.T) {
 	t.Run("spec-manifest/AC-28 ParsePushSpecs multiple refs", func(t *testing.T) {
-		input := "refs/heads/feat/a aaa refs/heads/feat/a 111\nrefs/heads/feat/b bbb refs/heads/feat/b 222\n"
+		input := "refs/heads/feat/a " + sha40A + " refs/heads/feat/a " + sha40B + "\n" +
+			"refs/heads/feat/b " + sha40C + " refs/heads/feat/b " + sha40D + "\n"
 		specs, err := ParsePushSpecs(strings.NewReader(input))
 		if err != nil {
 			t.Fatal(err)
@@ -43,7 +56,7 @@ func TestParsePushSpecs_MultipleRefs(t *testing.T) {
 
 func TestParsePushSpecs_NewBranch_ZeroRemoteSha(t *testing.T) {
 	t.Run("spec-manifest/AC-28 ParsePushSpecs new branch carries zero remote sha", func(t *testing.T) {
-		input := "refs/heads/new abc123 refs/heads/new " + ZeroSha + "\n"
+		input := "refs/heads/new " + sha40A + " refs/heads/new " + ZeroSha + "\n"
 		specs, err := ParsePushSpecs(strings.NewReader(input))
 		if err != nil {
 			t.Fatal(err)
@@ -56,7 +69,7 @@ func TestParsePushSpecs_NewBranch_ZeroRemoteSha(t *testing.T) {
 
 func TestParsePushSpecs_DeletedBranch_ZeroLocalSha(t *testing.T) {
 	t.Run("spec-manifest/AC-28 ParsePushSpecs deleted branch carries zero local sha", func(t *testing.T) {
-		input := "refs/heads/gone " + ZeroSha + " refs/heads/gone abc123\n"
+		input := "refs/heads/gone " + ZeroSha + " refs/heads/gone " + sha40A + "\n"
 		specs, err := ParsePushSpecs(strings.NewReader(input))
 		if err != nil {
 			t.Fatal(err)
@@ -85,6 +98,60 @@ func TestParsePushSpecs_MalformedLine(t *testing.T) {
 		_, err := ParsePushSpecs(strings.NewReader(input))
 		if err == nil {
 			t.Fatal("expected error on malformed line, got nil")
+		}
+	})
+}
+
+// Reject sha tokens that don't match git's canonical 40-char hex form.
+// Without this guard, a sha-shaped token like "--upload-pack=evil" would
+// flow into `git diff --name-only X..Y` and be parsed as a flag.
+func TestParsePushSpecs_RejectsNonHexSha(t *testing.T) {
+	t.Run("spec-manifest/AC-28 ParsePushSpecs rejects non-hex local_sha", func(t *testing.T) {
+		// 40 chars, but contains uppercase + non-hex.
+		input := "refs/heads/main --upload-pack=evil refs/heads/main " + ZeroSha + "\n"
+		_, err := ParsePushSpecs(strings.NewReader(input))
+		if err == nil {
+			t.Fatal("expected error on non-hex local_sha, got nil")
+		}
+		if !strings.Contains(err.Error(), "local_sha") {
+			t.Errorf("expected error to name local_sha, got: %v", err)
+		}
+	})
+	t.Run("spec-manifest/AC-28 ParsePushSpecs rejects non-hex remote_sha", func(t *testing.T) {
+		input := "refs/heads/main aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa refs/heads/main GARBAGE\n"
+		_, err := ParsePushSpecs(strings.NewReader(input))
+		if err == nil {
+			t.Fatal("expected error on non-hex remote_sha, got nil")
+		}
+		if !strings.Contains(err.Error(), "remote_sha") {
+			t.Errorf("expected error to name remote_sha, got: %v", err)
+		}
+	})
+	t.Run("spec-manifest/AC-28 ParsePushSpecs rejects too-short sha", func(t *testing.T) {
+		input := "refs/heads/main abc refs/heads/main " + ZeroSha + "\n"
+		_, err := ParsePushSpecs(strings.NewReader(input))
+		if err == nil {
+			t.Fatal("expected error on short sha, got nil")
+		}
+	})
+	t.Run("spec-manifest/AC-28 ParsePushSpecs accepts canonical 40-char hex sha", func(t *testing.T) {
+		input := "refs/heads/main aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa refs/heads/main bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"
+		specs, err := ParsePushSpecs(strings.NewReader(input))
+		if err != nil {
+			t.Fatalf("expected canonical sha to parse, got error: %v", err)
+		}
+		if len(specs) != 1 {
+			t.Errorf("expected 1 spec, got %d", len(specs))
+		}
+	})
+	t.Run("spec-manifest/AC-28 ParsePushSpecs accepts ZeroSha sentinel", func(t *testing.T) {
+		// Already covered by TestParsePushSpecs_NewBranch_ZeroRemoteSha and
+		// TestParsePushSpecs_DeletedBranch_ZeroLocalSha but verifying the new
+		// regex doesn't reject the sentinel.
+		input := "refs/heads/new aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa refs/heads/new " + ZeroSha + "\n"
+		_, err := ParsePushSpecs(strings.NewReader(input))
+		if err != nil {
+			t.Errorf("expected ZeroSha to be valid hex, got error: %v", err)
 		}
 	})
 }
