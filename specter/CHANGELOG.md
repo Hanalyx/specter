@@ -4,6 +4,34 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 ---
 
+## v0.11.1 — 2026-04-26
+
+**Theme: post-v0.11.0 hotfix.** Two bugs reported within hours of v0.11.0 shipping; both fixed.
+
+### Fixed
+
+#### GH #94 — `strictness=zero-tolerance` + `approval_gate` report demotion
+
+v0.11.0 fired exit code 3 when an AC carried `approval_gate: true` with unset `approval_date` under zero-tolerance, but the report cell continued to show the AC as PASS. Reporter expected the report to also reflect the demotion. v0.11.1 demotes such ACs in the report (moves them from `CoveredACs` to `UncoveredACs`, recomputes per-entry `CoveragePct` + `PassesThreshold`, recomputes `Summary.Passing` / `Summary.Failing`). Threshold mode unchanged — `approval_gate` stays metadata there per spec contract.
+
+**Behavior change for `strictness: zero-tolerance` only:** a spec with an `approval_gate: true` AC and unset `approval_date` now shows as `NONE / uncovered` in the report (was `PASS` in v0.11.0). Exit code 3 unchanged.
+
+#### GH #95 — `check --test` false positive on multi-`@spec` test files
+
+Test files declaring two `@spec` headers at the top got the second header as the parent context for following `@ac` lines. An `@ac` legitimately in the FIRST declared spec was flagged `unknown_ac_ref`. Fix: each `@ac` is now validated against the union of declared specs in the file. Cross-cutting tests that bridge two specs work as expected.
+
+### Internal
+
+- `cmd/specter/main.go`: new `demoteApprovalGateViolations` post-processor.
+- `internal/checker/test_annotations.go`: `scanFileAnnotations` tracks `declaredSpecs` (slice + dedupe set) instead of single `currentSpec`.
+- 5 new regression tests across `cmd/specter/coverage_strictness_test.go` and `internal/checker/test_annotations_test.go`.
+
+### No spec changes
+
+Spec contracts unchanged from v0.11.0; the v0.11.1 fix aligns the implementation with the contracts already declared (spec-coverage AC-29 always implied report demotion, even though the explicit AC text only mentioned exit code).
+
+---
+
 ## v0.11.0 — 2026-04-26
 
 **Theme: AI loop discipline + adoption hardening.**
