@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "1.7.0"
+  version: "1.8.0"
   status: draft
   tier: 2
 
@@ -161,6 +161,21 @@ spec:
 
     - id: C-23
       description: "`specter init --ai <tool>` MUST write a per-tool AI instruction file with a `<!-- specter:begin v1 --> ... <!-- specter:end -->` fenced region containing the v0.11 instruction template (preflight, Convention A, validation gate, on-demand explain references). The fenced region's tool-target path is: `claude` → `CLAUDE.md`, `codex` → `AGENTS.md`, `cursor` → `.cursor/rules/specter.md`, `copilot` → `.github/copilot-instructions.md` (body capped at 4KB), `gemini` → `GEMINI.md`. Re-runs MUST replace only the fenced region; out-of-fence content is preserved byte-for-byte. `--ai claude` checks for an existing `AGENTS.md` and writes `@AGENTS.md` import directive instead of inlining the body when one exists."
+      type: technical
+      enforcement: error
+
+    - id: C-24
+      description: "MUST parse `settings.strictness` (string enum: `annotation` | `threshold` | `zero-tolerance`) with default `threshold`. The level governs `coverage --strict` semantics in spec-coverage; spec-manifest's role is parse-only — accept the three values, default when unset, reject any other string with a clear error naming the valid options."
+      type: technical
+      enforcement: error
+
+    - id: C-25
+      description: "MUST parse `settings.tests_glob` as either a string (single glob) or a list of strings (multiple globs) into a normalized `[]string`. Used by `coverage` and `sync` as the default test-discovery pattern when `--tests` is unset. Closes the silent-0% UX hole where users running `coverage --strict` on a Python/Node project with no `--tests` flag see all ACs reported as uncovered because `filepath.Walk(\".\")` misses their `tests/**/*.py` layout."
+      type: technical
+      enforcement: error
+
+    - id: C-26
+      description: "ParseManifest MUST reject any unknown key under the `settings:` block (and at the top level of the manifest) with a clear error naming the offending key, the closest valid key by Levenshtein distance ≤ 3 (`did you mean: <key>?`), and the full list of valid keys at that level. Rationale: today `settings.tests_glob:` (a plausible-but-misspelled-or-not-yet-existing key) parses cleanly and is silently ignored, leading users to believe their manifest is configured when in fact the key did nothing. The same silent-acceptance footgun threatens any new settings key (e.g., the v0.11 `strictness` field) — making the rejection a parse-level invariant closes the class."
       type: technical
       enforcement: error
 
@@ -534,6 +549,51 @@ spec:
       references_constraints: ["C-23"]
       priority: high
 
+    - id: AC-37
+      description: "ParseManifest accepts `settings.strictness: annotation`, `settings.strictness: threshold`, and `settings.strictness: zero-tolerance` cleanly. When unset, the parsed Manifest carries `Settings.Strictness == \"threshold\"` (default applied)."
+      inputs:
+        manifest_strictness_annotation: "settings.strictness: annotation"
+        manifest_strictness_zero_tolerance: "settings.strictness: zero-tolerance"
+        manifest_unset: "settings: { specs_dir: specs }"
+      expected_output:
+        annotation_parses: true
+        zero_tolerance_parses: true
+        unset_default: "threshold"
+      references_constraints: ["C-24"]
+      priority: critical
+
+    - id: AC-38
+      description: "ParseManifest rejects `settings.strictness: bogus` with a clear error naming the field and the three valid values. No partial parse; the function returns an error and a nil Manifest."
+      inputs:
+        manifest: "settings.strictness: bogus"
+      expected_output:
+        error_contains: "settings.strictness"
+        error_lists_valid_values: ["annotation", "threshold", "zero-tolerance"]
+      references_constraints: ["C-24"]
+      priority: critical
+
+    - id: AC-39
+      description: "ParseManifest accepts `settings.tests_glob` as either a single string (`tests_glob: \"tests/**/*.py\"`) or a list (`tests_glob: [\"tests/**/*.py\", \"integration/**/*.py\"]`). Both forms normalize into `Settings.TestsGlob []string`."
+      inputs:
+        manifest_string_form: "settings.tests_glob: tests/**/*.py"
+        manifest_list_form: "settings.tests_glob: [tests/**/*.py, integration/**/*.py]"
+      expected_output:
+        string_form_normalized_length: 1
+        list_form_normalized_length: 2
+      references_constraints: ["C-25"]
+      priority: critical
+
+    - id: AC-40
+      description: "ParseManifest with a typo'd settings key (e.g., `test_glob:` instead of `tests_glob:`) returns an error naming the offending key, the closest valid key (`did you mean: tests_glob?`), and exits parse-time. Empty workspace under `coverage --strict` no longer silently reports 0% — the manifest fails to parse first."
+      inputs:
+        manifest: "settings.test_glob: tests/**/*.py"
+      expected_output:
+        error_contains: "test_glob"
+        error_did_you_mean: "tests_glob"
+        exit_code: "non-zero"
+      references_constraints: ["C-26"]
+      priority: critical
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -543,6 +603,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.8.0"
+      date: "2026-04-25"
+      author: "specter-team"
+      type: minor
+      description: "v0.11 settings hardening. Add C-24/AC-37..38 for `settings.strictness` (Feature 5: three-level enum gating coverage --strict semantics). Add C-25/AC-39 for `settings.tests_glob` (closes GH #78: default test-discovery pattern, removes the silent-0% UX hole when --tests is unset). Add C-26/AC-40 for unknown-key rejection in settings (closes GH #76: typo'd keys now error with did-you-mean). Together these close a class of silent-failure footguns where users guess plausible setting names and get no signal."
     - version: "1.7.0"
       date: "2026-04-25"
       author: "specter-team"
