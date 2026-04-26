@@ -4,7 +4,7 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 ---
 
-## v0.11.0 — 2026-04-25 (DRAFT)
+## v0.11.0 — 2026-04-26
 
 **Theme: AI loop discipline + adoption hardening.**
 
