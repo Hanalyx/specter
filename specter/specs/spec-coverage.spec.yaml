@@ -1,6 +1,6 @@
 spec:
   id: spec-coverage
-  version: "1.10.0"
+  version: "1.11.0"
   status: approved
   tier: 2
 
@@ -150,6 +150,26 @@ spec:
 
     - id: C-23
       description: "`specter coverage --scope <domain>` narrows `--strict`'s demand set to ACs of specs listed under the named domain in `specter.yaml`. Semantics: (a) ACs in the scoped domain behave per C-19 (must have status=passed entry, else demoted); (b) ACs outside the scoped domain use the pre-strict boolean-passed logic — annotation presence alone counts as coverage regardless of whether a passing entry exists in results; (c) the report includes ALL specs (not filtered), so the operator sees the full workspace, not a shrunken view. `--scope` without `--strict` is an error. `--scope` combines with `--tests <glob>` as AND (both filters apply). Rationale: staged adoption — a 250-spec workspace cannot migrate every test to runner-visible annotations in one wave; `--scope` lets CI enforce `--strict` on one domain per wave while the rest of the workspace continues with v0.9 semantics."
+      type: business
+      enforcement: error
+
+    - id: C-24
+      description: "When `settings.strictness == \"annotation\"` in `specter.yaml`, `specter coverage --strict` MUST exit non-zero with a clear error rejecting the flag combination: `--strict requires settings.strictness >= threshold; current strictness is annotation`. Rationale: `annotation` mode is for new adopters mid-migration; combining it with the strict flag is incoherent and almost always a misconfiguration."
+      type: business
+      enforcement: error
+
+    - id: C-25
+      description: "When `settings.strictness == \"zero-tolerance\"` (or `--strictness zero-tolerance`), `specter coverage` MUST exit non-zero whenever any annotated AC has a results-file status other than `passed`, regardless of tier coverage threshold. Under `threshold` (default), the same workspace may still pass if total demoted-coverage clears the tier threshold. Zero-tolerance is the strictest gate — one failing annotated test fails the entire run."
+      type: business
+      enforcement: error
+
+    - id: C-26
+      description: "Under `settings.strictness == \"zero-tolerance\"`, `specter coverage` MUST also exit non-zero when any AC carries `approval_gate: true` and an unset `approval_date`. The exit code is distinct from C-25's strictness violation (3 vs 2) so CI can differentiate. Under `threshold` mode `approval_gate` remains metadata-only (matches today's behavior — see spec-explain SPEC_SCHEMA_REFERENCE)."
+      type: business
+      enforcement: error
+
+    - id: C-27
+      description: "`specter coverage --strict` MUST emit a stderr warning before computing coverage when test discovery (after applying `--tests <glob>` or the manifest's `settings.tests_glob`, then falling back to `filepath.Walk(\".\")`) yields zero files containing `@spec` or `@ac` annotations. The warning names the likely cause (`no test files contained @spec/@ac annotations — coverage will report 0% for every spec`) and points at the configuration fix (`set settings.tests_glob in specter.yaml or pass --tests <glob>`). Under `strictness == zero-tolerance`, the warning is upgraded to a hard error (non-zero exit). Closes the silent-0% UX hole reported in GH #75."
       type: business
       enforcement: error
 
@@ -405,7 +425,56 @@ spec:
       references_constraints: ["C-23"]
       priority: medium
 
+    - id: AC-27
+      description: "`specter coverage --strictness <level>` overrides the manifest's `settings.strictness` per-invocation. `--strict` remains a backwards-compatible shortcut for `--strictness threshold`. `--strict --strictness annotation` is an error (incoherent: shortcut and explicit level disagree)."
+      inputs:
+        manifest_strictness: "threshold"
+        cli_flag: "--strictness zero-tolerance"
+      expected_output:
+        effective_strictness: "zero-tolerance"
+      references_constraints: ["C-24", "C-25"]
+      priority: critical
+
+    - id: AC-28
+      description: "Workspace where `settings.strictness == zero-tolerance` and one annotated AC has `status: failed` in `.specter-results.json`: `specter coverage` exits with code 2 even when the spec's tier-coverage % otherwise meets its threshold."
+      inputs:
+        manifest: "settings.strictness: zero-tolerance"
+        results: "AC-01 status=failed; AC-02..AC-10 status=passed (tier 2 spec at 90% > 80% threshold)"
+      expected_output:
+        exit_code: 2
+        threshold_alone_would_have_passed: true
+      references_constraints: ["C-25"]
+      priority: critical
+
+    - id: AC-29
+      description: "Workspace where `settings.strictness == zero-tolerance` and one AC carries `approval_gate: true` with `approval_date` unset: `specter coverage` exits with code 3 (distinct from C-25's code 2). Under `threshold`, the same workspace exits 0 — `approval_gate` remains metadata."
+      inputs:
+        manifest: "settings.strictness: zero-tolerance"
+        spec_ac: "approval_gate: true, approval_date: <unset>"
+      expected_output:
+        zero_tolerance_exit_code: 3
+        threshold_exit_code: 0
+      references_constraints: ["C-26"]
+      priority: high
+
+    - id: AC-30
+      description: "`specter coverage --strict` on a workspace where test discovery yields zero files containing `@spec` / `@ac` annotations emits a stderr warning (`no test files contained @spec/@ac annotations`) ABOVE the coverage table, naming the likely fix (`set settings.tests_glob or pass --tests <glob>`). Under `strictness == zero-tolerance`, the warning is upgraded to an error and exit is non-zero. Under `threshold`, exit code is unchanged from today (the run completes; the warning surfaces the cause)."
+      inputs:
+        scenario_threshold: "no annotated test files; settings.strictness: threshold"
+        scenario_zero_tolerance: "no annotated test files; settings.strictness: zero-tolerance"
+      expected_output:
+        threshold_warning_emitted: true
+        threshold_exit: "unchanged"
+        zero_tolerance_exit_code: "non-zero"
+      references_constraints: ["C-27"]
+      priority: critical
+
   changelog:
+    - version: "1.11.0"
+      date: "2026-04-25"
+      author: "specter-team"
+      type: minor
+      description: "v0.11 settings hardening (paired with spec-manifest 1.8.0). Add C-24/AC-27..28 and C-25/AC-28 for the three-level strictness gate (annotation rejects --strict; zero-tolerance fails on any non-passed annotated AC regardless of tier threshold). Add C-26/AC-29 for zero-tolerance approval_gate enforcement (exit code 3, distinct from strictness exit code 2). Add C-27/AC-30 for empty-test-discovery warning under --strict, upgraded to a hard error under zero-tolerance — closes GH #75 (silent 0% UX hole). Replaces the BUG-3 part 2 entry that used to live in BACKLOG."
     - version: "1.10.0"
       date: "2026-04-23"
       author: "specter-team"
