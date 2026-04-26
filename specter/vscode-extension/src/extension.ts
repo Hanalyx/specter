@@ -1046,14 +1046,25 @@ function registerCommands(ctx: vscode.ExtensionContext): void {
         'specterInsights',
         'Specter Insights',
         vscode.ViewColumn.Beside,
-        { enableScripts: true },
+        {
+          enableScripts: true,
+          // Restrict resource loading to nothing — the panel renders only
+          // inline content. Without this, an XSS regression could load
+          // arbitrary local files via vscode-resource: URIs.
+          localResourceRoots: [],
+        },
       );
+      // Generate a per-render nonce for the inline <script>. The CSP in
+      // renderInsightsHTML refuses any script that doesn't carry this nonce,
+      // so a future regression that misses an escapeHtml call cannot execute.
+      const nonce = require('crypto').randomBytes(16).toString('hex');
       const cards = buildInsightCards(entries, specIndex);
       panel.webview.html = renderInsightsHTML({
         cards,
         parseErrors,
         specCandidatesCount: coverageReport.specCandidatesCount ?? 0,
         entryCount: entries.length,
+        nonce,
       });
       // AC-39: parse-failure cards emit {openFile: path} messages when the
       // user clicks the header. Route them to vscode.open with the
@@ -1361,10 +1372,11 @@ interface RenderInsightsInput {
   parseErrors: Array<{ file: string; line?: number; message: string; type?: string; path?: string }>;
   specCandidatesCount: number;
   entryCount: number;
+  nonce: string;
 }
 
 function renderInsightsHTML(input: RenderInsightsInput): string {
-  const { cards, parseErrors, specCandidatesCount, entryCount } = input;
+  const { cards, parseErrors, specCandidatesCount, entryCount, nonce } = input;
 
   // AC-37: single source of truth for "what does the panel claim?".
   // See insights.ts computeInsightsStatus — the webview is a dumb
@@ -1442,6 +1454,7 @@ function renderInsightsHTML(input: RenderInsightsInput): string {
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
 <style>
   body { font-family: var(--vscode-font-family); padding: 1rem; }
   h1 { color: var(--vscode-foreground); }
@@ -1461,7 +1474,7 @@ function renderInsightsHTML(input: RenderInsightsInput): string {
 ${header}
 ${parseErrorHTML}
 ${coverageSection}
-<script>
+<script nonce="${nonce}">
   (function() {
     const vscode = acquireVsCodeApi();
     document.querySelectorAll('a.open-file').forEach(a => {

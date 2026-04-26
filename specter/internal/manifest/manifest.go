@@ -6,8 +6,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// MaxManifestBytes caps the input size before yaml.Unmarshal to prevent
+// memory exhaustion via billion-laughs / anchor-expansion on a malicious
+// specter.yaml. Real manifests are tiny (a few hundred lines max);
+// 64 KiB is generous.
+const MaxManifestBytes = 64 << 10 // 64 KiB
+
 // ParseManifest parses and validates a specter.yaml content string.
 func ParseManifest(yamlContent string) (*Manifest, error) {
+	if len(yamlContent) > MaxManifestBytes {
+		return nil, fmt.Errorf("specter.yaml exceeds %d byte limit (got %d bytes)", MaxManifestBytes, len(yamlContent))
+	}
 	var m Manifest
 	if err := yaml.Unmarshal([]byte(yamlContent), &m); err != nil {
 		return nil, fmt.Errorf("invalid YAML: %w", err)
