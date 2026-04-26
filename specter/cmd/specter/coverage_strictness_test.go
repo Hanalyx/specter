@@ -114,9 +114,70 @@ func TestCoverageStrictness_ZeroTolerance_FailsOnApprovalGate(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		_, code := runCLI(t, dir, "coverage", "--strict")
+		out, code := runCLI(t, dir, "coverage", "--strict")
 		if code != 3 {
 			t.Errorf("expected exit code 3 for approval_gate violation under zero-tolerance, got %d", code)
+		}
+		// GH #94 regression: under zero-tolerance, the report MUST demote the
+		// approval-gate-violating AC. v0.11.0 fired exit 3 but left the report
+		// showing the AC as covered (PASS). v0.11.1 demotes in the report too.
+		if !strings.Contains(out, "0%") {
+			t.Errorf("expected report to show 0%% coverage after approval_gate demotion, got:\n%s", out)
+		}
+		if !strings.Contains(out, "uncovered: AC-01") {
+			t.Errorf("expected report to list AC-01 as uncovered after demotion, got:\n%s", out)
+		}
+		if strings.Contains(out, "100%") {
+			t.Errorf("did not expect 100%% coverage in report after demotion (v0.11.0 bug); got:\n%s", out)
+		}
+	})
+}
+
+// GH #94 — under threshold mode, approval_gate violations stay metadata.
+// The report must show the AC as PASS (no demotion). Regression guard for
+// the v0.11.1 fix to ensure it doesn't accidentally demote in threshold mode.
+func TestCoverageStrictness_ThresholdMode_DoesNotDemoteApprovalGate(t *testing.T) {
+	t.Run("spec-coverage/AC-29 threshold mode does not demote approval_gate violations", func(t *testing.T) {
+		dir := t.TempDir()
+		writeManifestWithStrictness(t, dir, "threshold")
+
+		specBody := `spec:
+  id: gated-spec
+  version: "1.0.0"
+  status: approved
+  tier: 3
+  context: { system: x, feature: x }
+  objective: { summary: x }
+  constraints:
+    - id: C-01
+      description: "MUST do thing"
+      type: technical
+      enforcement: error
+  acceptance_criteria:
+    - id: AC-01
+      description: "Thing happens"
+      approval_gate: true
+      references_constraints: ["C-01"]
+      priority: high
+`
+		if err := os.WriteFile(filepath.Join(dir, "gated.spec.yaml"), []byte(specBody), 0644); err != nil {
+			t.Fatal(err)
+		}
+		testFile := "// @spec gated-spec\n// @ac AC-01\nfunc TestGated(t *testing.T) {}\n"
+		if err := os.WriteFile(filepath.Join(dir, "gated_test.go"), []byte(testFile), 0644); err != nil {
+			t.Fatal(err)
+		}
+		results := `{"results": [{"spec_id": "gated-spec", "ac_id": "AC-01", "status": "passed", "test_name": "TestGated"}]}`
+		if err := os.WriteFile(filepath.Join(dir, ".specter-results.json"), []byte(results), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		out, code := runCLI(t, dir, "coverage", "--strict")
+		if code != 0 {
+			t.Errorf("expected exit 0 under threshold mode (approval_gate is metadata), got %d", code)
+		}
+		if !strings.Contains(out, "100%") || !strings.Contains(out, "PASS") {
+			t.Errorf("expected 100%% PASS under threshold (no demotion), got:\n%s", out)
 		}
 	})
 }

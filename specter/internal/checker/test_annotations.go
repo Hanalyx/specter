@@ -75,7 +75,13 @@ func CheckTestAnnotations(testFiles map[string]string, specs []schema.SpecAST) [
 
 func scanFileAnnotations(path, content string, validACs map[string]map[string]bool) []CheckDiagnostic {
 	var diags []CheckDiagnostic
-	currentSpec := ""
+
+	// declaredSpecs accumulates every `@spec <id>` header seen in the file.
+	// Multi-`@spec` files are legitimate (cross-cutting tests that bridge
+	// two specs); each `@ac` line is validated against the *union* of
+	// declared specs, not just the most recent one (closes GH #95).
+	var declaredSpecs []string
+	specSeen := map[string]bool{}
 
 	// Multi-line string state. Annotations appearing inside a backtick template
 	// literal (TS/JS/Go raw string) or a Python triple-quoted string are
@@ -102,14 +108,18 @@ func scanFileAnnotations(path, content string, validACs map[string]map[string]bo
 		}
 
 		if m := tacSpecRefRE.FindStringSubmatch(line); len(m) > 1 {
-			currentSpec = m[1]
-			if _, known := validACs[currentSpec]; !known {
+			specID := m[1]
+			if !specSeen[specID] {
+				specSeen[specID] = true
+				declaredSpecs = append(declaredSpecs, specID)
+			}
+			if _, known := validACs[specID]; !known {
 				diags = append(diags, CheckDiagnostic{
 					Kind:     "unknown_spec_ref",
 					Severity: "error",
-					SpecID:   currentSpec,
+					SpecID:   specID,
 					Message: fmt.Sprintf("test %s:%d references @spec %q but no spec with that id exists in the workspace",
-						path, lineNum, currentSpec),
+						path, lineNum, specID),
 				})
 			}
 			continue
@@ -128,29 +138,60 @@ func scanFileAnnotations(path, content string, validACs map[string]map[string]bo
 		for _, tok := range tokens {
 			switch {
 			case tacStrictAcRE.MatchString(tok):
-				if currentSpec == "" {
-					// @ac without preceding @spec — out of scope for v0.11.
+				if len(declaredSpecs) == 0 {
+					// @ac without any preceding @spec — out of scope for v0.11.
 					continue
 				}
-				valid, ok := validACs[currentSpec]
-				if !ok {
-					// Parent spec already flagged as unknown_spec_ref.
+				// Collect the subset of declared specs that exist in the
+				// workspace. If none exist, cascade-suppress (parent specs
+				// already flagged as unknown_spec_ref).
+				var knownDeclared []string
+				for _, sid := range declaredSpecs {
+					if _, ok := validACs[sid]; ok {
+						knownDeclared = append(knownDeclared, sid)
+					}
+				}
+				if len(knownDeclared) == 0 {
 					continue
 				}
-				if !valid[tok] {
+				// Valid if the AC exists in ANY known declared spec
+				// (multi-@spec files bridge specs; an AC need only be
+				// declared by one of them).
+				inAny := false
+				for _, sid := range knownDeclared {
+					if validACs[sid][tok] {
+						inAny = true
+						break
+					}
+				}
+				if !inAny {
+					// Name the declared specs in the error so the operator
+					// can see which specs were checked.
+					specsNamed := strings.Join(knownDeclared, ", ")
+					reportSpec := knownDeclared[0]
+					if len(knownDeclared) > 1 {
+						reportSpec = "(" + specsNamed + ")"
+					}
 					diags = append(diags, CheckDiagnostic{
 						Kind:     "unknown_ac_ref",
 						Severity: "error",
-						SpecID:   currentSpec,
-						Message: fmt.Sprintf("test %s:%d references @ac %s but spec %q does not declare that AC",
-							path, lineNum, tok, currentSpec),
+						SpecID:   knownDeclared[0],
+						Message: fmt.Sprintf("test %s:%d references @ac %s but no declared spec %s declares that AC",
+							path, lineNum, tok, reportSpec),
 					})
 				}
 			case tacLooseAcRE.MatchString(tok):
+				// Use the most-recently-declared spec for context (just the
+				// label on the diagnostic; the malformed-ID check itself is
+				// independent of any spec).
+				lastSpec := ""
+				if len(declaredSpecs) > 0 {
+					lastSpec = declaredSpecs[len(declaredSpecs)-1]
+				}
 				diags = append(diags, CheckDiagnostic{
 					Kind:     "malformed_ac_id",
 					Severity: "error",
-					SpecID:   currentSpec,
+					SpecID:   lastSpec,
 					Message: fmt.Sprintf("test %s:%d has malformed AC id %q (expected ^AC-\\d{2,}$, e.g. AC-01)",
 						path, lineNum, tok),
 				})
