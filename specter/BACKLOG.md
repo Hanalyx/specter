@@ -4,7 +4,7 @@ Forward-looking roadmap. Items are grouped by target release. Each item is a sin
 
 Current shipped version: **v0.10.2** (CLI released to GitHub 2026-04-23; VS Code extension v0.10.2 shipped to Marketplace 2026-04-24). Past release notes live in [CHANGELOG.md](CHANGELOG.md) — this file is forward-only.
 
-Between releases. No working branch open. Per `CONTRIBUTING.md` → Branch workflow, PRs target `main` directly until the v0.11 cycle starts, at which point a new `release/v0.11` branch gets opened and this header is updated to name it.
+Current working branch: **`release/v0.11`** (opened 2026-04-25). All feature / fix / doc PRs target `release/v0.11`, not `main`, until the cycle merges. See `CONTRIBUTING.md` → Branch workflow. Cycle plan: `V0_11_PLAN.md`.
 
 The `chore/dogfood-strict` maintenance branch merged to `main` on 2026-04-24 (PR #66) — internal-only, no version bump. Specter now dogfoods `specter coverage --strict` on its own tests via `make dogfood-strict`: 15/15 specs mechanically verified across 214 (spec_id, ac_id) pairs from Go + TypeScript test runners.
 
@@ -119,9 +119,85 @@ The CI gate (`specter sync`) already enforces annotated tests must exist. This p
 
   **Why it doesn't dump spec content**: a 249-spec workspace would produce a 10000-line CLAUDE.md, churn on every spec edit, and consume AI context budget reserved for the actual task. The AI doesn't need full spec content pre-loaded — it needs to know specs EXIST, WHERE they live, and HOW to read them on demand. The `specter explain <spec-id>` shell-out from inside an AI session is fast and produces current content, not a stale snapshot.
 
-  **Open design question — what makes instructions actually get followed?** Subject of dedicated research before implementation. Current AI tooling has multiple persistence patterns: instruction files (CLAUDE.md, AGENTS.md, etc.) loaded at session start, plus `memory.md` and similar mechanisms for "always top of mind" reinforcement. Effective phrasing (imperative vs descriptive), section ordering, and reinforcement strategies need empirical testing before the file's final shape is decided. Multi-agent research scheduled.
+  **Design synthesis (3-agent research, 2026-04-25).** Findings on what makes instructions get followed, and how to keep them top of mind:
 
-  **Scope estimate**: `init --install-hook` is 1-2 days (Go template for the hook, `init` flag plumbing, integration test). `init --ai <tool>` is 2-3 days once the instruction-file design is settled (template per tool, manifest readback, idempotency markers, integration test). The instruction-file design phase is itself ~half a week of research + draft + multi-agent review.
+  **File targeting per tool.** Codex / Cursor / Gemini CLI / Copilot all read `AGENTS.md` (the cross-tool standard). Claude Code does not — it reads `CLAUDE.md` only. Copilot's code-review surface reads only the first 4KB of its instruction file. Practical layout:
+  - `--ai codex` / `--ai cursor` / `--ai gemini` write `AGENTS.md` (single canonical body).
+  - `--ai claude` writes `CLAUDE.md` whose body is `@AGENTS.md` (Claude's import directive) plus any Claude-specific addenda. One source of truth, no duplication. If the user's project has no `AGENTS.md` yet, `--ai claude` writes the body inline so the file stands alone.
+  - `--ai copilot` writes `.github/copilot-instructions.md` capped at 4KB.
+
+  **Length.** Cap each generated file at 80 lines. Instruction-following falls off above ~200 lines (Anthropic's CLAUDE.md guidance). HumanLayer's analysis of in-the-wild CLAUDE.md files recommends <60. The point is a project guide, not a manual — every detail link routes back to `specter explain`.
+
+  **Phrasing.** Plain imperative voice ("Run X", "Read Y"). Reserve `MUST` / `NEVER` for the 1–3 highest-stakes rules — aggressive caps inflate triggering and degrade adherence on modern Claude (Anthropic Claude 4 prompting guide). Specificity beats generality: `specter explain <spec-id>` beats "read the spec." Prefer positive ("Annotate every test with `@spec`/`@ac`") over negative ("Don't write tests without annotations") — the Pink Elephant effect costs adherence. One good/bad code-example pair per critical rule (GitHub's analysis of 2,500+ AGENTS.md repos: "one real snippet beats three paragraphs"). Repeat the load-bearing rule first AND last (Lost-in-the-Middle: middle of the file is the lowest-attention region).
+
+  **Top of mind under context pressure.** CLAUDE.md / AGENTS.md / GEMINI.md are loaded as user-prompt content, not system prompt — subject to drift, recency bias, and compaction loss. Two mitigations matter:
+  - **Project-root placement**: Claude Code re-injects project-root `CLAUDE.md` after `/compact` (Anthropic doc, "Instructions seem lost after /compact"). Nested `CLAUDE.md` files do not auto re-inject. Always write to project root for the re-injection guarantee.
+  - **Self-check at the top**: open the file with Anthropic's own preflight pattern adapted for Specter — "Before editing any file under `internal/`, identify the matching spec, run `specter explain <spec-id>`, then state in your reply which spec ID and AC IDs your change touches." Forces a written artifact before code, turning silent skipping into visible skipping.
+
+  **Hard enforcement (Claude-only, future).** For load-bearing rules instructions cannot guarantee, hooks are the only deterministic mechanism. Two candidates for a future `init --ai claude --with-hooks` (or fold into `init --install-hook`):
+  - `PreToolUse` matcher on `Edit|Write` for `internal/**/*.go` — block unless the matching `.spec.yaml` was Read in the same session.
+  - `PostToolUse` matcher `compact` — echo a 5-line "Before You Ship" checklist after auto-compaction (the only documented escape hatch for "non-forgettable" rules in Claude Code).
+
+  Codex / Cursor / Gemini have no hook equivalent — for those tools the file is the only persistence layer. Decide hook scope at implementation time; do not block v0.11 launch on it.
+
+  **Idempotent fenced markers.** Wrap the generated body in `<!-- specter:begin v1 --> ... <!-- specter:end -->`. Future `init --ai <tool>` runs replace only the fenced region; user-authored content outside the fence is preserved. The version tag (`v1`) lets later Specter releases migrate the block format without ambiguity.
+
+  **What stays out.** No spec content. No spec list. No AC enumeration. The file teaches the AI to ASK Specter for that data on demand (`specter explain <spec-id>`, `specter explain schema`, `specter explain annotation`), not to pre-load a snapshot that decays the moment a spec is edited.
+
+  **Draft `--ai claude` body** (~50 lines, the canonical body that `--ai codex|cursor|gemini` would also emit, modulo wrapping markers):
+
+  ```markdown
+  <!-- specter:begin v1 -->
+  # Specter project — read before writing code
+
+  Specs in `specs/*.spec.yaml` are the Single Source of Truth. Code is
+  derived from specs; when they disagree, the spec wins.
+
+  ## Before you edit code
+  1. Identify which spec governs the file (filename pattern: `specs/spec-<area>.spec.yaml`).
+  2. Run `specter explain <spec-id>` and read the AC list.
+  3. State the spec ID and AC IDs your change touches before producing code.
+
+  ## Tests trace to ACs (Convention A)
+  Every new test carries the spec ID and AC ID in its runner-visible name.
+
+  Good (Go):
+  ```go
+  t.Run("spec-coverage/AC-19 failed result demotes all tiers", func(t *testing.T) {
+      ...
+  })
+  ```
+
+  Good (Jest / Vitest):
+  ```ts
+  describe("[spec-extension/AC-12] command registration", () => { ... })
+  ```
+
+  Bad — invisible to coverage, will fail the gate:
+  ```go
+  func TestFailedResult(t *testing.T) { ... }
+  ```
+
+  ## Validation
+  Run `make dogfood-strict` before declaring work done. Exit 0 is the gate.
+  Strictness level for this project is in `specter.yaml`.
+
+  ## Boundaries
+  - Do not edit `specs/*.spec.yaml` to make code pass. Update the code,
+    or propose a spec change in your reply for human review.
+  - If no spec covers your change, stop and ask which spec to read or create.
+
+  ## On-demand reference
+  - `specter explain <spec-id>` — canonical spec content. Read it; do not guess.
+  - `specter explain schema` — schema field reference.
+  - `specter explain annotation` — test-annotation reference.
+
+  Reminder: read the spec before writing code. Tests without `@spec`/`@ac`
+  annotations are invisible to `coverage --strict` and will fail the gate.
+  <!-- specter:end -->
+  ```
+
+  **Scope estimate** (revised after research): `init --install-hook` 1-2 days. `init --ai <tool>` 2-3 days for v0.11 launch (template + per-tool path + idempotency markers + integration test verifying re-run preserves out-of-fence content). The Claude `PreToolUse` / `PostToolUse compact` hook templates are a v0.12 follow-up — they need a session-scoped "spec was Read" tracker in the hook script.
 
 - **`.specter-results.json` test runner adapters** — first-party adapters that write pass/fail results automatically so the pass-rate-aware coverage loop closes end-to-end without manual results-file maintenance:
   - Go: `go test -json | specter results ingest`
@@ -175,6 +251,30 @@ The CI gate (`specter sync`) already enforces annotated tests must exist. This p
   - **Docs only**: `TEST_ANNOTATION_REFERENCE.md` tells Python users to use Convention B. No code change. Penalty: Python is a second-class `--strict` citizen.
   - **Regex extension**: accept `_` as a separator, or a specific delimiter like `.` or `__`, so pytest function names can encode the pair directly. Non-trivial — `test_user_create_AC_01` has ambiguous spec-id boundary (`user_create` vs `user-create` vs partial-match). Needs a design doc. Candidate form: require spec-id to carry a `.` delimiter in Python titles (`def test_user_create.AC_01_brief` — invalid Python, so no) or use a class wrapper (`class Test_user_create: def test_AC_01(...)` → JUnit `Test_user_create.test_AC_01` — still no `/` or `:`).
   - **Status**: blocked pending P2 (`TEST_ANNOTATION_REFERENCE.md`) author's decision. If docs-only is chosen, close this item. If regex extension is chosen, spec-ingest 1.2.0 with C-09 and an AC for the new separator.
+
+---
+
+## v0.12 — AI loop hard enforcement (candidate)
+
+Research framing carried from the v0.11 `init --ai <tool>` design synthesis (2026-04-25):
+
+> Project-root `CLAUDE.md` is the only file across the major tools that's guaranteed re-injected after auto-compaction (Anthropic doc). All instruction files load as user-prompt content, not system prompt — they're high-priority but driftable. The two real top-of-mind levers are (1) keep the file at project root, (2) open it with a self-check / preflight prompt that forces the AI to write the spec ID before writing code. For hard guarantees, only Claude Code's `PreToolUse` / `PostToolUse compact` hooks are deterministic — those go in a v0.12 `--with-hooks` follow-up.
+
+v0.11 delivers lever (1) and lever (2) via the instruction file. v0.12 delivers the deterministic backstop:
+
+- **`specter init --ai claude --with-hooks`** — write hook templates into `.claude/settings.json` under a `<!-- specter:begin v1 -->` / `<!-- specter:end -->` fenced region. Two hooks:
+
+  - **`PreToolUse` matcher on `Edit` / `Write` targeting `internal/**/*.go`** — block the edit unless the matching `specs/spec-<pkg>.spec.yaml` was Read in the same session. Implementation requires a session-scoped "spec-was-Read" tracker: a `SessionStart` hook seeds an empty set file in `/tmp`; a `PreToolUse` matcher on `Read` appends to it; the `Edit`/`Write` matcher consults it and exits code 2 on miss. The stderr message becomes feedback to Claude, prompting it to Read the spec first.
+
+  - **`PostToolUse` matcher `compact`** — echo a 5-line "Before You Ship" checklist after auto-compaction. The only documented escape hatch for non-forgettable rules in Claude Code. Checklist content mirrors the load-bearing rules from the v0.11 instruction file (read the spec, annotate new tests with spec-id/AC-NN, run `make dogfood-strict`).
+
+  Claude-only. Codex / Cursor / Gemini have no hook equivalent — for those tools the v0.11 instruction file is the only persistence layer.
+
+  **Spec bump**: `spec-init` gains constraints for `--with-hooks` behavior, hook-file fenced-region idempotency, and SessionStart bootstrap. One C + one AC per hook (4 new ACs total) is the starting scope.
+
+  **Scope estimate**: 3-4 days. Most of the cost is in the session-scoped tracker — the hook script itself is small, but validating it survives across sessions, works inside git worktrees, and doesn't leak `/tmp` state requires integration testing with a real Claude Code instance.
+
+- **`unreachable_annotation` — source-only annotation detection.** Deferred from v0.11's `specter check --test` for the right reason: correlating `// @spec` / `// @ac` source comments with runner-visible test names requires a real per-language test-file parser, not line regex. Candidate for v0.12 once `check --test` has baked. Closes the last class of silent coverage miss the v0.10.1 docs patch could only warn about.
 
 ---
 

@@ -39,6 +39,8 @@ type Settings struct {
 	Strict        bool           `yaml:"strict,omitempty" json:"strict,omitempty"`                 // C-11: treat warnings as errors
 	WarnOnDraft   bool           `yaml:"warn_on_draft,omitempty" json:"warn_on_draft,omitempty"`   // C-12: warn on draft specs
 	TierOverrides map[string]int `yaml:"tier_overrides,omitempty" json:"tier_overrides,omitempty"` // C-14: per-spec tier overrides
+	TestsGlob     StringOrList   `yaml:"tests_glob,omitempty" json:"tests_glob,omitempty"`         // C-25: default test-discovery glob (string or list)
+	Strictness    string         `yaml:"strictness,omitempty" json:"strictness,omitempty"`         // C-24: annotation | threshold (default) | zero-tolerance
 }
 
 // CoverageConfig defines per-tier coverage thresholds.

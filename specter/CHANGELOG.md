@@ -4,6 +4,178 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 ---
 
+## v0.11.0 — 2026-04-25 (DRAFT)
+
+**Theme: AI loop discipline + adoption hardening.**
+
+Five new features close order-of-operations gaps; four GH issues from real adopter friction are fixed (#75, #76, #78, #79 cheap fix). Full walkthrough in `docs/explainer/v0.11-ai-loop-discipline.md`.
+
+### Added
+
+#### `specter explain` — three new read-only surfaces
+
+Stdout-only. File writes are scoped to `init --ai <tool>` (below).
+
+- `specter explain annotation` — prints the test-annotation reference (Convention A title form, Convention B runtime-log form, source-comment annotations that pair with either).
+- `specter explain schema` — prints the full schema field reference. Walks JSON `$ref` into `$defs` so nested fields under `spec.acceptance_criteria.items.*` and `spec.constraints.items.*` resolve.
+- `specter explain schema <field-path>` — prints single-field detail (type, default, enum, description). Returns non-zero with a `did you mean?` suggestion within Levenshtein 3 on unknown paths.
+- `specter explain <spec-id>` (no AC suffix) — now renders a spec card: tier, coverage %, per-AC test files. Previously showed only COVERED/UNCOVERED labels.
+
+Spec: `spec-explain` 1.0.0 → 1.1.0 (C-09..C-12, AC-07..AC-10).
+
+#### `specter check --test` (`-t`) — test-annotation cross-reference
+
+Opt-in flag. Scans test files for `@spec` / `@ac` source comments and emits diagnostics for references that don't resolve against parsed specs. Three diagnostic kinds:
+
+- `unknown_spec_ref` — `// @spec foo` where no spec with that id exists.
+- `unknown_ac_ref` — `// @spec real-spec` + `// @ac AC-99` where the named spec doesn't declare that AC.
+- `malformed_ac_id` — IDs failing `^AC-\d{2,}$` (`AC-1` not zero-padded, `ac-01` wrong case, `AC-1A` suffixed).
+
+Skips lines inside multi-line string literals (TS template strings, Python triple-quoted strings). Cascade rule: when `@spec` is unknown, child `@ac` lines are not separately checked. `specter sync --strict` (and `settings.strict: true`) routes the check through.
+
+Spec: `spec-check` 1.1.0 → 1.2.0 (C-09, AC-09..AC-12).
+
+#### `specter init --install-hook` — git pre-push hook
+
+Writes `.git/hooks/pre-push` (mode 0755) that blocks pushes whose diff changes implementation files but adds or updates no `@spec` / `@ac` annotations. Hook delegates to a hidden `specter pre-push-check` subcommand that reads git's pre-push stdin format, runs `git diff` per ref, and exits non-zero on impl-only diffs.
+
+- Doc / spec / test changes always pass.
+- Diffs touching impl AND adding an annotation delta in any test file pass.
+- New branches without `origin/HEAD` merge-base are skipped (no "before" to compare against).
+- `git push --no-verify` bypasses (git's behavior, not Specter's).
+
+Hook script wrapped in shell-comment fenced markers (`# specter:begin v1` / `# specter:end`). Re-runs replace only the fenced region.
+
+Spec: `spec-manifest` C-22, AC-27..AC-29.
+
+#### `specter init --ai <tool>` — per-tool AI instruction file
+
+Five tools, one command per tool:
+
+| `--ai <tool>` | Target file |
+|---|---|
+| `claude` | `CLAUDE.md` |
+| `codex` | `AGENTS.md` |
+| `cursor` | `.cursor/rules/specter.md` (creates parent dir) |
+| `copilot` | `.github/copilot-instructions.md` (capped at 4096 bytes) |
+| `gemini` | `GEMINI.md` |
+
+Body wrapped in `<!-- specter:begin v1 -->` / `<!-- specter:end -->` markers. Re-runs replace only the fenced region; out-of-fence content preserved byte-for-byte.
+
+Body teaches the AI to (1) read the spec before writing code, (2) use Convention A annotations with good/bad examples, (3) run `make dogfood-strict` before declaring work done, (4) call `specter explain` for spec content on demand.
+
+`--ai claude` checks for an existing `AGENTS.md` and writes `@AGENTS.md` import directive instead of inlining the body, avoiding duplication.
+
+Spec: `spec-manifest` C-23, AC-30..AC-36.
+
+#### `settings.strictness` — three-level coverage gate
+
+```yaml
+settings:
+  strictness: threshold     # annotation | threshold (default) | zero-tolerance
+```
+
+| Level | Behavior |
+|---|---|
+| `annotation` | Pre-v0.10 behavior. `coverage --strict` rejected as incoherent. |
+| `threshold` (default) | v0.10.x `--strict` behavior. Tier threshold applies after demotion. |
+| `zero-tolerance` | Any non-passed annotated AC exits 2. `approval_gate: true` with unset `approval_date` exits 3 (distinct). |
+
+Override per invocation with `--strictness <level>`. CLI flag and manifest field validated against the same enum; typos at either layer error with valid values listed.
+
+Spec: `spec-manifest` C-24, AC-37..AC-38; `spec-coverage` C-24..C-26, AC-27..AC-29.
+
+#### `settings.tests_glob` — default test-discovery pattern
+
+```yaml
+settings:
+  tests_glob: "tests/**/*.py"           # string form
+  # OR
+  tests_glob:                           # list form
+    - "backend/**/*_test.go"
+    - "frontend/**/*.test.ts"
+```
+
+Used when `--tests` is unset. Supports `**` (recursive). List form unions matches.
+
+Spec: `spec-manifest` C-25, AC-39. Closes GH #78.
+
+### Fixed
+
+#### GH #75 — silent 0% on empty test discovery (under `--strict`)
+
+`specter coverage --strict` no longer falls through to `filepath.Walk(".")` when the configured glob matches zero files. Instead, it warns above the coverage table:
+
+```
+warn: no test files contained @spec/@ac annotations — coverage will report 0% for every spec
+      set settings.tests_glob in specter.yaml or pass --tests <glob>
+```
+
+Under `strictness: zero-tolerance`, the warning escalates to a hard error.
+
+Spec: `spec-coverage` C-27, AC-30.
+
+#### GH #76 — `specter.yaml` settings block silently accepted unknown keys
+
+`ParseManifest` now errors on unknown top-level and `settings:` keys with did-you-mean suggestions (Levenshtein ≤ 3) and the full list of valid keys. Existing manifests with typo'd keys will start failing on parse — fix the typo or remove the field.
+
+Spec: `spec-manifest` C-26, AC-40.
+
+#### GH #79 (cheap fix) — ingest body regex accepts `#` and `*`
+
+`specter ingest`'s body-text annotation extractor (used to scan JUnit `<system-out>`) previously accepted `//` only. Now accepts `//`, `#`, `*` — the same three markers the source-file scanner already accepts. Cross-language Convention B output flows through ingest without language-specific kludges.
+
+Pytest users can `print("# @spec my-spec")` from inside a test and ingest extracts identically to a Go test's `t.Log("// @spec my-spec")`.
+
+The bigger fix (a `pytest-specter` plugin) is tracked for a follow-up.
+
+Spec: `spec-ingest` 1.2.0 → 1.3.0 (C-12, AC-12).
+
+### Security
+
+A pre-release security review identified hardening opportunities across the VS Code extension, the CLI, and the build. All addressed in v0.11.0:
+
+- **VS Code extension** — `specter.binaryPath` and `specter.version` are now declared `"scope": "machine"`, so workspace-level overrides are ignored. `specter.version` is additionally validated against strict semver (`^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$`) before being interpolated into download URLs. `package.json` declares `capabilities.untrustedWorkspaces` with `supported: "limited"`. The "View Diff" terminal command refuses paths containing shell metacharacters before reaching `terminal.sendText`. The `which` shim switched from `execSync` template strings to `execFileSync` array form.
+- **CLI — pre-push hook** (new in v0.11.0): `ParsePushSpecs` validates `local_sha` and `remote_sha` against git's canonical 40-char hex form. `init --install-hook` uses `os.Lstat` and refuses to write through a `.git` symlink or worktree pointer file.
+- **Build** — `go.mod` directive bumped from `1.25.8` to `1.25.9`, picking up five stdlib advisories (TLS, x509, archive/tar, html/template).
+
+No CVEs were assigned; the findings were caught pre-release. The disclosure note in `docs/explainer/v0.11-ai-loop-discipline.md` covers the threat model and mitigations.
+
+### Changed
+
+- `loadManifest()` (internal) now returns an error when an existing `specter.yaml` fails to parse, rather than silently falling back to defaults. Library helpers (`noSpecsMessage`, `discoverSpecs`) tolerate missing manifests; RunE handlers fail-fast on invalid ones. Combined with the unknown-key rejection above, every typo in `specter.yaml` now surfaces at parse time.
+- `discoverTestFiles` no longer falls through to walking `.` when an explicit glob matches zero files. The empty result is surfaced (and warned about) instead of hidden behind a noisy walk.
+- `specter coverage --strict` exit codes: 0 (pass), 2 (strictness violation under zero-tolerance), 3 (approval-gate violation under zero-tolerance), errSilent (tier-threshold failure under threshold mode).
+
+### Internal
+
+- New package `internal/explain` — pure functions for schema walking and annotation reference rendering.
+- New `internal/manifest/string_or_list.go` — custom `UnmarshalYAML` accepting scalar or sequence.
+- New `internal/manifest/fenced.go` — `ReplaceFencedRegion` helper for idempotent file regions, used by both `init --install-hook` and `init --ai <tool>`.
+- New `internal/manifest/{hook,ai_templates,prepush}.go` — pure logic for hook script, instruction templates, and pre-push diff classification.
+- New `cmd/specter/glob.go` — `**`-aware glob matcher (no new dependency); used by `discoverTestFiles` when an explicit glob is provided.
+- `internal/parser.SchemaBytes()` exposes the embedded JSON schema for consumers that need to walk it.
+
+### Spec versions
+
+| Spec | v0.10.2 | v0.11.0 |
+|---|---|---|
+| spec-explain | 1.0.0 | 1.1.0 |
+| spec-check | 1.1.0 | 1.2.0 |
+| spec-ingest | 1.2.0 | 1.3.0 |
+| spec-manifest | 1.6.0 | 1.8.0 |
+| spec-coverage | 1.10.0 | 1.11.0 |
+
+### Migration
+
+Most projects: drop-in. `settings.strictness` defaults to `threshold` (matches v0.10.x `--strict`); `tests_glob` is opt-in.
+
+Projects with typos in `specter.yaml`: the parse error will surface on first invocation. Fix the offending key (the error names the closest valid key).
+
+Python projects using pytest with `# @spec` source comments: `coverage` already worked via the source-file scanner. `coverage --strict` now also works if you wire the autouse-fixture pattern in `conftest.py` (documented in `docs/explainer/v0.11-ai-loop-discipline.md`).
+
+---
+
 ## v0.10.2 — 2026-04-23
 
 **Theme: docs/code parity fixes from jwtms Wave 0/1 integration.**

@@ -6,9 +6,16 @@ name: Pre-Release Test Suite
 # Tier 3: Real-world validation against 12 open-source repos
 
 on:
+  # Tag push: catch-all safety net before the GitHub Release publishes.
   push:
     tags:
       - "v*"
+  # PR to main: gates every working-branch → main merge before the tag exists.
+  # Closes the ordering gap where Tier 3 (real-world matrix) only ran AFTER
+  # tagging, by which time release.yml had already started building artifacts.
+  pull_request:
+    branches: [main]
+    paths: ['specter/**', '.github/**']
   workflow_dispatch:
 
 defaults:
