@@ -131,6 +131,16 @@ The bigger fix (a `pytest-specter` plugin) is tracked for a follow-up.
 
 Spec: `spec-ingest` 1.2.0 → 1.3.0 (C-12, AC-12).
 
+### Security
+
+A pre-release security review identified hardening opportunities across the VS Code extension, the CLI, and the build. All addressed in v0.11.0:
+
+- **VS Code extension** — `specter.binaryPath` and `specter.version` are now declared `"scope": "machine"`, so workspace-level overrides are ignored. `specter.version` is additionally validated against strict semver (`^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$`) before being interpolated into download URLs. `package.json` declares `capabilities.untrustedWorkspaces` with `supported: "limited"`. The "View Diff" terminal command refuses paths containing shell metacharacters before reaching `terminal.sendText`. The `which` shim switched from `execSync` template strings to `execFileSync` array form.
+- **CLI — pre-push hook** (new in v0.11.0): `ParsePushSpecs` validates `local_sha` and `remote_sha` against git's canonical 40-char hex form. `init --install-hook` uses `os.Lstat` and refuses to write through a `.git` symlink or worktree pointer file.
+- **Build** — `go.mod` directive bumped from `1.25.8` to `1.25.9`, picking up five stdlib advisories (TLS, x509, archive/tar, html/template).
+
+No CVEs were assigned; the findings were caught pre-release. The disclosure note in `docs/explainer/v0.11-ai-loop-discipline.md` covers the threat model and mitigations.
+
 ### Changed
 
 - `loadManifest()` (internal) now returns an error when an existing `specter.yaml` fails to parse, rather than silently falling back to defaults. Library helpers (`noSpecsMessage`, `discoverSpecs`) tolerate missing manifests; RunE handlers fail-fast on invalid ones. Combined with the unknown-key rejection above, every typo in `specter.yaml` now surfaces at parse time.
