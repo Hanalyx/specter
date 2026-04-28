@@ -1,6 +1,6 @@
 spec:
   id: spec-doctor
-  version: "1.1.0"
+  version: "1.2.0"
   status: draft
   tier: 2
 
@@ -81,6 +81,11 @@ spec:
     - id: C-09
       description: "When the parse check fails, doctor MUST print a pattern analysis section that groups parse errors by (type, path). If a single pattern covers every discovered spec, doctor MUST name this as the signature of schema-version drift and suggest the operator check the Specter schema changelog. Rationale: a flat list of 20 identical parse errors is noise; a single `every spec missing required field X` line is a diagnosis."
       type: business
+      enforcement: error
+
+    - id: C-10
+      description: "When run without a `specter.yaml`, `specter doctor` MUST discover `.spec.yaml` files via a recursive walk from the current working directory, applying the default exclusions (`node_modules`, `dist`, `.git`, `vendor`, `__pycache__`, `.next`, `testdata`, `tests/fixtures`). When a `specter.yaml` IS present, doctor MUST honor `settings.specs_dir` (default `specs`) as before. Rationale: AC-02 reports the manifest as `WARN (optional)`; if discovery then fails for specs outside `./specs/`, the `optional` framing is a lie. The two checks must agree about whether running without a manifest is supported."
+      type: technical
       enforcement: error
 
   acceptance_criteria:
@@ -168,6 +173,28 @@ spec:
       references_constraints: ["C-09"]
       priority: high
 
+    - id: AC-10
+      description: "Project without `specter.yaml` containing a `.spec.yaml` at cwd root (e.g. `./bar.spec.yaml`) reports spec-files as PASS, not FAIL. Same for a non-default subdirectory (e.g. `./mySpecs/bar.spec.yaml`). The previous behavior (only finding specs under `./specs/`) was inconsistent with manifest-as-optional framing."
+      inputs:
+        project_root_spec: "directory with bar.spec.yaml at cwd root, no specter.yaml"
+        project_custom_dir: "directory with mySpecs/bar.spec.yaml, no specter.yaml"
+      expected_output:
+        spec_files_status: "PASS"
+        exit_code_when_only_doctor_check_fails_is_unrelated: "either 0 or 1 depending on coverage; spec-files itself is PASS"
+      references_constraints: ["C-10"]
+      priority: critical
+
+    - id: AC-11
+      description: "Project WITH `specter.yaml` honors `settings.specs_dir` for discovery — recursive-from-cwd does not override it. Manifest with `specs_dir: customSpecs` finds files under `customSpecs/` only; specs at cwd root or in other subdirectories are NOT discovered. Guards against the v0.12 fix accidentally breaking explicit configurations."
+      inputs:
+        project: "directory with specter.yaml setting specs_dir: customSpecs, plus specs at customSpecs/a.spec.yaml AND b.spec.yaml at cwd root"
+      expected_output:
+        discovered_count: 1
+        discovered_includes: "customSpecs/a.spec.yaml"
+        discovered_excludes: "b.spec.yaml"
+      references_constraints: ["C-10"]
+      priority: critical
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -180,6 +207,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.2.0"
+      date: "2026-04-27"
+      author: "specter-team"
+      type: minor
+      description: "Add C-10/AC-10/AC-11 for GH #93: align doctor's no-manifest discovery with the manifest-as-optional framing. When no `specter.yaml` is present, discovery walks recursively from cwd (with default exclusions). When a manifest IS present, doctor honors `settings.specs_dir` as before — the manifest-present path is unchanged."
     - version: "1.1.0"
       date: "2026-04-19"
       author: "specter-team"
