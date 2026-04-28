@@ -17,7 +17,7 @@ import {
   isBinaryFile,
 } from './binaryDiscovery';
 import { buildDiagnostics, buildCoverageParseDiagnostics, DiagnosticReplacer, shouldRunCoverageForFile } from './diagnostics';
-import { matchRemovedFieldDiagnostic } from './quickFix';
+import { matchRemovedFieldDiagnostic, isLineSafeToDelete } from './quickFix';
 import {
   buildSpecCompletions,
   buildACCompletions,
@@ -777,12 +777,19 @@ function registerProviders(ctx: vscode.ExtensionContext): void {
     }),
   );
 
-  // -- Code actions: quick-fix for known-removed fields (spec-vscode AC-52)
-  // When a parse diagnostic on a .spec.yaml file flags `Unknown field 'X'`
-  // and X is in the known-removed-fields list (initial v0.12 list:
-  // `trust_level`), offer a `Remove deprecated field 'X'` CodeAction that
-  // deletes the offending line. Pairs with `specter doctor --fix`'s
-  // strip-trust-level rewrite (CLI path applies the same repair).
+  // -- Code actions: quick-fix for known-removed fields (spec-vscode AC-52,
+  //    with shape-aware refusal per AC-53). When a parse diagnostic on a
+  //    .spec.yaml file flags `Unknown field 'X'` and X is in the
+  //    known-removed-fields list (initial v0.12 list: `trust_level`), offer
+  //    a `Remove deprecated field 'X'` CodeAction that deletes the
+  //    offending line. Pairs with `specter doctor --fix`'s strip-trust-level
+  //    rewrite (CLI path applies the same repair).
+  //
+  //    C-29: refuse to offer the action when the diagnostic's line has a
+  //    block-scalar value, an empty value (next-line content), or an
+  //    unterminated quoted string — line-deletion on those shapes orphans
+  //    continuation lines and corrupts the file. Mirrors the migrate
+  //    package's yaml-aware refusal.
   ctx.subscriptions.push(
     vscode.languages.registerCodeActionsProvider(specYamlSelector, {
       provideCodeActions(doc, range, context) {
@@ -796,6 +803,12 @@ function registerProviders(ctx: vscode.ExtensionContext): void {
           if (!fieldName) {
             continue;
           }
+          const lineNumber = diag.range.start.line;
+          const line = doc.lineAt(lineNumber);
+          // C-29: shape-aware refusal. Silent skip — no action offered.
+          if (!isLineSafeToDelete(line.text)) {
+            continue;
+          }
           const action = new vscode.CodeAction(
             `Remove deprecated field '${fieldName}'`,
             vscode.CodeActionKind.QuickFix,
@@ -804,8 +817,6 @@ function registerProviders(ctx: vscode.ExtensionContext): void {
           action.isPreferred = true;
           // Delete the offending line (and its trailing newline so the
           // surrounding YAML stays clean).
-          const lineNumber = diag.range.start.line;
-          const line = doc.lineAt(lineNumber);
           const deleteRange = line.rangeIncludingLineBreak;
           action.edit = new vscode.WorkspaceEdit();
           action.edit.delete(doc.uri, deleteRange);
