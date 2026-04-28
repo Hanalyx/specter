@@ -17,6 +17,7 @@ import {
   isBinaryFile,
 } from './binaryDiscovery';
 import { buildDiagnostics, buildCoverageParseDiagnostics, DiagnosticReplacer, shouldRunCoverageForFile } from './diagnostics';
+import { matchRemovedFieldDiagnostic } from './quickFix';
 import {
   buildSpecCompletions,
   buildACCompletions,
@@ -773,6 +774,47 @@ function registerProviders(ctx: vscode.ExtensionContext): void {
         }
         return actions;
       },
+    }),
+  );
+
+  // -- Code actions: quick-fix for known-removed fields (spec-vscode AC-52)
+  // When a parse diagnostic on a .spec.yaml file flags `Unknown field 'X'`
+  // and X is in the known-removed-fields list (initial v0.12 list:
+  // `trust_level`), offer a `Remove deprecated field 'X'` CodeAction that
+  // deletes the offending line. Pairs with `specter doctor --fix`'s
+  // strip-trust-level rewrite (CLI path applies the same repair).
+  ctx.subscriptions.push(
+    vscode.languages.registerCodeActionsProvider(specYamlSelector, {
+      provideCodeActions(doc, range, context) {
+        const actions: vscode.CodeAction[] = [];
+        for (const diag of context.diagnostics) {
+          // Only act on diagnostics whose range overlaps the requested range.
+          if (!diag.range.intersection(range)) {
+            continue;
+          }
+          const fieldName = matchRemovedFieldDiagnostic(diag.message);
+          if (!fieldName) {
+            continue;
+          }
+          const action = new vscode.CodeAction(
+            `Remove deprecated field '${fieldName}'`,
+            vscode.CodeActionKind.QuickFix,
+          );
+          action.diagnostics = [diag];
+          action.isPreferred = true;
+          // Delete the offending line (and its trailing newline so the
+          // surrounding YAML stays clean).
+          const lineNumber = diag.range.start.line;
+          const line = doc.lineAt(lineNumber);
+          const deleteRange = line.rangeIncludingLineBreak;
+          action.edit = new vscode.WorkspaceEdit();
+          action.edit.delete(doc.uri, deleteRange);
+          actions.push(action);
+        }
+        return actions;
+      },
+    }, {
+      providedCodeActionKinds: [vscode.CodeActionKind.QuickFix],
     }),
   );
 
