@@ -1,6 +1,6 @@
 spec:
   id: spec-doctor
-  version: "1.2.0"
+  version: "1.3.0"
   status: draft
   tier: 2
 
@@ -86,6 +86,21 @@ spec:
     - id: C-10
       description: "When run without a `specter.yaml`, `specter doctor` MUST discover `.spec.yaml` files via a recursive walk from the current working directory, applying the default exclusions (`node_modules`, `dist`, `.git`, `vendor`, `__pycache__`, `.next`, `testdata`, `tests/fixtures`). When a `specter.yaml` IS present, doctor MUST honor `settings.specs_dir` (default `specs`) as before. Rationale: AC-02 reports the manifest as `WARN (optional)`; if discovery then fails for specs outside `./specs/`, the `optional` framing is a lie. The two checks must agree about whether running without a manifest is supported."
       type: technical
+      enforcement: error
+
+    - id: C-11
+      description: "`specter doctor --fix` MUST apply known-safe schema-drift rewrites to affected spec files and write the results in place. The rewrite set is a fixed table in `internal/migrate` (not user-configurable in v0.12). Initial table: strip `trust_level` from specs whose parse error signature is `additionalProperties` at path `spec` with message naming `'trust_level'` (removed in v0.6.5). The table is extensible — future rewrites (field renames, root-level-block wrap) land as additions without API change. Rewrites apply ONLY to specs whose parse errors match a known pattern; specs with unmatched errors are left untouched. Writes are byte-preserving outside the rewrite (no whole-file reformatting)."
+      type: business
+      enforcement: error
+
+    - id: C-12
+      description: "`specter doctor --fix --dry-run` MUST print the list of (file → rewrite) actions that `--fix` would apply WITHOUT modifying any files on disk. Exit 0 regardless of whether rewrites were found. Rationale: matches the `init --refresh --dry-run` precedent (spec-manifest C-20); lets operators review before committing."
+      type: technical
+      enforcement: error
+
+    - id: C-13
+      description: "After `--fix` or `--fix --dry-run`, doctor MUST print a summary of the form `doctor --fix: N file(s) rewritten` (or `N file(s) would be rewritten` under dry-run), listing each affected file with the rewrite name applied. When N=0, doctor MUST print `doctor --fix: no changes` and exit 0. Rationale: the operator needs to know what happened (or what would happen) without re-reading the files."
+      type: business
       enforcement: error
 
   acceptance_criteria:
@@ -195,6 +210,48 @@ spec:
       references_constraints: ["C-10"]
       priority: critical
 
+    - id: AC-12
+      description: "`specter doctor --fix` in a workspace with one .spec.yaml file that has `trust_level: high` at the `spec.` level rewrites the file in place to remove that line. After rewrite, `specter parse` on the file succeeds. All other fields and surrounding lines are byte-preserved."
+      inputs:
+        file_before: "spec with trust_level: high under spec:"
+        command: "specter doctor --fix"
+      expected_output:
+        trust_level_removed: true
+        parse_after_rewrite_succeeds: true
+      references_constraints: ["C-11"]
+      priority: critical
+
+    - id: AC-13
+      description: "`specter doctor --fix --dry-run` on the same workspace prints what `--fix` would do (file path + rewrite name) but leaves the file byte-identical on disk. Output contains `would rewrite` and names the file and the rewrite name."
+      inputs:
+        command: "specter doctor --fix --dry-run"
+      expected_output:
+        stdout_contains: "would rewrite"
+        file_unchanged_on_disk: true
+        exit_code: 0
+      references_constraints: ["C-12"]
+      priority: high
+
+    - id: AC-14
+      description: "`specter doctor` (no `--fix`) in a workspace with `trust_level` drift must NOT write any file changes. Drift is reported in the pattern-analysis block (C-09); the filesystem is byte-unchanged after the command exits. Regression guard for C-07 (read-only by default)."
+      inputs:
+        command: "specter doctor"
+      expected_output:
+        file_unchanged_on_disk: true
+      references_constraints: ["C-07"]
+      priority: critical
+
+    - id: AC-15
+      description: "`specter doctor --fix` in a workspace with no known-drift signature (every spec parses cleanly, OR parse errors don't match any rewrite pattern) prints `doctor --fix: no changes` and exits 0 without writing any files."
+      inputs:
+        case_a: "workspace with all clean specs"
+        case_b: "workspace where parse errors don't match any rewrite"
+      expected_output:
+        stdout_contains: "no changes"
+        exit_code: 0
+      references_constraints: ["C-13"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -207,6 +264,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.3.0"
+      date: "2026-04-27"
+      author: "specter-team"
+      type: minor
+      description: "v0.12 — `specter doctor --fix` rewrite table. Add C-11/AC-12 for known-safe rewrites (initial table: strip `trust_level`, removed in v0.6.5). Add C-12/AC-13 for `--fix --dry-run` (preview without writing). Add C-13/AC-14/AC-15 for the rewrite summary (`N file(s) rewritten` or `no changes`) and the regression guard that `doctor` without `--fix` stays read-only. Rewrites live in a new `internal/migrate` package as a table-driven design — adding future rewrites (field renames, schema-version migrations) requires only a table entry, not a code-path change."
     - version: "1.2.0"
       date: "2026-04-27"
       author: "specter-team"
