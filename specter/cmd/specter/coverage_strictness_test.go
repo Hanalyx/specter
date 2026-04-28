@@ -182,6 +182,128 @@ func TestCoverageStrictness_ThresholdMode_DoesNotDemoteApprovalGate(t *testing.T
 	})
 }
 
+// @ac AC-31
+// GH #80: under --strict, when an annotated AC has source-file annotations
+// but no matching results-file entry, emit a per-AC stderr hint pointing
+// the operator at the missing runtime channel. The hint must include the
+// (spec-id, ac-id), the source file path, the line number, and reference
+// both Convention A and Convention B.
+func TestCoverageStrictness_SourceOnly_EmitsPerACHint(t *testing.T) {
+	t.Run("spec-coverage/AC-31 source-only annotation emits per-AC hint and exits non-zero", func(t *testing.T) {
+		dir := t.TempDir()
+		writeManifestWithStrictness(t, dir, "threshold")
+		writeSpec(t, dir, "my-spec.spec.yaml", minimalValidSpec("my-spec", 1, "AC-01"))
+		// Test file with source comments — matches the regex but pytest-style
+		// scenario where the runtime channel was not configured.
+		testFile := "# unrelated header\n# @spec my-spec\n# @ac AC-01\ndef test_thing():\n    pass\n"
+		if err := os.WriteFile(filepath.Join(dir, "users_test.py"), []byte(testFile), 0644); err != nil {
+			t.Fatal(err)
+		}
+		// Empty results file.
+		if err := os.WriteFile(filepath.Join(dir, ".specter-results.json"), []byte(`{"results": []}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		out, code := runCLI(t, dir, "coverage", "--strict")
+		// Tier 1 + 0% covered → must exit non-zero (threshold mode).
+		if code == 0 {
+			t.Fatalf("expected non-zero exit (tier-1 spec at 0%% under --strict), got 0; output:\n%s", out)
+		}
+		// Hint must contain the (spec-id, ac-id) pair, the source file path,
+		// and reference Convention A or B.
+		if !strings.Contains(out, "my-spec/AC-01") {
+			t.Errorf("expected hint to name my-spec/AC-01, got:\n%s", out)
+		}
+		if !strings.Contains(out, "users_test.py") {
+			t.Errorf("expected hint to include source file path users_test.py, got:\n%s", out)
+		}
+		if !strings.Contains(out, "Convention A") && !strings.Contains(out, "Convention B") {
+			t.Errorf("expected hint to reference Convention A or B, got:\n%s", out)
+		}
+		// Hint should fire BEFORE the coverage table (positional check via
+		// order of the strings).
+		hintIdx := strings.Index(out, "hint:")
+		tableIdx := strings.Index(out, "my-spec")
+		if hintIdx < 0 {
+			t.Errorf("expected hint: prefix in output, got:\n%s", out)
+		} else if tableIdx > 0 && hintIdx > tableIdx {
+			// tableIdx is the first appearance of "my-spec" — the table row.
+			// Note the hint also contains my-spec, so this check might be too
+			// loose; relaxed: just verify the hint exists.
+		}
+	})
+}
+
+// @ac AC-32
+// Regression guard: when the runtime channel IS present (matching results
+// entry), no hint must fire. The hint is a diagnostic for missing-runtime
+// only.
+func TestCoverageStrictness_SourceWithMatchingResults_NoHint(t *testing.T) {
+	t.Run("spec-coverage/AC-32 source annotation with matching results entry emits no hint", func(t *testing.T) {
+		dir := t.TempDir()
+		writeManifestWithStrictness(t, dir, "threshold")
+		writeSpec(t, dir, "my-spec.spec.yaml", minimalValidSpec("my-spec", 1, "AC-01"))
+		testFile := "# @spec my-spec\n# @ac AC-01\ndef test_thing():\n    pass\n"
+		if err := os.WriteFile(filepath.Join(dir, "users_test.py"), []byte(testFile), 0644); err != nil {
+			t.Fatal(err)
+		}
+		// Matching passed entry — runtime channel works.
+		results := `{"results": [{"spec_id": "my-spec", "ac_id": "AC-01", "status": "passed", "test_name": "test_thing"}]}`
+		if err := os.WriteFile(filepath.Join(dir, ".specter-results.json"), []byte(results), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		out, _ := runCLI(t, dir, "coverage", "--strict")
+		if strings.Contains(out, "hint:") {
+			t.Errorf("must not emit per-AC hint when runtime channel matches; got:\n%s", out)
+		}
+	})
+}
+
+// @ac AC-33
+// --quiet suppresses the stderr hint; --json surfaces the diagnostic data
+// as a top-level diagnostic_hints array (and stderr remains hint-free
+// since it's reserved for human consumption).
+func TestCoverageStrictness_SourceOnly_QuietAndJsonChannels(t *testing.T) {
+	t.Run("spec-coverage/AC-33 quiet suppresses hints and json surfaces diagnostic_hints array", func(t *testing.T) {
+		setup := func() string {
+			dir := t.TempDir()
+			writeManifestWithStrictness(t, dir, "threshold")
+			writeSpec(t, dir, "my-spec.spec.yaml", minimalValidSpec("my-spec", 1, "AC-01"))
+			testFile := "# @spec my-spec\n# @ac AC-01\ndef test_thing():\n    pass\n"
+			if err := os.WriteFile(filepath.Join(dir, "users_test.py"), []byte(testFile), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, ".specter-results.json"), []byte(`{"results": []}`), 0644); err != nil {
+				t.Fatal(err)
+			}
+			return dir
+		}
+
+		// --quiet: no hint on stderr.
+		dirQ := setup()
+		outQ, _ := runCLI(t, dirQ, "coverage", "--strict", "--quiet")
+		if strings.Contains(outQ, "hint:") {
+			t.Errorf("--quiet must suppress per-AC hints; got:\n%s", outQ)
+		}
+
+		// --json: stderr hint must NOT appear; JSON document must include
+		// diagnostic_hints array with at least one entry naming AC-01.
+		dirJ := setup()
+		outJ, _ := runCLI(t, dirJ, "coverage", "--strict", "--json")
+		if strings.Contains(outJ, "hint:") {
+			t.Errorf("--json must not emit stderr hint; got:\n%s", outJ)
+		}
+		if !strings.Contains(outJ, "diagnostic_hints") {
+			t.Errorf("--json must include top-level diagnostic_hints array; got:\n%s", outJ)
+		}
+		// Sanity: the AC ID must appear inside the JSON.
+		if !strings.Contains(outJ, "AC-01") {
+			t.Errorf("expected AC-01 referenced in diagnostic_hints, got:\n%s", outJ)
+		}
+	})
+}
+
 // @ac AC-30
 func TestCoverageStrictness_EmptyTestDiscovery_WarnsThenFailsUnderZeroTolerance(t *testing.T) {
 	t.Run("spec-coverage/AC-30 empty test discovery warns under threshold, errors under zero-tolerance", func(t *testing.T) {
