@@ -220,16 +220,9 @@ func TestCoverageStrictness_SourceOnly_EmitsPerACHint(t *testing.T) {
 		if !strings.Contains(out, "Convention A") && !strings.Contains(out, "Convention B") {
 			t.Errorf("expected hint to reference Convention A or B, got:\n%s", out)
 		}
-		// Hint should fire BEFORE the coverage table (positional check via
-		// order of the strings).
-		hintIdx := strings.Index(out, "hint:")
-		tableIdx := strings.Index(out, "my-spec")
-		if hintIdx < 0 {
-			t.Errorf("expected hint: prefix in output, got:\n%s", out)
-		} else if tableIdx > 0 && hintIdx > tableIdx {
-			// tableIdx is the first appearance of "my-spec" — the table row.
-			// Note the hint also contains my-spec, so this check might be too
-			// loose; relaxed: just verify the hint exists.
+		// Hint must use the documented "hint:" prefix.
+		if !strings.Contains(out, "hint:") {
+			t.Errorf("expected `hint:` prefix in output, got:\n%s", out)
 		}
 	})
 }

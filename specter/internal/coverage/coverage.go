@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/Hanalyx/specter/internal/schema"
@@ -31,10 +32,17 @@ var acTagRE = regexp.MustCompile(`^\s*(?://|#|\*)\s*@ac\s+(.+)`)
 var acIDRE = regexp.MustCompile(`AC-\d{2,}`)
 
 // AnnotationMatch represents annotations found in a test file.
+//
+// Lines maps each ac_id in ACIDs to the 1-based line number of its first
+// occurrence in the source file. Used by DiagnoseSourceOnlyACs (spec-coverage
+// C-28) to produce file:line precision in the source-only hint. Older
+// callers that don't care about line numbers can ignore the field; ACIDs
+// remains the canonical list.
 type AnnotationMatch struct {
-	File   string   `json:"file"`
-	SpecID string   `json:"spec_id"`
-	ACIDs  []string `json:"ac_ids"`
+	File   string         `json:"file"`
+	SpecID string         `json:"spec_id"`
+	ACIDs  []string       `json:"ac_ids"`
+	Lines  map[string]int `json:"lines,omitempty"`
 }
 
 // SpecCoverageEntry is coverage data for a single spec.
@@ -71,6 +79,104 @@ type CoverageReport struct {
 	// consumers can name "all 20 specs are missing `objective`" in one
 	// breath instead of 20 individual messages. Sorted by count descending.
 	ParseErrorPatterns []ParseErrorPattern `json:"parse_error_patterns,omitempty"`
+	// DiagnosticHints carries spec-coverage C-28 source-only hints (v0.12 /
+	// GH #80). When --strict is on and an annotated AC has source-file
+	// annotations but no matching .specter-results.json entry, an entry is
+	// added here naming the (spec_id, ac_id, file, line). The CLI surfaces
+	// these on stderr (above the table) when --strict and not --quiet, OR
+	// in the JSON document when --json. Limited to the first 5 affected
+	// pairs to keep CI logs compact.
+	DiagnosticHints []SourceOnlyHint `json:"diagnostic_hints,omitempty"`
+}
+
+// SourceOnlyHint names a (spec_id, ac_id) pair that has source-file
+// annotations but no matching .specter-results.json entry — i.e., the test
+// has the source comment but never produced runner-visible output that
+// `specter ingest` can pick up. Spec-coverage C-28 / GH #80.
+type SourceOnlyHint struct {
+	SpecID string `json:"spec_id"`
+	ACID   string `json:"ac_id"`
+	File   string `json:"file"`
+	Line   int    `json:"line"`
+}
+
+// MaxSourceOnlyHints caps the per-run hint count so a workspace with many
+// annotated-but-untracked ACs doesn't drown CI logs. Per spec-coverage C-28.
+const MaxSourceOnlyHints = 5
+
+// DiagnoseSourceOnlyACs returns the (spec_id, ac_id, file, line) tuples for
+// annotated ACs that have no matching entry in the results file. Used by
+// `specter coverage --strict` to surface the missing-runtime-channel cause
+// when a test carries source comments but no runner-visible annotation
+// reaches `specter ingest`.
+//
+// Capped at MaxSourceOnlyHints entries; sorted by (spec_id, ac_id, file)
+// for deterministic output. Restricted to ACs that actually exist in the
+// provided specs — phantom AC IDs from typo'd source comments are not
+// part of this diagnostic (they would just produce a noisy hint about a
+// non-existent AC; the regular coverage report already catches them).
+func DiagnoseSourceOnlyACs(annotations []AnnotationMatch, results *ResultsFile, specs []schema.SpecAST) []SourceOnlyHint {
+	// Set of (spec_id, ac_id) that have at least one results entry.
+	hasEntry := make(map[string]bool)
+	if results != nil {
+		for _, r := range results.Results {
+			hasEntry[r.SpecID+"/"+r.ACID] = true
+		}
+	}
+
+	// Set of valid AC IDs per spec.
+	validACs := make(map[string]map[string]bool, len(specs))
+	for i := range specs {
+		s := &specs[i]
+		validACs[s.ID] = make(map[string]bool, len(s.AcceptanceCriteria))
+		for _, ac := range s.AcceptanceCriteria {
+			validACs[s.ID][ac.ID] = true
+		}
+	}
+
+	var hints []SourceOnlyHint
+	added := make(map[string]bool)
+	for _, ann := range annotations {
+		if validACs[ann.SpecID] == nil {
+			continue
+		}
+		for _, acID := range ann.ACIDs {
+			if !validACs[ann.SpecID][acID] {
+				continue
+			}
+			key := ann.SpecID + "/" + acID
+			if hasEntry[key] || added[key] {
+				continue
+			}
+			line := 0
+			if ann.Lines != nil {
+				line = ann.Lines[acID]
+			}
+			hints = append(hints, SourceOnlyHint{
+				SpecID: ann.SpecID,
+				ACID:   acID,
+				File:   ann.File,
+				Line:   line,
+			})
+			added[key] = true
+		}
+	}
+
+	// Deterministic order: by (spec_id, ac_id, file).
+	sort.Slice(hints, func(i, j int) bool {
+		if hints[i].SpecID != hints[j].SpecID {
+			return hints[i].SpecID < hints[j].SpecID
+		}
+		if hints[i].ACID != hints[j].ACID {
+			return hints[i].ACID < hints[j].ACID
+		}
+		return hints[i].File < hints[j].File
+	})
+
+	if len(hints) > MaxSourceOnlyHints {
+		hints = hints[:MaxSourceOnlyHints]
+	}
+	return hints
 }
 
 // ParseErrorEntry carries a single parse failure through --json output so
@@ -165,13 +271,18 @@ type CoverageSummary struct {
 // containing an example payload that happened to start with `//`.
 func ExtractAnnotations(fileContent, filePath string) []AnnotationMatch {
 	matchMap := make(map[string]map[string]bool)
+	// lineMap[spec_id][ac_id] → 1-based line number of the first @ac
+	// occurrence for that pair. Spec-coverage C-28 (v0.12 / GH #80) uses
+	// this to surface file:line precision in source-only hints.
+	lineMap := make(map[string]map[string]int)
 
 	lines := strings.Split(fileContent, "\n")
 	var currentSpecID string
 
 	var inBacktick, inTripleDouble, inTripleSingle bool
 
-	for _, line := range lines {
+	for i, line := range lines {
+		lineNum := i + 1
 		lineStartsInString := inBacktick || inTripleDouble || inTripleSingle
 
 		trimmed := strings.TrimSpace(line)
@@ -184,12 +295,18 @@ func ExtractAnnotations(fileContent, filePath string) []AnnotationMatch {
 				currentSpecID = m[1]
 				if matchMap[currentSpecID] == nil {
 					matchMap[currentSpecID] = make(map[string]bool)
+					lineMap[currentSpecID] = make(map[string]int)
 				}
 			}
 
 			if m := acTagRE.FindStringSubmatch(line); len(m) > 1 && currentSpecID != "" {
 				for _, acID := range acIDRE.FindAllString(m[1], -1) {
 					matchMap[currentSpecID][acID] = true
+					// First occurrence wins — don't overwrite on subsequent
+					// lines that re-annotate the same AC.
+					if _, seen := lineMap[currentSpecID][acID]; !seen {
+						lineMap[currentSpecID][acID] = lineNum
+					}
 				}
 			}
 			// Line comments consume the rest of the line in all supported
@@ -210,10 +327,20 @@ func ExtractAnnotations(fileContent, filePath string) []AnnotationMatch {
 		for id := range acSet {
 			acIDs = append(acIDs, id)
 		}
+		// Snapshot the line map for this spec; nil if unused so existing
+		// callers serializing the struct without lines still see omitempty.
+		var linesCopy map[string]int
+		if len(lineMap[specID]) > 0 {
+			linesCopy = make(map[string]int, len(lineMap[specID]))
+			for k, v := range lineMap[specID] {
+				linesCopy[k] = v
+			}
+		}
 		results = append(results, AnnotationMatch{
 			File:   filePath,
 			SpecID: specID,
 			ACIDs:  acIDs,
+			Lines:  linesCopy,
 		})
 	}
 
