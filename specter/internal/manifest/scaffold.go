@@ -24,6 +24,9 @@ func ScaffoldManifest(name, description string, specIDs []string) string {
 // knows why `domains:` is empty.
 func ScaffoldManifestWithContext(name, description string, specIDs []string, candidatesCount int) string {
 	m := Manifest{
+		// C-28 / AC-42: schema_version is the first field — declared first
+		// in the struct so yaml.Marshal emits it ahead of system:.
+		SchemaVersion: 1,
 		System: SystemConfig{
 			Name:        name,
 			Description: description,

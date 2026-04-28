@@ -94,9 +94,21 @@ settings:
 		}
 		got := string(body)
 
-		// schema_version must remain at the top.
-		if !strings.HasPrefix(strings.TrimSpace(got), "schema_version: 1") {
-			t.Errorf("schema_version line not preserved at top; file:\n%s", got)
+		// schema_version must remain present and equal to 1. After refresh,
+		// header comments may sit above it, but the first non-comment,
+		// non-blank line must be `schema_version: 1`.
+		var firstNonComment string
+		for _, line := range strings.Split(got, "\n") {
+			t := strings.TrimSpace(line)
+			if t == "" || strings.HasPrefix(t, "#") {
+				continue
+			}
+			firstNonComment = t
+			break
+		}
+		if firstNonComment != "schema_version: 1" {
+			t.Errorf("first non-comment line = %q, want %q\nfile:\n%s",
+				firstNonComment, "schema_version: 1", got)
 		}
 		// Custom domain "auth" must remain.
 		if !strings.Contains(got, "auth:") || !strings.Contains(got, "spec-b") {
