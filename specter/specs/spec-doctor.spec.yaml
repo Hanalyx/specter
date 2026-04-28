@@ -1,6 +1,6 @@
 spec:
   id: spec-doctor
-  version: "1.5.0"
+  version: "1.6.0"
   status: draft
   tier: 2
 
@@ -109,7 +109,7 @@ spec:
       enforcement: error
 
     - id: C-15
-      description: "When a spec rewrite predicate matches but the YAML shape of the targeted value is structurally unsafe for line-based deletion (block scalar with `|` or `>` indicator, mapping/sequence value, anchor/alias, or any non-plain-scalar form), `--fix` MUST emit an `unhandled` diagnostic naming the file and the reason instead of producing a partial rewrite. The file MUST remain byte-unchanged. Detection MUST use yaml.v3 structural inspection (Node.Kind / Node.Style) — string regex alone misses anchors, aliases, and styled scalars. The summary MUST split into two blocks: `doctor --fix: N file(s) rewritten` (successful) and `doctor --fix: N file(s) need manual edit` (refused), with each manual-edit entry on its own line in the form `  skip <file> — <reason>`. Rationale: the line-based regex deletion in C-11 is byte-preserving (its strength) but unsafe on values that span multiple lines (its weakness); refusal is safer than corruption."
+      description: "When a spec rewrite predicate matches but the targeted value is structurally unsafe for line-based deletion, `--fix` MUST emit an `unhandled` diagnostic naming the file and the reason instead of producing a partial rewrite. The file MUST remain byte-unchanged. The underlying invariant for line-based deletion is `the value occupies exactly one source line` — refusal MUST trigger when ANY of the following hold: (a) `Node.Kind` is not `ScalarNode` (sequence, mapping, alias); (b) `Node.Style` is `LiteralStyle` or `FoldedStyle` (block scalars `|`/`>`); (c) the value's source span exceeds one line — folded plain scalars, multi-line quoted scalars, or any source-shape where a non-blank/non-comment line at greater indentation than the key follows the value's first line. Detection MUST iterate every YAML document in the file (via `yaml.Decoder` for multi-document files) — the rewrite predicate fires per parse-error per file, but the safety check MUST cover every document so that an unsafe shape in document N>0 still refuses the whole-file rewrite. The summary MUST split into two blocks: `doctor --fix: N file(s) rewritten` (successful) and `doctor --fix: N file(s) need manual edit` (refused), with each manual-edit entry on its own line in the form `  skip <file> — <reason>`. Rationale: the line-based regex deletion in C-11 is byte-preserving (its strength) but unsafe on values that span multiple lines (its weakness); refusal is safer than corruption. Earlier wording (v1.5.0) enumerated specific unsafe shapes; this version (v1.6.0) names the underlying invariant so future YAML idioms that span lines without a block-scalar indicator (folded plain, quoted multi-line) are correctly refused."
       type: business
       enforcement: error
 
@@ -323,6 +323,43 @@ spec:
       references_constraints: ["C-15"]
       priority: critical
 
+    - id: AC-21
+      description: "Plain scalar value with folded continuation: `trust_level: high\\n    confidence` (no `|`/`>` indicator; YAML's plain-scalar folding rule lets indented continuation lines extend a plain scalar across multiple source lines). `--fix` MUST refuse the rewrite. yaml.v3 reports this as `Kind=ScalarNode, Style=PlainStyle` (passes the AC-19/20 kind/style checks), so refusal MUST come from the line-span branch of C-15. Reason MUST mention `spans multiple lines`. File is byte-unchanged on disk. Closes the gap surfaced in the v0.12 review where the AC-19/20 fix only refused explicit block scalars and let folded plain scalars through, producing the same orphaned-continuation corruption."
+      inputs:
+        file_before: "spec under spec: with `trust_level: high` then indented continuation `    confidence` on the next line"
+        command: "specter doctor --fix"
+      expected_output:
+        file_byte_unchanged: true
+        rewritten_count_for_file: 0
+        manual_edit_reason_contains: "spans multiple lines"
+      references_constraints: ["C-15"]
+      priority: critical
+
+    - id: AC-22
+      description: "Quoted scalar value spanning multiple source lines: `trust_level: \"line1\\n    line2\"` or single-quoted equivalent. yaml.v3 reports `Kind=ScalarNode, Style=DoubleQuotedStyle` (or `SingleQuotedStyle`) — passes the kind/style checks. Refusal MUST come from the line-span branch. Reason MUST mention `spans multiple lines`. File is byte-unchanged. Single-line quoted values (`trust_level: \"high\"`) MUST continue to rewrite — this AC adds source-span as the discriminator."
+      inputs:
+        case_double_quoted: "trust_level: \"line1\\n    line2\""
+        case_single_quoted: "trust_level: 'line1\\n    line2'"
+        case_single_line_quoted: "trust_level: \"high\" (regression — must still rewrite)"
+      expected_output:
+        double_quoted_multiline_refused: true
+        single_quoted_multiline_refused: true
+        single_line_quoted_rewritten: true
+      references_constraints: ["C-15"]
+      priority: critical
+
+    - id: AC-23
+      description: "Multi-document YAML file (separated by `---`) where document 0 has a safe `trust_level: high` plain scalar AND document 1 has an unsafe shape (block scalar, folded plain, or quoted multi-line). `--fix` MUST refuse the whole file — the rewrite is per-file, not per-document, and partially rewriting the file would leave doc 1 corrupted. Detection MUST iterate documents via `yaml.Decoder` and run the safety check on each. Reason MUST name the unsafe shape in the offending document. The earlier v1.5.0 implementation only inspected `doc.Content[0]` and missed unsafe shapes in doc 1+."
+      inputs:
+        file: "two YAML documents: doc 0 trust_level: high (safe); doc 1 trust_level: | with continuation (unsafe)"
+        command: "specter doctor --fix"
+      expected_output:
+        file_byte_unchanged: true
+        rewritten_count_for_file: 0
+        manual_edit_reason_contains_block_scalar_or_spans: true
+      references_constraints: ["C-15"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -335,6 +372,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.6.0"
+      date: "2026-04-28"
+      author: "specter-team"
+      type: minor
+      description: "v0.12 review-of-the-fix — tighten C-15's refusal predicate. The v1.5.0 impl over-fit to specific unsafe shapes (block scalar, non-scalar) and missed three corruption-causing shapes the agent review surfaced: folded plain scalars with indented continuation (AC-21), multi-line quoted scalars (AC-22), and unsafe shapes in non-first documents of multi-document YAML files (AC-23). All three pass yaml.v3's Kind/Style check yet still produce the same orphaned-continuation corruption the v1.5.0 fix was meant to close. C-15 reworded to name the underlying invariant (`value occupies exactly one source line`); detection MUST also walk source lines around `Node.Line` to verify span, and MUST iterate documents via `yaml.Decoder` rather than inspect only `doc.Content[0]`. Adds AC-21/22/23."
     - version: "1.5.0"
       date: "2026-04-28"
       author: "specter-team"
