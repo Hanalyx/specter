@@ -21,6 +21,7 @@ import (
 	specdiff "github.com/Hanalyx/specter/internal/diff"
 	"github.com/Hanalyx/specter/internal/explain"
 	"github.com/Hanalyx/specter/internal/manifest"
+	"github.com/Hanalyx/specter/internal/migrate"
 	"github.com/Hanalyx/specter/internal/parser"
 	"github.com/Hanalyx/specter/internal/resolver"
 	"github.com/Hanalyx/specter/internal/reverse"
@@ -1826,10 +1827,11 @@ func runInitTemplate(templateType string, force bool) error {
 //
 // @spec spec-doctor
 func doctorCmd() *cobra.Command {
-	return &cobra.Command{
+	var fix, dryRun bool
+	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Run pre-flight project health checks",
-		Long:  "Checks project readiness before running the full sync pipeline. Reports PASS/WARN/FAIL for each check so developers know exactly what needs attention.",
+		Long:  "Checks project readiness before running the full sync pipeline. Reports PASS/WARN/FAIL for each check so developers know exactly what needs attention.\n\nWith --fix, applies known-safe schema-drift rewrites to spec files (initial table: strip trust_level removed in v0.6.5). Add --dry-run to preview without writing.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			anyFail := false
 
@@ -1990,6 +1992,24 @@ func doctorCmd() *cobra.Command {
 
 			fmt.Println()
 
+			// spec-doctor C-11/12/13 (v0.12 / GH-via-feat-doctor-fix):
+			// after the diagnostic checks complete, if --fix is on, apply
+			// the known-safe rewrite table and print a summary. Exit code
+			// under --fix reflects the fix action only (0 on success, even
+			// no-op; non-zero only if the rewrite mechanism errored).
+			// Diagnostic check failures still appear in the output above
+			// but do not drive the exit code under --fix — operator runs
+			// `specter doctor` (no --fix) for a pure health-based exit.
+			if fix {
+				applied, err := runDoctorFix(allParseErrs, dryRun)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "error:", err)
+					return errSilent
+				}
+				printDoctorFixSummary(applied, dryRun)
+				return nil
+			}
+
 			// C-06: exit 0 if all PASS/WARN, exit 1 if any FAIL
 			if anyFail {
 				fmt.Println("Result: FAIL — fix the issues above before running `specter sync`")
@@ -1998,6 +2018,82 @@ func doctorCmd() *cobra.Command {
 			fmt.Println("Result: OK — project is ready for `specter sync`")
 			return nil
 		},
+	}
+	cmd.Flags().BoolVar(&fix, "fix", false, "Apply known-safe schema-drift rewrites to spec files in place")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "With --fix, print what would change without writing to disk")
+	return cmd
+}
+
+// doctorFixApplied is one (file, rewrites) tuple produced by runDoctorFix.
+// Used by printDoctorFixSummary to emit the C-13 summary block.
+type doctorFixApplied struct {
+	File     string
+	Rewrites []string
+}
+
+// runDoctorFix applies the migrate package's rewrite table to every spec
+// file with parse errors. Returns the list of (file, rewrites) tuples
+// where at least one rewrite fired. Under dryRun the on-disk content is
+// left unchanged; the return value still reflects what would have been
+// rewritten so the summary can name it.
+func runDoctorFix(parseErrors []coverage.ParseErrorEntry, dryRun bool) ([]doctorFixApplied, error) {
+	// Group parse errors by file so each file's rewrite table is consulted
+	// once with all relevant errors.
+	errsByFile := map[string][]coverage.ParseErrorEntry{}
+	var fileOrder []string
+	for _, e := range parseErrors {
+		if _, seen := errsByFile[e.File]; !seen {
+			fileOrder = append(fileOrder, e.File)
+		}
+		errsByFile[e.File] = append(errsByFile[e.File], e)
+	}
+
+	var applied []doctorFixApplied
+	for _, file := range fileOrder {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			// Read failure already surfaced in the doctor parse check; skip
+			// rewrite rather than double-error.
+			continue
+		}
+		result, err := migrate.Apply(content, errsByFile[file])
+		if err != nil {
+			return nil, fmt.Errorf("rewrite %s: %w", file, err)
+		}
+		if len(result.Applied) == 0 {
+			continue
+		}
+		if !dryRun {
+			if err := os.WriteFile(file, result.Content, 0644); err != nil {
+				return nil, fmt.Errorf("write %s: %w", file, err)
+			}
+		}
+		applied = append(applied, doctorFixApplied{File: file, Rewrites: result.Applied})
+	}
+	return applied, nil
+}
+
+// printDoctorFixSummary emits the spec-doctor C-13 summary block. Format
+// matches the AC-12/13/15 test expectations: lists the files with their
+// applied rewrite names, reports either `N file(s) rewritten`,
+// `N file(s) would be rewritten` (under dry-run), or `no changes`.
+func printDoctorFixSummary(applied []doctorFixApplied, dryRun bool) {
+	fmt.Println()
+	if len(applied) == 0 {
+		fmt.Println("doctor --fix: no changes")
+		return
+	}
+	totalVerb := "rewritten"
+	itemVerb := "rewrite"
+	if dryRun {
+		totalVerb = "would be rewritten"
+		itemVerb = "would rewrite"
+	}
+	fmt.Printf("doctor --fix: %d file(s) %s\n", len(applied), totalVerb)
+	for _, a := range applied {
+		for _, name := range a.Rewrites {
+			fmt.Printf("  %s %s (%s)\n", itemVerb, a.File, name)
+		}
 	}
 }
 
