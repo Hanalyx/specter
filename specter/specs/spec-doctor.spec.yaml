@@ -1,6 +1,6 @@
 spec:
   id: spec-doctor
-  version: "1.4.0"
+  version: "1.5.0"
   status: draft
   tier: 2
 
@@ -105,6 +105,11 @@ spec:
 
     - id: C-14
       description: "`specter doctor --fix` MUST canonicalize `specter.yaml` when present: if the file exists on disk but lacks a `schema_version:` line, `--fix` prepends `schema_version: 1\\n` to the file (preserving the original content byte-for-byte after that line) and counts the manifest as one rewritten file in the C-13 summary with rewrite name `add-schema-version`. If `specter.yaml` already declares `schema_version:`, the manifest is byte-unchanged. If `specter.yaml` does not exist, manifest canonicalization is a silent no-op (`specter init` is the right command for that path). Under `--dry-run`, no write occurs and the summary uses the `would be rewritten` form. Rationale: a pre-v0.12 project upgrading has a manifest without `schema_version`; `doctor --fix` is the natural upgrade path. Pairs with the `schema_version` field added to the Manifest struct in spec-manifest 1.9.0."
+      type: business
+      enforcement: error
+
+    - id: C-15
+      description: "When a spec rewrite predicate matches but the YAML shape of the targeted value is structurally unsafe for line-based deletion (block scalar with `|` or `>` indicator, mapping/sequence value, anchor/alias, or any non-plain-scalar form), `--fix` MUST emit an `unhandled` diagnostic naming the file and the reason instead of producing a partial rewrite. The file MUST remain byte-unchanged. Detection MUST use yaml.v3 structural inspection (Node.Kind / Node.Style) — string regex alone misses anchors, aliases, and styled scalars. The summary MUST split into two blocks: `doctor --fix: N file(s) rewritten` (successful) and `doctor --fix: N file(s) need manual edit` (refused), with each manual-edit entry on its own line in the form `  skip <file> — <reason>`. Rationale: the line-based regex deletion in C-11 is byte-preserving (its strength) but unsafe on values that span multiple lines (its weakness); refusal is safer than corruption."
       type: business
       enforcement: error
 
@@ -291,6 +296,33 @@ spec:
       references_constraints: ["C-14"]
       priority: high
 
+    - id: AC-19
+      description: "Spec file containing `trust_level: |` (block scalar with literal-style indicator) followed by indented continuation lines: `--fix` MUST refuse the rewrite. The file is byte-unchanged on disk. The summary splits into two blocks: rewritten (does NOT include this file) and needs-manual-edit (lists this file with reason `trust_level uses a block scalar`). Same treatment for the folded-style indicator (`>`)."
+      inputs:
+        file_before: "spec under spec: with `trust_level: |` then indented continuation lines `    high` and `    confidence`"
+        command: "specter doctor --fix"
+      expected_output:
+        file_byte_unchanged: true
+        summary_contains_section: "need manual edit"
+        manual_edit_reason_contains: "block scalar"
+        rewritten_count_for_file: 0
+      references_constraints: ["C-15"]
+      priority: critical
+
+    - id: AC-20
+      description: "Spec file containing `trust_level:` followed by a sequence value (next-line `- entries`) or a mapping value (next-line key:value pairs): `--fix` MUST refuse the rewrite. The file is byte-unchanged on disk. The needs-manual-edit summary entry names the file with reason `trust_level value is not a scalar`. Plain scalar values (`trust_level: high`, `trust_level: \"high\"`, `trust_level: 0.5`) MUST continue to rewrite successfully — this AC narrows refusal to non-scalar shapes only."
+      inputs:
+        case_sequence: "trust_level: with next-line '- high' / '- medium' entries"
+        case_mapping: "trust_level: with next-line nested key:value pairs"
+        case_plain_scalar: "trust_level: high (regression — must still rewrite)"
+      expected_output:
+        sequence_refused: true
+        mapping_refused: true
+        plain_scalar_rewritten: true
+        manual_edit_reason_contains: "not a scalar"
+      references_constraints: ["C-15"]
+      priority: critical
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -303,6 +335,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.5.0"
+      date: "2026-04-28"
+      author: "specter-team"
+      type: minor
+      description: "v0.12 review fix — yaml-aware refusal of structurally unsafe rewrites. Add C-15 + AC-19/20: when a rewrite predicate matches but the YAML shape (block scalar, sequence, mapping value, anchor/alias) is unsafe for line-based deletion, `--fix` refuses with an `unhandled` diagnostic instead of producing a corrupted file. Detection uses yaml.v3 Node.Kind/Style inspection. Summary splits into rewritten + needs-manual-edit blocks. Closes the file-corruption bug surfaced in the v0.12 review against `trust_level: |` block scalars."
     - version: "1.4.0"
       date: "2026-04-27"
       author: "specter-team"
