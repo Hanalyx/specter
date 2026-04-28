@@ -1,6 +1,6 @@
 spec:
   id: spec-doctor
-  version: "1.3.0"
+  version: "1.4.0"
   status: draft
   tier: 2
 
@@ -100,6 +100,11 @@ spec:
 
     - id: C-13
       description: "After `--fix` or `--fix --dry-run`, doctor MUST print a summary of the form `doctor --fix: N file(s) rewritten` (or `N file(s) would be rewritten` under dry-run), listing each affected file with the rewrite name applied. When N=0, doctor MUST print `doctor --fix: no changes` and exit 0. Rationale: the operator needs to know what happened (or what would happen) without re-reading the files."
+      type: business
+      enforcement: error
+
+    - id: C-14
+      description: "`specter doctor --fix` MUST canonicalize `specter.yaml` when present: if the file exists on disk but lacks a `schema_version:` line, `--fix` prepends `schema_version: 1\\n` to the file (preserving the original content byte-for-byte after that line) and counts the manifest as one rewritten file in the C-13 summary with rewrite name `add-schema-version`. If `specter.yaml` already declares `schema_version:`, the manifest is byte-unchanged. If `specter.yaml` does not exist, manifest canonicalization is a silent no-op (`specter init` is the right command for that path). Under `--dry-run`, no write occurs and the summary uses the `would be rewritten` form. Rationale: a pre-v0.12 project upgrading has a manifest without `schema_version`; `doctor --fix` is the natural upgrade path. Pairs with the `schema_version` field added to the Manifest struct in spec-manifest 1.9.0."
       type: business
       enforcement: error
 
@@ -252,6 +257,40 @@ spec:
       references_constraints: ["C-13"]
       priority: high
 
+    - id: AC-16
+      description: "`specter doctor --fix` in a workspace whose `specter.yaml` exists but lacks `schema_version` adds `schema_version: 1` at the top of the file. After the command, ParseManifest on the file reports SchemaVersion=1. The original manifest content (system, domains, settings, comments) is byte-preserved after the new schema_version line. The summary names the manifest with rewrite `add-schema-version`."
+      inputs:
+        manifest_before: "specter.yaml with system/domains/settings but no schema_version line"
+        command: "specter doctor --fix"
+      expected_output:
+        first_nonempty_line: "schema_version: 1"
+        parsed_schema_version: 1
+        summary_contains: "add-schema-version"
+      references_constraints: ["C-14"]
+      priority: critical
+
+    - id: AC-17
+      description: "`specter doctor --fix` when `specter.yaml` already declares `schema_version:` leaves the manifest byte-unchanged. The summary does NOT name the manifest as rewritten (no spurious entry). If only the manifest already had schema_version and no spec rewrites apply, the summary is `doctor --fix: no changes`."
+      inputs:
+        manifest_before: "specter.yaml with schema_version: 1 already at top"
+        command: "specter doctor --fix"
+      expected_output:
+        manifest_byte_unchanged: true
+        summary_does_not_mention_manifest: true
+      references_constraints: ["C-14"]
+      priority: high
+
+    - id: AC-18
+      description: "`specter doctor --fix` in a workspace with NO `specter.yaml` performs no manifest canonicalization (silent no-op). The command does not create the file, does not error, and does not include any manifest entry in the summary. The summary reflects only spec-file rewrites (or `no changes` if none apply)."
+      inputs:
+        workspace: "directory with .spec.yaml files but no specter.yaml"
+        command: "specter doctor --fix"
+      expected_output:
+        manifest_not_created: true
+        no_manifest_entry_in_summary: true
+      references_constraints: ["C-14"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -264,6 +303,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.4.0"
+      date: "2026-04-27"
+      author: "specter-team"
+      type: minor
+      description: "v0.12 — manifest canonicalization in --fix. Add C-14/AC-16/17/18: `specter doctor --fix` prepends `schema_version: 1` to a pre-v0.12 manifest that lacks the field. Already-canonical manifests are byte-unchanged; missing manifests are a silent no-op. Pairs with spec-manifest 1.9.0's schema_version field. Activates the schema-stability policy."
     - version: "1.3.0"
       date: "2026-04-27"
       author: "specter-team"
