@@ -2032,10 +2032,11 @@ type doctorFixApplied struct {
 }
 
 // runDoctorFix applies the migrate package's rewrite table to every spec
-// file with parse errors. Returns the list of (file, rewrites) tuples
-// where at least one rewrite fired. Under dryRun the on-disk content is
-// left unchanged; the return value still reflects what would have been
-// rewritten so the summary can name it.
+// file with parse errors and canonicalizes specter.yaml when present.
+// Returns the list of (file, rewrites) tuples where at least one rewrite
+// fired. Under dryRun the on-disk content is left unchanged; the return
+// value still reflects what would have been rewritten so the summary can
+// name it.
 func runDoctorFix(parseErrors []coverage.ParseErrorEntry, dryRun bool) ([]doctorFixApplied, error) {
 	// Group parse errors by file so each file's rewrite table is consulted
 	// once with all relevant errors.
@@ -2070,7 +2071,54 @@ func runDoctorFix(parseErrors []coverage.ParseErrorEntry, dryRun bool) ([]doctor
 		}
 		applied = append(applied, doctorFixApplied{File: file, Rewrites: result.Applied})
 	}
+
+	// spec-doctor C-14 (v0.12): canonicalize specter.yaml when present and
+	// missing schema_version. Silent no-op when the file doesn't exist —
+	// `specter init` is the right command for that path.
+	if manifestApplied, err := canonicalizeManifest(dryRun); err != nil {
+		return nil, err
+	} else if manifestApplied != nil {
+		applied = append(applied, *manifestApplied)
+	}
+
 	return applied, nil
+}
+
+// canonicalizeManifest implements spec-doctor C-14 (v0.12). Returns a
+// doctorFixApplied entry with rewrite name "add-schema-version" when the
+// manifest existed but lacked a schema_version line. Returns nil if no
+// rewrite was needed (manifest absent, OR already declares schema_version).
+// Under dryRun, the in-memory result is computed but no file is written.
+func canonicalizeManifest(dryRun bool) (*doctorFixApplied, error) {
+	manifestPath, _ := findManifest()
+	if manifestPath == "" {
+		return nil, nil // no manifest → silent no-op (AC-18)
+	}
+	content, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", manifestPath, err)
+	}
+	// Already declares schema_version? byte-unchanged (AC-17). Match a
+	// `schema_version:` key at the start of any line — guards against
+	// matching a string literal containing the substring elsewhere.
+	for _, line := range strings.Split(string(content), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "schema_version:") {
+			return nil, nil
+		}
+	}
+	// Missing → prepend the canonical line, preserving original bytes
+	// after it (AC-16). Use plain string concat so existing comments,
+	// formatting, and trailing whitespace are byte-preserved.
+	newContent := []byte("schema_version: 1\n" + string(content))
+	if !dryRun {
+		if err := os.WriteFile(manifestPath, newContent, 0644); err != nil {
+			return nil, fmt.Errorf("write %s: %w", manifestPath, err)
+		}
+	}
+	return &doctorFixApplied{
+		File:     manifestPath,
+		Rewrites: []string{"add-schema-version"},
+	}, nil
 }
 
 // printDoctorFixSummary emits the spec-doctor C-13 summary block. Format
