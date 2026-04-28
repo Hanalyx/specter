@@ -14,6 +14,8 @@
 package migrate
 
 import (
+	"bytes"
+	"io"
 	"regexp"
 	"strings"
 
@@ -151,54 +153,122 @@ func stripTrustLevel(content []byte) ([]byte, bool, string) {
 }
 
 // canSafelyStripTrustLevel uses yaml.v3 to inspect the YAML shape of the
-// `spec.trust_level` value (if present). Returns (true, "") for a plain
-// scalar or absent key — both safe for the line-based deletion path.
-// Returns (false, reason) for any non-scalar or block-scalar shape; the
-// caller surfaces the reason as an Unhandled diagnostic.
+// `spec.trust_level` value (if present) in every document of the file.
+// Returns (true, "") only when EVERY document's trust_level (if any) is a
+// plain scalar AND occupies exactly one source line. Returns (false,
+// reason) on the first document that fails any of the checks.
 //
-// Spec-doctor C-15. Detection lives at the parsing layer rather than as
-// a tightened regex because YAML scalar styles (literal/folded/anchored/
-// aliased) cannot be reliably distinguished without parsing — a regex
-// that tried would either be too loose (leaks corruption) or too strict
-// (rejects safe forms).
+// Spec-doctor C-15 (v1.6.0):
+//
+//   - (a) Kind != ScalarNode → refuse (sequence/mapping/alias)
+//   - (b) Style is Literal/Folded → refuse (block scalar `|`/`>`)
+//   - (c) value's source span > one line → refuse (folded plain scalar,
+//     multi-line quoted scalar)
+//
+// Multi-document handling (AC-23): yaml.Decoder iterates each document;
+// the safety check runs on each. The rewrite is per-file, so a single
+// unsafe document forces refusal of the whole file — partial rewrite
+// across documents is not byte-safe.
 func canSafelyStripTrustLevel(content []byte) (bool, string) {
-	var doc yaml.Node
-	if err := yaml.Unmarshal(content, &doc); err != nil {
-		// File doesn't even parse as YAML. Specter parse already reported
-		// the error to the operator; refuse the rewrite cautiously rather
-		// than blindly slicing lines out of an unparseable file.
-		return false, "yaml parse failed: " + err.Error()
+	dec := yaml.NewDecoder(bytes.NewReader(content))
+	for {
+		var doc yaml.Node
+		err := dec.Decode(&doc)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			// File doesn't parse as YAML. Specter parse already reported
+			// the error; refuse cautiously rather than slice lines out of
+			// an unparseable file.
+			return false, "yaml parse failed: " + err.Error()
+		}
+		if reason, ok := canSafelyStripTrustLevelInDoc(content, &doc); !ok {
+			return false, reason
+		}
 	}
+	return true, ""
+}
+
+// canSafelyStripTrustLevelInDoc runs the safety check on one document.
+// Returns ("", true) for a safe plain scalar or absent key; (reason,
+// false) for unsafe shapes.
+func canSafelyStripTrustLevelInDoc(content []byte, doc *yaml.Node) (string, bool) {
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
-		return false, "empty document"
+		return "", true
 	}
 	root := doc.Content[0]
 	spec := findMappingValue(root, "spec")
 	if spec == nil || spec.Kind != yaml.MappingNode {
-		// No spec mapping at the root → nothing to strip; treat as safe
-		// no-op (the regex will find nothing to match).
-		return true, ""
+		// No spec mapping → no trust_level to strip; the regex will find
+		// nothing in this doc. Treat as safe no-op.
+		return "", true
 	}
-	val := findMappingValue(spec, "trust_level")
+	keyNode, val := findMappingKeyValue(spec, "trust_level")
 	if val == nil {
-		return true, "" // key absent — safe no-op
+		return "", true
 	}
 	if val.Kind != yaml.ScalarNode {
 		switch val.Kind {
 		case yaml.SequenceNode:
-			return false, "trust_level value is not a scalar (sequence)"
+			return "trust_level value is not a scalar (sequence)", false
 		case yaml.MappingNode:
-			return false, "trust_level value is not a scalar (mapping)"
+			return "trust_level value is not a scalar (mapping)", false
 		case yaml.AliasNode:
-			return false, "trust_level value is not a scalar (alias)"
+			return "trust_level value is not a scalar (alias)", false
 		default:
-			return false, "trust_level value is not a scalar"
+			return "trust_level value is not a scalar", false
 		}
 	}
 	if val.Style == yaml.LiteralStyle || val.Style == yaml.FoldedStyle {
-		return false, "trust_level uses a block scalar"
+		return "trust_level uses a block scalar", false
 	}
-	return true, ""
+	// AC-21/22 line-span check. yaml.v3 reports the value's start position
+	// via Node.Line; this walks the source to verify the value occupies
+	// only that one line. Catches folded plain scalars and multi-line
+	// quoted scalars that pass the kind/style checks but would still
+	// orphan continuation lines under line-based deletion.
+	if !valueOccupiesOneSourceLine(content, val.Line, keyNode.Column) {
+		return "trust_level value spans multiple lines", false
+	}
+	return "", true
+}
+
+// valueOccupiesOneSourceLine returns true when the value rooted at
+// (1-based) `valLine` does NOT extend onto subsequent source lines as a
+// continuation of a folded plain scalar or a multi-line quoted scalar.
+// `keyCol` is the 1-based column where the parent key starts; any
+// non-blank line whose indentation exceeds `keyCol-1` after `valLine` is
+// treated as continuation.
+//
+// Document separators (`---`, `...`) end the current document and the
+// search. Blank lines and YAML comments are skipped.
+func valueOccupiesOneSourceLine(content []byte, valLine int, keyCol int) bool {
+	parentIndent := keyCol - 1 // 0-based indent count of the parent key
+	lines := strings.Split(string(content), "\n")
+	// 1-based valLine maps to lines[valLine-1] for the value's first
+	// source line; we walk lines[valLine] onward.
+	for j := valLine; j < len(lines); j++ {
+		line := lines[j]
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if trimmed == "---" || trimmed == "..." {
+			// End of current YAML document — anything beyond is a separate
+			// document, not a continuation of this value.
+			return true
+		}
+		nextIndent := len(line) - len(strings.TrimLeft(line, " \t"))
+		if nextIndent <= parentIndent {
+			// Same or lesser indent → next sibling key (or unrelated
+			// content). Value occupies just its first line.
+			return true
+		}
+		// Greater indent → continuation. Value spans multiple lines.
+		return false
+	}
+	return true
 }
 
 // findMappingValue returns the value Node for a given key in a Mapping
@@ -214,4 +284,19 @@ func findMappingValue(m *yaml.Node, key string) *yaml.Node {
 		}
 	}
 	return nil
+}
+
+// findMappingKeyValue is findMappingValue but also returns the key Node
+// (so callers can inspect the key's source position via Line/Column).
+func findMappingKeyValue(m *yaml.Node, key string) (*yaml.Node, *yaml.Node) {
+	if m == nil || m.Kind != yaml.MappingNode {
+		return nil, nil
+	}
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		k := m.Content[i]
+		if k.Kind == yaml.ScalarNode && k.Value == key {
+			return k, m.Content[i+1]
+		}
+	}
+	return nil, nil
 }
