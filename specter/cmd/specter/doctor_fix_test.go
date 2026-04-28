@@ -204,6 +204,79 @@ func TestDoctor_Fix_Manifest_AlreadyCanonical_IsNoOp(t *testing.T) {
 	})
 }
 
+// legacySpecBlockScalarTrustLevel is a spec where trust_level uses the
+// literal-style block scalar (`|`). doctor --fix must refuse to rewrite
+// this shape (per AC-19) — line-based deletion would orphan the
+// continuation lines and corrupt the file.
+const legacySpecBlockScalarTrustLevel = `spec:
+  id: legacy-spec
+  version: "1.0.0"
+  status: draft
+  tier: 3
+  trust_level: |
+    high
+    confidence
+  context:
+    system: test
+    feature: test
+  objective:
+    summary: test
+  constraints:
+    - id: C-01
+      description: "MUST something"
+      type: technical
+      enforcement: error
+  acceptance_criteria:
+    - id: AC-01
+      description: "test"
+      references_constraints: ["C-01"]
+      priority: high
+`
+
+// @ac AC-19
+// CLI integration: doctor --fix on a spec whose trust_level is a block
+// scalar emits the `needs manual edit` summary block, leaves the file
+// byte-unchanged, and does NOT include the file in the rewritten count.
+func TestDoctor_Fix_BlockScalar_PrintsManualEditSummary(t *testing.T) {
+	t.Run("spec-doctor/AC-19 block scalar trust_level produces manual-edit summary", func(t *testing.T) {
+		dir := t.TempDir()
+		specPath := filepath.Join(dir, "specs", "legacy.spec.yaml")
+		_ = os.MkdirAll(filepath.Dir(specPath), 0755)
+		_ = os.WriteFile(specPath, []byte(legacySpecBlockScalarTrustLevel), 0644)
+
+		out, _ := runCLI(t, dir, "doctor", "--fix")
+
+		// File must be byte-unchanged after refusal.
+		after, err := os.ReadFile(specPath)
+		if err != nil {
+			t.Fatalf("read after: %v", err)
+		}
+		if string(after) != legacySpecBlockScalarTrustLevel {
+			t.Errorf("file must be byte-unchanged when --fix refuses; got:\n%s", after)
+		}
+
+		// Summary must include the manual-edit block.
+		if !strings.Contains(out, "need manual edit") {
+			t.Errorf("expected `need manual edit` summary block; got:\n%s", out)
+		}
+		// Block-scalar reason must surface.
+		if !strings.Contains(strings.ToLower(out), "block scalar") {
+			t.Errorf("expected reason naming `block scalar`; got:\n%s", out)
+		}
+		// File name must appear in the manual-edit listing.
+		if !strings.Contains(out, "legacy.spec.yaml") {
+			t.Errorf("expected manual-edit entry to name legacy.spec.yaml; got:\n%s", out)
+		}
+		// Must NOT appear under the rewritten block — search for the
+		// "rewritten" header that would only appear if at least one
+		// successful rewrite happened.
+		if strings.Contains(out, "doctor --fix: 1 file(s) rewritten") ||
+			strings.Contains(out, "doctor --fix: 2 file(s) rewritten") {
+			t.Errorf("file must not be counted as rewritten when refused; got:\n%s", out)
+		}
+	})
+}
+
 // @ac AC-18
 // doctor --fix in a workspace with NO specter.yaml does not create one.
 // The manifest canonicalization is a silent no-op when no manifest exists.

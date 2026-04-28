@@ -2001,12 +2001,12 @@ func doctorCmd() *cobra.Command {
 			// but do not drive the exit code under --fix — operator runs
 			// `specter doctor` (no --fix) for a pure health-based exit.
 			if fix {
-				applied, err := runDoctorFix(allParseErrs, dryRun)
+				applied, unhandled, err := runDoctorFix(allParseErrs, dryRun)
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "error:", err)
 					return errSilent
 				}
-				printDoctorFixSummary(applied, dryRun)
+				printDoctorFixSummary(applied, unhandled, dryRun)
 				return nil
 			}
 
@@ -2025,19 +2025,32 @@ func doctorCmd() *cobra.Command {
 }
 
 // doctorFixApplied is one (file, rewrites) tuple produced by runDoctorFix.
-// Used by printDoctorFixSummary to emit the C-13 summary block.
+// Used by printDoctorFixSummary to emit the C-13 rewritten-files block.
 type doctorFixApplied struct {
 	File     string
 	Rewrites []string
 }
 
+// doctorFixUnhandled is one (file, rewrite, reason) tuple produced by
+// runDoctorFix when migrate.Apply refused a structurally unsafe shape.
+// Used by printDoctorFixSummary to emit the C-15 needs-manual-edit block.
+type doctorFixUnhandled struct {
+	File    string
+	Rewrite string
+	Reason  string
+}
+
 // runDoctorFix applies the migrate package's rewrite table to every spec
 // file with parse errors and canonicalizes specter.yaml when present.
-// Returns the list of (file, rewrites) tuples where at least one rewrite
-// fired. Under dryRun the on-disk content is left unchanged; the return
-// value still reflects what would have been rewritten so the summary can
-// name it.
-func runDoctorFix(parseErrors []coverage.ParseErrorEntry, dryRun bool) ([]doctorFixApplied, error) {
+// Returns:
+//   - applied: (file, rewrites) tuples where at least one rewrite fired
+//   - unhandled: (file, rewrite, reason) tuples where a rewrite predicate
+//     matched but migrate.Apply refused due to unsafe YAML shape (C-15).
+//
+// Under dryRun the on-disk content is left unchanged; both return slices
+// still reflect what would have been rewritten / would have been refused
+// so the summary can name them.
+func runDoctorFix(parseErrors []coverage.ParseErrorEntry, dryRun bool) ([]doctorFixApplied, []doctorFixUnhandled, error) {
 	// Group parse errors by file so each file's rewrite table is consulted
 	// once with all relevant errors.
 	errsByFile := map[string][]coverage.ParseErrorEntry{}
@@ -2050,6 +2063,7 @@ func runDoctorFix(parseErrors []coverage.ParseErrorEntry, dryRun bool) ([]doctor
 	}
 
 	var applied []doctorFixApplied
+	var unhandled []doctorFixUnhandled
 	for _, file := range fileOrder {
 		content, err := os.ReadFile(file)
 		if err != nil {
@@ -2059,14 +2073,23 @@ func runDoctorFix(parseErrors []coverage.ParseErrorEntry, dryRun bool) ([]doctor
 		}
 		result, err := migrate.Apply(content, errsByFile[file])
 		if err != nil {
-			return nil, fmt.Errorf("rewrite %s: %w", file, err)
+			return nil, nil, fmt.Errorf("rewrite %s: %w", file, err)
+		}
+		// Surface refusals first so the operator sees them in the summary
+		// regardless of whether other rewrites on the same file applied.
+		for _, u := range result.Unhandled {
+			unhandled = append(unhandled, doctorFixUnhandled{
+				File:    file,
+				Rewrite: u.Rewrite,
+				Reason:  u.Reason,
+			})
 		}
 		if len(result.Applied) == 0 {
 			continue
 		}
 		if !dryRun {
 			if err := os.WriteFile(file, result.Content, 0644); err != nil {
-				return nil, fmt.Errorf("write %s: %w", file, err)
+				return nil, nil, fmt.Errorf("write %s: %w", file, err)
 			}
 		}
 		applied = append(applied, doctorFixApplied{File: file, Rewrites: result.Applied})
@@ -2076,12 +2099,12 @@ func runDoctorFix(parseErrors []coverage.ParseErrorEntry, dryRun bool) ([]doctor
 	// missing schema_version. Silent no-op when the file doesn't exist —
 	// `specter init` is the right command for that path.
 	if manifestApplied, err := canonicalizeManifest(dryRun); err != nil {
-		return nil, err
+		return nil, nil, err
 	} else if manifestApplied != nil {
 		applied = append(applied, *manifestApplied)
 	}
 
-	return applied, nil
+	return applied, unhandled, nil
 }
 
 // canonicalizeManifest implements spec-doctor C-14 (v0.12). Returns a
@@ -2121,26 +2144,42 @@ func canonicalizeManifest(dryRun bool) (*doctorFixApplied, error) {
 	}, nil
 }
 
-// printDoctorFixSummary emits the spec-doctor C-13 summary block. Format
-// matches the AC-12/13/15 test expectations: lists the files with their
-// applied rewrite names, reports either `N file(s) rewritten`,
-// `N file(s) would be rewritten` (under dry-run), or `no changes`.
-func printDoctorFixSummary(applied []doctorFixApplied, dryRun bool) {
+// printDoctorFixSummary emits the spec-doctor summary blocks. Two blocks:
+//   - C-13 rewritten: `N file(s) rewritten` (or `would be rewritten` under
+//     dry-run), one line per applied rewrite. When N=0 AND no manual-edit
+//     entries exist, prints `no changes`.
+//   - C-15 needs-manual-edit: `N file(s) need manual edit`, one line per
+//     refused rewrite naming the file and reason. Skipped when empty.
+func printDoctorFixSummary(applied []doctorFixApplied, unhandled []doctorFixUnhandled, dryRun bool) {
 	fmt.Println()
-	if len(applied) == 0 {
+	if len(applied) == 0 && len(unhandled) == 0 {
 		fmt.Println("doctor --fix: no changes")
 		return
 	}
-	totalVerb := "rewritten"
-	itemVerb := "rewrite"
-	if dryRun {
-		totalVerb = "would be rewritten"
-		itemVerb = "would rewrite"
+	if len(applied) > 0 {
+		totalVerb := "rewritten"
+		itemVerb := "rewrite"
+		if dryRun {
+			totalVerb = "would be rewritten"
+			itemVerb = "would rewrite"
+		}
+		fmt.Printf("doctor --fix: %d file(s) %s\n", len(applied), totalVerb)
+		for _, a := range applied {
+			for _, name := range a.Rewrites {
+				fmt.Printf("  %s %s (%s)\n", itemVerb, a.File, name)
+			}
+		}
 	}
-	fmt.Printf("doctor --fix: %d file(s) %s\n", len(applied), totalVerb)
-	for _, a := range applied {
-		for _, name := range a.Rewrites {
-			fmt.Printf("  %s %s (%s)\n", itemVerb, a.File, name)
+	if len(unhandled) > 0 {
+		// Distinct files only — multiple unhandled rewrites on one file
+		// still count as one file in the summary header.
+		seenFiles := map[string]bool{}
+		for _, u := range unhandled {
+			seenFiles[u.File] = true
+		}
+		fmt.Printf("doctor --fix: %d file(s) need manual edit\n", len(seenFiles))
+		for _, u := range unhandled {
+			fmt.Printf("  skip %s — %s\n", u.File, u.Reason)
 		}
 	}
 }
