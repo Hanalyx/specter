@@ -19,6 +19,12 @@ import (
 //go:embed spec-schema.json
 var schemaFS embed.FS
 
+// SchemaBytes returns the raw embedded spec-schema.json. Used by packages that
+// need to walk the schema (e.g., internal/explain) without re-embedding the file.
+func SchemaBytes() ([]byte, error) {
+	return schemaFS.ReadFile("spec-schema.json")
+}
+
 // ParseError represents a validation error with path and optional line info.
 type ParseError struct {
 	Path    string `json:"path"`

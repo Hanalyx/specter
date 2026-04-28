@@ -3,7 +3,7 @@
 // Tests for binary discovery and auto-download logic.
 // All functions under test are pure or injectable — no VS Code runtime required.
 
-import { resolveBinaryPath, verifyChecksum, buildDownloadUrl, isBinaryFile } from '../binaryDiscovery';
+import { resolveBinaryPath, verifyChecksum, buildDownloadUrl, isBinaryFile, validateVersion } from '../binaryDiscovery';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -216,5 +216,67 @@ describe('[spec-vscode/AC-50] specter.version config default (C-27)', () => {
     // default, version skew between the Marketplace extension and the
     // GoReleaser-produced GitHub Release reappears. Keep the default empty
     // so downloadBinary reads ctx.extension.packageJSON.version.
+  });
+});
+
+describe('[spec-vscode] validateVersion — input validation for version strings used in URLs', () => {
+  it('accepts plain semver MAJOR.MINOR.PATCH', () => {
+    expect(() => validateVersion('0.10.2')).not.toThrow();
+    expect(() => validateVersion('1.0.0')).not.toThrow();
+    expect(() => validateVersion('123.456.789')).not.toThrow();
+  });
+
+  it('accepts semver with pre-release suffix', () => {
+    expect(() => validateVersion('0.10.0-rc.1')).not.toThrow();
+    expect(() => validateVersion('1.0.0-beta')).not.toThrow();
+    expect(() => validateVersion('0.10.0-pre.20260425')).not.toThrow();
+  });
+
+  it('rejects strings with path separators (URL injection guard)', () => {
+    expect(() => validateVersion('0.10.0/../../attacker/evil/releases/download/v1.0.0')).toThrow();
+    expect(() => validateVersion('0.10.0/extra')).toThrow();
+    expect(() => validateVersion('../../malicious')).toThrow();
+  });
+
+  it('rejects strings with whitespace, query strings, or special URL chars', () => {
+    expect(() => validateVersion('0.10.0 ')).toThrow();
+    expect(() => validateVersion('0.10.0?token=abc')).toThrow();
+    expect(() => validateVersion('0.10.0#frag')).toThrow();
+    expect(() => validateVersion('0.10.0\n0.10.0')).toThrow();
+  });
+
+  it('rejects empty string and non-string inputs', () => {
+    expect(() => validateVersion('')).toThrow();
+    expect(() => validateVersion(undefined as unknown as string)).toThrow();
+    expect(() => validateVersion(null as unknown as string)).toThrow();
+    expect(() => validateVersion(123 as unknown as string)).toThrow();
+  });
+
+  it('rejects "latest" — callers must resolve it to a concrete version first', () => {
+    // resolveLatestVersion() in binaryDiscovery.ts queries the GitHub API and
+    // returns a concrete tag; that result is what flows into URL construction.
+    expect(() => validateVersion('latest')).toThrow();
+  });
+
+  it('buildDownloadUrl propagates the validation error', () => {
+    expect(() => buildDownloadUrl({ version: '0.10.0/evil', os: 'linux', arch: 'amd64' })).toThrow(/invalid specter version/);
+  });
+});
+
+describe('[spec-vscode] package.json declares machine-scope and untrusted-workspace capability', () => {
+  const pkg = require('../../package.json');
+
+  it('specter.binaryPath is machine-scoped', () => {
+    expect(pkg.contributes.configuration.properties['specter.binaryPath'].scope).toBe('machine');
+  });
+
+  it('specter.version is machine-scoped', () => {
+    expect(pkg.contributes.configuration.properties['specter.version'].scope).toBe('machine');
+  });
+
+  it('declares untrustedWorkspaces capability with explanation', () => {
+    expect(pkg.capabilities?.untrustedWorkspaces?.supported).toBe('limited');
+    expect(typeof pkg.capabilities.untrustedWorkspaces.description).toBe('string');
+    expect(pkg.capabilities.untrustedWorkspaces.description.length).toBeGreaterThan(0);
   });
 });

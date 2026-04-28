@@ -153,7 +153,11 @@ All tests use Convention A subtest wrapping.
 
 ---
 
-## Feature 5 — `settings.strictness`
+## Feature 5 + Wave C bundle — settings hardening (Feature 5 + GH issues #75, #76, #78)
+
+Wave C scope expanded after a `gh issue list` review surfaced three open bugs/enhancements on the same `settings:` surface as `settings.strictness`. Bundling avoids shipping a new `strictness:` key into a settings block where typos are silently accepted (#76) and where empty test discovery silently reports 0% (#75).
+
+This branch is **stacked on `feat/init-bundle`** (PR #81) so spec-manifest starts at v1.7.0 with C-22/C-23/AC-27..AC-36 already present.
 
 ### Spec (commit 1)
 
@@ -161,33 +165,54 @@ Two specs bump in one commit:
 
 **`spec-manifest` 1.7.0 → 1.8.0:**
 - C-24: `settings.strictness` field with enum `{annotation, threshold, zero-tolerance}`, default `threshold`.
-- AC-37: parse accepts all three enum values; default applied when unset.
-- AC-38: parse rejects invalid enum with clear error message.
+- C-25: `settings.tests_glob` (string or list) — default test-discovery pattern (closes #78).
+- C-26: `ParseManifest` rejects unknown keys in any block under `settings:` with a "did you mean?" suggestion (closes #76).
+- AC-37: parse accepts all three strictness enum values; default `threshold` applied when unset.
+- AC-38: parse rejects invalid strictness enum with clear error message.
+- AC-39: `settings.tests_glob` accepts a string or a list; both flow through to discovery.
+- AC-40: typo'd settings key (e.g., `tests_glob:` -> `test_glob:`) errors with did-you-mean suggestion.
 
 **`spec-coverage` 1.10.0 → 1.11.0:**
 - C-24: `strictness=annotation` rejects `--strict` CLI flag with clear error.
 - C-25: `strictness=zero-tolerance` exits non-zero when any annotated AC has `status != passed`, regardless of tier threshold.
 - C-26: `strictness=zero-tolerance` exits non-zero when any AC has `approval_gate: true` and `approval_date` unset.
+- C-27: `coverage --strict` warns (and under zero-tolerance, errors) when test discovery returns zero files containing `@spec`/`@ac` annotations (closes #75).
 - AC-27: `--strictness <level>` CLI flag overrides `specter.yaml` per-invocation.
 - AC-28: `--strict` is preserved as a shortcut for `--strictness threshold` (backwards compatible).
 - AC-29: exit-code contract — 0 for pass, 2 for strictness violation, 3 for approval-gate violation under zero-tolerance.
+- AC-30: empty test-discovery emits a clear warning above the coverage table; under zero-tolerance, exits non-zero.
 
 ### Tests (commit 2)
 
-- `internal/parser/strictness_test.go`: AC-37, AC-38.
-- `internal/coverage/strictness_test.go`: AC-27 through AC-29, plus one test per `strictness` level verifying demotion semantics.
-- `cmd/specter/coverage_strictness_test.go`: CLI-level — `--strictness zero-tolerance` on a fixture with one failing test exits code 2; same fixture under `threshold` exits 0 if tier threshold met.
+Pure tests in `internal/manifest/`:
+- `settings_strictness_test.go`: AC-37, AC-38 (parse strictness enum).
+- `settings_tests_glob_test.go`: AC-39 (string + list forms).
+- `settings_unknown_key_test.go`: AC-40 (did-you-mean for typos).
+
+CLI tests:
+- `cmd/specter/coverage_strictness_test.go`: AC-27..29 — `--strictness zero-tolerance` on a fixture with one failing test exits 2; threshold exits 0; approval_gate=true && approval_date=null exits 3.
+- `cmd/specter/coverage_empty_discovery_test.go`: AC-30 — empty workspace warns; zero-tolerance fails.
 
 ### Implementation (commit 3)
 
-- `internal/parser/spec-schema.json`: add `settings.strictness` enum. JSON-schema validation catches AC-38.
-- `internal/coverage/coverage.go`: `BuildCoverageReportStrict` gains a `Strictness` field; exit-code contract lives in `cmd/specter/main.go`.
-- `cmd/specter/main.go`: add `--strictness` flag; wire `--strict` as its shortcut.
-- `docs/CLI_REFERENCE.md`: new section on strictness levels. `docs/SPEC_SCHEMA_REFERENCE.md`: add `settings.strictness` field row.
+- `internal/manifest/types.go`: add `Strictness string` and `TestsGlob StringOrList` fields to `Settings`.
+- `internal/manifest/manifest.go`: switch `yaml.Unmarshal` to `yaml.NewDecoder(...).KnownFields(true)`; add `Strictness` enum validation; render did-you-mean for unknown keys via Levenshtein.
+- `internal/coverage/coverage.go`: `BuildCoverageReportStrict` gains a `Strictness` field; new exit-code contract.
+- `cmd/specter/main.go`: add `--strictness <level>` flag; wire `--strict` as its shortcut. `coverage` and `sync` consult `m.Settings.TestsGlob` when `--tests` is unset. Empty-discovery warning printed above the table.
+- `docs/CLI_REFERENCE.md`: new strictness section + `--strictness` flag. `docs/SPEC_SCHEMA_REFERENCE.md`: add `settings.strictness` and `settings.tests_glob` rows.
 
 ### Eval
 
-`make dogfood-strict` green under default (`threshold`). Set `settings.strictness: zero-tolerance` in `specter.yaml` and re-run — confirm the gate still passes (all 15 specs at 100% avg coverage means zero failing tests). Create a deliberate failing-test fixture and confirm zero-tolerance exits 2 where threshold would exit 0. Two review agents (per root `CLAUDE.md` Docs Review Policy) verify `SPEC_SCHEMA_REFERENCE.md` and `CLI_REFERENCE.md` deltas match the embedded schema and code behavior.
+`make dogfood-strict` green under default (`threshold`). Setting `settings.strictness: zero-tolerance` keeps it green (15/15 specs, no failing tests). Deliberate failing-test fixture: zero-tolerance exits 2 where threshold exits 0. Typo'd `tests_glob:` errors with did-you-mean. Empty workspace under `--strict` warns clearly. Two review agents verify `SPEC_SCHEMA_REFERENCE.md` and `CLI_REFERENCE.md` deltas match the embedded schema and code behavior.
+
+### Closes
+
+- Feature 5 (`settings.strictness`)
+- GH #75 (silent 0% on empty test discovery)
+- GH #76 (silent acceptance of unknown settings keys)
+- GH #78 (`settings.tests_glob`)
+
+Cluster 2 (GH #77, #79, #80 — Python adoption / Convention B for pytest) is intentionally out of scope; tracked as the next wave after Wave C lands.
 
 ---
 

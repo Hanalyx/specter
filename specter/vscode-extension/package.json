@@ -2,7 +2,7 @@
   "name": "specter-vscode",
   "displayName": "Specter SDD",
   "description": "Spec-Driven Development tooling for VS Code — inline coverage, diagnostics, annotation assistance, and intent drift detection.",
-  "version": "0.10.2",
+  "version": "0.11.1",
   "publisher": "Hanalyx",
   "license": "MIT",
   "engines": {
@@ -30,6 +30,12 @@
     "url": "https://github.com/Hanalyx/specter"
   },
   "main": "./out/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Specter executes a CLI binary discovered from PATH or downloaded from GitHub Releases. Workspace-scoped overrides for the binary path and version are ignored in untrusted workspaces."
+    }
+  },
   "activationEvents": [
     "workspaceContains:**/specter.yaml",
     "workspaceContains:**/*.spec.yaml"
@@ -41,7 +47,8 @@
         "specter.binaryPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the specter binary. If empty, Specter will search PATH then ~/.specter/bin/specter, then auto-download."
+          "scope": "machine",
+          "description": "Path to the specter binary. If empty, Specter will search PATH then ~/.specter/bin/specter, then auto-download. Machine-scoped: ignored by workspace and folder settings."
         },
         "specter.autoDownload": {
           "type": "boolean",
@@ -51,7 +58,8 @@
         "specter.version": {
           "type": "string",
           "default": "",
-          "description": "Specter CLI version to auto-download. Empty (default) matches the extension version. Set 'latest' to always track the newest GitHub release, or pin a specific version (e.g. '0.9.2')."
+          "scope": "machine",
+          "description": "Specter CLI version to auto-download. Empty (default) matches the extension version. Set 'latest' to always track the newest GitHub release, or pin a specific version (e.g. '0.9.2'). Machine-scoped: ignored by workspace and folder settings."
         },
         "specter.showInsightsOnFailure": {
           "type": "boolean",
