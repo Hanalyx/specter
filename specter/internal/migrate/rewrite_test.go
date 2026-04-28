@@ -279,3 +279,174 @@ func TestApply_QuotedAndNumeric_TrustLevel_StillRewrite(t *testing.T) {
 		}
 	})
 }
+
+// @ac AC-21
+// Plain scalar value with folded continuation (no `|`/`>` indicator).
+// yaml.v3 reports Kind=ScalarNode, Style=PlainStyle — passes the v1.5.0
+// kind/style check. The line-span branch must catch it: a non-blank line
+// at greater indent than the key follows the value's first line.
+func TestApply_PlainFoldedContinuation_TrustLevel_Refused(t *testing.T) {
+	t.Run("spec-doctor/AC-21 plain scalar with folded continuation refused via line-span check", func(t *testing.T) {
+		yamlIn := `spec:
+  id: legacy-spec
+  trust_level: high
+    confidence
+  context:
+    system: test
+`
+		result, _ := Apply([]byte(yamlIn), trustLevelErr)
+		if len(result.Applied) != 0 {
+			t.Errorf("folded plain scalar must not be rewritten; got Applied=%v", result.Applied)
+		}
+		if string(result.Content) != yamlIn {
+			t.Errorf("content must be byte-unchanged on refusal; got:\n%s", result.Content)
+		}
+		if len(result.Unhandled) != 1 {
+			t.Fatalf("expected 1 Unhandled entry, got %d: %+v", len(result.Unhandled), result.Unhandled)
+		}
+		if !strings.Contains(strings.ToLower(result.Unhandled[0].Reason), "spans multiple lines") {
+			t.Errorf("expected reason naming `spans multiple lines`, got: %q", result.Unhandled[0].Reason)
+		}
+	})
+}
+
+// @ac AC-22
+// Quoted scalar value spanning multiple source lines. Style is
+// DoubleQuotedStyle / SingleQuotedStyle, not Literal/Folded — passes
+// the v1.5.0 style check. Line-span branch must catch it.
+func TestApply_DoubleQuotedMultiline_TrustLevel_Refused(t *testing.T) {
+	t.Run("spec-doctor/AC-22 double-quoted multi-line trust_level refused", func(t *testing.T) {
+		yamlIn := `spec:
+  id: legacy-spec
+  trust_level: "line1
+    line2"
+  context:
+    system: test
+`
+		result, _ := Apply([]byte(yamlIn), trustLevelErr)
+		if len(result.Applied) != 0 {
+			t.Errorf("double-quoted multi-line must not be rewritten; got Applied=%v", result.Applied)
+		}
+		if string(result.Content) != yamlIn {
+			t.Errorf("content must be byte-unchanged on refusal")
+		}
+		if len(result.Unhandled) != 1 {
+			t.Fatalf("expected 1 Unhandled entry, got %d", len(result.Unhandled))
+		}
+		if !strings.Contains(strings.ToLower(result.Unhandled[0].Reason), "spans multiple lines") {
+			t.Errorf("expected reason naming `spans multiple lines`, got: %q", result.Unhandled[0].Reason)
+		}
+	})
+}
+
+// @ac AC-22
+// Single-quoted multi-line gets the same refusal.
+func TestApply_SingleQuotedMultiline_TrustLevel_Refused(t *testing.T) {
+	t.Run("spec-doctor/AC-22 single-quoted multi-line trust_level refused", func(t *testing.T) {
+		yamlIn := `spec:
+  id: legacy-spec
+  trust_level: 'line1
+    line2'
+  context:
+    system: test
+`
+		result, _ := Apply([]byte(yamlIn), trustLevelErr)
+		if len(result.Applied) != 0 {
+			t.Errorf("single-quoted multi-line must not be rewritten")
+		}
+		if len(result.Unhandled) != 1 {
+			t.Fatalf("expected 1 Unhandled entry, got %d", len(result.Unhandled))
+		}
+		if !strings.Contains(strings.ToLower(result.Unhandled[0].Reason), "spans multiple lines") {
+			t.Errorf("expected reason naming `spans multiple lines`, got: %q", result.Unhandled[0].Reason)
+		}
+	})
+}
+
+// @ac AC-22
+// Regression guard: single-line quoted values continue to rewrite.
+// Already covered by TestApply_QuotedAndNumeric_TrustLevel_StillRewrite
+// above; this run re-verifies after the line-span check is added.
+func TestApply_SingleLineQuoted_TrustLevel_StillRewrites(t *testing.T) {
+	t.Run("spec-doctor/AC-22 single-line quoted trust_level still rewrites after line-span check", func(t *testing.T) {
+		yamlIn := `spec:
+  id: x
+  trust_level: "high"
+  context:
+    system: t
+`
+		result, _ := Apply([]byte(yamlIn), trustLevelErr)
+		if len(result.Applied) != 1 {
+			t.Errorf("single-line quoted must still rewrite; got Applied=%v", result.Applied)
+		}
+		if len(result.Unhandled) != 0 {
+			t.Errorf("single-line quoted must not produce Unhandled; got %+v", result.Unhandled)
+		}
+	})
+}
+
+// @ac AC-23
+// Multi-document YAML file: doc 0 has a safe trust_level, doc 1 has an
+// unsafe shape. The whole file must be refused — partial rewrite is not
+// safe across documents.
+func TestApply_MultiDoc_UnsafeInLaterDoc_Refused(t *testing.T) {
+	t.Run("spec-doctor/AC-23 multi-doc with unsafe shape in non-first doc refused", func(t *testing.T) {
+		yamlIn := `spec:
+  id: doc0
+  trust_level: high
+  context:
+    system: t
+---
+spec:
+  id: doc1
+  trust_level: |
+    high
+    confidence
+  context:
+    system: t
+`
+		result, _ := Apply([]byte(yamlIn), trustLevelErr)
+		if len(result.Applied) != 0 {
+			t.Errorf("multi-doc with unsafe shape in doc 1 must not be rewritten; got Applied=%v", result.Applied)
+		}
+		if string(result.Content) != yamlIn {
+			t.Errorf("content must be byte-unchanged when any doc is unsafe")
+		}
+		if len(result.Unhandled) != 1 {
+			t.Fatalf("expected 1 Unhandled entry, got %d", len(result.Unhandled))
+		}
+		// Reason should reference the unsafe shape in doc 1 (block scalar
+		// or spans-multiple-lines — either is acceptable per AC-23).
+		reason := strings.ToLower(result.Unhandled[0].Reason)
+		if !strings.Contains(reason, "block scalar") && !strings.Contains(reason, "spans multiple lines") {
+			t.Errorf("expected reason naming `block scalar` or `spans multiple lines`, got: %q", result.Unhandled[0].Reason)
+		}
+	})
+}
+
+// @ac AC-23
+// Regression guard: multi-doc where ALL docs are safe must continue to
+// rewrite (each doc's trust_level: line is deleted).
+func TestApply_MultiDoc_AllSafe_Rewrites(t *testing.T) {
+	t.Run("spec-doctor/AC-23 multi-doc all safe still rewrites", func(t *testing.T) {
+		yamlIn := `spec:
+  id: doc0
+  trust_level: high
+  context:
+    system: t
+---
+spec:
+  id: doc1
+  trust_level: medium
+  context:
+    system: t
+`
+		result, _ := Apply([]byte(yamlIn), trustLevelErr)
+		if len(result.Applied) != 1 {
+			t.Errorf("multi-doc all-safe must rewrite; got Applied=%v", result.Applied)
+		}
+		if strings.Contains(string(result.Content), "trust_level") {
+			t.Errorf("trust_level should be stripped from both docs")
+		}
+	})
+}
