@@ -125,3 +125,101 @@ func TestDoctor_Fix_NoChanges_Exits0(t *testing.T) {
 		}
 	})
 }
+
+// manifestWithoutSchemaVersion is the pre-v0.12 specter.yaml shape (no
+// schema_version line). doctor --fix should canonicalize it.
+const manifestWithoutSchemaVersion = `system:
+  name: demo
+  tier: 2
+domains:
+  default:
+    tier: 2
+    specs: []
+`
+
+// @ac AC-16
+// doctor --fix on a workspace whose specter.yaml lacks schema_version adds
+// schema_version: 1 at the top. ParseManifest then reports SchemaVersion=1
+// and original content is byte-preserved after the new line.
+func TestDoctor_Fix_Manifest_AddsSchemaVersion(t *testing.T) {
+	t.Run("spec-doctor/AC-16 fix prepends schema_version to manifest lacking it", func(t *testing.T) {
+		dir := t.TempDir()
+		manifestPath := filepath.Join(dir, "specter.yaml")
+		if err := os.WriteFile(manifestPath, []byte(manifestWithoutSchemaVersion), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		out, _ := runCLI(t, dir, "doctor", "--fix")
+
+		after, err := os.ReadFile(manifestPath)
+		if err != nil {
+			t.Fatalf("read after: %v", err)
+		}
+		// First non-empty line must be schema_version: 1.
+		lines := strings.Split(string(after), "\n")
+		var first string
+		for _, l := range lines {
+			if t := strings.TrimSpace(l); t != "" {
+				first = t
+				break
+			}
+		}
+		if first != "schema_version: 1" {
+			t.Errorf("first non-empty line = %q, want %q\nfile:\n%s", first, "schema_version: 1", after)
+		}
+		// Original content must still be present after the schema_version line.
+		if !strings.Contains(string(after), "system:") || !strings.Contains(string(after), "name: demo") {
+			t.Errorf("original manifest content not preserved; got:\n%s", after)
+		}
+		// Summary must mention the rewrite name.
+		if !strings.Contains(out, "add-schema-version") {
+			t.Errorf("summary must reference `add-schema-version` rewrite; got:\n%s", out)
+		}
+	})
+}
+
+// @ac AC-17
+// doctor --fix on a manifest that already declares schema_version leaves
+// the file byte-unchanged.
+func TestDoctor_Fix_Manifest_AlreadyCanonical_IsNoOp(t *testing.T) {
+	t.Run("spec-doctor/AC-17 fix on already-canonical manifest is byte no-op", func(t *testing.T) {
+		dir := t.TempDir()
+		canonical := "schema_version: 1\n" + manifestWithoutSchemaVersion
+		manifestPath := filepath.Join(dir, "specter.yaml")
+		if err := os.WriteFile(manifestPath, []byte(canonical), 0644); err != nil {
+			t.Fatal(err)
+		}
+		writeSpec(t, dir, "clean.spec.yaml", minimalValidSpec("clean", 3, "AC-01"))
+
+		out, _ := runCLI(t, dir, "doctor", "--fix")
+
+		after, _ := os.ReadFile(manifestPath)
+		if string(after) != canonical {
+			t.Errorf("already-canonical manifest must be byte-unchanged; got:\n%s\nwant:\n%s", after, canonical)
+		}
+		// Should not name the manifest as rewritten in the summary.
+		if strings.Contains(out, "add-schema-version") {
+			t.Errorf("must not report add-schema-version when manifest already has schema_version; got:\n%s", out)
+		}
+	})
+}
+
+// @ac AC-18
+// doctor --fix in a workspace with NO specter.yaml does not create one.
+// The manifest canonicalization is a silent no-op when no manifest exists.
+func TestDoctor_Fix_NoManifest_DoesNotCreate(t *testing.T) {
+	t.Run("spec-doctor/AC-18 fix without manifest does not create one", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSpec(t, dir, "clean.spec.yaml", minimalValidSpec("clean", 3, "AC-01"))
+
+		out, _ := runCLI(t, dir, "doctor", "--fix")
+
+		if _, err := os.Stat(filepath.Join(dir, "specter.yaml")); err == nil {
+			t.Errorf("doctor --fix must not create specter.yaml when one does not exist")
+		}
+		// Should not name a manifest in the summary.
+		if strings.Contains(out, "add-schema-version") {
+			t.Errorf("must not report add-schema-version when no manifest exists; got:\n%s", out)
+		}
+	})
+}
