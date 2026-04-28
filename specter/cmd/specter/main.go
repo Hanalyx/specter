@@ -53,12 +53,12 @@ const maxDescLen = 50
 // nothing. Explains where specter looked and what to try next — users often
 // keep specs in a non-default directory and need the hint.
 func noSpecsMessage() string {
-	m, _, _ := loadManifest()
-	searched := m.SpecsDir()
-	if searched == "" || searched == "." {
-		searched = "current directory and subdirectories"
+	m, manifestRoot, _ := loadManifest()
+	var searched string
+	if manifestRoot == "" {
+		searched = "current directory and subdirectories (no specter.yaml found)"
 	} else {
-		searched = fmt.Sprintf("%q (from specter.yaml)", searched)
+		searched = fmt.Sprintf("%q (from specter.yaml)", m.SpecsDir())
 	}
 	return fmt.Sprintf(
 		"No .spec.yaml files found.\n\n"+
@@ -269,12 +269,23 @@ func discoverSpecs(patterns ...string) []string {
 		return patterns
 	}
 	// Load manifest to honor settings.exclude and specs_dir.
-	m, _, _ := loadManifest()
+	m, manifestRoot, _ := loadManifest()
 	excludeNames := make(map[string]bool)
 	for _, e := range m.ExcludePatterns() {
 		excludeNames[e] = true
 	}
-	root := m.SpecsDir()
+	// spec-doctor C-10 / GH #93: when no specter.yaml is found, walk
+	// recursively from cwd instead of the manifest default `specs`.
+	// AC-02 reports manifest as WARN/optional; if discovery then required
+	// specs to live under ./specs/, the optional framing is a lie. When a
+	// manifest IS present (manifestRoot != ""), honor settings.specs_dir
+	// as before so explicit configurations stay authoritative (AC-11).
+	var root string
+	if manifestRoot == "" {
+		root = "."
+	} else {
+		root = m.SpecsDir()
+	}
 
 	var files []string
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
