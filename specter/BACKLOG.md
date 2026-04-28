@@ -64,6 +64,25 @@ Detailed rationale lives on each issue thread. Brief summary:
 - **GH #99 — coverage inference from `generated_from.test_files`.** Migration-only pain that contradicts the v0.10 mechanical-coverage design call. Migration tool (GH #96) should backfill annotations on import, not coverage soft-infer.
 - **GH #100 — `spec.kind: audit-matrix`.** Cross-cutting pattern is real, but polymorphic `spec.kind` is a heavyweight schema commitment when lighter mechanisms (reverse linking via `governs:`, tags + queries, external tracker files) cover the use case at much lower cost.
 
+### Post-v0.12-review polish (P2/P3 follow-ups)
+
+Surfaced by the 2-agent review of the v0.12 cycle (2026-04-28). Severity-tagged. None block merge — the merge-blocking P1s (block-scalar corruption + AC-52 grep regex) shipped on `feat/doctor-fix-v2` 1.5.0 and `feat/vscode-quick-fix-v2` 1.6.0. These are spec-test discipline tightening that can ride a follow-up patch or land before v0.12 tag if convenient.
+
+- **P2 — AC-16 doesn't actually verify `ParseManifest reports SchemaVersion=1`.** The AC text explicitly says "After the command, ParseManifest on the file reports SchemaVersion=1" but `TestDoctor_Fix_Manifest_AddsSchemaVersion` only checks the first-line literal and substring presence. Add the ParseManifest call + SchemaVersion field assertion. Mitigated by `feat/schema-version-manifest-v2`'s parse-side coverage of the same input shape, but the AC's own assertion is unverified by its own test.
+- **P2 — AC-31 ordering check is dead code.** `feat/coverage-source-only-hint`'s test computes `hintIdx` and `tableIdx` for "hint above table" ordering but the `else if` body is empty (just a comment). Spec C-28 explicitly says "printed before the coverage table" — impl is correct via inspection but the test doesn't enforce it. Tighten the assertion.
+- **P2 — `init --refresh` byte-unchanged claim is overstated.** spec-manifest C-28 / AC-43 say `init --refresh` MUST leave `schema_version` byte-unchanged. The impl re-marshals through `yaml.Marshal`, which preserves the value but not byte-for-byte (key order, comments, custom whitespace can shift). The AC-43 test never verifies byte-equality — only substring presence. Either fix the spec wording (value-preservation, not byte-preservation) or change refresh to in-place line-edit (like canonicalizeManifest does). Pre-existing C-19 design concern surfaced by the new field.
+- **P3 — `internal/migrate/rewrite.go` package comment line says "C-10" should say "C-11"** (the rewrite-table constraint, not the discovery-fallback one). One-character fix.
+- **P3 — `spec-doctor` 1.3.0 changelog narrative groups AC-14 under C-13**, but AC-14's `references_constraints` is `["C-07"]` (read-only-by-default regression guard, not the summary). Cosmetic mismatch.
+- **P3 — `coverage --strict --json` exits 0 when uncovered**, but text mode exits 1 on the same input. Possibly intentional (json-as-data-extraction), but inconsistent and surprising for CI consumers. Pre-existing; verify intent and either align or document.
+- **P3 — `.specter-results.json` accepts `"status": "pass"` (vs the canonical `"passed"`) and silently treats it as not-passed.** No diagnostic for the typo. Pre-existing footgun; add a strictness-mode warning when status values fall outside the documented enum.
+
+### Future paths for `doctor --fix` rewrite engine
+
+When real adoption shows the `needs-manual-edit` path (spec-doctor C-15) is hit often, two upgrade routes:
+
+- **Option C — yaml.v3-aware byte-range splice.** Use yaml.v3 to find the exact byte range of the targeted (key, value) entry — start at `keyNode.Line`/`keyNode.Column`, end at the next sibling's start (or document EOF for the last entry). Splice that byte range out of the original content; never call `yaml.Marshal`. Handles every YAML shape correctly AND preserves bytes outside the deletion. Requires ~40 lines of node-walking code and care around edge cases (last-entry-in-mapping, EOF without trailing newline, mixed line endings). Selectable per-rewrite — table entries opt into byte-range mode when their predicate matches a structurally complex value.
+- **Option A+ — full `yaml.Marshal` round-trip with diff guard.** Round-trip the document through `*yaml.Node` (preserves comments via `Head/Line/Foot`), with `Encoder.SetIndent(matchOriginalIndent(content))`. After marshaling, diff against the original; if the diff has more changed lines than the deletion target, refuse and fall back to Unhandled. Less recommended than Option C — pays the marshal cost only to throw it away on style normalization.
+
 ---
 
 ## Audit items still pending (from `research/SPECTER_QUALITY_AUDIT.md`)
