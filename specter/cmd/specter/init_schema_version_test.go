@@ -59,15 +59,27 @@ func TestInit_Scaffold_EmitsSchemaVersionAsFirstField(t *testing.T) {
 
 // @ac AC-43
 // `specter init --refresh` on an existing specter.yaml that already declares
-// schema_version (and custom domains / settings / comments) leaves the file
-// byte-unchanged outside the rewritten domains.default.specs list.
+// schema_version (and custom domains / settings / comments) leaves the
+// schema_version line byte-unchanged regardless of value (1, 7, 42).
+// AC-43 spec text: "leaves the schema_version line byte-unchanged" — value
+// is not constrained to 1, so the test parameterizes over a non-default
+// value to catch a regression where refresh rewrote the value (e.g., to 1).
 func TestInit_Refresh_PreservesSchemaVersionAndCustomFields(t *testing.T) {
-	t.Run("spec-manifest/AC-43 init refresh preserves schema_version and custom fields", func(t *testing.T) {
-		dir := t.TempDir()
-		writeSpec(t, dir, "spec-a.spec.yaml", minimalValidSpec("spec-a", 3, "AC-01"))
-		writeSpec(t, dir, "spec-c.spec.yaml", minimalValidSpec("spec-c", 3, "AC-01"))
+	cases := []struct {
+		name              string
+		schemaVersionLine string
+	}{
+		{"value=1 (default)", "schema_version: 1"},
+		{"value=7 (non-default)", "schema_version: 7"},
+		{"value=42 (arbitrary)", "schema_version: 42"},
+	}
+	for _, tc := range cases {
+		t.Run("spec-manifest/AC-43 init refresh preserves schema_version line ("+tc.name+")", func(t *testing.T) {
+			dir := t.TempDir()
+			writeSpec(t, dir, "spec-a.spec.yaml", minimalValidSpec("spec-a", 3, "AC-01"))
+			writeSpec(t, dir, "spec-c.spec.yaml", minimalValidSpec("spec-c", 3, "AC-01"))
 
-		original := `schema_version: 1
+			original := tc.schemaVersionLine + `
 system:
   name: demo-system
   tier: 2
@@ -81,46 +93,55 @@ settings:
   strict: true
   specs_dir: specs
 `
-		writeManifestRaw(t, dir, original)
+			writeManifestRaw(t, dir, original)
 
-		_, code := runCLI(t, dir, "init", "--refresh")
-		if code != 0 {
-			t.Fatalf("refresh exited %d, want 0", code)
-		}
-
-		body, err := os.ReadFile(filepath.Join(dir, "specter.yaml"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		got := string(body)
-
-		// schema_version must remain present and equal to 1. After refresh,
-		// header comments may sit above it, but the first non-comment,
-		// non-blank line must be `schema_version: 1`.
-		var firstNonComment string
-		for _, line := range strings.Split(got, "\n") {
-			t := strings.TrimSpace(line)
-			if t == "" || strings.HasPrefix(t, "#") {
-				continue
+			_, code := runCLI(t, dir, "init", "--refresh")
+			if code != 0 {
+				t.Fatalf("refresh exited %d, want 0", code)
 			}
-			firstNonComment = t
-			break
-		}
-		if firstNonComment != "schema_version: 1" {
-			t.Errorf("first non-comment line = %q, want %q\nfile:\n%s",
-				firstNonComment, "schema_version: 1", got)
-		}
-		// Custom domain "auth" must remain.
-		if !strings.Contains(got, "auth:") || !strings.Contains(got, "spec-b") {
-			t.Errorf("custom domain `auth` was not preserved; file:\n%s", got)
-		}
-		// Custom settings must remain.
-		if !strings.Contains(got, "strict: true") {
-			t.Errorf("custom settings.strict not preserved; file:\n%s", got)
-		}
-		// domains.default.specs must include the newly-discovered spec-c.
-		if !strings.Contains(got, "spec-c") {
-			t.Errorf("expected newly-discovered spec-c in default specs after refresh; file:\n%s", got)
-		}
-	})
+
+			body, err := os.ReadFile(filepath.Join(dir, "specter.yaml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := string(body)
+
+			// AC-43 byte-unchanged claim: the literal schema_version line
+			// from the input must appear verbatim in the output. Substring
+			// match is sufficient — the line is unique and ordering is
+			// covered by the first-non-comment check below.
+			if !strings.Contains(got, tc.schemaVersionLine) {
+				t.Errorf("schema_version line %q not preserved verbatim after refresh\nfile:\n%s",
+					tc.schemaVersionLine, got)
+			}
+
+			// First non-comment line must be exactly the input value (no
+			// rewrite to 1, no key reordering that demotes it).
+			var firstNonComment string
+			for _, line := range strings.Split(got, "\n") {
+				stripped := strings.TrimSpace(line)
+				if stripped == "" || strings.HasPrefix(stripped, "#") {
+					continue
+				}
+				firstNonComment = stripped
+				break
+			}
+			if firstNonComment != tc.schemaVersionLine {
+				t.Errorf("first non-comment line = %q, want %q\nfile:\n%s",
+					firstNonComment, tc.schemaVersionLine, got)
+			}
+			// Custom domain "auth" must remain.
+			if !strings.Contains(got, "auth:") || !strings.Contains(got, "spec-b") {
+				t.Errorf("custom domain `auth` was not preserved; file:\n%s", got)
+			}
+			// Custom settings must remain.
+			if !strings.Contains(got, "strict: true") {
+				t.Errorf("custom settings.strict not preserved; file:\n%s", got)
+			}
+			// domains.default.specs must include the newly-discovered spec-c.
+			if !strings.Contains(got, "spec-c") {
+				t.Errorf("expected newly-discovered spec-c in default specs after refresh; file:\n%s", got)
+			}
+		})
+	}
 }
