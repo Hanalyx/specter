@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Hanalyx/specter/internal/manifest"
 )
 
 // legacySpecWithTrustLevel returns spec YAML carrying a trust_level key that
@@ -175,6 +177,17 @@ func TestDoctor_Fix_Manifest_AddsSchemaVersion(t *testing.T) {
 		// Summary must mention the rewrite name.
 		if !strings.Contains(out, "add-schema-version") {
 			t.Errorf("summary must reference `add-schema-version` rewrite; got:\n%s", out)
+		}
+		// AC-16 spec text: "ParseManifest on the file reports SchemaVersion=1".
+		// Enforce that downstream consumers actually see the value the rewrite
+		// added — first-line literal check alone leaves the parser-side claim
+		// unverified.
+		m, err := manifest.ParseManifest(string(after))
+		if err != nil {
+			t.Fatalf("ParseManifest after --fix: %v\nfile:\n%s", err, after)
+		}
+		if m.SchemaVersion != 1 {
+			t.Errorf("ParseManifest reports SchemaVersion=%d, want 1", m.SchemaVersion)
 		}
 	})
 }
