@@ -1,6 +1,6 @@
 spec:
   id: spec-doctor
-  version: "1.7.0"
+  version: "1.8.0"
   status: draft
   tier: 2
 
@@ -114,7 +114,7 @@ spec:
       enforcement: error
 
     - id: C-16
-      description: "`specter doctor --fix` is a BETA feature in v0.12. Before applying any rewrite or canonicalization, `--fix` MUST print a clearly-marked `[BETA]` warning to stderr describing (a) the known string-literal corruption gap (deferred to BACKLOG cycle 6), (b) the recommendation to commit spec files BEFORE running so changes can be diffed and reverted, and (c) `--dry-run` as a safe preview path. After the warning, `--fix` MUST prompt the operator on stdin with `Continue? (y/N): ` and MUST require an affirmative response (`y` or `yes`, case-insensitive) to proceed. Any other input — empty/Enter, `n`/`no`, or any non-affirmative string — MUST exit 0 with a `Aborted. No files modified.` line and no on-disk changes. The `--yes` (or `-y`) CLI flag MUST bypass both the warning and the prompt for non-interactive use (CI, scripted migrations). When stdin is not a terminal AND `--yes` is not set, `--fix` MUST refuse with an explicit error directing the operator to either run interactively or pass `--yes`. `--dry-run` MUST be exempt from the prompt — preview mode is read-only. Rationale: the BACKLOG cycle 6 known-limitation can corrupt spec documentation that mentions deprecated field names in prose; until that's closed, gating the destructive path behind explicit acknowledgment is the right safety posture."
+      description: "`specter doctor --fix` is a BETA feature in v0.12. Before applying any rewrite or canonicalization, `--fix` MUST print a clearly-marked `[BETA]` warning to stderr describing (a) the known string-literal corruption gap (deferred to BACKLOG cycle 6), (b) the recommendation to commit spec files BEFORE running so changes can be diffed and reverted, and (c) `--dry-run` as a safe preview path. After the warning, `--fix` MUST prompt the operator on stdin with `Continue? (y/N): ` and MUST require an affirmative response (`y` or `yes`, case-insensitive) to proceed. Any other input — empty/Enter, `n`/`no`, or any non-affirmative string — MUST exit 0 with a `Aborted. No files modified.` line and no on-disk changes. The `--yes` (or `-y`) CLI flag MUST bypass both the warning and the prompt for non-interactive use (CI, scripted migrations). When stdin is not a terminal AND `--yes` is not set, `--fix` MUST refuse with an explicit error directing the operator to either run interactively or pass `--yes` — and the refusal MUST happen BEFORE reading any stdin content (i.e., piping `y\\n` from a non-TTY does NOT bypass the gate; the gate is keyed on the terminal capability of stdin, not on what content arrives). TTY detection MUST use a stdin filedescriptor mode check (e.g., `os.Stdin.Stat()` returning a character-device mode) rather than EOF-on-empty heuristics. `--dry-run` MUST be exempt from the prompt — preview mode is read-only. Rationale: the BACKLOG cycle 6 known-limitation can corrupt spec documentation that mentions deprecated field names in prose; until that's closed, gating the destructive path behind explicit acknowledgment is the right safety posture. The TTY-not-EOF clarification closes a regression where `echo y | specter doctor --fix` would silently rewrite files (the EOF-on-empty heuristic only refused empty pipes; piped affirmative content slipped through)."
       type: business
       enforcement: error
 
@@ -431,6 +431,22 @@ spec:
       references_constraints: ["C-16"]
       priority: high
 
+    - id: AC-29
+      description: "`specter doctor --fix` invoked with non-TTY stdin AND piped affirmative content (e.g., `echo y | specter doctor --fix` or any CI script that pipes confirmation tokens) without `--yes` MUST refuse with the same error message and exit code as AC-27. The refusal MUST happen BEFORE the stdin content is read — what the pipe contains is irrelevant; non-TTY without `--yes` is the refusal trigger. NO files MUST be modified. Rationale: a CI script that accidentally pipes anything to specter (output of an earlier step, a heredoc, a literal `y`) must not silently bypass the BETA gate. Closes a regression where the v1.7.0 EOF-on-empty heuristic accepted any non-empty piped content."
+      inputs:
+        scenarios:
+          - "stdin piped 'y\\n'; --yes not set; --dry-run not set"
+          - "stdin piped 'yes\\n'; --yes not set; --dry-run not set"
+          - "stdin piped 'arbitrary content'; --yes not set; --dry-run not set"
+        command: "echo y | specter doctor --fix"
+      expected_output:
+        exit_code_nonzero: true
+        error_contains: "--yes"
+        error_contains_interactive: true
+        files_byte_unchanged: true
+      references_constraints: ["C-16"]
+      priority: critical
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -443,6 +459,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.8.0"
+      date: "2026-04-29"
+      author: "specter-team"
+      type: minor
+      description: "v0.12 review fix — strengthen C-16 BETA gate to refuse non-TTY-with-content. v0.12 cycle review (2026-04-29) found that the v1.7.0 BETA gate's non-TTY refusal was implemented via EOF-on-empty rather than TTY detection. `echo y | specter doctor --fix` bypassed the gate because the piped `y\\n` arrived as content, not EOF. C-16 reworded to mandate TTY-detection-based refusal (e.g., `os.Stdin.Stat()` character-device check) BEFORE reading stdin content. AC-29 added explicitly covering the piped-content scenario. Rationale: the BETA gate's whole purpose is to force operator acknowledgment in CI; an EOF-only check defeats that posture for any scripted invocation. The TTY check fires before stdin is read, so what the pipe contains is irrelevant."
     - version: "1.7.0"
       date: "2026-04-29"
       author: "specter-team"
