@@ -83,6 +83,24 @@ When real adoption shows the `needs-manual-edit` path (spec-doctor C-15) is hit 
 - **Option C — yaml.v3-aware byte-range splice.** Use yaml.v3 to find the exact byte range of the targeted (key, value) entry — start at `keyNode.Line`/`keyNode.Column`, end at the next sibling's start (or document EOF for the last entry). Splice that byte range out of the original content; never call `yaml.Marshal`. Handles every YAML shape correctly AND preserves bytes outside the deletion. Requires ~40 lines of node-walking code and care around edge cases (last-entry-in-mapping, EOF without trailing newline, mixed line endings). Selectable per-rewrite — table entries opt into byte-range mode when their predicate matches a structurally complex value.
 - **Option A+ — full `yaml.Marshal` round-trip with diff guard.** Round-trip the document through `*yaml.Node` (preserves comments via `Head/Line/Foot`), with `Encoder.SetIndent(matchOriginalIndent(content))`. After marshaling, diff against the original; if the diff has more changed lines than the deletion target, refuse and fall back to Unhandled. Less recommended than Option C — pays the marshal cost only to throw it away on style normalization.
 
+### Cycle 6 — line-targeted deletion (deferred from feat/doctor-fix-v2)
+
+Surfaced by the 2-agent review of the v0.12 line-span tightening (2026-04-28). One known data-loss bug class remains in the `--fix` rewrite path even with the v1.6.0 line-span check (AC-21/22/23) in place: the **predicate is yaml.v3 node-scoped, but the deletion is regex file-scoped**. Two corruption shapes leak:
+
+- **Case A** — `trust_level:` mentioned inside a string literal (e.g., `summary: |` or `description: |` block scalars containing migration documentation that names the deprecated field). Predicate inspects only the legitimate `spec.trust_level` node; regex `^\s+trust_level\s*:\s*\S.*$` then strips the line inside the documentation string too. Silent corruption.
+- **Case B** — `trust_level:` under a non-`spec` mapping (less plausible against current schema, but a hand-edited file with extra keys would over-delete).
+
+Plus two latent concerns of much lower likelihood: `#`/`---`/`...` lines inside multi-line quoted scalars confuse the line-span helper; anchored values (`trust_level: &anchor high`) deleted without checking for `*anchor` references elsewhere.
+
+**Recommended fix: cycle 6 with line-targeted deletion.** Estimated 30–45 minutes; spec-doctor 1.6.0 → 1.7.0 with one new constraint (or extension to C-15) and AC-24/AC-25 covering the two corruption shapes plus regression guards. Concretely:
+
+1. Have `canSafelyStripTrustLevel` return both the verdict AND the list of `keyNode.Line` values for legitimate matches across all documents.
+2. Replace the regex line-walk in `stripTrustLevel` with index-based deletion: strip exactly the source-line indices yaml.v3 reported for `spec.trust_level` keys, leave everything else byte-preserved.
+3. Add an early refusal when `val.Anchor != ""` (closes the alias concern).
+4. New tests: corruption-shape regressions for Case A (string-literal mention) and Case B (sibling mapping); regression guard that the legitimate single-key case still rewrites cleanly.
+
+Until cycle 6 ships, `doctor --fix` is gated as **beta** (interactive y/N confirmation; `--yes` to bypass for CI; `--dry-run` exempt). The beta gate keeps the existing predicate's safety net visible to operators while the regex/predicate scope mismatch is being closed.
+
 ---
 
 ## Audit items still pending (from `research/SPECTER_QUALITY_AUDIT.md`)
