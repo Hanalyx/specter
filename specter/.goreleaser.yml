@@ -55,11 +55,17 @@ signs:
     output: true
 
 # CycloneDX SBOM per archive via syft. Lands as <archive>.sbom.json
-# alongside the archives in the GitHub Release.
+# alongside the archives in the GitHub Release. The explicit
+# `cyclonedx-json={{ .Document }}` arg overrides syft's default SPDX
+# output so the published SBOM matches what the changelog claims.
 sboms:
   - artifacts: archive
     documents:
       - "{{ .ArtifactName }}.sbom.json"
+    args:
+      - "$artifact"
+      - "--output"
+      - "cyclonedx-json={{ .Document }}"
 
 changelog:
   sort: asc
