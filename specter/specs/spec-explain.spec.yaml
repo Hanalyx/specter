@@ -1,6 +1,6 @@
 spec:
   id: spec-explain
-  version: "1.1.0"
+  version: "1.2.0"
   status: draft
   tier: 2
 
@@ -98,6 +98,11 @@ spec:
     - id: C-12
       description: "MUST print a human-readable spec card to stdout when invoked as `specter explain <spec-id>` with no AC suffix; card contains tier, current coverage percentage, and per-AC test-file list"
       type: technical
+      enforcement: error
+
+    - id: C-13
+      description: "When `explain` shows the annotation example for an uncovered AC and the detected language is Python, the example MUST teach the dual-channel pattern: the source-comment annotation (`# @spec`/`# @ac`), the test function with a `@pytest.mark.spec(...)` decorator, the conftest.py autouse fixture that emits Convention B annotations into JUnit `<system-out>`, and the required `pytest.ini` settings (`junit_logging = system-out` plus the `spec` marker registration). Source comments alone don't satisfy `coverage --strict` — pytest's JUnit XML output does not include source-file scans, so without the runtime emission `specter ingest` sees no (spec_id, ac_id) pair for the test."
+      type: business
       enforcement: error
 
   acceptance_criteria:
@@ -206,6 +211,46 @@ spec:
       references_constraints: ["C-12"]
       priority: high
 
+    - id: AC-11
+      description: "`specter explain <spec-id>:AC-NN` for an uncovered AC, in a project where `discoverTestFiles` returns at least one `.py` file, prints the dual-channel pattern: a test function carrying both `# @spec`/`# @ac` source comments AND a `@pytest.mark.spec(...)` decorator, the conftest.py autouse fixture that emits Convention B annotations into JUnit `<system-out>`, and the `pytest.ini` block (marker registration + `junit_logging = system-out`). When ONLY `.py` files are detected, the Go `t.Run` example is NOT shown."
+      inputs:
+        test_files: ["tests/test_user.py"]
+        ac_id: "AC-02"
+        covered: false
+      expected_output:
+        contains_pytest_mark_spec: "@pytest.mark.spec"
+        contains_conftest_autouse: "autouse=True"
+        contains_pytest_ini: "junit_logging = system-out"
+        contains_source_comment: "# @spec"
+        does_not_contain_go_t_run: "// @spec"
+      references_constraints: ["C-13", "C-08"]
+      priority: critical
+
+    - id: AC-12
+      description: "Same uncovered-AC scenario when `discoverTestFiles` returns ONLY Go test files: the Convention A `t.Run` Go example is shown; the Python pytest-mark / conftest / pytest.ini pattern is NOT shown. Guards against the AC-11 fix accidentally showing Python boilerplate to Go-only projects."
+      inputs:
+        test_files: ["cmd/specter/foo_test.go"]
+        ac_id: "AC-02"
+        covered: false
+      expected_output:
+        contains_go_t_run: "t.Run"
+        does_not_contain_pytest_mark_spec: "@pytest.mark.spec"
+        does_not_contain_conftest: "autouse=True"
+      references_constraints: ["C-13", "C-08"]
+      priority: high
+
+    - id: AC-13
+      description: "When `discoverTestFiles` returns zero test files, the annotation example falls back to a generic Go example BUT also notes the dual-channel requirement (source comments alone don't satisfy `coverage --strict` — runtime visibility is required). Prevents the developer from being led down the source-only path on greenfield projects."
+      inputs:
+        test_files: []
+        ac_id: "AC-02"
+        covered: false
+      expected_output:
+        contains_generic_example: true
+        contains_dual_channel_note: "coverage --strict"
+      references_constraints: ["C-13"]
+      priority: medium
+
   depends_on:
     - spec_id: spec-coverage
       version_range: "^1.0.0"
@@ -215,6 +260,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.2.0"
+      date: "2026-04-27"
+      author: "specter-team"
+      type: minor
+      description: "v0.12 GH #77 — language-aware explain. When the detected test language is Python, the uncovered-AC annotation example now teaches the dual-channel pattern (source comments + pytest.mark.spec decorator + conftest autouse fixture + pytest.ini settings) instead of the source-only pattern, which silently fails under `coverage --strict`. Adds C-13 and AC-11/AC-12/AC-13."
     - version: "1.1.0"
       date: "2026-04-25"
       author: "specter-team"

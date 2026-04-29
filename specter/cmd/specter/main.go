@@ -2184,11 +2184,42 @@ func explainDetailMode(spec *schema.SpecAST, acID string, coveredBy map[string][
 			fmt.Printf("  %s:\n", lang)
 			switch lang {
 			case "Python":
+				// spec-explain C-13 (v0.12 / GH #77): Python's source-comment
+				// pattern alone fails coverage --strict because pytest's JUnit
+				// XML doesn't include source-file scans — only runtime emission
+				// via system-out reaches `specter ingest`. Teach the dual-channel
+				// pattern: source comments + pytest.mark.spec decorator +
+				// conftest autouse fixture (emits Convention B into system-out)
+				// + pytest.ini settings (junit_logging = system-out plus marker
+				// registration).
+				funcName := "test_" + sanitizeID(spec.ID) + "_" + strings.ToLower(strings.ReplaceAll(acID, "-", "_"))
+				fmt.Printf("    # Test (carries both Convention B source comments AND pytest.mark.spec):\n")
 				fmt.Printf("    # @spec %s\n", spec.ID)
 				fmt.Printf("    # @ac %s\n", acID)
-				fmt.Printf("    def test_%s_%s():\n", sanitizeID(spec.ID), strings.ToLower(strings.ReplaceAll(acID, "-", "_")))
+				fmt.Printf("    @pytest.mark.spec(%q, %q)\n", spec.ID, acID)
+				fmt.Printf("    def %s():\n", funcName)
 				fmt.Printf("        # %s\n", targetAC.Description)
 				fmt.Printf("        ...\n")
+				fmt.Println()
+				fmt.Printf("    # conftest.py — emits Convention B into JUnit <system-out>\n")
+				fmt.Printf("    # so `specter ingest` sees the (spec_id, ac_id) pair:\n")
+				fmt.Printf("    import pytest\n")
+				fmt.Printf("\n")
+				fmt.Printf("    @pytest.fixture(autouse=True)\n")
+				fmt.Printf("    def specter_emit_annotations(request):\n")
+				fmt.Printf("        marker = request.node.get_closest_marker(\"spec\")\n")
+				fmt.Printf("        if marker:\n")
+				fmt.Printf("            spec_id, *ac_ids = marker.args\n")
+				fmt.Printf("            print(f\"// @spec {spec_id}\")\n")
+				fmt.Printf("            for ac_id in ac_ids:\n")
+				fmt.Printf("                print(f\"// @ac {ac_id}\")\n")
+				fmt.Printf("        yield\n")
+				fmt.Println()
+				fmt.Printf("    # pytest.ini — registers the marker and routes prints to JUnit:\n")
+				fmt.Printf("    [pytest]\n")
+				fmt.Printf("    markers =\n")
+				fmt.Printf("        spec: Specter SDD spec/AC mapping\n")
+				fmt.Printf("    junit_logging = system-out\n")
 			case "TypeScript / JavaScript":
 				fmt.Printf("    // @spec %s\n", spec.ID)
 				fmt.Printf("    // @ac %s\n", acID)
@@ -2203,6 +2234,16 @@ func explainDetailMode(spec *schema.SpecAST, acID string, coveredBy map[string][
 				fmt.Printf("        // %s\n", targetAC.Description)
 				fmt.Printf("    }\n")
 			}
+			fmt.Println()
+		}
+		// AC-13: when test discovery returned nothing, detectAnnotationLanguages
+		// fell back to the Go default. Note the dual-channel requirement
+		// explicitly so the developer is not led down the source-only path.
+		if len(testFiles) == 0 {
+			fmt.Println("  Note: source comments alone do not satisfy `coverage --strict`.")
+			fmt.Println("  Tests must produce a runner-visible signal (Convention A: spec-id/AC-NN")
+			fmt.Println("  in the test name, OR Convention B: emit `// @spec`/`// @ac` lines via")
+			fmt.Println("  test stdout). Run `specter explain annotation` for the full reference.")
 			fmt.Println()
 		}
 	}
