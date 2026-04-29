@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -21,6 +23,7 @@ import (
 	specdiff "github.com/Hanalyx/specter/internal/diff"
 	"github.com/Hanalyx/specter/internal/explain"
 	"github.com/Hanalyx/specter/internal/manifest"
+	"github.com/Hanalyx/specter/internal/migrate"
 	"github.com/Hanalyx/specter/internal/parser"
 	"github.com/Hanalyx/specter/internal/resolver"
 	"github.com/Hanalyx/specter/internal/reverse"
@@ -53,12 +56,12 @@ const maxDescLen = 50
 // nothing. Explains where specter looked and what to try next — users often
 // keep specs in a non-default directory and need the hint.
 func noSpecsMessage() string {
-	m, _, _ := loadManifest()
-	searched := m.SpecsDir()
-	if searched == "" || searched == "." {
-		searched = "current directory and subdirectories"
+	m, manifestRoot, _ := loadManifest()
+	var searched string
+	if manifestRoot == "" {
+		searched = "current directory and subdirectories (no specter.yaml found)"
 	} else {
-		searched = fmt.Sprintf("%q (from specter.yaml)", searched)
+		searched = fmt.Sprintf("%q (from specter.yaml)", m.SpecsDir())
 	}
 	return fmt.Sprintf(
 		"No .spec.yaml files found.\n\n"+
@@ -269,12 +272,23 @@ func discoverSpecs(patterns ...string) []string {
 		return patterns
 	}
 	// Load manifest to honor settings.exclude and specs_dir.
-	m, _, _ := loadManifest()
+	m, manifestRoot, _ := loadManifest()
 	excludeNames := make(map[string]bool)
 	for _, e := range m.ExcludePatterns() {
 		excludeNames[e] = true
 	}
-	root := m.SpecsDir()
+	// spec-doctor C-10 / GH #93: when no specter.yaml is found, walk
+	// recursively from cwd instead of the manifest default `specs`.
+	// AC-02 reports manifest as WARN/optional; if discovery then required
+	// specs to live under ./specs/, the optional framing is a lie. When a
+	// manifest IS present (manifestRoot != ""), honor settings.specs_dir
+	// as before so explicit configurations stay authoritative (AC-11).
+	var root string
+	if manifestRoot == "" {
+		root = "."
+	} else {
+		root = m.SpecsDir()
+	}
 
 	var files []string
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
@@ -667,6 +681,7 @@ func coverageCmd() *cobra.Command {
 	var strict bool
 	var scope string
 	var strictnessFlag string
+	var quiet bool
 	cmd := &cobra.Command{
 		Use:   "coverage",
 		Short: "Generate spec-to-test traceability matrix",
@@ -819,6 +834,16 @@ func coverageCmd() *cobra.Command {
 				report.Entries[i].SpecFile = specFileByID[report.Entries[i].SpecID]
 			}
 
+			// spec-coverage C-28 / GH #80: when --strict, surface (spec_id,
+			// ac_id) pairs that have source-file annotations but no matching
+			// .specter-results.json entry. Captures the missing-runtime-channel
+			// cause that v0.10's mechanical demotion otherwise leaves silent.
+			// Always populate report.DiagnosticHints so --json carries them;
+			// stderr printing happens later under non-json + non-quiet.
+			if strict {
+				report.DiagnosticHints = coverage.DiagnoseSourceOnlyACs(allAnnotations, results, specs)
+			}
+
 			// GH #94 — under zero-tolerance, demote ACs that violate the
 			// approval_gate contract (approval_gate: true with unset
 			// approval_date) so the report reflects the same enforcement
@@ -849,6 +874,25 @@ func coverageCmd() *cobra.Command {
 
 			if hasErrors {
 				return errSilent
+			}
+
+			// AC-31 / AC-33: per-AC source-only hints are printed to stderr
+			// ABOVE the table when --strict is on, --quiet is off, and we're
+			// not in --json mode (JSON consumers see them in DiagnosticHints).
+			if strict && !quiet && len(report.DiagnosticHints) > 0 {
+				for _, h := range report.DiagnosticHints {
+					loc := h.File
+					if h.Line > 0 {
+						loc = fmt.Sprintf("%s:%d", h.File, h.Line)
+					}
+					fmt.Fprintf(os.Stderr,
+						"hint: %s/%s has source annotation in %s but no matching pass in .specter-results.json\n",
+						h.SpecID, h.ACID, loc)
+					fmt.Fprintln(os.Stderr,
+						"      did your test runner emit a runner-visible annotation? "+
+							"(Convention A: spec-id/AC-NN in the test name; "+
+							"Convention B: print '// @spec'/'// @ac' lines from the test body)")
+				}
 			}
 
 			// C-16: summary header ABOVE the table, reflects the full
@@ -954,6 +998,7 @@ func coverageCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&strict, "strict", false, "Require .specter-results.json and treat any non-passed annotated AC as uncovered (all tiers)")
 	cmd.Flags().StringVar(&scope, "scope", "", "Narrow --strict demand to specs in the named domain from specter.yaml (specs outside the domain fall back to v0.9 boolean-passed logic). Requires --strict.")
 	cmd.Flags().StringVar(&strictnessFlag, "strictness", "", "Override settings.strictness in specter.yaml (annotation | threshold | zero-tolerance)")
+	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress per-AC source-only hints under --strict (the diagnostic_hints array still appears in --json output)")
 	return cmd
 }
 
@@ -1815,10 +1860,11 @@ func runInitTemplate(templateType string, force bool) error {
 //
 // @spec spec-doctor
 func doctorCmd() *cobra.Command {
-	return &cobra.Command{
+	var fix, dryRun, yes bool
+	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Run pre-flight project health checks",
-		Long:  "Checks project readiness before running the full sync pipeline. Reports PASS/WARN/FAIL for each check so developers know exactly what needs attention.",
+		Long:  "Checks project readiness before running the full sync pipeline. Reports PASS/WARN/FAIL for each check so developers know exactly what needs attention.\n\nWith --fix, applies known-safe schema-drift rewrites to spec files (initial table: strip trust_level removed in v0.6.5). Add --dry-run to preview without writing.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			anyFail := false
 
@@ -1979,6 +2025,38 @@ func doctorCmd() *cobra.Command {
 
 			fmt.Println()
 
+			// spec-doctor C-11/12/13 (v0.12 / GH-via-feat-doctor-fix):
+			// after the diagnostic checks complete, if --fix is on, apply
+			// the known-safe rewrite table and print a summary. Exit code
+			// under --fix reflects the fix action only (0 on success, even
+			// no-op; non-zero only if the rewrite mechanism errored).
+			// Diagnostic check failures still appear in the output above
+			// but do not drive the exit code under --fix — operator runs
+			// `specter doctor` (no --fix) for a pure health-based exit.
+			if fix {
+				// spec-doctor C-16 (v1.7.0): BETA gate. Print warning + prompt
+				// for confirmation unless --yes is set or --dry-run is in use
+				// (preview is read-only, no warning needed).
+				if !dryRun && !yes {
+					proceed, err := confirmFixWithUser(os.Stdin, stdinIsTTY(), os.Stderr)
+					if err != nil {
+						fmt.Fprintln(os.Stderr, "error:", err)
+						return errSilent
+					}
+					if !proceed {
+						fmt.Println("Aborted. No files modified.")
+						return nil
+					}
+				}
+				applied, unhandled, err := runDoctorFix(allParseErrs, dryRun)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "error:", err)
+					return errSilent
+				}
+				printDoctorFixSummary(applied, unhandled, dryRun)
+				return nil
+			}
+
 			// C-06: exit 0 if all PASS/WARN, exit 1 if any FAIL
 			if anyFail {
 				fmt.Println("Result: FAIL — fix the issues above before running `specter sync`")
@@ -1987,6 +2065,233 @@ func doctorCmd() *cobra.Command {
 			fmt.Println("Result: OK — project is ready for `specter sync`")
 			return nil
 		},
+	}
+	cmd.Flags().BoolVar(&fix, "fix", false, "Apply known-safe schema-drift rewrites to spec files in place (BETA — see --yes to bypass interactive confirmation)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "With --fix, print what would change without writing to disk (skips BETA prompt)")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip the --fix BETA confirmation prompt (for non-interactive use)")
+	return cmd
+}
+
+// stdinIsTTY reports whether os.Stdin is connected to a character device
+// (terminal). Returns false for pipes, redirects, /dev/null, and any
+// CI-like environment without a controlling terminal.
+//
+// Implementation: os.Stdin.Stat() returns a FileInfo whose Mode includes
+// os.ModeCharDevice when the underlying fd points at a terminal. Stat()
+// failing returns false (treat unknown as non-TTY — safer default for a
+// destructive operation gate). spec-doctor C-16 (1.8.0+).
+func stdinIsTTY() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+// confirmFixWithUser prints the spec-doctor C-16 BETA warning and prompts
+// the operator on the supplied stderr writer for confirmation.
+//
+// Returns (true, nil) on affirmative TTY input ("y" / "yes",
+// case-insensitive); (false, nil) on any other TTY input (decline);
+// (false, err) when isTTY=false — the gate refuses BEFORE reading
+// content so piped affirmative data (echo y | specter doctor --fix)
+// cannot bypass the BETA acknowledgment. spec-doctor C-16 (1.8.0+).
+//
+// The (stdin, isTTY, stderr) signature exists for unit-testing: tests
+// inject a strings.NewReader and a synthetic isTTY value; the CLI path
+// passes os.Stdin, stdinIsTTY(), and os.Stderr.
+func confirmFixWithUser(stdin io.Reader, isTTY bool, stderr io.Writer) (bool, error) {
+	fmt.Fprintln(stderr, "[BETA] specter doctor --fix")
+	fmt.Fprintln(stderr)
+	fmt.Fprintln(stderr, "  This command rewrites your .spec.yaml files in place to repair known")
+	fmt.Fprintln(stderr, "  schema drift (currently: strip the v0.6.5-removed `trust_level` field).")
+	fmt.Fprintln(stderr)
+	fmt.Fprintln(stderr, "  Known limitation (BACKLOG cycle 6): when `trust_level: <value>` appears")
+	fmt.Fprintln(stderr, "  inside a string literal (e.g., a description block scalar mentioning")
+	fmt.Fprintln(stderr, "  the deprecated field), the deletion may strip that documentation line")
+	fmt.Fprintln(stderr, "  too. Cycle 6 will replace regex deletion with line-targeted deletion.")
+	fmt.Fprintln(stderr)
+	fmt.Fprintln(stderr, "  Recommended:")
+	fmt.Fprintln(stderr, "    - Commit your spec files BEFORE running so changes can be diffed.")
+	fmt.Fprintln(stderr, "    - Use --dry-run to preview changes without writing.")
+	fmt.Fprintln(stderr, "    - Use --yes (or -y) for non-interactive (CI) runs.")
+	fmt.Fprintln(stderr)
+	fmt.Fprintf(stderr, "Continue? (y/N): ")
+
+	if !isTTY {
+		// Refuse before reading any stdin content. Closes the regression
+		// where echo y | specter doctor --fix bypassed the gate by
+		// arriving as content rather than EOF.
+		fmt.Fprintln(stderr)
+		return false, fmt.Errorf("--fix requires interactive confirmation; run with --yes (or -y) for non-interactive use, or run interactively")
+	}
+
+	reader := bufio.NewReader(stdin)
+	line, err := reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return false, fmt.Errorf("read stdin: %w", err)
+	}
+	answer := strings.ToLower(strings.TrimSpace(line))
+	return answer == "y" || answer == "yes", nil
+}
+
+// doctorFixApplied is one (file, rewrites) tuple produced by runDoctorFix.
+// Used by printDoctorFixSummary to emit the C-13 rewritten-files block.
+type doctorFixApplied struct {
+	File     string
+	Rewrites []string
+}
+
+// doctorFixUnhandled is one (file, rewrite, reason) tuple produced by
+// runDoctorFix when migrate.Apply refused a structurally unsafe shape.
+// Used by printDoctorFixSummary to emit the C-15 needs-manual-edit block.
+type doctorFixUnhandled struct {
+	File    string
+	Rewrite string
+	Reason  string
+}
+
+// runDoctorFix applies the migrate package's rewrite table to every spec
+// file with parse errors and canonicalizes specter.yaml when present.
+// Returns:
+//   - applied: (file, rewrites) tuples where at least one rewrite fired
+//   - unhandled: (file, rewrite, reason) tuples where a rewrite predicate
+//     matched but migrate.Apply refused due to unsafe YAML shape (C-15).
+//
+// Under dryRun the on-disk content is left unchanged; both return slices
+// still reflect what would have been rewritten / would have been refused
+// so the summary can name them.
+func runDoctorFix(parseErrors []coverage.ParseErrorEntry, dryRun bool) ([]doctorFixApplied, []doctorFixUnhandled, error) {
+	// Group parse errors by file so each file's rewrite table is consulted
+	// once with all relevant errors.
+	errsByFile := map[string][]coverage.ParseErrorEntry{}
+	var fileOrder []string
+	for _, e := range parseErrors {
+		if _, seen := errsByFile[e.File]; !seen {
+			fileOrder = append(fileOrder, e.File)
+		}
+		errsByFile[e.File] = append(errsByFile[e.File], e)
+	}
+
+	var applied []doctorFixApplied
+	var unhandled []doctorFixUnhandled
+	for _, file := range fileOrder {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			// Read failure already surfaced in the doctor parse check; skip
+			// rewrite rather than double-error.
+			continue
+		}
+		result, err := migrate.Apply(content, errsByFile[file])
+		if err != nil {
+			return nil, nil, fmt.Errorf("rewrite %s: %w", file, err)
+		}
+		// Surface refusals first so the operator sees them in the summary
+		// regardless of whether other rewrites on the same file applied.
+		for _, u := range result.Unhandled {
+			unhandled = append(unhandled, doctorFixUnhandled{
+				File:    file,
+				Rewrite: u.Rewrite,
+				Reason:  u.Reason,
+			})
+		}
+		if len(result.Applied) == 0 {
+			continue
+		}
+		if !dryRun {
+			if err := os.WriteFile(file, result.Content, 0644); err != nil {
+				return nil, nil, fmt.Errorf("write %s: %w", file, err)
+			}
+		}
+		applied = append(applied, doctorFixApplied{File: file, Rewrites: result.Applied})
+	}
+
+	// spec-doctor C-14 (v0.12): canonicalize specter.yaml when present and
+	// missing schema_version. Silent no-op when the file doesn't exist —
+	// `specter init` is the right command for that path.
+	if manifestApplied, err := canonicalizeManifest(dryRun); err != nil {
+		return nil, nil, err
+	} else if manifestApplied != nil {
+		applied = append(applied, *manifestApplied)
+	}
+
+	return applied, unhandled, nil
+}
+
+// canonicalizeManifest implements spec-doctor C-14 (v0.12). Returns a
+// doctorFixApplied entry with rewrite name "add-schema-version" when the
+// manifest existed but lacked a schema_version line. Returns nil if no
+// rewrite was needed (manifest absent, OR already declares schema_version).
+// Under dryRun, the in-memory result is computed but no file is written.
+func canonicalizeManifest(dryRun bool) (*doctorFixApplied, error) {
+	manifestPath, _ := findManifest()
+	if manifestPath == "" {
+		return nil, nil // no manifest → silent no-op (AC-18)
+	}
+	content, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", manifestPath, err)
+	}
+	// Already declares schema_version? byte-unchanged (AC-17). Match a
+	// `schema_version:` key at the start of any line — guards against
+	// matching a string literal containing the substring elsewhere.
+	for _, line := range strings.Split(string(content), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "schema_version:") {
+			return nil, nil
+		}
+	}
+	// Missing → prepend the canonical line, preserving original bytes
+	// after it (AC-16). Use plain string concat so existing comments,
+	// formatting, and trailing whitespace are byte-preserved.
+	newContent := []byte("schema_version: 1\n" + string(content))
+	if !dryRun {
+		if err := os.WriteFile(manifestPath, newContent, 0644); err != nil {
+			return nil, fmt.Errorf("write %s: %w", manifestPath, err)
+		}
+	}
+	return &doctorFixApplied{
+		File:     manifestPath,
+		Rewrites: []string{"add-schema-version"},
+	}, nil
+}
+
+// printDoctorFixSummary emits the spec-doctor summary blocks. Two blocks:
+//   - C-13 rewritten: `N file(s) rewritten` (or `would be rewritten` under
+//     dry-run), one line per applied rewrite. When N=0 AND no manual-edit
+//     entries exist, prints `no changes`.
+//   - C-15 needs-manual-edit: `N file(s) need manual edit`, one line per
+//     refused rewrite naming the file and reason. Skipped when empty.
+func printDoctorFixSummary(applied []doctorFixApplied, unhandled []doctorFixUnhandled, dryRun bool) {
+	fmt.Println()
+	if len(applied) == 0 && len(unhandled) == 0 {
+		fmt.Println("doctor --fix: no changes")
+		return
+	}
+	if len(applied) > 0 {
+		totalVerb := "rewritten"
+		itemVerb := "rewrite"
+		if dryRun {
+			totalVerb = "would be rewritten"
+			itemVerb = "would rewrite"
+		}
+		fmt.Printf("doctor --fix: %d file(s) %s\n", len(applied), totalVerb)
+		for _, a := range applied {
+			for _, name := range a.Rewrites {
+				fmt.Printf("  %s %s (%s)\n", itemVerb, a.File, name)
+			}
+		}
+	}
+	if len(unhandled) > 0 {
+		// Distinct files only — multiple unhandled rewrites on one file
+		// still count as one file in the summary header.
+		seenFiles := map[string]bool{}
+		for _, u := range unhandled {
+			seenFiles[u.File] = true
+		}
+		fmt.Printf("doctor --fix: %d file(s) need manual edit\n", len(seenFiles))
+		for _, u := range unhandled {
+			fmt.Printf("  skip %s — %s\n", u.File, u.Reason)
+		}
 	}
 }
 
@@ -2184,11 +2489,42 @@ func explainDetailMode(spec *schema.SpecAST, acID string, coveredBy map[string][
 			fmt.Printf("  %s:\n", lang)
 			switch lang {
 			case "Python":
+				// spec-explain C-13 (v0.12 / GH #77): Python's source-comment
+				// pattern alone fails coverage --strict because pytest's JUnit
+				// XML doesn't include source-file scans — only runtime emission
+				// via system-out reaches `specter ingest`. Teach the dual-channel
+				// pattern: source comments + pytest.mark.spec decorator +
+				// conftest autouse fixture (emits Convention B into system-out)
+				// + pytest.ini settings (junit_logging = system-out plus marker
+				// registration).
+				funcName := "test_" + sanitizeID(spec.ID) + "_" + strings.ToLower(strings.ReplaceAll(acID, "-", "_"))
+				fmt.Printf("    # Test (carries both Convention B source comments AND pytest.mark.spec):\n")
 				fmt.Printf("    # @spec %s\n", spec.ID)
 				fmt.Printf("    # @ac %s\n", acID)
-				fmt.Printf("    def test_%s_%s():\n", sanitizeID(spec.ID), strings.ToLower(strings.ReplaceAll(acID, "-", "_")))
+				fmt.Printf("    @pytest.mark.spec(%q, %q)\n", spec.ID, acID)
+				fmt.Printf("    def %s():\n", funcName)
 				fmt.Printf("        # %s\n", targetAC.Description)
 				fmt.Printf("        ...\n")
+				fmt.Println()
+				fmt.Printf("    # conftest.py — emits Convention B into JUnit <system-out>\n")
+				fmt.Printf("    # so `specter ingest` sees the (spec_id, ac_id) pair:\n")
+				fmt.Printf("    import pytest\n")
+				fmt.Printf("\n")
+				fmt.Printf("    @pytest.fixture(autouse=True)\n")
+				fmt.Printf("    def specter_emit_annotations(request):\n")
+				fmt.Printf("        marker = request.node.get_closest_marker(\"spec\")\n")
+				fmt.Printf("        if marker:\n")
+				fmt.Printf("            spec_id, *ac_ids = marker.args\n")
+				fmt.Printf("            print(f\"// @spec {spec_id}\")\n")
+				fmt.Printf("            for ac_id in ac_ids:\n")
+				fmt.Printf("                print(f\"// @ac {ac_id}\")\n")
+				fmt.Printf("        yield\n")
+				fmt.Println()
+				fmt.Printf("    # pytest.ini — registers the marker and routes prints to JUnit:\n")
+				fmt.Printf("    [pytest]\n")
+				fmt.Printf("    markers =\n")
+				fmt.Printf("        spec: Specter SDD spec/AC mapping\n")
+				fmt.Printf("    junit_logging = system-out\n")
 			case "TypeScript / JavaScript":
 				fmt.Printf("    // @spec %s\n", spec.ID)
 				fmt.Printf("    // @ac %s\n", acID)
@@ -2203,6 +2539,16 @@ func explainDetailMode(spec *schema.SpecAST, acID string, coveredBy map[string][
 				fmt.Printf("        // %s\n", targetAC.Description)
 				fmt.Printf("    }\n")
 			}
+			fmt.Println()
+		}
+		// AC-13: when test discovery returned nothing, detectAnnotationLanguages
+		// fell back to the Go default. Note the dual-channel requirement
+		// explicitly so the developer is not led down the source-only path.
+		if len(testFiles) == 0 {
+			fmt.Println("  Note: source comments alone do not satisfy `coverage --strict`.")
+			fmt.Println("  Tests must produce a runner-visible signal (Convention A: spec-id/AC-NN")
+			fmt.Println("  in the test name, OR Convention B: emit `// @spec`/`// @ac` lines via")
+			fmt.Println("  test stdout). Run `specter explain annotation` for the full reference.")
 			fmt.Println()
 		}
 	}

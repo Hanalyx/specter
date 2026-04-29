@@ -8,9 +8,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// MaxManifestBytes caps the input size before yaml.Unmarshal to prevent
+// memory exhaustion via billion-laughs / anchor-expansion on a malicious
+// specter.yaml. Real manifests are tiny (a few hundred lines max);
+// 64 KiB is generous.
+const MaxManifestBytes = 64 << 10 // 64 KiB
+
 // validTopLevelKeys lists every key allowed at the manifest top level.
 // Updated when adding a new top-level field.
-var validTopLevelKeys = []string{"system", "domains", "settings", "registry"}
+var validTopLevelKeys = []string{"schema_version", "system", "domains", "settings", "registry"}
 
 // validSettingsKeys lists every key allowed under `settings:`. Updated when
 // adding a new settings field.
@@ -29,6 +35,12 @@ var validStrictnessValues = []string{"annotation", "threshold", "zero-tolerance"
 // C-24: validates settings.strictness against the enum {annotation,
 // threshold, zero-tolerance} and applies the default ("threshold") when unset.
 func ParseManifest(yamlContent string) (*Manifest, error) {
+	// Step 0: input size cap. Cheapest check first — caps a malicious
+	// manifest before yaml.Unmarshal allocates on it.
+	if len(yamlContent) > MaxManifestBytes {
+		return nil, fmt.Errorf("specter.yaml exceeds %d byte limit (got %d bytes)", MaxManifestBytes, len(yamlContent))
+	}
+
 	// Step 1: unknown-key rejection. Parse into a generic map first so we
 	// can surface offending keys with did-you-mean before the typed parse
 	// silently drops them.
@@ -40,6 +52,13 @@ func ParseManifest(yamlContent string) (*Manifest, error) {
 	var m Manifest
 	if err := yaml.Unmarshal([]byte(yamlContent), &m); err != nil {
 		return nil, fmt.Errorf("invalid YAML: %w", err)
+	}
+
+	// C-27: schema_version absent → default to 1. Tool-layer code (doctor
+	// --fix migration) is the right place to validate whether the declared
+	// integer is supported; ParseManifest preserves the value verbatim.
+	if m.SchemaVersion == 0 {
+		m.SchemaVersion = 1
 	}
 
 	if m.System.Name == "" {

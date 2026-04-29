@@ -1,0 +1,45 @@
+# Dependabot configuration.
+#
+# GitHub Actions are SHA-pinned across the workflow files (M5 from the v0.11
+# pre-release security review). Dependabot resolves the human-readable
+# version comment (`# v4`) and bumps both the SHA and the comment when a
+# new release ships, so SHA pinning doesn't strand the project on stale
+# action versions.
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(actions)"
+
+  - package-ecosystem: gomod
+    directory: /specter
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    # Group routine x/sys, x/text, x/net updates into one PR.
+    groups:
+      golang-x:
+        patterns:
+          - "golang.org/x/*"
+
+  - package-ecosystem: npm
+    directory: /specter/vscode-extension
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps-npm)"
+    # devDependencies only — runtime npm tree is empty.
+    groups:
+      build-tooling:
+        patterns:
+          - "@types/*"
+          - "eslint*"
+          - "@typescript-eslint/*"

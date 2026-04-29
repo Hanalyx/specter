@@ -8,7 +8,10 @@
 // @spec spec-coverage
 package coverage
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // ResultEntry records the outcome of a single AC in a specific spec.
 // Status (v1.9.0+) is the canonical field; Passed is derived for back-compat.
@@ -29,9 +32,19 @@ type ResultsFile struct {
 // can use either field.
 //
 // C-21: accepts entries with only `passed`, only `status`, or both.
+//
+// MaxResultsFileBytes caps the input size before json.Unmarshal to prevent
+// memory exhaustion when a malicious CI runner / PR commits a multi-GB
+// .specter-results.json into the workspace. The structure is flat (one
+// entry per (spec_id, ac_id) pair); 16 MiB is generous for ~100k entries.
+const MaxResultsFileBytes = 16 << 20 // 16 MiB
+
 func ParseResultsFile(data []byte) (*ResultsFile, error) {
 	if len(data) == 0 {
 		return nil, nil
+	}
+	if len(data) > MaxResultsFileBytes {
+		return nil, fmt.Errorf(".specter-results.json exceeds %d byte limit (got %d bytes)", MaxResultsFileBytes, len(data))
 	}
 	var rf ResultsFile
 	if err := json.Unmarshal(data, &rf); err != nil {
