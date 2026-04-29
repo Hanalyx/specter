@@ -224,6 +224,22 @@ func TestCoverageStrictness_SourceOnly_EmitsPerACHint(t *testing.T) {
 		if !strings.Contains(out, "hint:") {
 			t.Errorf("expected `hint:` prefix in output, got:\n%s", out)
 		}
+		// AC-31 spec text: "prints the per-AC hint to stderr ABOVE the table".
+		// The coverage table opens with `Spec ID` as the first column header
+		// (cmd/specter/main.go); enforce the ordering rather than relying on
+		// inspection alone.
+		hintIdx := strings.Index(out, "hint:")
+		tableIdx := strings.Index(out, "Spec ID")
+		if hintIdx < 0 {
+			t.Fatalf("expected `hint:` in output for ordering check, got:\n%s", out)
+		}
+		if tableIdx < 0 {
+			t.Fatalf("expected coverage table header `Spec ID` in output for ordering check, got:\n%s", out)
+		}
+		if hintIdx >= tableIdx {
+			t.Errorf("hint must appear ABOVE the coverage table; got hint at %d, table header at %d:\n%s",
+				hintIdx, tableIdx, out)
+		}
 	})
 }
 
