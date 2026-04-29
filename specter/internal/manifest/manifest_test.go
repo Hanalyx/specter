@@ -90,6 +90,53 @@ func TestParseManifest_MalformedYAML(t *testing.T) {
 	}
 }
 
+// M2 (chore/v0.12-security-hardening): ParseManifest MUST refuse input
+// larger than MaxManifestBytes (64 KiB) before yaml.Unmarshal allocates,
+// preventing memory exhaustion via billion-laughs / anchor-expansion on
+// a malicious specter.yaml.
+//
+// Aspirational test coverage flagged by the v0.12 review: the constant +
+// reference existed, but no test exercised the rejection path. Without
+// this, a refactor that drops the cap check ships silently.
+func TestParseManifest_RejectsOversizedInput(t *testing.T) {
+	t.Run("M2 size cap refuses input over 64 KiB limit", func(t *testing.T) {
+		// One byte past the limit triggers len() > limit.
+		oversized := make([]byte, MaxManifestBytes+1)
+		for i := range oversized {
+			oversized[i] = ' '
+		}
+
+		_, err := ParseManifest(string(oversized))
+		if err == nil {
+			t.Fatal("expected error for input larger than MaxManifestBytes, got nil")
+		}
+		if !strings.Contains(err.Error(), "exceeds") {
+			t.Errorf("expected error to mention `exceeds`, got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "byte limit") {
+			t.Errorf("expected error to mention `byte limit`, got: %v", err)
+		}
+	})
+
+	t.Run("M2 size cap accepts input at exactly the limit", func(t *testing.T) {
+		// Boundary condition: len == limit must succeed (the check is >).
+		// Build a valid manifest then pad to exactly the limit with comment
+		// bytes (which YAML ignores). Need at least the required `system.name`.
+		base := "system:\n  name: test\n"
+		if len(base) > MaxManifestBytes {
+			t.Skip("test fixture larger than limit — adjust if MaxManifestBytes shrinks")
+		}
+		padding := strings.Repeat("#", MaxManifestBytes-len(base))
+		atLimit := base + padding
+		if len(atLimit) != MaxManifestBytes {
+			t.Fatalf("padding miscalculation: len=%d, want %d", len(atLimit), MaxManifestBytes)
+		}
+		if _, err := ParseManifest(atLimit); err != nil {
+			t.Errorf("unexpected error for input at the limit: %v", err)
+		}
+	})
+}
+
 // @ac AC-08
 func TestDefaults(t *testing.T) {
 	t.Run("spec-manifest/AC-08 defaults", func(t *testing.T) {

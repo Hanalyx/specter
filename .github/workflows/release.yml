@@ -1,59 +1,60 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_run:
+    workflows: ["Pre-Release Test Suite"]
+    types: [completed]
+    branches: [main]
 
+# `contents: write` lets goreleaser create the GitHub Release.
+# `id-token: write` lets cosign fetch a sigstore OIDC token for keyless
+# signing of checksums.txt.
 permissions:
   contents: write
+  id-token: write
 
 defaults:
   run:
     working-directory: specter
 
+# Concurrency guard: two near-simultaneous tag pushes would otherwise race
+# goreleaser. cancel-in-progress: false because release artifacts are
+# expensive to rebuild and we'd rather queue than abort midway.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  test:
-    name: Vet, Test, Dogfood
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: specter/go.mod
-          cache-dependency-path: specter/go.sum
-
-      - name: Vet
-        run: go vet ./...
-
-      - name: Test
-        run: go test ./...
-
-      - name: Build
-        run: go build -o bin/specter ./cmd/specter/
-
-      - name: Dogfood
-        run: |
-          bin/specter parse specs/*.spec.yaml
-          bin/specter resolve
-          bin/specter check
-
   release:
+    # Only run when the upstream Pre-Release Test Suite (Tier 1+2+3) was
+    # triggered by a tag push AND finished successfully. Otherwise a Tier 3
+    # regression-matrix failure could publish artifacts before validation
+    # completes.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
     name: Build and Release
-    needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: specter/go.mod
           cache-dependency-path: specter/go.sum
 
-      - uses: goreleaser/goreleaser-action@v6
+      # cosign for keyless signing of checksums.txt (configured in
+      # specter/.goreleaser.yml signs: block).
+      - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+
+      # syft for CycloneDX SBOM emission per archive (configured in
+      # specter/.goreleaser.yml sboms: block).
+      - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+
+      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         with:
           distribution: goreleaser
           version: latest
