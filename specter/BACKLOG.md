@@ -66,15 +66,29 @@ Detailed rationale lives on each issue thread. Brief summary:
 
 ### Post-v0.12-review polish (P2/P3 follow-ups)
 
-Surfaced by the 2-agent review of the v0.12 cycle (2026-04-28). Severity-tagged. None block merge — the merge-blocking P1s (block-scalar corruption + AC-52 grep regex) shipped on `feat/doctor-fix-v2` 1.5.0 and `feat/vscode-quick-fix-v2` 1.6.0. These are spec-test discipline tightening that can ride a follow-up patch or land before v0.12 tag if convenient.
+Surfaced by the 2-agent review of the v0.12 cycle (2026-04-28) and the re-review (2026-04-29). Severity-tagged. None block merge — the merge-blocking P1s (block-scalar corruption, AC-52 grep regex, BETA-gate non-TTY refusal, goreleaser SBOM template field) shipped on `feat/doctor-fix-v2` 1.8.0, `feat/vscode-quick-fix-v2` 1.6.0, and `chore/v0.12-security-hardening`. The items below are remaining spec-test discipline tightening that can ride a follow-up patch or land before v0.12 tag if convenient.
 
-- **P2 — AC-16 doesn't actually verify `ParseManifest reports SchemaVersion=1`.** The AC text explicitly says "After the command, ParseManifest on the file reports SchemaVersion=1" but `TestDoctor_Fix_Manifest_AddsSchemaVersion` only checks the first-line literal and substring presence. Add the ParseManifest call + SchemaVersion field assertion. Mitigated by `feat/schema-version-manifest-v2`'s parse-side coverage of the same input shape, but the AC's own assertion is unverified by its own test.
-- **P2 — AC-31 ordering check is dead code.** `feat/coverage-source-only-hint`'s test computes `hintIdx` and `tableIdx` for "hint above table" ordering but the `else if` body is empty (just a comment). Spec C-28 explicitly says "printed before the coverage table" — impl is correct via inspection but the test doesn't enforce it. Tighten the assertion.
-- **P2 — `init --refresh` byte-unchanged claim is overstated.** spec-manifest C-28 / AC-43 say `init --refresh` MUST leave `schema_version` byte-unchanged. The impl re-marshals through `yaml.Marshal`, which preserves the value but not byte-for-byte (key order, comments, custom whitespace can shift). The AC-43 test never verifies byte-equality — only substring presence. Either fix the spec wording (value-preservation, not byte-preservation) or change refresh to in-place line-edit (like canonicalizeManifest does). Pre-existing C-19 design concern surfaced by the new field.
+Closed by the 2026-04-29 fix pass:
+- ~~AC-16 ParseManifest assertion~~ → closed in `2474dec` on `feat/doctor-fix-v2`.
+- ~~AC-31 ordering check~~ → closed in `1742cfe` on `feat/coverage-source-only-hint` with `hintIdx < tableIdx` strings.Index comparison.
+- ~~AC-43 byte-unchanged claim~~ → closed in `fc807ae` on `feat/schema-version-manifest-v2` with parameterized (1, 7, 42) sub-tests asserting verbatim line preservation.
+- ~~M1/M2/M4 aspirational test coverage~~ → closed in `6813c67` on `chore/v0.12-security-hardening` (size-cap tests for results.json + manifest, source-grep CSP test for the webview).
+- ~~M5 ci.yml setup-node SHA pin~~ → closed in `640c995`.
+- ~~M6 SBOM format mismatch~~ → closed in `b536cab` (CycloneDX) and `6debbbd` (correct `$document` shell-style syntax — `{{ .Document }}` is not a goreleaser template field and would crash at release time).
+- ~~BETA gate non-TTY-with-content bypass~~ → closed in `391a759` via TTY-detection refusal with `os.Stdin.Stat() & os.ModeCharDevice` check before reading stdin content; spec-doctor 1.7.0 → 1.8.0 + AC-29.
+
+Open:
+
+- **P2 — AC-25 decline-aborts wiring is unverified end-to-end.** The cycle-7 refactor moved `confirmFixWithUser` to a unit-testable signature (`io.Reader`, `isTTY bool`, `io.Writer`) and tests AC-25 directly with `isTTY=true` + decline content. But the CLI integration that turns `proceed=false` into `Aborted. No files modified.` printed to stdout has no end-to-end test. Risk is low (the wiring is one `if !proceed { fmt.Println(...) }`) but the spec sentence is not mechanically enforced.
+- **P3 — `--yes` / `-y` doc parity.** spec-doctor C-16 mandates both the long flag and the short alias. Consider a parity test (similar to commands.test.ts) that checks `cmd/specter/main.go`'s flag declaration matches `docs/CLI_REFERENCE.md` for the doctor command.
 - **P3 — `internal/migrate/rewrite.go` package comment line says "C-10" should say "C-11"** (the rewrite-table constraint, not the discovery-fallback one). One-character fix.
 - **P3 — `spec-doctor` 1.3.0 changelog narrative groups AC-14 under C-13**, but AC-14's `references_constraints` is `["C-07"]` (read-only-by-default regression guard, not the summary). Cosmetic mismatch.
 - **P3 — `coverage --strict --json` exits 0 when uncovered**, but text mode exits 1 on the same input. Possibly intentional (json-as-data-extraction), but inconsistent and surprising for CI consumers. Pre-existing; verify intent and either align or document.
 - **P3 — `.specter-results.json` accepts `"status": "pass"` (vs the canonical `"passed"`) and silently treats it as not-passed.** No diagnostic for the typo. Pre-existing footgun; add a strictness-mode warning when status values fall outside the documented enum.
+
+### Release-time pre-flight gate
+
+The 2026-04-29 re-review caught a release-time landmine in `.goreleaser.yml` (the M6 `{{ .Document }}` template-field bug) by config inspection alone — there was no CI gate to catch goreleaser config errors before the actual release ran. A pre-flight smoke test (`goreleaser release --snapshot --skip=publish --clean`) in CI would have failed loudly when the bad template landed and saved the iteration cost. Worth one workflow file to add — applies to every future hardening change to the release config.
 
 ### Future paths for `doctor --fix` rewrite engine
 
