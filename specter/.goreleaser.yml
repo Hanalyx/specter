@@ -56,8 +56,13 @@ signs:
 
 # CycloneDX SBOM per archive via syft. Lands as <archive>.sbom.json
 # alongside the archives in the GitHub Release. The explicit
-# `cyclonedx-json={{ .Document }}` arg overrides syft's default SPDX
-# output so the published SBOM matches what the changelog claims.
+# `cyclonedx-json=$document` arg overrides syft's default SPDX output
+# so the published SBOM matches what the changelog claims.
+#
+# `$document` is a shell-style env var that goreleaser populates from
+# the `documents` template via os.Expand (internal/pipe/sbom/sbom.go);
+# Go template fields like `{{ .Document }}` do NOT work here and would
+# fail at release time under goreleaser's missingkey=error setting.
 sboms:
   - artifacts: archive
     documents:
@@ -65,7 +70,7 @@ sboms:
     args:
       - "$artifact"
       - "--output"
-      - "cyclonedx-json={{ .Document }}"
+      - "cyclonedx-json=$document"
 
 changelog:
   sort: asc
