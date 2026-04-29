@@ -41,6 +41,13 @@ checksum:
 #   cosign verify-blob --certificate-identity-regexp 'https://github.com/Hanalyx/specter/.github/workflows/release.yml' \
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
 #     --certificate checksums.txt.pem --signature checksums.txt.sig checksums.txt
+#
+# `--new-bundle-format=false` keeps the legacy two-file output
+# (.sig + .pem) that matches the verification example above. Recent
+# cosign versions default to bundle-format=true, which deprecates
+# `--output-signature`/`--output-certificate` and requires `--bundle
+# <path>`. Until verification tooling and docs migrate to bundle
+# format, opt out explicitly.
 signs:
   - cmd: cosign
     signature: "${artifact}.sig"
@@ -48,6 +55,7 @@ signs:
     args:
       - "sign-blob"
       - "--yes"
+      - "--new-bundle-format=false"
       - "--output-signature=${signature}"
       - "--output-certificate=${certificate}"
       - "${artifact}"
