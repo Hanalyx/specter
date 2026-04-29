@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -1827,7 +1829,7 @@ func runInitTemplate(templateType string, force bool) error {
 //
 // @spec spec-doctor
 func doctorCmd() *cobra.Command {
-	var fix, dryRun bool
+	var fix, dryRun, yes bool
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Run pre-flight project health checks",
@@ -2001,6 +2003,20 @@ func doctorCmd() *cobra.Command {
 			// but do not drive the exit code under --fix — operator runs
 			// `specter doctor` (no --fix) for a pure health-based exit.
 			if fix {
+				// spec-doctor C-16 (v1.7.0): BETA gate. Print warning + prompt
+				// for confirmation unless --yes is set or --dry-run is in use
+				// (preview is read-only, no warning needed).
+				if !dryRun && !yes {
+					proceed, err := confirmFixWithUser()
+					if err != nil {
+						fmt.Fprintln(os.Stderr, "error:", err)
+						return errSilent
+					}
+					if !proceed {
+						fmt.Println("Aborted. No files modified.")
+						return nil
+					}
+				}
 				applied, unhandled, err := runDoctorFix(allParseErrs, dryRun)
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "error:", err)
@@ -2019,9 +2035,54 @@ func doctorCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&fix, "fix", false, "Apply known-safe schema-drift rewrites to spec files in place")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "With --fix, print what would change without writing to disk")
+	cmd.Flags().BoolVar(&fix, "fix", false, "Apply known-safe schema-drift rewrites to spec files in place (BETA — see --yes to bypass interactive confirmation)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "With --fix, print what would change without writing to disk (skips BETA prompt)")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip the --fix BETA confirmation prompt (for non-interactive use)")
 	return cmd
+}
+
+// confirmFixWithUser prints the spec-doctor C-16 BETA warning and prompts
+// the operator on stdin. Returns (true, nil) when the operator types
+// `y`/`yes` (case-insensitive); (false, nil) when they decline (any other
+// input including empty/Enter); (false, err) when stdin is exhausted with
+// no input available (CI-like scenario where --yes was not set).
+//
+// Reads exactly one line via bufio.Reader.ReadString('\n'). The "no input
+// available" case is detected by io.EOF on the first call before any
+// content was read — that distinguishes "operator pressed Enter without
+// typing" (read returns "\n", nil) from "stdin is /dev/null or piped
+// from a process that closed without writing" (read returns "", io.EOF).
+func confirmFixWithUser() (bool, error) {
+	fmt.Fprintln(os.Stderr, "[BETA] specter doctor --fix")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "  This command rewrites your .spec.yaml files in place to repair known")
+	fmt.Fprintln(os.Stderr, "  schema drift (currently: strip the v0.6.5-removed `trust_level` field).")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "  Known limitation (BACKLOG cycle 6): when `trust_level: <value>` appears")
+	fmt.Fprintln(os.Stderr, "  inside a string literal (e.g., a description block scalar mentioning")
+	fmt.Fprintln(os.Stderr, "  the deprecated field), the deletion may strip that documentation line")
+	fmt.Fprintln(os.Stderr, "  too. Cycle 6 will replace regex deletion with line-targeted deletion.")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "  Recommended:")
+	fmt.Fprintln(os.Stderr, "    - Commit your spec files BEFORE running so changes can be diffed.")
+	fmt.Fprintln(os.Stderr, "    - Use --dry-run to preview changes without writing.")
+	fmt.Fprintln(os.Stderr, "    - Use --yes (or -y) for non-interactive (CI) runs.")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprint(os.Stderr, "Continue? (y/N): ")
+
+	reader := bufio.NewReader(os.Stdin)
+	line, err := reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return false, fmt.Errorf("read stdin: %w", err)
+	}
+	if err == io.EOF && line == "" {
+		// No interactive input available (stdin is /dev/null, closed pipe,
+		// CI without --yes). Refuse with explicit guidance.
+		fmt.Fprintln(os.Stderr)
+		return false, fmt.Errorf("--fix requires interactive confirmation; run with --yes (or -y) for non-interactive use, or run interactively")
+	}
+	answer := strings.ToLower(strings.TrimSpace(line))
+	return answer == "y" || answer == "yes", nil
 }
 
 // doctorFixApplied is one (file, rewrites) tuple produced by runDoctorFix.

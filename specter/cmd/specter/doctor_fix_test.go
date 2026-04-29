@@ -44,7 +44,7 @@ func TestDoctor_Fix_StripsTrustLevel(t *testing.T) {
 		_ = os.MkdirAll(filepath.Dir(specPath), 0755)
 		_ = os.WriteFile(specPath, []byte(legacySpecWithTrustLevel), 0644)
 
-		out, _ := runCLI(t, dir, "doctor", "--fix")
+		out, _ := runCLI(t, dir, "doctor", "--fix", "--yes")
 		// Post-fix: the file must parse, and the trust_level line must be gone.
 		after, err := os.ReadFile(specPath)
 		if err != nil {
@@ -116,7 +116,7 @@ func TestDoctor_Fix_NoChanges_Exits0(t *testing.T) {
 		dir := t.TempDir()
 		writeSpec(t, dir, "clean.spec.yaml", minimalValidSpec("clean", 3, "AC-01"))
 
-		out, code := runCLI(t, dir, "doctor", "--fix")
+		out, code := runCLI(t, dir, "doctor", "--fix", "--yes")
 		if code != 0 {
 			t.Errorf("expected exit 0 on clean workspace, got %d. output:\n%s", code, out)
 		}
@@ -149,7 +149,7 @@ func TestDoctor_Fix_Manifest_AddsSchemaVersion(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		out, _ := runCLI(t, dir, "doctor", "--fix")
+		out, _ := runCLI(t, dir, "doctor", "--fix", "--yes")
 
 		after, err := os.ReadFile(manifestPath)
 		if err != nil {
@@ -191,7 +191,7 @@ func TestDoctor_Fix_Manifest_AlreadyCanonical_IsNoOp(t *testing.T) {
 		}
 		writeSpec(t, dir, "clean.spec.yaml", minimalValidSpec("clean", 3, "AC-01"))
 
-		out, _ := runCLI(t, dir, "doctor", "--fix")
+		out, _ := runCLI(t, dir, "doctor", "--fix", "--yes")
 
 		after, _ := os.ReadFile(manifestPath)
 		if string(after) != canonical {
@@ -244,7 +244,7 @@ func TestDoctor_Fix_BlockScalar_PrintsManualEditSummary(t *testing.T) {
 		_ = os.MkdirAll(filepath.Dir(specPath), 0755)
 		_ = os.WriteFile(specPath, []byte(legacySpecBlockScalarTrustLevel), 0644)
 
-		out, _ := runCLI(t, dir, "doctor", "--fix")
+		out, _ := runCLI(t, dir, "doctor", "--fix", "--yes")
 
 		// File must be byte-unchanged after refusal.
 		after, err := os.ReadFile(specPath)
