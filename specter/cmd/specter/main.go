@@ -667,6 +667,7 @@ func coverageCmd() *cobra.Command {
 	var strict bool
 	var scope string
 	var strictnessFlag string
+	var quiet bool
 	cmd := &cobra.Command{
 		Use:   "coverage",
 		Short: "Generate spec-to-test traceability matrix",
@@ -819,6 +820,16 @@ func coverageCmd() *cobra.Command {
 				report.Entries[i].SpecFile = specFileByID[report.Entries[i].SpecID]
 			}
 
+			// spec-coverage C-28 / GH #80: when --strict, surface (spec_id,
+			// ac_id) pairs that have source-file annotations but no matching
+			// .specter-results.json entry. Captures the missing-runtime-channel
+			// cause that v0.10's mechanical demotion otherwise leaves silent.
+			// Always populate report.DiagnosticHints so --json carries them;
+			// stderr printing happens later under non-json + non-quiet.
+			if strict {
+				report.DiagnosticHints = coverage.DiagnoseSourceOnlyACs(allAnnotations, results, specs)
+			}
+
 			// GH #94 — under zero-tolerance, demote ACs that violate the
 			// approval_gate contract (approval_gate: true with unset
 			// approval_date) so the report reflects the same enforcement
@@ -849,6 +860,25 @@ func coverageCmd() *cobra.Command {
 
 			if hasErrors {
 				return errSilent
+			}
+
+			// AC-31 / AC-33: per-AC source-only hints are printed to stderr
+			// ABOVE the table when --strict is on, --quiet is off, and we're
+			// not in --json mode (JSON consumers see them in DiagnosticHints).
+			if strict && !quiet && len(report.DiagnosticHints) > 0 {
+				for _, h := range report.DiagnosticHints {
+					loc := h.File
+					if h.Line > 0 {
+						loc = fmt.Sprintf("%s:%d", h.File, h.Line)
+					}
+					fmt.Fprintf(os.Stderr,
+						"hint: %s/%s has source annotation in %s but no matching pass in .specter-results.json\n",
+						h.SpecID, h.ACID, loc)
+					fmt.Fprintln(os.Stderr,
+						"      did your test runner emit a runner-visible annotation? "+
+							"(Convention A: spec-id/AC-NN in the test name; "+
+							"Convention B: print '// @spec'/'// @ac' lines from the test body)")
+				}
 			}
 
 			// C-16: summary header ABOVE the table, reflects the full
@@ -954,6 +984,7 @@ func coverageCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&strict, "strict", false, "Require .specter-results.json and treat any non-passed annotated AC as uncovered (all tiers)")
 	cmd.Flags().StringVar(&scope, "scope", "", "Narrow --strict demand to specs in the named domain from specter.yaml (specs outside the domain fall back to v0.9 boolean-passed logic). Requires --strict.")
 	cmd.Flags().StringVar(&strictnessFlag, "strictness", "", "Override settings.strictness in specter.yaml (annotation | threshold | zero-tolerance)")
+	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress per-AC source-only hints under --strict (the diagnostic_hints array still appears in --json output)")
 	return cmd
 }
 

@@ -1,6 +1,6 @@
 spec:
   id: spec-coverage
-  version: "1.11.0"
+  version: "1.12.0"
   status: approved
   tier: 2
 
@@ -170,6 +170,11 @@ spec:
 
     - id: C-27
       description: "`specter coverage --strict` MUST emit a stderr warning before computing coverage when test discovery (after applying `--tests <glob>` or the manifest's `settings.tests_glob`, then falling back to `filepath.Walk(\".\")`) yields zero files containing `@spec` or `@ac` annotations. The warning names the likely cause (`no test files contained @spec/@ac annotations — coverage will report 0% for every spec`) and points at the configuration fix (`set settings.tests_glob in specter.yaml or pass --tests <glob>`). Under `strictness == zero-tolerance`, the warning is upgraded to a hard error (non-zero exit). Closes the silent-0% UX hole reported in GH #75."
+      type: business
+      enforcement: error
+
+    - id: C-28
+      description: "Under `--strict`, when an annotated AC has at least one matching `@ac` source-file annotation but no matching entry in `.specter-results.json` for that (spec_id, ac_id) pair, `specter coverage` MUST emit a per-AC stderr hint of the form `hint: <spec-id>/<AC-NN> has source annotation in <file>:<line> but no matching pass in .specter-results.json — did your test runner emit a runner-visible annotation (Convention A: spec-id/AC-NN in the test name; Convention B: print '// @spec'/'// @ac' from the test body)?`. One hint per affected (spec_id, ac_id) pair, printed before the coverage table. Limit to the first 5 affected pairs to keep CI logs compact. Suppress entirely with `--quiet`. Under `--json`, surface as a top-level `diagnostic_hints` array (no stderr hint). Closes the GH #80 confusion where Python users with source-only `# @ac` comments saw `--strict` exit non-zero with no signal about the missing runtime channel."
       type: business
       enforcement: error
 
@@ -469,7 +474,46 @@ spec:
       references_constraints: ["C-27"]
       priority: critical
 
+    - id: AC-31
+      description: "Workspace where `.specter-results.json` exists but contains zero entries for `<spec-id>/AC-01`, AND a test file contains `# @spec <spec-id>` + `# @ac AC-01` source comments: `coverage --strict` exits with the threshold-failure code AND prints the per-AC hint to stderr ABOVE the table. The hint includes the source file path and line number, and references both Convention A and Convention B in the prompt."
+      inputs:
+        results_file: ".specter-results.json contains no entries for the (spec-id, AC-01) pair"
+        annotated_test: "tests/foo.py with `# @spec my-spec` then `# @ac AC-01` source comments at line 12 and 13"
+      expected_output:
+        stderr_contains: "hint: my-spec/AC-01 has source annotation in tests/foo.py:13"
+        stderr_contains_alt: "Convention A"
+        exit_code_nonzero: true
+      references_constraints: ["C-28"]
+      priority: critical
+
+    - id: AC-32
+      description: "When the same AC has BOTH a source annotation AND a matching results-file entry (status: passed), no hint is emitted. The hint is a diagnostic for the missing-runtime-channel case only; it must not fire when the runtime channel exists."
+      inputs:
+        results_file: ".specter-results.json contains entry for (spec-id, AC-01) with status: passed"
+        annotated_test: "tests/foo.py with `# @spec my-spec` and `# @ac AC-01` source comments"
+      expected_output:
+        stderr_contains_hint: false
+      references_constraints: ["C-28"]
+      priority: high
+
+    - id: AC-33
+      description: "`coverage --strict --quiet` suppresses the per-AC stderr hints entirely (no diagnostic_hints printed). `coverage --strict --json` surfaces the same diagnostic data as a top-level `diagnostic_hints` array in the JSON document — each entry has `spec_id`, `ac_id`, `file`, `line` fields — with no stderr hint output (stderr is reserved for human consumption)."
+      inputs:
+        scenario_quiet: "AC-31 inputs + --quiet flag"
+        scenario_json: "AC-31 inputs + --json flag"
+      expected_output:
+        quiet_stderr_no_hint: true
+        json_includes_diagnostic_hints_array: true
+        json_no_stderr_hint: true
+      references_constraints: ["C-28"]
+      priority: high
+
   changelog:
+    - version: "1.12.0"
+      date: "2026-04-27"
+      author: "specter-team"
+      type: minor
+      description: "v0.12 GH #80 — source-only diagnostic hint under --strict. Add C-28 + AC-31/32/33: when an annotated AC has source-file `@ac` comments but no matching `.specter-results.json` entry, emit a per-AC stderr hint pointing the operator at the missing runtime channel (Convention A or B). Limited to first 5 affected pairs; suppressed by --quiet; surfaced as `diagnostic_hints` array under --json. Closes the GH #80 confusion where Python users with source-only `# @ac` comments saw 0% strict coverage with no signal. Implementation extends `AnnotationMatch` with line-number tracking so the hint can name `file:line` precisely."
     - version: "1.11.0"
       date: "2026-04-25"
       author: "specter-team"
