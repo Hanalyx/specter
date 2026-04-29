@@ -1,10 +1,21 @@
 name: Release
 
 on:
+  # M7: chained on the upstream Pre-Release Test Suite. Tag pushes set
+  # head_branch to the tag name (e.g., v0.12.0), so we do NOT filter
+  # branches at the trigger level — the `if:` condition below enforces
+  # the tag-only invariant via startsWith(head_branch, 'v').
   workflow_run:
     workflows: ["Pre-Release Test Suite"]
     types: [completed]
-    branches: [main]
+  # Manual fallback so the operator can re-run for an existing tag
+  # (e.g., when fixing a release-infra bug post-tag) without re-tagging.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g., v0.12.0). Defaults to the workflow ref."
+        required: false
+        type: string
 
 # `contents: write` lets goreleaser create the GitHub Release.
 # `id-token: write` lets cosign fetch a sigstore OIDC token for keyless
@@ -26,19 +37,24 @@ concurrency:
 
 jobs:
   release:
-    # Only run when the upstream Pre-Release Test Suite (Tier 1+2+3) was
-    # triggered by a tag push AND finished successfully. Otherwise a Tier 3
-    # regression-matrix failure could publish artifacts before validation
-    # completes.
+    # workflow_run path: only run when the upstream Pre-Release Test Suite
+    # (Tier 1+2+3) was triggered by a tag push AND finished successfully.
+    # Otherwise a Tier 3 regression-matrix failure could publish artifacts
+    # before validation completes.
+    # workflow_dispatch path: always run (operator opt-in for re-releases).
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      startsWith(github.event.workflow_run.head_branch, 'v')
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       startsWith(github.event.workflow_run.head_branch, 'v'))
     name: Build and Release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          # workflow_run carries the upstream commit SHA;
+          # workflow_dispatch with a tag input checks that ref out;
+          # workflow_dispatch with no input falls back to github.ref.
+          ref: ${{ github.event.workflow_run.head_sha || inputs.tag || github.ref }}
           fetch-depth: 0
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
