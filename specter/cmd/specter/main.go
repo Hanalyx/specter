@@ -2007,7 +2007,7 @@ func doctorCmd() *cobra.Command {
 				// for confirmation unless --yes is set or --dry-run is in use
 				// (preview is read-only, no warning needed).
 				if !dryRun && !yes {
-					proceed, err := confirmFixWithUser()
+					proceed, err := confirmFixWithUser(os.Stdin, stdinIsTTY(), os.Stderr)
 					if err != nil {
 						fmt.Fprintln(os.Stderr, "error:", err)
 						return errSilent
@@ -2041,45 +2041,64 @@ func doctorCmd() *cobra.Command {
 	return cmd
 }
 
-// confirmFixWithUser prints the spec-doctor C-16 BETA warning and prompts
-// the operator on stdin. Returns (true, nil) when the operator types
-// `y`/`yes` (case-insensitive); (false, nil) when they decline (any other
-// input including empty/Enter); (false, err) when stdin is exhausted with
-// no input available (CI-like scenario where --yes was not set).
+// stdinIsTTY reports whether os.Stdin is connected to a character device
+// (terminal). Returns false for pipes, redirects, /dev/null, and any
+// CI-like environment without a controlling terminal.
 //
-// Reads exactly one line via bufio.Reader.ReadString('\n'). The "no input
-// available" case is detected by io.EOF on the first call before any
-// content was read — that distinguishes "operator pressed Enter without
-// typing" (read returns "\n", nil) from "stdin is /dev/null or piped
-// from a process that closed without writing" (read returns "", io.EOF).
-func confirmFixWithUser() (bool, error) {
-	fmt.Fprintln(os.Stderr, "[BETA] specter doctor --fix")
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "  This command rewrites your .spec.yaml files in place to repair known")
-	fmt.Fprintln(os.Stderr, "  schema drift (currently: strip the v0.6.5-removed `trust_level` field).")
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "  Known limitation (BACKLOG cycle 6): when `trust_level: <value>` appears")
-	fmt.Fprintln(os.Stderr, "  inside a string literal (e.g., a description block scalar mentioning")
-	fmt.Fprintln(os.Stderr, "  the deprecated field), the deletion may strip that documentation line")
-	fmt.Fprintln(os.Stderr, "  too. Cycle 6 will replace regex deletion with line-targeted deletion.")
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "  Recommended:")
-	fmt.Fprintln(os.Stderr, "    - Commit your spec files BEFORE running so changes can be diffed.")
-	fmt.Fprintln(os.Stderr, "    - Use --dry-run to preview changes without writing.")
-	fmt.Fprintln(os.Stderr, "    - Use --yes (or -y) for non-interactive (CI) runs.")
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprint(os.Stderr, "Continue? (y/N): ")
+// Implementation: os.Stdin.Stat() returns a FileInfo whose Mode includes
+// os.ModeCharDevice when the underlying fd points at a terminal. Stat()
+// failing returns false (treat unknown as non-TTY — safer default for a
+// destructive operation gate). spec-doctor C-16 (1.8.0+).
+func stdinIsTTY() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
 
-	reader := bufio.NewReader(os.Stdin)
+// confirmFixWithUser prints the spec-doctor C-16 BETA warning and prompts
+// the operator on the supplied stderr writer for confirmation.
+//
+// Returns (true, nil) on affirmative TTY input ("y" / "yes",
+// case-insensitive); (false, nil) on any other TTY input (decline);
+// (false, err) when isTTY=false — the gate refuses BEFORE reading
+// content so piped affirmative data (echo y | specter doctor --fix)
+// cannot bypass the BETA acknowledgment. spec-doctor C-16 (1.8.0+).
+//
+// The (stdin, isTTY, stderr) signature exists for unit-testing: tests
+// inject a strings.NewReader and a synthetic isTTY value; the CLI path
+// passes os.Stdin, stdinIsTTY(), and os.Stderr.
+func confirmFixWithUser(stdin io.Reader, isTTY bool, stderr io.Writer) (bool, error) {
+	fmt.Fprintln(stderr, "[BETA] specter doctor --fix")
+	fmt.Fprintln(stderr)
+	fmt.Fprintln(stderr, "  This command rewrites your .spec.yaml files in place to repair known")
+	fmt.Fprintln(stderr, "  schema drift (currently: strip the v0.6.5-removed `trust_level` field).")
+	fmt.Fprintln(stderr)
+	fmt.Fprintln(stderr, "  Known limitation (BACKLOG cycle 6): when `trust_level: <value>` appears")
+	fmt.Fprintln(stderr, "  inside a string literal (e.g., a description block scalar mentioning")
+	fmt.Fprintln(stderr, "  the deprecated field), the deletion may strip that documentation line")
+	fmt.Fprintln(stderr, "  too. Cycle 6 will replace regex deletion with line-targeted deletion.")
+	fmt.Fprintln(stderr)
+	fmt.Fprintln(stderr, "  Recommended:")
+	fmt.Fprintln(stderr, "    - Commit your spec files BEFORE running so changes can be diffed.")
+	fmt.Fprintln(stderr, "    - Use --dry-run to preview changes without writing.")
+	fmt.Fprintln(stderr, "    - Use --yes (or -y) for non-interactive (CI) runs.")
+	fmt.Fprintln(stderr)
+	fmt.Fprintf(stderr, "Continue? (y/N): ")
+
+	if !isTTY {
+		// Refuse before reading any stdin content. Closes the regression
+		// where echo y | specter doctor --fix bypassed the gate by
+		// arriving as content rather than EOF.
+		fmt.Fprintln(stderr)
+		return false, fmt.Errorf("--fix requires interactive confirmation; run with --yes (or -y) for non-interactive use, or run interactively")
+	}
+
+	reader := bufio.NewReader(stdin)
 	line, err := reader.ReadString('\n')
 	if err != nil && err != io.EOF {
 		return false, fmt.Errorf("read stdin: %w", err)
-	}
-	if err == io.EOF && line == "" {
-		// No interactive input available (stdin is /dev/null, closed pipe,
-		// CI without --yes). Refuse with explicit guidance.
-		fmt.Fprintln(os.Stderr)
-		return false, fmt.Errorf("--fix requires interactive confirmation; run with --yes (or -y) for non-interactive use, or run interactively")
 	}
 	answer := strings.ToLower(strings.TrimSpace(line))
 	return answer == "y" || answer == "yes", nil
