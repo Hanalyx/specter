@@ -285,14 +285,165 @@ func TestDoctor_Fix_NoManifest_DoesNotCreate(t *testing.T) {
 		dir := t.TempDir()
 		writeSpec(t, dir, "clean.spec.yaml", minimalValidSpec("clean", 3, "AC-01"))
 
-		out, _ := runCLI(t, dir, "doctor", "--fix")
+		out, _ := runCLI(t, dir, "doctor", "--fix", "--yes")
 
 		if _, err := os.Stat(filepath.Join(dir, "specter.yaml")); err == nil {
 			t.Errorf("doctor --fix must not create specter.yaml when one does not exist")
 		}
-		// Should not name a manifest in the summary.
 		if strings.Contains(out, "add-schema-version") {
 			t.Errorf("must not report add-schema-version when no manifest exists; got:\n%s", out)
+		}
+	})
+}
+
+// @ac AC-24
+// Interactive --fix: stdin "y\n" → BETA warning printed, prompt printed,
+// rewrite proceeds, file modified.
+func TestDoctor_Fix_BetaGate_YesProceeds(t *testing.T) {
+	t.Run("spec-doctor/AC-24 interactive yes proceeds with rewrite", func(t *testing.T) {
+		dir := t.TempDir()
+		specPath := filepath.Join(dir, "specs", "legacy.spec.yaml")
+		_ = os.MkdirAll(filepath.Dir(specPath), 0755)
+		_ = os.WriteFile(specPath, []byte(legacySpecWithTrustLevel), 0644)
+
+		out, _ := runCLIWithStdin(t, dir, "y\n", "doctor", "--fix")
+
+		if !strings.Contains(out, "[BETA]") {
+			t.Errorf("expected [BETA] warning in output; got:\n%s", out)
+		}
+		if !strings.Contains(strings.ToLower(out), "cycle 6") {
+			t.Errorf("expected warning to name cycle 6 known limitation; got:\n%s", out)
+		}
+		if !strings.Contains(out, "Continue? (y/N)") {
+			t.Errorf("expected `Continue? (y/N)` prompt; got:\n%s", out)
+		}
+		after, err := os.ReadFile(specPath)
+		if err != nil {
+			t.Fatalf("read after: %v", err)
+		}
+		if strings.Contains(string(after), "trust_level") {
+			t.Errorf("expected trust_level stripped after `y` confirmation; got:\n%s", after)
+		}
+	})
+}
+
+// @ac AC-25
+// Interactive --fix declines: empty input, n, no, "maybe later" — all
+// produce `Aborted. No files modified.` and exit 0 with file unchanged.
+func TestDoctor_Fix_BetaGate_DeclineAborts(t *testing.T) {
+	declineInputs := []struct {
+		name  string
+		stdin string
+	}{
+		{"empty (Enter)", "\n"},
+		{"n", "n\n"},
+		{"N", "N\n"},
+		{"no", "no\n"},
+		{"NO", "NO\n"},
+		{"unrecognized", "maybe later\n"},
+	}
+	for _, tc := range declineInputs {
+		t.Run("spec-doctor/AC-25 decline aborts ("+tc.name+")", func(t *testing.T) {
+			dir := t.TempDir()
+			specPath := filepath.Join(dir, "specs", "legacy.spec.yaml")
+			_ = os.MkdirAll(filepath.Dir(specPath), 0755)
+			_ = os.WriteFile(specPath, []byte(legacySpecWithTrustLevel), 0644)
+
+			out, code := runCLIWithStdin(t, dir, tc.stdin, "doctor", "--fix")
+
+			if code != 0 {
+				t.Errorf("expected exit 0 on decline, got %d; output:\n%s", code, out)
+			}
+			if !strings.Contains(out, "Aborted") {
+				t.Errorf("expected `Aborted` in output; got:\n%s", out)
+			}
+			after, _ := os.ReadFile(specPath)
+			if string(after) != legacySpecWithTrustLevel {
+				t.Errorf("file must be byte-unchanged on decline; got:\n%s", after)
+			}
+		})
+	}
+}
+
+// @ac AC-26
+// `--yes` (and `-y`) bypass the warning AND prompt; rewrite proceeds.
+func TestDoctor_Fix_BetaGate_YesFlagBypasses(t *testing.T) {
+	for _, flag := range []string{"--yes", "-y"} {
+		t.Run("spec-doctor/AC-26 "+flag+" bypasses warning and prompt", func(t *testing.T) {
+			dir := t.TempDir()
+			specPath := filepath.Join(dir, "specs", "legacy.spec.yaml")
+			_ = os.MkdirAll(filepath.Dir(specPath), 0755)
+			_ = os.WriteFile(specPath, []byte(legacySpecWithTrustLevel), 0644)
+
+			out, _ := runCLI(t, dir, "doctor", "--fix", flag)
+
+			if strings.Contains(out, "[BETA]") {
+				t.Errorf("%s must suppress [BETA] warning; got:\n%s", flag, out)
+			}
+			if strings.Contains(out, "Continue? (y/N)") {
+				t.Errorf("%s must suppress prompt; got:\n%s", flag, out)
+			}
+			after, _ := os.ReadFile(specPath)
+			if strings.Contains(string(after), "trust_level") {
+				t.Errorf("%s must rewrite the file; trust_level still present", flag)
+			}
+		})
+	}
+}
+
+// @ac AC-27
+// Non-TTY stdin (no input available) without --yes → error, file unchanged,
+// exit non-zero. runCLI's default behavior gives the child process EOF on
+// stdin immediately (no input piped), which simulates the CI scenario.
+func TestDoctor_Fix_BetaGate_NonTTY_WithoutYes_Errors(t *testing.T) {
+	t.Run("spec-doctor/AC-27 non-tty stdin without --yes errors with guidance", func(t *testing.T) {
+		dir := t.TempDir()
+		specPath := filepath.Join(dir, "specs", "legacy.spec.yaml")
+		_ = os.MkdirAll(filepath.Dir(specPath), 0755)
+		_ = os.WriteFile(specPath, []byte(legacySpecWithTrustLevel), 0644)
+
+		out, code := runCLIWithStdin(t, dir, "", "doctor", "--fix")
+
+		if code == 0 {
+			t.Errorf("expected non-zero exit when --fix with non-tty stdin and no --yes; got 0:\n%s", out)
+		}
+		if !strings.Contains(out, "--yes") {
+			t.Errorf("expected error message naming --yes flag; got:\n%s", out)
+		}
+		after, _ := os.ReadFile(specPath)
+		if string(after) != legacySpecWithTrustLevel {
+			t.Errorf("file must be byte-unchanged on non-tty refusal; got:\n%s", after)
+		}
+	})
+}
+
+// @ac AC-28
+// `--fix --dry-run` skips the BETA warning and prompt entirely (preview
+// mode is read-only). Summary still prints.
+func TestDoctor_Fix_BetaGate_DryRun_SkipsPrompt(t *testing.T) {
+	t.Run("spec-doctor/AC-28 dry-run skips warning and prompt", func(t *testing.T) {
+		dir := t.TempDir()
+		specPath := filepath.Join(dir, "specs", "legacy.spec.yaml")
+		_ = os.MkdirAll(filepath.Dir(specPath), 0755)
+		_ = os.WriteFile(specPath, []byte(legacySpecWithTrustLevel), 0644)
+
+		out, code := runCLI(t, dir, "doctor", "--fix", "--dry-run")
+
+		if code != 0 {
+			t.Errorf("expected exit 0 on --dry-run; got %d", code)
+		}
+		if strings.Contains(out, "[BETA]") {
+			t.Errorf("--dry-run must suppress [BETA] warning; got:\n%s", out)
+		}
+		if strings.Contains(out, "Continue? (y/N)") {
+			t.Errorf("--dry-run must suppress prompt; got:\n%s", out)
+		}
+		if !strings.Contains(out, "would be rewritten") && !strings.Contains(out, "would rewrite") {
+			t.Errorf("expected dry-run summary; got:\n%s", out)
+		}
+		after, _ := os.ReadFile(specPath)
+		if string(after) != legacySpecWithTrustLevel {
+			t.Errorf("--dry-run must not modify the file; got:\n%s", after)
 		}
 	})
 }
