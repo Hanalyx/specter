@@ -123,6 +123,106 @@ func TestDoctor_ParsePatternAnalysis_NamesDrift(t *testing.T) {
 	})
 }
 
+// @ac AC-10
+// GH #93: doctor's no-manifest discovery must walk recursively from cwd,
+// not just look in ./specs/. Two scenarios — spec at cwd root, and spec
+// in a non-default subdirectory — both must be discovered.
+func TestDoctor_NoManifest_RecursiveDiscovery_FromCwdRoot(t *testing.T) {
+	t.Run("spec-doctor/AC-10 no manifest spec at cwd root is discovered", func(t *testing.T) {
+		dir := t.TempDir()
+		// Write spec directly at cwd root, NOT under specs/. No manifest.
+		if err := os.WriteFile(filepath.Join(dir, "bar.spec.yaml"), []byte(minimalValidSpec("bar", 3, "AC-01")), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		out, _ := runCLI(t, dir, "doctor")
+		if !strings.Contains(out, "spec-files") {
+			t.Fatalf("expected spec-files check in output, got:\n%s", out)
+		}
+		// spec-files line must be PASS, not FAIL.
+		for _, line := range strings.Split(out, "\n") {
+			if strings.Contains(line, "spec-files") {
+				if strings.Contains(line, "[FAIL]") {
+					t.Errorf("spec-files must PASS when a .spec.yaml exists at cwd root with no manifest (GH #93): %s", line)
+				}
+				if !strings.Contains(line, "[PASS]") {
+					t.Errorf("expected [PASS] on spec-files line, got: %s", line)
+				}
+			}
+		}
+	})
+}
+
+// @ac AC-10
+func TestDoctor_NoManifest_RecursiveDiscovery_NonDefaultSubdir(t *testing.T) {
+	t.Run("spec-doctor/AC-10 no manifest spec in non-default subdir is discovered", func(t *testing.T) {
+		dir := t.TempDir()
+		// Write spec under mySpecs/ (NOT specs/). No manifest.
+		mySpecsDir := filepath.Join(dir, "mySpecs")
+		if err := os.MkdirAll(mySpecsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(mySpecsDir, "bar.spec.yaml"), []byte(minimalValidSpec("bar", 3, "AC-01")), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		out, _ := runCLI(t, dir, "doctor")
+		for _, line := range strings.Split(out, "\n") {
+			if strings.Contains(line, "spec-files") {
+				if strings.Contains(line, "[FAIL]") {
+					t.Errorf("spec-files must PASS when a .spec.yaml exists under any non-default subdir with no manifest (GH #93): %s", line)
+				}
+				if !strings.Contains(line, "[PASS]") {
+					t.Errorf("expected [PASS] on spec-files line, got: %s", line)
+				}
+			}
+		}
+	})
+}
+
+// @ac AC-11
+// Guard: when a manifest IS present and sets specs_dir, the recursive
+// fallback must NOT override it. Specs outside specs_dir must be invisible
+// to discovery so explicit configurations stay authoritative.
+func TestDoctor_ManifestPresent_HonorsSpecsDir_NoRecursiveFallback(t *testing.T) {
+	t.Run("spec-doctor/AC-11 manifest specs_dir is authoritative not overridden by recursive fallback", func(t *testing.T) {
+		dir := t.TempDir()
+		// Write spec in customSpecs/ (the configured dir).
+		customSpecsDir := filepath.Join(dir, "customSpecs")
+		if err := os.MkdirAll(customSpecsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(customSpecsDir, "a.spec.yaml"), []byte(minimalValidSpec("a", 3, "AC-01")), 0644); err != nil {
+			t.Fatal(err)
+		}
+		// Write another spec at cwd root that should NOT be discovered.
+		if err := os.WriteFile(filepath.Join(dir, "b.spec.yaml"), []byte(minimalValidSpec("b", 3, "AC-01")), 0644); err != nil {
+			t.Fatal(err)
+		}
+		// Manifest sets specs_dir to the custom directory.
+		writeManifest(t, dir, "system:\n  name: test-system\nsettings:\n  specs_dir: customSpecs\n")
+
+		out, _ := runCLI(t, dir, "doctor")
+		// spec-files line should report exactly 1 spec discovered, not 2.
+		var specFilesLine string
+		for _, line := range strings.Split(out, "\n") {
+			if strings.Contains(line, "spec-files") {
+				specFilesLine = line
+				break
+			}
+		}
+		if specFilesLine == "" {
+			t.Fatalf("expected spec-files check in output, got:\n%s", out)
+		}
+		if !strings.Contains(specFilesLine, "1 spec") {
+			t.Errorf("expected exactly 1 spec discovered (only customSpecs/a.spec.yaml), got: %s\nfull output:\n%s", specFilesLine, out)
+		}
+		if strings.Contains(specFilesLine, "2 spec") {
+			t.Errorf("recursive fallback wrongly applied — manifest specs_dir must be authoritative: %s", specFilesLine)
+		}
+	})
+}
+
 // @ac AC-05
 func TestDoctor_NoAnnotations_ReportsWarnNotFail(t *testing.T) {
 	t.Run("spec-doctor/AC-05 no annotations reports warn not fail", func(t *testing.T) {

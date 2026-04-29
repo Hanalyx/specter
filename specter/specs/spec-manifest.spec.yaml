@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "1.8.0"
+  version: "1.9.0"
   status: draft
   tier: 2
 
@@ -177,6 +177,16 @@ spec:
     - id: C-26
       description: "ParseManifest MUST reject any unknown key under the `settings:` block (and at the top level of the manifest) with a clear error naming the offending key, the closest valid key by Levenshtein distance ≤ 3 (`did you mean: <key>?`), and the full list of valid keys at that level. Rationale: today `settings.tests_glob:` (a plausible-but-misspelled-or-not-yet-existing key) parses cleanly and is silently ignored, leading users to believe their manifest is configured when in fact the key did nothing. The same silent-acceptance footgun threatens any new settings key (e.g., the v0.11 `strictness` field) — making the rejection a parse-level invariant closes the class."
       type: technical
+      enforcement: error
+
+    - id: C-27
+      description: "The Manifest struct MUST accept an optional top-level integer field `schema_version`. ParseManifest accepts YAML with or without the field; absence defaults to 1. Rationale: records the spec-schema draft this project commits to. Lives at the project level (one per repository) rather than on every spec — specs stay content-focused. During v0.x the value is a placeholder (always 1; pre-1.0 schema is draft per BACKLOG `Schema stability policy`). Locks to the canonical v1 shape at Specter v1.0.0, after which breaking schema changes bump the integer and require a doctor --fix migration path. The key MUST be added to the validTopLevelKeys list so v0.11's unknown-key rejection (C-26) accepts it."
+      type: technical
+      enforcement: error
+
+    - id: C-28
+      description: "`specter init` (scaffold mode, no `--refresh`) MUST write `schema_version: 1` as the first field in the emitted specter.yaml — ahead of `system:`. `specter init --refresh` MUST leave any existing `schema_version` value byte-unchanged (per C-19 non-destructive refresh, only `domains.default.specs` is touched). Rationale: makes the project's schema commitment visible at the top of the file where operators read first, and aligns with the schema-stability policy that activates the moment `doctor --fix` ships."
+      type: business
       enforcement: error
 
   acceptance_criteria:
@@ -594,6 +604,41 @@ spec:
       references_constraints: ["C-26"]
       priority: critical
 
+    - id: AC-41
+      description: "ParseManifest accepts `schema_version: 1` at the top level and the parsed Manifest struct exposes SchemaVersion=1. ParseManifest also accepts a manifest with no `schema_version` field and defaults SchemaVersion to 1 — both paths produce the same in-memory state. ParseManifest with `schema_version: 5` (a future integer) parses cleanly and exposes SchemaVersion=5; whether 5 is supported is a tool-layer concern (e.g. doctor --fix), not a parse-layer one."
+      inputs:
+        case_explicit_1: "manifest with schema_version: 1"
+        case_absent: "manifest without schema_version"
+        case_future: "manifest with schema_version: 5"
+      expected_output:
+        explicit_1_schema_version: 1
+        absent_schema_version: 1
+        future_schema_version: 5
+      references_constraints: ["C-27"]
+      priority: critical
+
+    - id: AC-42
+      description: "`specter init` (scaffold mode) on a workspace with no `specter.yaml` writes a file whose first non-empty, non-comment line is `schema_version: 1` (preceding `system:`). ParseManifest on the resulting file reports SchemaVersion=1. The emitted manifest is also accepted by `specter parse`-style validation downstream."
+      inputs:
+        command: "specter init --name foo"
+      expected_output:
+        first_field: "schema_version: 1"
+        parsed_schema_version: 1
+      references_constraints: ["C-28"]
+      priority: critical
+
+    - id: AC-43
+      description: "`specter init --refresh` on a workspace with an existing `specter.yaml` containing `schema_version: 1` (or any value) leaves the schema_version line byte-unchanged after the refresh. Only `domains.default.specs` is rewritten (per C-19); any custom schema_version, settings, custom domains, or comments outside the specs list are preserved."
+      inputs:
+        existing_manifest: "specter.yaml with schema_version: 1, custom domains, custom settings"
+        command: "specter init --refresh"
+      expected_output:
+        schema_version_byte_unchanged: true
+        custom_domains_preserved: true
+        custom_settings_preserved: true
+      references_constraints: ["C-28"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -603,6 +648,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.9.0"
+      date: "2026-04-27"
+      author: "specter-team"
+      type: minor
+      description: "v0.12 — schema_version field. Add C-27/AC-41 for the optional top-level `schema_version` integer (defaults to 1; pre-1.0 placeholder per BACKLOG `Schema stability policy`). Add C-28/AC-42/43 for init scaffold writing schema_version: 1 as the first field, and refresh preserving any existing value. Activates the schema-stability policy when paired with `doctor --fix` (which uses the value to target known schema versions for rewrite). Also extends validTopLevelKeys so v0.11's unknown-key rejection accepts the new key."
     - version: "1.8.0"
       date: "2026-04-25"
       author: "specter-team"

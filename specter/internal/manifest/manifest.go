@@ -16,7 +16,7 @@ const MaxManifestBytes = 64 << 10 // 64 KiB
 
 // validTopLevelKeys lists every key allowed at the manifest top level.
 // Updated when adding a new top-level field.
-var validTopLevelKeys = []string{"system", "domains", "settings", "registry"}
+var validTopLevelKeys = []string{"schema_version", "system", "domains", "settings", "registry"}
 
 // validSettingsKeys lists every key allowed under `settings:`. Updated when
 // adding a new settings field.
@@ -52,6 +52,13 @@ func ParseManifest(yamlContent string) (*Manifest, error) {
 	var m Manifest
 	if err := yaml.Unmarshal([]byte(yamlContent), &m); err != nil {
 		return nil, fmt.Errorf("invalid YAML: %w", err)
+	}
+
+	// C-27: schema_version absent → default to 1. Tool-layer code (doctor
+	// --fix migration) is the right place to validate whether the declared
+	// integer is supported; ParseManifest preserves the value verbatim.
+	if m.SchemaVersion == 0 {
+		m.SchemaVersion = 1
 	}
 
 	if m.System.Name == "" {
