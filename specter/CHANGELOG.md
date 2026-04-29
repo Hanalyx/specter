@@ -4,6 +4,92 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 ---
 
+## v0.12.0 — 2026-04-29
+
+**Theme: migration tooling + supply-chain hardening.** v0.12 ships the migration toolchain parked since v0.10 (`doctor --fix`, `schema_version` manifest field, VS Code quick-fix) so projects upgrading from older Specter releases can repair schema drift in-place. Paired with the M-tier security hardening bundle (size caps, webview CSP, SHA-pinned actions, sigstore signing, CycloneDX SBOM) so the supply chain catches up with the feature surface.
+
+### Added
+
+#### `specter doctor --fix` — table-driven rewrite engine (BETA)
+
+Apply known-safe rewrites to spec files that fail parse against the current schema. v0.12 ships one rewrite (`strip-trust-level` for the v0.6.5-removed field) and the table is open for additions. Manifest canonicalization (`add-schema-version`) prepends `schema_version: 1` to a pre-v0.12 `specter.yaml`.
+
+`--fix` is gated as **BETA** until line-targeted deletion lands (BACKLOG cycle 6). The gate emits a `[BETA]` warning naming the known string-literal corruption gap, prompts `Continue? (y/N): ` on stdin, and proceeds only on affirmative input. `--yes` (or `-y`) bypasses for CI; `--dry-run` is exempt (preview mode is read-only). Non-TTY stdin without `--yes` is refused via TTY detection (`os.Stdin.Stat()` character-device check) BEFORE stdin content is read — `echo y | specter doctor --fix` cannot bypass the gate.
+
+The rewrite engine refuses structurally unsafe shapes via yaml.v3 inspection: block scalars, sequences, mapping values, anchored values, multi-line quoted scalars, and folded plain scalars all fall into the `needs-manual-edit` summary block rather than producing corrupted output.
+
+spec-doctor 1.1.0 → 1.8.0 (C-10..C-16, AC-10..AC-29).
+
+#### `specter init` writes `schema_version: 1`
+
+`specter init` (scaffold mode) now emits `schema_version: 1` as the first field in the generated `specter.yaml`, ahead of `system:`. `init --refresh` preserves any existing `schema_version` value byte-for-byte (verified across `1`, `7`, `42`). Activates the schema-stability policy: at v1.0.0 the then-current schema becomes the canonical `schema_version: 1` permanently, and subsequent breaking changes bump the integer with `doctor --fix` migration paths.
+
+spec-manifest 1.8.0 → 1.9.0 (C-27/28, AC-41/42/43).
+
+#### GH #77 — language-aware `specter explain`
+
+When `discoverTestFiles` returns at least one `.py` file, `specter explain annotation` emits Python source-comment examples (`# @spec`, `# @ac`) and the autouse-fixture pattern alongside the JS/TS examples. Closes the Python-onboarding friction where users copying `// @spec` examples got "annotation not detected" despite the source comment being syntactically correct for their language.
+
+spec-explain 1.1.0 → 1.2.0 (C-13, AC-11/12/13).
+
+#### GH #80 — source-only diagnostic hint under `--strict`
+
+When an annotated AC has source-file `@ac` comments but no matching `.specter-results.json` entry, `coverage --strict` now emits a per-AC stderr hint above the table:
+
+```
+hint: my-spec/AC-01 has source annotation in tests/foo.py:13 but no
+matching pass in .specter-results.json — did your test runner emit a
+runner-visible annotation (Convention A: spec-id/AC-NN in the test
+name; Convention B: print '// @spec'/'// @ac' from the test body)?
+```
+
+Limited to the first 5 affected pairs to keep CI logs compact. Suppressed by `--quiet`. Surfaced as a top-level `diagnostic_hints` array under `--json`. Closes the GH #80 confusion where Python users with source-only `# @ac` comments saw `--strict` exit non-zero with no signal about the missing runtime channel.
+
+spec-coverage 1.11.0 → 1.12.0 (C-28, AC-31/32/33).
+
+#### VS Code — "Remove deprecated field" quick-fix
+
+Lightbulb action on `Unknown field 'X'` parse errors offers "Remove deprecated field 'X'" when X is in the known-removed list (currently `trust_level`). The quick-fix performs YAML-shape inspection before rewriting — fields whose value spans multiple lines, lives inside a block scalar, or has unclosed quotes are silently refused (the parse error is still surfaced, just without a fix offer). Pairs with `doctor --fix` for the CLI path.
+
+spec-vscode 1.4.0 → 1.6.0 (C-28/29, AC-51/52/53).
+
+### Fixed
+
+#### GH #93 — `doctor` no-manifest discovery alignment
+
+`specter doctor` returned "no specs" when run without `specter.yaml`, while `parse` discovered nested `*.spec.yaml` files recursively. The asymmetry confused first-run users. `doctor`'s no-manifest fallback now matches `parse`'s behavior — recursive discovery from the working directory.
+
+spec-doctor C-10/AC-10/AC-11.
+
+### Security
+
+Supply-chain hardening bundle. None of these change user-facing behavior; all are defense-in-depth for the build/release path.
+
+- **M1 — 16 MiB cap on `.specter-results.json`.** Prevents memory exhaustion when a malicious CI runner commits a multi-GB results file. `internal/coverage/results.go` rejects oversized input before `json.Unmarshal` allocates. New `results_test.go` exercises both the rejection and the at-limit acceptance paths.
+- **M2 — 64 KiB cap on `specter.yaml`.** Same shape for the manifest path — caps a malicious specter.yaml before `yaml.Unmarshal` exposes the parser to billion-laughs / anchor-expansion. New `TestParseManifest_RejectsOversizedInput` enforces.
+- **M4 — Webview CSP with per-render nonce.** `vscode-extension/src/extension.ts`'s insights webview now serves with `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';` and `localResourceRoots: []`. Nonce is `crypto.randomBytes(16)` per render. `csp.test.ts` enforces six source-level invariants (CSP meta tag presence, default-src 'none', script-src nonce template, inline `<script>` nonce attribute, randomBytes entropy, empty localResourceRoots) so a future regression that drops or weakens the CSP fails CI.
+- **M5 — GHA SHA-pinning + Dependabot config.** Every `uses:` line in every workflow is pinned to a 40-char SHA with the version comment preserved. `.github/dependabot.yml` resolves both the SHA and the version tag for ongoing maintenance.
+- **M6 — Sigstore cosign keyless signing + CycloneDX SBOM.** Releases now publish a `checksums.txt.sig` + `.pem` cert pair (verifiable with `cosign verify-blob --certificate-identity-regexp '...release.yml' --certificate-oidc-issuer https://token.actions.githubusercontent.com`) and a `<archive>.sbom.json` in CycloneDX format per release archive. `-trimpath` and reproducible `mod_timestamp` enabled in `.goreleaser.yml`.
+- **M7 — `release.yml` chained on Pre-Release Test Suite.** Releases trigger via `workflow_run` after the test suite completes successfully. Concurrency guard prevents overlapping releases. `id-token: write` declared for sigstore OIDC. The previously redundant in-release test job is removed.
+- **M8 — `jest-junit` ^16 → ^17.** Routine dev-dep bump; existing inline reporter config is forward-compatible.
+
+### Process
+
+- **Specter Schema Request Brief (SSRB).** Every schema-change request now gets a written brief documenting the decision and reasoning at `docs/ssrb/SSRB-NNN.md`. Backfilled briefs for the four post-v0.11 closures (GH #97/#98/#99/#100). Triage discipline (universality test, schema conservatism) extracted from internal CLAUDE.md to `docs/TRIAGE_DISCIPLINE.md`.
+
+### Internal
+
+- `internal/migrate/rewrite.go` — table-driven rewrite engine with yaml-aware safety predicates (`canSafelyStripTrustLevel`, `valueOccupiesOneSourceLine`, multi-doc iteration via `yaml.Decoder`).
+- `cmd/specter/doctor_fix_test.go` + `init_schema_version_test.go` + `migrate/rewrite_test.go` — comprehensive test coverage for the new rewrite paths.
+- `vscode-extension/src/quickFix.ts` — pure runtime-free helpers for the quick-fix YAML-shape inspection (16 chomp/indent variants tested).
+- Spec/test parity tightening surfaced by the v0.12 review: AC-16 calls `ParseManifest`, AC-31 enforces `hintIdx < tableIdx` ordering, AC-43 parameterizes over `(1, 7, 42)` to assert byte-equality of the schema_version line.
+
+### Behavior changes
+
+None for greenfield projects on v0.11.x. Pre-v0.12 projects without `schema_version` in their `specter.yaml`: `doctor --fix` will offer the `add-schema-version` manifest canonicalization (gated behind the BETA prompt). The default value of `schema_version` is `1` — `ParseManifest` defaults to 1 when the field is absent, so v0.11 manifests parse cleanly under v0.12.
+
+---
+
 ## v0.11.1 — 2026-04-26
 
 **Theme: post-v0.11.0 hotfix.** Two bugs reported within hours of v0.11.0 shipping; both fixed.
