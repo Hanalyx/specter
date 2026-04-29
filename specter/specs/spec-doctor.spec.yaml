@@ -1,6 +1,6 @@
 spec:
   id: spec-doctor
-  version: "1.6.0"
+  version: "1.7.0"
   status: draft
   tier: 2
 
@@ -110,6 +110,11 @@ spec:
 
     - id: C-15
       description: "When a spec rewrite predicate matches but the targeted value is structurally unsafe for line-based deletion, `--fix` MUST emit an `unhandled` diagnostic naming the file and the reason instead of producing a partial rewrite. The file MUST remain byte-unchanged. The underlying invariant for line-based deletion is `the value occupies exactly one source line` — refusal MUST trigger when ANY of the following hold: (a) `Node.Kind` is not `ScalarNode` (sequence, mapping, alias); (b) `Node.Style` is `LiteralStyle` or `FoldedStyle` (block scalars `|`/`>`); (c) the value's source span exceeds one line — folded plain scalars, multi-line quoted scalars, or any source-shape where a non-blank/non-comment line at greater indentation than the key follows the value's first line. Detection MUST iterate every YAML document in the file (via `yaml.Decoder` for multi-document files) — the rewrite predicate fires per parse-error per file, but the safety check MUST cover every document so that an unsafe shape in document N>0 still refuses the whole-file rewrite. The summary MUST split into two blocks: `doctor --fix: N file(s) rewritten` (successful) and `doctor --fix: N file(s) need manual edit` (refused), with each manual-edit entry on its own line in the form `  skip <file> — <reason>`. Rationale: the line-based regex deletion in C-11 is byte-preserving (its strength) but unsafe on values that span multiple lines (its weakness); refusal is safer than corruption. Earlier wording (v1.5.0) enumerated specific unsafe shapes; this version (v1.6.0) names the underlying invariant so future YAML idioms that span lines without a block-scalar indicator (folded plain, quoted multi-line) are correctly refused."
+      type: business
+      enforcement: error
+
+    - id: C-16
+      description: "`specter doctor --fix` is a BETA feature in v0.12. Before applying any rewrite or canonicalization, `--fix` MUST print a clearly-marked `[BETA]` warning to stderr describing (a) the known string-literal corruption gap (deferred to BACKLOG cycle 6), (b) the recommendation to commit spec files BEFORE running so changes can be diffed and reverted, and (c) `--dry-run` as a safe preview path. After the warning, `--fix` MUST prompt the operator on stdin with `Continue? (y/N): ` and MUST require an affirmative response (`y` or `yes`, case-insensitive) to proceed. Any other input — empty/Enter, `n`/`no`, or any non-affirmative string — MUST exit 0 with a `Aborted. No files modified.` line and no on-disk changes. The `--yes` (or `-y`) CLI flag MUST bypass both the warning and the prompt for non-interactive use (CI, scripted migrations). When stdin is not a terminal AND `--yes` is not set, `--fix` MUST refuse with an explicit error directing the operator to either run interactively or pass `--yes`. `--dry-run` MUST be exempt from the prompt — preview mode is read-only. Rationale: the BACKLOG cycle 6 known-limitation can corrupt spec documentation that mentions deprecated field names in prose; until that's closed, gating the destructive path behind explicit acknowledgment is the right safety posture."
       type: business
       enforcement: error
 
@@ -360,6 +365,72 @@ spec:
       references_constraints: ["C-15"]
       priority: high
 
+    - id: AC-24
+      description: "Interactive `specter doctor --fix` (TTY stdin, `--yes` not set, not `--dry-run`) on a workspace with rewrite-eligible drift. `--fix` MUST print a `[BETA]` warning block to stderr naming the cycle 6 string-literal corruption gap, the commit-first recommendation, and the `--dry-run` alternative. After the warning, `--fix` MUST emit `Continue? (y/N): ` to stderr and read one line from stdin. Operator types `y` (or `Y`/`yes`/`YES`) → `--fix` proceeds with the rewrite as in C-11/C-13, file is rewritten, summary prints. Workspace ends in the same state as if `--fix` had been called without the gate."
+      inputs:
+        scenario: "TTY stdin; trust_level: high under spec; user types 'y' at prompt"
+      expected_output:
+        warning_contains: "BETA"
+        warning_contains_cycle_6: true
+        prompt_contains: "Continue? (y/N)"
+        on_yes_proceeds: true
+        file_rewritten_after_yes: true
+      references_constraints: ["C-16"]
+      priority: critical
+
+    - id: AC-25
+      description: "Interactive `specter doctor --fix` where the operator declines the prompt. Any of: empty input (Enter), `n`, `N`, `no`, `NO`, or any string not in `{y, yes, Y, YES}` MUST cause `--fix` to print `Aborted. No files modified.` to stdout and exit 0. NO files MUST be modified — both spec rewrites AND manifest canonicalization MUST be skipped. The diagnostic checks above the prompt still ran and printed; only the repair pass is gated by the prompt."
+      inputs:
+        scenarios:
+          - "TTY stdin; user presses Enter (empty)"
+          - "TTY stdin; user types 'n'"
+          - "TTY stdin; user types 'no'"
+          - "TTY stdin; user types 'maybe later'"
+      expected_output:
+        all_scenarios_exit_code: 0
+        all_scenarios_print_aborted: true
+        all_scenarios_files_byte_unchanged: true
+      references_constraints: ["C-16"]
+      priority: critical
+
+    - id: AC-26
+      description: "`specter doctor --fix --yes` MUST bypass both the BETA warning and the prompt entirely. The `--yes` flag is the explicit acknowledgment for non-interactive use (CI, scripted migrations). After the diagnostic checks print, `--fix` proceeds directly to the rewrite without any warning or stdin read. `-y` is an accepted short alias."
+      inputs:
+        scenarios:
+          - "any stdin (TTY or not); --yes flag"
+          - "any stdin; -y short flag"
+      expected_output:
+        no_beta_warning_printed: true
+        no_prompt_printed: true
+        rewrite_proceeds: true
+      references_constraints: ["C-16"]
+      priority: high
+
+    - id: AC-27
+      description: "`specter doctor --fix` invoked with non-TTY stdin (e.g., piped from another command, redirected from /dev/null, or in a CI environment without a controlling terminal) AND without `--yes` MUST refuse with an explicit error message naming the two acceptable paths: run interactively, or pass `--yes`. Exit code MUST be non-zero. NO files MUST be modified. Rationale: silently hanging on a stdin read in CI is a worse failure than refusing — and silently auto-proceeding without the operator acknowledging the BETA warning defeats the gate's purpose."
+      inputs:
+        scenario: "stdin piped from /dev/null or another process; --yes not set; --dry-run not set"
+        command: "specter doctor --fix < /dev/null"
+      expected_output:
+        exit_code_nonzero: true
+        error_contains: "--yes"
+        error_contains_interactive: true
+        files_byte_unchanged: true
+      references_constraints: ["C-16"]
+      priority: high
+
+    - id: AC-28
+      description: "`specter doctor --fix --dry-run` MUST skip the BETA warning AND the prompt — preview mode is read-only and safe. The dry-run summary still prints (`would be rewritten` / `would be rewritten under manual edit`). Exit code 0 regardless of whether rewrites or refusals were found. Operators use `--dry-run` as the side-effect-free preview before deciding whether to run `--fix` for real."
+      inputs:
+        scenario: "any stdin; --fix --dry-run on workspace with trust_level drift"
+      expected_output:
+        no_beta_warning_printed: true
+        no_prompt_printed: true
+        dry_run_summary_prints: true
+        files_byte_unchanged: true
+      references_constraints: ["C-16"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -372,6 +443,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.7.0"
+      date: "2026-04-29"
+      author: "specter-team"
+      type: minor
+      description: "v0.12 BETA gate — `specter doctor --fix` is gated behind a `[BETA]` warning + interactive y/N confirmation until BACKLOG cycle 6 (line-targeted deletion) closes the known string-literal corruption gap. Add C-16 + AC-24/25/26/27/28: warning to stderr, prompt to stdin, affirmative-only proceed, `Aborted` on decline. `--yes` / `-y` flag bypasses for CI; non-TTY stdin without `--yes` errors with guidance. `--dry-run` exempt — preview is read-only."
     - version: "1.6.0"
       date: "2026-04-28"
       author: "specter-team"
