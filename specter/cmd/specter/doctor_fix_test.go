@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -297,39 +298,55 @@ func TestDoctor_Fix_NoManifest_DoesNotCreate(t *testing.T) {
 }
 
 // @ac AC-24
-// Interactive --fix: stdin "y\n" → BETA warning printed, prompt printed,
-// rewrite proceeds, file modified.
+// confirmFixWithUser with TTY stdin and operator entering an affirmative
+// answer ("y", "Y", "yes", "YES") → returns proceed=true, prints BETA
+// warning and the prompt to stderr.
+//
+// Direct unit test of the helper rather than an exec.Cmd subprocess: a
+// Go test process spawning a child via exec.Cmd cannot present a real
+// pty to the child, so any subprocess test of "interactive y proceeds"
+// is fundamentally a non-TTY test. The helper takes an isTTY bool and
+// an io.Reader, so the unit-test path injects both directly.
 func TestDoctor_Fix_BetaGate_YesProceeds(t *testing.T) {
-	t.Run("spec-doctor/AC-24 interactive yes proceeds with rewrite", func(t *testing.T) {
-		dir := t.TempDir()
-		specPath := filepath.Join(dir, "specs", "legacy.spec.yaml")
-		_ = os.MkdirAll(filepath.Dir(specPath), 0755)
-		_ = os.WriteFile(specPath, []byte(legacySpecWithTrustLevel), 0644)
-
-		out, _ := runCLIWithStdin(t, dir, "y\n", "doctor", "--fix")
-
-		if !strings.Contains(out, "[BETA]") {
-			t.Errorf("expected [BETA] warning in output; got:\n%s", out)
-		}
-		if !strings.Contains(strings.ToLower(out), "cycle 6") {
-			t.Errorf("expected warning to name cycle 6 known limitation; got:\n%s", out)
-		}
-		if !strings.Contains(out, "Continue? (y/N)") {
-			t.Errorf("expected `Continue? (y/N)` prompt; got:\n%s", out)
-		}
-		after, err := os.ReadFile(specPath)
-		if err != nil {
-			t.Fatalf("read after: %v", err)
-		}
-		if strings.Contains(string(after), "trust_level") {
-			t.Errorf("expected trust_level stripped after `y` confirmation; got:\n%s", after)
-		}
-	})
+	cases := []struct {
+		name  string
+		stdin string
+	}{
+		{"y", "y\n"},
+		{"Y", "Y\n"},
+		{"yes", "yes\n"},
+		{"YES", "YES\n"},
+	}
+	for _, tc := range cases {
+		t.Run("spec-doctor/AC-24 interactive "+tc.name+" proceeds", func(t *testing.T) {
+			var stderr bytes.Buffer
+			proceed, err := confirmFixWithUser(strings.NewReader(tc.stdin), true, &stderr)
+			if err != nil {
+				t.Fatalf("unexpected error from helper with TTY+%s: %v", tc.name, err)
+			}
+			if !proceed {
+				t.Errorf("expected proceed=true for affirmative %q, got false", tc.stdin)
+			}
+			if !strings.Contains(stderr.String(), "[BETA]") {
+				t.Errorf("expected [BETA] warning in stderr; got:\n%s", stderr.String())
+			}
+			if !strings.Contains(strings.ToLower(stderr.String()), "cycle 6") {
+				t.Errorf("expected warning to name cycle 6 known limitation; got:\n%s", stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "Continue? (y/N)") {
+				t.Errorf("expected `Continue? (y/N)` prompt; got:\n%s", stderr.String())
+			}
+		})
+	}
 }
 
 // @ac AC-25
-// Interactive --fix declines: empty input, n, no, "maybe later" — all
-// produce `Aborted. No files modified.` and exit 0 with file unchanged.
+// confirmFixWithUser with TTY stdin and any non-affirmative answer
+// (empty, n, N, no, NO, unrecognized string) → returns proceed=false.
+// The CLI integration layer turns proceed=false into "Aborted. No files
+// modified." and exit 0 — that wiring is covered by the live AC-26 test
+// (--yes proceeds) and AC-27 test (non-TTY refuses) which cross-check
+// the file is byte-unchanged.
 func TestDoctor_Fix_BetaGate_DeclineAborts(t *testing.T) {
 	declineInputs := []struct {
 		name  string
@@ -344,22 +361,13 @@ func TestDoctor_Fix_BetaGate_DeclineAborts(t *testing.T) {
 	}
 	for _, tc := range declineInputs {
 		t.Run("spec-doctor/AC-25 decline aborts ("+tc.name+")", func(t *testing.T) {
-			dir := t.TempDir()
-			specPath := filepath.Join(dir, "specs", "legacy.spec.yaml")
-			_ = os.MkdirAll(filepath.Dir(specPath), 0755)
-			_ = os.WriteFile(specPath, []byte(legacySpecWithTrustLevel), 0644)
-
-			out, code := runCLIWithStdin(t, dir, tc.stdin, "doctor", "--fix")
-
-			if code != 0 {
-				t.Errorf("expected exit 0 on decline, got %d; output:\n%s", code, out)
+			var stderr bytes.Buffer
+			proceed, err := confirmFixWithUser(strings.NewReader(tc.stdin), true, &stderr)
+			if err != nil {
+				t.Fatalf("unexpected error from helper with TTY+%q: %v", tc.stdin, err)
 			}
-			if !strings.Contains(out, "Aborted") {
-				t.Errorf("expected `Aborted` in output; got:\n%s", out)
-			}
-			after, _ := os.ReadFile(specPath)
-			if string(after) != legacySpecWithTrustLevel {
-				t.Errorf("file must be byte-unchanged on decline; got:\n%s", after)
+			if proceed {
+				t.Errorf("expected proceed=false for non-affirmative %q, got true", tc.stdin)
 			}
 		})
 	}
@@ -444,6 +452,55 @@ func TestDoctor_Fix_BetaGate_DryRun_SkipsPrompt(t *testing.T) {
 		after, _ := os.ReadFile(specPath)
 		if string(after) != legacySpecWithTrustLevel {
 			t.Errorf("--dry-run must not modify the file; got:\n%s", after)
+		}
+	})
+}
+
+// @ac AC-29
+// Non-TTY stdin with piped affirmative content (echo y | specter doctor
+// --fix) without --yes MUST refuse with the same error and exit code as
+// AC-27. The TTY check fires BEFORE stdin is read, so what the pipe
+// contains is irrelevant.
+//
+// Two layers cover this: (a) the helper unit-test path verifies that
+// confirmFixWithUser with isTTY=false refuses regardless of the reader
+// content; (b) the exec.Cmd integration test verifies the wiring
+// produces the same error message + non-zero exit + byte-unchanged file.
+func TestDoctor_Fix_BetaGate_NonTTY_WithContent_Errors(t *testing.T) {
+	t.Run("spec-doctor/AC-29 helper non-tty with piped content refuses", func(t *testing.T) {
+		piped := []string{"y\n", "yes\n", "Y\n", "arbitrary content from CI\n"}
+		for _, content := range piped {
+			var stderr bytes.Buffer
+			proceed, err := confirmFixWithUser(strings.NewReader(content), false, &stderr)
+			if err == nil {
+				t.Errorf("expected refusal error for non-tty with content %q, got nil", content)
+			}
+			if proceed {
+				t.Errorf("expected proceed=false for non-tty with content %q, got true", content)
+			}
+			if !strings.Contains(err.Error(), "--yes") {
+				t.Errorf("expected error to name --yes flag; got %q", err.Error())
+			}
+		}
+	})
+
+	t.Run("spec-doctor/AC-29 cli non-tty with piped y refuses", func(t *testing.T) {
+		dir := t.TempDir()
+		specPath := filepath.Join(dir, "specs", "legacy.spec.yaml")
+		_ = os.MkdirAll(filepath.Dir(specPath), 0755)
+		_ = os.WriteFile(specPath, []byte(legacySpecWithTrustLevel), 0644)
+
+		out, code := runCLIWithStdin(t, dir, "y\n", "doctor", "--fix")
+
+		if code == 0 {
+			t.Errorf("expected non-zero exit when --fix with non-tty stdin (piped y) and no --yes; got 0:\n%s", out)
+		}
+		if !strings.Contains(out, "--yes") {
+			t.Errorf("expected error message naming --yes flag; got:\n%s", out)
+		}
+		after, _ := os.ReadFile(specPath)
+		if string(after) != legacySpecWithTrustLevel {
+			t.Errorf("file must be byte-unchanged on non-tty refusal regardless of pipe content; got:\n%s", after)
 		}
 	})
 }
