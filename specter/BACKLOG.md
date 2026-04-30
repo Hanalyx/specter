@@ -2,17 +2,28 @@
 
 Forward-looking roadmap. Items are grouped by target release. Each item is a single sentence of intent plus a link to the design doc or discussion when one exists.
 
-Current shipped version: **v0.11.1** (CLI tagged 2026-04-26; VS Code extension v0.11.1 published to Marketplace pre-release channel — stable still on v0.10.2, promote when soak completes). Past release notes live in [CHANGELOG.md](CHANGELOG.md) — this file is forward-only.
+Current shipped version: **v0.12.0** (CLI tagged 2026-04-30 at commit `97df6e3`; VS Code extension VSIX built locally, awaiting manual Marketplace gate per `specter/CLAUDE.md`). Past release notes live in [CHANGELOG.md](CHANGELOG.md) — this file is forward-only.
 
-Working branch: **release/v0.12** (cut 2026-04-27 from `main` at v0.11.1). Per `CONTRIBUTING.md` → Branch workflow, all feature / fix / doc PRs during the cycle target `release/v0.12`, not `main`.
+Working branch: **none open yet**. The next cycle (`v0.12.1` or `v0.13`) will be cut from `main` when scope locks. Per `CONTRIBUTING.md` → Branch workflow, all feature / fix / doc PRs during a cycle target the working branch, not `main`.
 
-The v0.11 cycle delivered five v0.11.0 features (explain bundle, check --test, init --install-hook, init --ai <tool>, settings.strictness + tests_glob), seven security hardening items folded pre-release, four GH-issue closures (#75, #76, #78, #79), and a v0.11.1 hotfix for two reports (GH #94 zero-tolerance + approval_gate report demotion; GH #95 multi-`@spec` `check --test` validation). Post-release issue triage closed four feature requests as not-planned (GH #97, #98, #99, #100) under the universality + schema-conservatism filters.
+The v0.12 cycle delivered: `doctor --fix` BETA migration tooling (7 SDD sub-cycles), `init` writes `schema_version: 1`, GH #77 language-aware `explain`, GH #80 source-only diagnostic hint, GH #93 `doctor` no-manifest discovery alignment, VS Code quick-fix for removed fields, full M-tier supply-chain hardening (M1/M2/M4/M5/M6/M7/M8), and the SSRB framework for schema-change decisions. Three release-infra hotfixes (#116, #117, #118) post-cycle to fix landmines in the M6/M7 first-run paths. v0.12.0 shipped 2026-04-30T02:24:21Z with 16 release artifacts including sigstore-signed checksums (keyless OIDC) and CycloneDX SBOMs.
 
 ---
 
-## v0.12 — migration tooling + security hardening (working branch open)
+## v0.12.1+ — TBD scope
 
-Two themes: ship the migration tooling parked since v0.10 (doctor --fix, schema_version, VS Code quick-fix) so JWTMS-style schema drift becomes fixable in-place without GH #96, and fold the M-tier security hardening pre-staged on `chore/v0.12-security-hardening` into the release.
+Open candidates (not yet committed to a cycle):
+
+- **GH #101 — `specter doctor --diff <baseline>`**. Deferred from v0.12; standalone feature work rather than bundled with `doctor --fix`. ~1 day of work; reads existing `doctor --json` output, emits set differences. Useful for iterative migration-script development.
+- **Pre-flight gate (P1)** — see "Release-time pre-flight gate (P1)" section below; promoted from P3 after three landmines surfaced this cycle.
+- **VSIX packaging hygiene** — `junit.xml` (jest-junit output, 42 KB) is being packed into the VSIX. Add to `.vscodeignore`. P3, low-effort.
+- **Post-v0.12-review polish (P2/P3)** — see existing section below.
+
+---
+
+## v0.12 — shipped 2026-04-30 (archived for reference)
+
+Two themes delivered: shipped the migration tooling parked since v0.10 (doctor --fix, schema_version, VS Code quick-fix) so JWTMS-style schema drift is fixable in-place without GH #96, and folded the M-tier security hardening into the release.
 
 ### CLI features
 
@@ -86,9 +97,96 @@ Open:
 - **P3 — `coverage --strict --json` exits 0 when uncovered**, but text mode exits 1 on the same input. Possibly intentional (json-as-data-extraction), but inconsistent and surprising for CI consumers. Pre-existing; verify intent and either align or document.
 - **P3 — `.specter-results.json` accepts `"status": "pass"` (vs the canonical `"passed"`) and silently treats it as not-passed.** No diagnostic for the typo. Pre-existing footgun; add a strictness-mode warning when status values fall outside the documented enum.
 
-### Release-time pre-flight gate
+### Release-time pre-flight gate (P1 — promoted from P3)
 
-The 2026-04-29 re-review caught a release-time landmine in `.goreleaser.yml` (the M6 `{{ .Document }}` template-field bug) by config inspection alone — there was no CI gate to catch goreleaser config errors before the actual release ran. A pre-flight smoke test (`goreleaser release --snapshot --skip=publish --clean`) in CI would have failed loudly when the bad template landed and saved the iteration cost. Worth one workflow file to add — applies to every future hardening change to the release config.
+The v0.12.0 release surfaced **four release-infra landmines** end-to-end, all of which would have been caught by a single `goreleaser release --snapshot --skip=publish --clean` smoke job in CI:
+
+1. **`cyclonedx-json={{ .Document }}` template field** — caught pre-merge by agent re-review (config inspection only). Goreleaser would have crashed at release time with `template: invalid: map has no entry for key "Document"`. Fixed in `6debbbd` before the tag push.
+2. **`release.yml` `branches: [main]` filter excluded tag refs** — caught only after the tag push when `workflow_run` events list returned `[]`. M7 chain never fired. Fixed in PR #116.
+3. **Cosign `--new-bundle-format=false` flag silently ignored** — caught only after firing release dispatch and observing the same error twice in a row. Cosign 2.5+ deprecated the legacy two-file output and the negation flag isn't honored. Superseded by #4.
+4. **Migrate to new bundle format** — fixed by switching to `--bundle=${signature}` in PR #118, validated locally with `cosign sign-blob --key cosign.key --bundle ...`.
+
+Cumulative cost: ~1 day of release-pipeline iteration that produced zero user-facing value. Each landmine was fully predictable from config inspection IF we'd been able to run the pipeline before the tag push.
+
+#### Proposed workflow
+
+A new `.github/workflows/release-snapshot.yml` triggered on PRs that touch `**/.goreleaser.y*ml`, `.github/workflows/release*.yml`, or `specter/cmd/specter/main.go` (anything that affects build output). Body:
+
+```yaml
+name: Release pipeline pre-flight (snapshot)
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/release*.yml'
+      - 'specter/.goreleaser.y*ml'
+      - 'specter/Makefile'
+      - 'specter/go.mod'
+      - 'specter/go.sum'
+defaults:
+  run:
+    working-directory: specter
+permissions:
+  contents: read
+  id-token: write   # OIDC for cosign keyless
+jobs:
+  snapshot:
+    name: Goreleaser snapshot (build + archive + SBOM + sign)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@<sha>     # SHA-pin all
+      - uses: actions/setup-go@<sha>
+        with: { go-version-file: specter/go.mod }
+      - uses: sigstore/cosign-installer@<sha>
+      - uses: anchore/sbom-action/download-syft@<sha>
+      - uses: goreleaser/goreleaser-action@<sha>
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --snapshot --skip=publish --clean
+          workdir: specter
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify signing artifact present
+        run: test -f dist/checksums.txt.sigstore.json
+      - name: Verify SBOMs present
+        run: |
+          ls dist/*.sbom.json | wc -l | grep -q '^5$' || (ls dist/ && exit 1)
+```
+
+#### Expected catch rate
+
+Each of the 4 landmines from v0.12 would have failed this workflow:
+
+| # | Landmine | Failure mode caught |
+|---|---|---|
+| 1 | `{{ .Document }}` | goreleaser tmpl error during `release --snapshot` |
+| 2 | `branches: [main]` filter | N/A (release.yml not exercised by snapshot) — caught by separate `actionlint` job, see below |
+| 3 | `--new-bundle-format=false` ignored | cosign step inside snapshot |
+| 4 | Bundle format args | cosign step inside snapshot |
+
+Items 1, 3, 4 caught directly. Item 2 is structural CI-config drift, not goreleaser drift — covered by a separate `actionlint`-style step. Together: 100% of v0.12.0's landmines would have failed CI before merge.
+
+#### Open design questions
+
+- **Cosign keyless on PR runs**: works for PRs from the same repo (OIDC token issued normally). Forks need fallback. Simplest: `--skip=sign` for PRs from forks; `id-token: write` permission auto-degrades.
+- **Snapshot timing**: full snapshot is ~1 minute on ubuntu-latest. Doesn't add to PR critical path (parallel with existing CI).
+- **Caching**: setup-go cache hit avoids rebuild if go.mod/go.sum unchanged. Snapshot itself rebuilds binaries — 5 platforms × ~5s each = ~25s.
+
+#### Why P1
+
+Landmine count over recent cycles: v0.10 (0), v0.11 (0), **v0.12 (4)**. The pattern correlates with introducing new release-infra features (M6 sigstore, M7 workflow_run chain). Future cycles WILL touch release infra (Homebrew tap is parked in `.goreleaser.yml`, future M-tier items). Without this gate, every such change risks repeating today's iteration cost.
+
+#### Effort
+
+One workflow file (~50 lines) + three SHA pins + one PR. Estimated 1-2 hours including local snapshot validation against current main HEAD to confirm all paths are exercised.
+
+#### Acceptance
+
+- Workflow file lands at `.github/workflows/release-snapshot.yml`.
+- Triggered on changes to release-infra paths.
+- Successfully runs `goreleaser release --snapshot --skip=publish --clean` against current main.
+- A test PR that intentionally breaks `.goreleaser.yml` (e.g., reverts the `$document` fix) fails the workflow.
+- BACKLOG entry moves from "candidate" to "shipped" reference once verified.
 
 ### Future paths for `doctor --fix` rewrite engine
 
