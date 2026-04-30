@@ -34,30 +34,28 @@ checksum:
   name_template: "checksums.txt"
   algorithm: sha256
 
-# Cosign keyless signing of checksums.txt via sigstore.
-# The release workflow's permissions block must declare `id-token: write`
-# so goreleaser-action can fetch the OIDC token. Verify a downloaded
-# release with:
-#   cosign verify-blob --certificate-identity-regexp 'https://github.com/Hanalyx/specter/.github/workflows/release.yml' \
+# Cosign keyless signing of checksums.txt via sigstore — new bundle
+# format (single .sigstore.json file containing signature + cert).
+# The release workflow's permissions block must declare `id-token:
+# write` so goreleaser-action can fetch the OIDC token. Verify a
+# downloaded release with:
+#   cosign verify-blob \
+#     --certificate-identity-regexp 'https://github.com/Hanalyx/specter/.github/workflows/release.yml' \
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-#     --certificate checksums.txt.pem --signature checksums.txt.sig checksums.txt
+#     --bundle checksums.txt.sigstore.json \
+#     checksums.txt
 #
-# `--new-bundle-format=false` keeps the legacy two-file output
-# (.sig + .pem) that matches the verification example above. Recent
-# cosign versions default to bundle-format=true, which deprecates
-# `--output-signature`/`--output-certificate` and requires `--bundle
-# <path>`. Until verification tooling and docs migrate to bundle
-# format, opt out explicitly.
+# Recent cosign versions (2.5+) default --new-bundle-format=true and
+# silently ignore the legacy `--output-signature` / `--output-certificate`
+# flags; the pre-2.5 two-file output path no longer works reliably.
+# We track the new format directly rather than fighting the default.
 signs:
   - cmd: cosign
-    signature: "${artifact}.sig"
-    certificate: "${artifact}.pem"
+    signature: "${artifact}.sigstore.json"
     args:
       - "sign-blob"
       - "--yes"
-      - "--new-bundle-format=false"
-      - "--output-signature=${signature}"
-      - "--output-certificate=${certificate}"
+      - "--bundle=${signature}"
       - "${artifact}"
     artifacts: checksum
     output: true
