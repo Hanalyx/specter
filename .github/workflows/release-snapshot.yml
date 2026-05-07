@@ -1,0 +1,126 @@
+name: Release pipeline pre-flight (snapshot)
+
+# v0.12.1 pre-flight gate (BACKLOG P1, promoted from P3 after v0.12.0
+# surfaced four release-time landmines). Runs `goreleaser release
+# --snapshot --skip=publish --clean` against PRs that touch release
+# infrastructure, so config bugs fail CI before they cost a tag-and-debug
+# cycle. Same goreleaser command, same SHA-pinned actions, same cosign
+# and syft tooling as the production `release.yml`.
+#
+# Fork PRs run with `--skip=sign` because cosign keyless OIDC tokens
+# are not issued for fork-PR runs (option (a) decided 2026-05-07).
+# Same-repo PRs run the full snapshot including signing, which catches
+# cosign-flag changes before merge.
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/release*.yml'
+      - 'specter/.goreleaser.y*ml'
+      - 'specter/Makefile'
+      - 'specter/go.mod'
+      - 'specter/go.sum'
+
+permissions:
+  contents: read
+  # OIDC token for cosign keyless signing on same-repo PRs.
+  # GitHub auto-degrades this to no-token on fork PRs, which is why
+  # the snapshot job adds --skip=sign for fork-PR runs.
+  id-token: write
+
+defaults:
+  run:
+    working-directory: specter
+
+# Concurrency guard: cancel superseded runs on the same PR. Cheaper to
+# rebuild than to queue snapshots that nobody is waiting on.
+concurrency:
+  group: release-snapshot-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  snapshot:
+    name: Goreleaser snapshot (build + archive + sign + SBOM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # PR head ref so we exercise the proposed change, not the
+          # merge-base of main.
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: specter/go.mod
+          cache-dependency-path: specter/go.sum
+
+      # cosign keyless signing (only exercised on same-repo PRs; fork
+      # PRs skip via --skip=sign below).
+      - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+
+      # syft for CycloneDX SBOM emission per archive.
+      - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+
+      # Same-repo PR: full snapshot including sign + SBOM.
+      # Fork PR: skip sign (no OIDC token); SBOM still works.
+      - name: Goreleaser snapshot (same-repo)
+        if: github.event.pull_request.head.repo.fork == false
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --snapshot --skip=publish --clean
+          workdir: specter
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Goreleaser snapshot (fork PR — skip sign)
+        if: github.event.pull_request.head.repo.fork == true
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --snapshot --skip=publish --skip=sign --clean
+          workdir: specter
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Verify the artifacts the production pipeline depends on were
+      # actually produced. Catches landmines #1 (template field crash)
+      # and #3/#4 (cosign flag / bundle format) from v0.12.0.
+      #
+      # Sign verification only runs on same-repo PRs because fork PRs
+      # skip signing.
+      - name: Verify snapshot outputs
+        run: |
+          set -euo pipefail
+
+          # Archives: 5 platforms (linux/darwin × amd64/arm64 + windows amd64)
+          archive_count=$(ls dist/specter_*.tar.gz dist/specter_*.zip 2>/dev/null | wc -l)
+          if [ "$archive_count" -lt 5 ]; then
+            echo "::error::expected at least 5 archives, found $archive_count"
+            ls -la dist/
+            exit 1
+          fi
+          echo "archives: $archive_count"
+
+          # SBOMs: one per archive
+          sbom_count=$(ls dist/*.sbom.json 2>/dev/null | wc -l)
+          if [ "$sbom_count" -lt 5 ]; then
+            echo "::error::expected at least 5 SBOMs, found $sbom_count"
+            ls -la dist/*.sbom.json 2>/dev/null || true
+            exit 1
+          fi
+          echo "SBOMs: $sbom_count"
+
+          # Cosign signature on checksums.txt (same-repo PRs only).
+          if [ "${{ github.event.pull_request.head.repo.fork }}" = "false" ]; then
+            if [ ! -f dist/checksums.txt.sigstore.json ]; then
+              echo "::error::expected dist/checksums.txt.sigstore.json (cosign sigstore bundle)"
+              ls -la dist/ | grep -i sig || true
+              exit 1
+            fi
+            echo "cosign sigstore bundle: present"
+          else
+            echo "cosign verification skipped (fork PR)"
+          fi
