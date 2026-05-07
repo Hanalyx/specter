@@ -14,7 +14,7 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 Apply known-safe rewrites to spec files that fail parse against the current schema. v0.12 ships one rewrite (`strip-trust-level` for the v0.6.5-removed field) and the table is open for additions. Manifest canonicalization (`add-schema-version`) prepends `schema_version: 1` to a pre-v0.12 `specter.yaml`.
 
-`--fix` is gated as **BETA** until line-targeted deletion lands (BACKLOG cycle 6). The gate emits a `[BETA]` warning naming the known string-literal corruption gap, prompts `Continue? (y/N): ` on stdin, and proceeds only on affirmative input. `--yes` (or `-y`) bypasses for CI; `--dry-run` is exempt (preview mode is read-only). Non-TTY stdin without `--yes` is refused via TTY detection (`os.Stdin.Stat()` character-device check) BEFORE stdin content is read — `echo y | specter doctor --fix` cannot bypass the gate.
+`--fix` is gated as **BETA** because the regex deletion does not yet handle string-literal mentions of the deprecated field. The gate emits a `[BETA]` warning naming the known corruption gap, prompts `Continue? (y/N): ` on stdin, and proceeds only on affirmative input. `--yes` (or `-y`) bypasses for CI; `--dry-run` is exempt (preview mode is read-only). Non-TTY stdin without `--yes` is refused via TTY detection (`os.Stdin.Stat()` character-device check) BEFORE stdin content is read — `echo y | specter doctor --fix` cannot bypass the gate.
 
 The rewrite engine refuses structurally unsafe shapes via yaml.v3 inspection: block scalars, sequences, mapping values, anchored values, multi-line quoted scalars, and folded plain scalars all fall into the `needs-manual-edit` summary block rather than producing corrupted output.
 
@@ -371,10 +371,6 @@ v0.10.0 shipped `specter coverage --strict`, but every foundational guide still 
 - `vscode-extension/walkthrough/step3.md` — onboarding walkthrough updated.
 - All four docs cross-link into `TEST_ANNOTATION_REFERENCE.md` rather than duplicating the rules.
 
-### BACKLOG
-
-- Adds v0.11 bullet **Python Convention A gap** — pytest function names can't contain `/` or `:`, so the natural Convention A form doesn't match the ingest regex. Documents two candidate resolutions: docs-only (Python uses Convention B) or regex extension. Blocked on a design call.
-
 ### No code changes
 
 CLI and extension runtime unchanged from v0.10.0. This is a docs release — the version bump exists to mark "v0.10.0 shipped with misleading guidance, v0.10.1 corrects it." Extension version bumped from 0.10.0 to 0.10.1 to match.
@@ -509,7 +505,7 @@ All 14 specs dogfood at 100% AC coverage. 209 TypeScript tests pass. All Go test
 
 ### Deferred to v0.10
 
-From the audit's MEDIUM tier: HTTPS-redirect validation in `httpsGet`, cache-directory permission hardening (`mode: 0o700`), subprocess `maxBuffer` caps, tar-slip defenses via `node-tar`, YAML-bomb anchor limits, snake/camel conversion for `check --json` and `parse --json`, TOCTOU race on cache-path `exists()` check. Full list in BACKLOG.md.
+From the audit's MEDIUM tier: HTTPS-redirect validation in `httpsGet`, cache-directory permission hardening (`mode: 0o700`), subprocess `maxBuffer` caps, tar-slip defenses via `node-tar`, YAML-bomb anchor limits, snake/camel conversion for `check --json` and `parse --json`, TOCTOU race on cache-path `exists()` check.
 
 ---
 
@@ -655,7 +651,7 @@ Followed the project's own SDD workflow: plan → specs first → failing tests 
 
 ### Docs
 
-- **`docs/RELEASE_PLAN.md` archived** to `docs/archive/RELEASE_PLAN.md` with a prominent "stale" notice. Current release status → `CHANGELOG.md`, forward roadmap → `BACKLOG.md`.
+- **`docs/RELEASE_PLAN.md` archived** to `docs/archive/RELEASE_PLAN.md` with a prominent "stale" notice. Current release status → `CHANGELOG.md`.
 
 ---
 
@@ -685,7 +681,6 @@ Followed the project's own SDD workflow: plan → specs first → failing tests 
 
 - `SPEC_SCHEMA_REFERENCE.md` — context extension escape hatch removed from docs; replaced with "propose a new schema field."
 - `GOTCHAS.md` #14 added: documents the silent-context-drop trap and its v0.7.0 fix.
-- `BACKLOG.md` introduced with v0.8.0 annotation-based source-file tracking and deferred items.
 
 ### Migration notes
 

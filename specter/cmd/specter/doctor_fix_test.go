@@ -343,8 +343,8 @@ func TestDoctor_Fix_BetaGate_YesProceeds(t *testing.T) {
 			if !strings.Contains(stderr.String(), "[BETA]") {
 				t.Errorf("expected [BETA] warning in stderr; got:\n%s", stderr.String())
 			}
-			if !strings.Contains(strings.ToLower(stderr.String()), "cycle 6") {
-				t.Errorf("expected warning to name cycle 6 known limitation; got:\n%s", stderr.String())
+			if !strings.Contains(strings.ToLower(stderr.String()), "known limitation") {
+				t.Errorf("expected warning to name the known limitation; got:\n%s", stderr.String())
 			}
 			if !strings.Contains(stderr.String(), "Continue? (y/N)") {
 				t.Errorf("expected `Continue? (y/N)` prompt; got:\n%s", stderr.String())

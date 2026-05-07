@@ -1,9 +1,8 @@
 // Per-tool AI instruction templates for `init --ai <tool>`.
 //
-// Body content reflects the v0.11 design synthesis (see specter/BACKLOG.md
-// "init --ai <tool>" entry): preflight self-check at the top, Convention A
-// example, validation gate, on-demand `specter explain` references, no spec
-// content dumped (the AI asks Specter for it on demand).
+// Body content reflects the v0.11 design synthesis: preflight self-check at
+// the top, Convention A example, validation gate, on-demand `specter explain`
+// references, no spec content dumped (the AI asks Specter for it on demand).
 //
 // @spec spec-manifest
 package manifest

@@ -38,7 +38,7 @@ The canonical schema does not currently express multi-file source provenance. Th
 - **Hand-edit `tags` workaround.** Status quo. Functional but opaque; tags isn't designed for URIs.
 - **`specter migrate --from=jwtms` shape translator (GH #96).** When the migration tool lands, it absorbs JWTMS's flatter `spec.source_files` shape on import without relaxing the canonical schema. The asymmetry stays; the migration tool absorbs the cost.
 - **`specter reverse` extension.** If `reverse` itself produces drafts where multi-source-file output is the natural shape, that's a different design call — but it hasn't surfaced.
-- **Generalize `generated_from` to `provenance`.** Discussed in BACKLOG under "Unscheduled — design work needed first". Larger redesign; not the right scope for this request.
+- **Generalize `generated_from` to `provenance`.** Open design topic; larger redesign, not the right scope for this request.
 
 ## 7. Decision
 
@@ -54,4 +54,4 @@ REJECT under §3 and §6. The singular/plural asymmetry is a real shape concern 
 
 - GH issue: https://github.com/Hanalyx/specter/issues/97 (closed not-planned)
 - Related SSRBs: SSRB-096 (when GH #96 lands)
-- Related specs/code: `internal/parser/spec-schema.json` (GeneratedFrom shape), `BACKLOG.md` "Generalize `generated_from` to `provenance`"
+- Related specs/code: `internal/parser/spec-schema.json` (GeneratedFrom shape)
