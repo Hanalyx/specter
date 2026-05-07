@@ -26,7 +26,7 @@ Expand-Archive specter.zip -DestinationPath "$env:USERPROFILE\.specter\bin"
 [Environment]::SetEnvironmentVariable("Path", "$env:Path;$env:USERPROFILE\.specter\bin", "User")
 ```
 
-For `.deb`, `.rpm`, and other install methods see the [root README](../README.md#install).
+For `.deb`, `.rpm`, and other install methods see the [Specter README](../README.md#install).
 
 ---
 
@@ -121,6 +121,8 @@ def test_create_user_returns_201(): ...
 // @ac AC-01
 func TestCreateUser_Returns201(t *testing.T) { ... }
 ```
+
+Source comments are enough for `specter coverage`. For `specter coverage --strict`, also expose `user-create/AC-01` in the test title or print `@spec` and `@ac` during the test before running `specter ingest`.
 
 ---
 

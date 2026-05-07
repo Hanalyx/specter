@@ -131,9 +131,9 @@ The annotations are plain comments — no build step, no framework, works in any
 
 | Setting | Default | Description |
 |---|---|---|
-| `specter.binaryPath` | `""` | Path to the specter binary. Leave empty to auto-resolve. |
+| `specter.binaryPath` | `""` | Path to the specter binary. Leave empty to auto-resolve. Machine-scoped; workspace settings are ignored. |
 | `specter.autoDownload` | `true` | Download specter automatically if not found. |
-| `specter.version` | `"latest"` | Binary version to download. |
+| `specter.version` | `""` | Binary version to download. Empty means "match the extension version"; `latest` tracks the newest GitHub release. Machine-scoped; workspace settings are ignored. |
 | `specter.showInsightsOnFailure` | `true` | Open Insights panel automatically when a spec fails threshold. |
 
 ---
@@ -146,7 +146,6 @@ The annotations are plain comments — no build step, no framework, works in any
 | `Specter: Copy Spec Context for AI` | Copy current spec as a structured AI prompt preamble |
 | `Specter: Run Sync` | Re-run the full coverage pipeline manually |
 | `Specter: Run Reverse Compiler` | Generate draft specs from your source code |
-| `Specter: Open QuickStart` | Open the bundled QuickStart doc in VS Code |
 | `Specter: Add CLI to Shell PATH` | Append `~/.specter/bin` to your shell rc file so `specter` works in external terminals |
 | `Specter: Re-download CLI` | Force a fresh download of the CLI binary (recovery if the cached one is broken) |
 | `Specter: Show Output Log` | Open the Specter output channel with download/coverage error details |

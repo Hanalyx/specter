@@ -22,6 +22,24 @@ A micro-spec also includes **acceptance criteria** -- testable conditions that p
 
 ---
 
+## What kinds of specs can I write with Specter?
+
+Specter is content-agnostic. Anything that fits the spec shape -- context, objective, constraints, acceptance criteria -- is a valid spec. The pipeline (parse -> resolve -> check -> coverage -> sync) does not inspect what category of contract you are describing.
+
+Examples that all live in `.spec.yaml`:
+
+- **Behavioral contracts** -- runtime behavior of an endpoint, a background job, a state machine.
+- **Data invariants** -- "every payment has a tenant_id," "PII fields are encrypted at rest."
+- **Security and policy** -- authorization rules, audit logging, compliance constraints.
+- **Schema and structural contracts** -- the shape of a configuration file, a webhook payload, a registry entry format.
+- **Architecture rules** -- "service A must not call service B directly."
+
+The structure stays the same in every case: constraints define the rules, ACs define how to verify them, tests provide mechanical proof. Specter does not need to know whether the constraint is a runtime invariant or a policy -- only that it has an ID, a description, and an AC that references it.
+
+A practical implication: when your contract has *load-bearing data* (an exemptions list, a permission catalog, a feature-flag table), keep the data in a sidecar file and let the spec describe the format the entries must satisfy. The spec is the type definition; the data is the catalog. Specter validates the type definition; your test suite or lint rule validates the catalog against it.
+
+---
+
 ## Why YAML?
 
 Specter uses YAML as the spec format for several reasons:
@@ -38,7 +56,7 @@ Specter uses YAML as the spec format for several reasons:
 
 OpenAPI describes **API surfaces** -- endpoints, request/response schemas, status codes. It answers "what shape does the data have?"
 
-Specter describes **behavioral contracts** -- context, intent, constraints, and acceptance criteria for any component in a system, not just APIs. It answers "what should this component do, why, and how do we verify it?"
+Specter describes **component contracts** -- context, intent, constraints, and acceptance criteria for any component in a system, not just APIs. The contract can be runtime behavior, data invariants, security policy, schema constraints, or any other rule a component must satisfy. It answers "what must this component do or guarantee, why, and how do we verify it?"
 
 Key differences:
 
@@ -47,7 +65,7 @@ Key differences:
 - OpenAPI does not model dependencies between specifications. Specter builds a dependency graph (`depends_on`) and detects circular dependencies, version mismatches, and structural conflicts across specs.
 - Specter specs include acceptance criteria with explicit traceability to constraints. OpenAPI has no equivalent.
 
-The two are complementary. An API spec in Specter might reference an OpenAPI schema for the data format while adding behavioral constraints and acceptance criteria on top.
+The two are complementary. An API spec in Specter might reference an OpenAPI schema for the data format while adding constraints and acceptance criteria on top.
 
 ---
 
@@ -75,7 +93,7 @@ Start small and work outward:
 1. **Generate draft specs from existing code.** Run `specter reverse src/ --output specs/` to extract draft specs from TypeScript, Python, or Go source files. Specter analyzes validation schemas, test assertions, and function signatures to produce `.spec.yaml` drafts.
 2. **Review and complete the drafts.** The reverse compiler extracts structure but not intent. Review each generated spec, complete any ACs marked as gaps, and add missing constraints.
 3. **Annotate existing tests.** Add `@spec` and `@ac` annotations to tests that cover the specified behavior. Run `specter coverage` to see where gaps remain.
-4. **Integrate into CI.** Add `specter sync` to your CI pipeline. It exits 0 only when all Tier 1/2 specs meet their coverage thresholds.
+4. **Integrate into CI.** Add `specter sync` to your CI pipeline. It exits 0 only when all discovered specs meet their configured thresholds.
 5. **Expand incrementally.** Add specs for new features as they are built. Over time, spec coverage grows organically.
 
 Use `specter doctor` to check project health at any time. It runs all pre-flight checks and tells you exactly what needs attention before running the full pipeline.
@@ -161,7 +179,7 @@ Use `specter sync` as your CI gate. It runs the full pipeline (parse → resolve
 `specter sync` exits `0` only when:
 - All spec files parse without schema errors
 - The dependency graph has no cycles or broken references
-- No Tier 1/2 specs have orphan constraints (by default; configurable with `--strict`)
+- No check-phase errors; warnings fail only under `--strict` or `settings.strict: true`
 - All Tier 1 specs have 100% AC coverage, all Tier 2 specs have 80%, all Tier 3 specs have 50%
 
 The exit code is `0` on success and `1` on failure, so it integrates with any CI system that checks exit codes. You can also run individual pipeline stages (`specter parse`, `specter resolve`, `specter check`, `specter coverage`) for more granular control.
@@ -170,7 +188,7 @@ The exit code is `0` on success and `1` on failure, so it integrates with any CI
 
 ## What languages does Specter support?
 
-The `.spec.yaml` format is **language-agnostic**. Specs describe behavioral contracts, not implementation details. You can write specs for systems built in any language.
+The `.spec.yaml` format is **language-agnostic**. Specs describe component contracts -- runtime behavior, data invariants, schemas, policies -- not implementation details. You can write specs for systems built in any language.
 
 The toolchain is built in Go and distributed as a single binary with zero runtime dependencies.
 

@@ -142,7 +142,7 @@ specs/
   ...
 ```
 
-Each spec reflects the structure Specter found in your code — routes, models, validation rules, constraints. Every spec will have `gap: true` at this stage. That is expected.
+Each spec reflects the structure Specter found in your code: routes, models, validation rules, and constraints. Some acceptance criteria may have `gap: true` at this stage. That is expected.
 
 > **`gap: true` means:** Specter extracted the structure but could not infer the *intent*. A human (or AI) needs to complete it before it becomes authoritative.
 
@@ -154,19 +154,31 @@ specter init
 
 Creates `specter.yaml`:
 ```yaml
-specs_dir: specs
-tests_dir: .
-exclude:
-  - node_modules
-  - .git
-  - dist
-  - .next
+schema_version: 1
+system:
+  name: my-project
+  tier: 2
+domains:
+  default:
+    tier: 2
+    description: Add spec IDs here as you create them. See the spec-manifest spec for the schema.
+settings:
+  specs_dir: specs
+  coverage:
+    tier1: 100
+    tier2: 80
+    tier3: 50
+  exclude:
+    - node_modules
+    - dist
+    - .git
+    - vendor
 ```
 
 This file is required for:
 - The VS Code extension to activate
 - `specter sync` to know where to look
-- The `--exclude` patterns to work
+- Discovery settings and coverage thresholds
 
 Commit this file. It belongs in source control.
 
@@ -200,7 +212,6 @@ spec:
   version: "1.0.0"
   status: draft
   tier: 2
-  gap: true
   context:
     system: User service
     description: "Handles user account creation"
@@ -212,8 +223,10 @@ spec:
   acceptance_criteria:
     - id: AC-01
       description: ""
+      gap: true
     - id: AC-02
       description: ""
+      gap: true
 ```
 
 **AI prompt — fill the gaps:**
@@ -297,7 +310,7 @@ Specter reads test annotations from two places. Both matter.
 1. **Source comments**: `// @spec <spec-id>` and `// @ac AC-NN` above the test function. Read by `specter coverage`.
 2. **Runner-visible annotation**: the `<spec-id>/AC-NN` pair in the test title, or a `console.log('// @spec ...')` inside the test body. Read by `specter ingest` into `.specter-results.json`. Required by `specter coverage --strict`.
 
-Source comments alone: `coverage` counts it, `--strict` demotes it. Write both forms and both commands work.
+Source comments alone: `coverage` counts it, `--strict` demotes it. Write both forms so both commands work.
 
 Full rules, per-language examples, parameterized tests, migration recipe, and troubleshooting: see [`TEST_ANNOTATION_REFERENCE.md`](TEST_ANNOTATION_REFERENCE.md).
 
@@ -340,7 +353,8 @@ Rules:
 1. One test per AC.
 2. The test title carries [spec-id/AC-NN]:
    TypeScript:  it('[spec-id/AC-NN] brief description', () => { ... })
-   Python:      def test_spec_id_AC_NN_brief(...): ...
+   Python:      use a runtime print/log form; pytest function names do not
+                contain the `/` or `:` separator that ingest requires
    Go:          t.Run("spec-id/AC-NN brief description", ...)
    AC-NN is zero-padded: AC-01, not AC-1.
 3. Above each test, add:
@@ -377,11 +391,13 @@ test('[user-create/AC-02] invalid email format returns 400', async () => {
 });
 ```
 
-**Python/pytest** — Python function names can't contain `/` or `[`. Encode the pair in the function name. `specter ingest` reads the function name as the test title.
+**Python/pytest** — Python function names cannot contain `/` or `:`. Use runtime output so `specter ingest` can read the pair from JUnit `<system-out>`.
 ```python
 # @spec user-create
 # @ac AC-01
-def test_user_create_AC_01_valid_registration_returns_201(client):
+def test_valid_registration_returns_201(client):
+    print('// @spec user-create')
+    print('// @ac AC-01')
     response = client.post('/users', json={
         'email': 'alice@example.com',
         'password': 'correct-horse-battery'
@@ -391,12 +407,20 @@ def test_user_create_AC_01_valid_registration_returns_201(client):
 
 # @spec user-create
 # @ac AC-02
-def test_user_create_AC_02_invalid_email_returns_400(client):
+def test_invalid_email_returns_400(client):
+    print('// @spec user-create')
+    print('// @ac AC-02')
     response = client.post('/users', json={
         'email': 'not-an-email',
         'password': 'correct-horse-battery'
     })
     assert response.status_code == 400
+```
+
+Run pytest with JUnit logging enabled:
+
+```bash
+pytest --junitxml=test-results.xml -o junit_logging=all -o junit_log_passing_tests=True
 ```
 
 **Go** — use `t.Run` so each AC has its own runner-visible subtest title. `specter ingest` reads subtest names from `go test -json` output.
@@ -497,7 +521,7 @@ spec:
   status: approved    # ← was draft
 ```
 
-`Approved` specs are enforced more strictly by CI. Constraints become `error` by default and coverage thresholds are non-negotiable.
+`approved` means the team has accepted the spec as authoritative. Specter checks `draft` and `review` specs by default too. For release gates, set `settings.warn_on_draft: true` and `settings.strict: true` so drafts and warnings block the pipeline.
 
 **AI prompt — review a spec before promotion:**
 
@@ -525,7 +549,7 @@ Flag any issues. If it looks good, say so and I'll promote it.
 | `Specter: no specter.yaml found` | Manifest missing | Run `specter init` |
 | `error [required] spec/id` | Missing required field | Add the field; see [Schema Reference](SPEC_SCHEMA_REFERENCE.md) |
 | `error [pattern] spec/constraints/0/id` | Wrong ID format | Must be `C-01`, `C-02`, etc. |
-| AC shows 0% after annotating tests | Annotation not found | Check `@spec` ID matches `spec.id` exactly; check `tests_dir` in `specter.yaml` |
+| AC shows 0% after annotating tests | Annotation not found | Check `@spec` ID matches `spec.id` exactly; check `settings.tests_glob` or pass `--tests <glob>` |
 | `specter reverse` generates too many specs | Large codebase | Use `--exclude` flag or add patterns to `specter.yaml` |
 | Coverage drops after refactor | Tests deleted | Re-annotate new tests; run `specter coverage` to find the gap |
 

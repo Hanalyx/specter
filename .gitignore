@@ -2,6 +2,10 @@
 CLAUDE.md
 **/CLAUDE.md
 
+# Codex / agent instructions (local, not shipped)
+AGENTS.md
+**/AGENTS.md
+
 # Archived Node.js implementation (kept locally for reference)
 specter-node-archive/
 
