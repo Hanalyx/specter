@@ -76,7 +76,7 @@ sboms:
     args:
       - "$artifact"
       - "--output"
-      - "cyclonedx-json=$document"
+      - "cyclonedx-json={{ .Document }}"
 
 changelog:
   sort: asc
