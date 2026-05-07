@@ -4,6 +4,81 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 ---
 
+## v0.12.1 — 2026-05-07
+
+**Theme: release-infra hardening + user-facing docs parity.**
+
+Patch cycle. No new CLI features. The v0.12.0 release surfaced four release-time landmines (cosign bundle format, `release.yml` `branches` filter excluding tag refs, `--new-bundle-format=false` silently ignored, goreleaser template field crash) that cumulatively cost ~1 day of post-tag iteration. v0.12.1 ships the pre-flight gate that catches that class pre-merge, plus brings user-facing docs into parity with v0.10–v0.12 shipped behavior.
+
+### Added
+
+#### Release-pipeline pre-flight gate
+
+New CI workflow at `.github/workflows/release-snapshot.yml`. Triggers on PRs that touch release infrastructure (`release*.yml`, `.goreleaser.yml`, `Makefile`, `go.mod`, `go.sum`) and runs `goreleaser release --snapshot --skip=publish --clean` against the PR head. Catches:
+
+- Goreleaser config crashes (template-field errors, malformed `signs:` / `sboms:` blocks).
+- Cosign flag and bundle-format regressions (the cosign step actually executes on same-repo PRs).
+- Missing or malformed artifacts (verify-outputs step asserts ≥5 archives, ≥5 SBOMs, and the `dist/checksums.txt.sigstore.json` cosign bundle on same-repo PRs).
+
+Fork-PR handling: cosign keyless OIDC tokens are not issued for fork-PR runs, so fork PRs run with `--skip=sign`. Same-repo PRs run the full snapshot. This catches goreleaser config bugs from any contributor while accepting that cosign-flag changes are verified only on same-repo PRs (which is where signing changes actually land — fork PRs cannot push tags).
+
+All actions SHA-pinned to the same versions as the production `release.yml` for consistency. Concurrency guard cancels superseded runs on the same PR.
+
+### Documentation
+
+#### v0.10–v0.12 user-facing docs parity
+
+Six classes of doc-vs-code mismatches corrected in tracked user docs:
+
+- **Status lifecycle**: `SPEC_SCHEMA_REFERENCE.md` and `FAQ.md` no longer claim "only `approved` specs are enforced by sync." All discovered specs are checked; `settings.warn_on_draft` + `settings.strict` gate release posture.
+- **Approval gate**: `SPEC_SCHEMA_REFERENCE.md` now reflects the v0.11.1 enforcement contract — metadata under threshold, demoted under `strictness: zero-tolerance`.
+- **CLI catch-up**: `CLI_REFERENCE.md` now documents `check --test`, `coverage --strictness/--quiet`, `init --install-hook`, `init --ai`, `doctor --fix/--dry-run/--yes`, and `ingest --junit/--go-test` glob + repeated-flag support — flags that shipped in v0.10–v0.12 but the docs lagged. Manifest example updated to v0.11+ shape (`schema_version`, nested `system`, `domains`, `settings.coverage`).
+- **Test annotation realism for Python**: `GETTING_STARTED.md` teaches the runtime `print('// @spec ...')` form for pytest (function names cannot contain `/` or `:`) and shows the `pytest --junitxml -o junit_logging=all` invocation `ingest` actually requires.
+- **Content-agnostic positioning**: README + FAQ frame `.spec.yaml` as a component-contract format covering behavior, data invariants, security, schema, and architecture rules — not API behavior alone.
+- **Install snippet correctness**: root README now detects OS+arch and resolves the latest release tag instead of always grabbing `specter_Linux_x86_64.tar.gz`.
+
+VS Code README clarifies `specter.binaryPath` and `specter.version` settings as machine-scoped per the v0.11 hardening; drops the de-listed `Open QuickStart` command row.
+
+#### Reference-doc style discipline
+
+Embedded `specter explain annotation` reference and the public `TEST_ANNOTATION_REFERENCE.md` no longer carry "is planned for a future release" promises. Reference docs state current behavior; planning lives elsewhere.
+
+### Internal
+
+#### Planning surface moved local-only
+
+`BACKLOG.md` and `docs/roadmap/` (added this cycle) become maintainer-local working files. `CHANGELOG.md` (history), `docs/ssrb/` (formal schema decisions), `docs/CLI_REFERENCE.md` and `docs/SPEC_SCHEMA_REFERENCE.md` (reference docs), and `docs/TRIAGE_DISCIPLINE.md` (process) remain public. Forward planning now follows a 1-feature-per-minor cadence through v1.0.0 (the minor number rule applies pre-1.0 only; post-1.0 cadence is reactive).
+
+22 tracked-file references to `BACKLOG.md` scrubbed across `CONTRIBUTING.md`, the embedded `specter explain` reference, three SSRBs, four `internal/` Go files, three `.spec.yaml` files, `cmd/specter/main.go` stderr text, and others. `CONTRIBUTING.md` now points contributors at GitHub's branch list (`gh api repos/Hanalyx/specter/branches`) for finding the active `release/*` branch.
+
+Two stale planning docs deleted: `V0_11_PLAN.md` and `V0_12_PYTHON_FOLLOWUP_PLAN.md` (both explicitly marked themselves as temporary working documents to delete after their cycles shipped).
+
+#### SSRB-101 — source-file governance evaluation
+
+Combined evaluation of two competing proposals for "how does Specter know which source files a spec governs" — annotation-based (extend `@spec` to source files) and declarative (`governs: [string]` schema field). Status: `NEEDS-DESIGN`. Decision target: end of v0.16 cycle, with field evidence accumulated during v0.13–v0.16.
+
+### Fixed
+
+#### Spec narrative descriptions
+
+`spec-coverage` 1.11.0 (one description), `spec-doctor` C-16/v1.7.0 (two descriptions), `spec-manifest` C-27/v1.7.0 (two descriptions) updated to drop external planning-doc references in favor of inline rationale. No AC or constraint shape changes; no spec version bump.
+
+#### `internal/migrate/rewrite.go` package comment
+
+Comment said "C-10" should say "C-11" — the package implements the rewrite-table constraint, not the discovery-fallback one. One-character correction.
+
+#### `doctor --fix` BETA warning text
+
+Stderr text in `cmd/specter/main.go` no longer references an external planning doc. Operators see the same safety-relevant content (known string-literal corruption gap, recommendation to commit before running, `--dry-run` preview path) without an out-of-band pointer.
+
+### Release notes
+
+CLI behavior unchanged from v0.12.0. No new flags, no new commands, no schema changes. The pre-flight workflow runs only on PRs touching release infrastructure (no impact on regular feature/fix PRs). The VS Code extension VSIX is bumped to 0.12.1 for version alignment; no extension behavior changes.
+
+The pre-flight gate's design was specified in BACKLOG before becoming local-only; the workflow file is the canonical artifact. A test PR that intentionally regresses `.goreleaser.yml` confirms the gate fails on bad config.
+
+---
+
 ## v0.12.0 — 2026-04-29
 
 **Theme: migration tooling + supply-chain hardening.** v0.12 ships the migration toolchain parked since v0.10 (`doctor --fix`, `schema_version` manifest field, VS Code quick-fix) so projects upgrading from older Specter releases can repair schema drift in-place. Paired with the M-tier security hardening bundle (size caps, webview CSP, SHA-pinned actions, sigstore signing, CycloneDX SBOM) so the supply chain catches up with the feature surface.
