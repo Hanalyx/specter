@@ -180,7 +180,7 @@ spec:
       enforcement: error
 
     - id: C-27
-      description: "The Manifest struct MUST accept an optional top-level integer field `schema_version`. ParseManifest accepts YAML with or without the field; absence defaults to 1. Rationale: records the spec-schema draft this project commits to. Lives at the project level (one per repository) rather than on every spec — specs stay content-focused. During v0.x the value is a placeholder (always 1; pre-1.0 schema is draft per BACKLOG `Schema stability policy`). Locks to the canonical v1 shape at Specter v1.0.0, after which breaking schema changes bump the integer and require a doctor --fix migration path. The key MUST be added to the validTopLevelKeys list so v0.11's unknown-key rejection (C-26) accepts it."
+      description: "The Manifest struct MUST accept an optional top-level integer field `schema_version`. ParseManifest accepts YAML with or without the field; absence defaults to 1. Rationale: records the spec-schema draft this project commits to. Lives at the project level (one per repository) rather than on every spec — specs stay content-focused. During v0.x the value is a placeholder (always 1; the schema is draft pre-1.0). Locks to the canonical v1 shape at Specter v1.0.0, after which breaking schema changes bump the integer and require a doctor --fix migration path. The key MUST be added to the validTopLevelKeys list so v0.11's unknown-key rejection (C-26) accepts it."
       type: technical
       enforcement: error
 
@@ -652,7 +652,7 @@ spec:
       date: "2026-04-27"
       author: "specter-team"
       type: minor
-      description: "v0.12 — schema_version field. Add C-27/AC-41 for the optional top-level `schema_version` integer (defaults to 1; pre-1.0 placeholder per BACKLOG `Schema stability policy`). Add C-28/AC-42/43 for init scaffold writing schema_version: 1 as the first field, and refresh preserving any existing value. Activates the schema-stability policy when paired with `doctor --fix` (which uses the value to target known schema versions for rewrite). Also extends validTopLevelKeys so v0.11's unknown-key rejection accepts the new key."
+      description: "v0.12 — schema_version field. Add C-27/AC-41 for the optional top-level `schema_version` integer (defaults to 1; pre-1.0 placeholder while the schema is draft). Add C-28/AC-42/43 for init scaffold writing schema_version: 1 as the first field, and refresh preserving any existing value. Activates the schema-stability policy when paired with `doctor --fix` (which uses the value to target known schema versions for rewrite). Also extends validTopLevelKeys so v0.11's unknown-key rejection accepts the new key."
     - version: "1.8.0"
       date: "2026-04-25"
       author: "specter-team"

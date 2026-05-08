@@ -60,4 +60,4 @@ REJECT per §3 and §5. The pain is migration-only (greenfield projects don't hi
 
 - GH issue: https://github.com/Hanalyx/specter/issues/99 (closed not-planned)
 - Related SSRBs: SSRB-096 (when GH #96 lands)
-- Related specs/code: `spec-coverage` v1.9.0+ (mechanical strict mode), `BACKLOG.md` v0.10 design call
+- Related specs/code: `spec-coverage` v1.9.0+ (mechanical strict mode)

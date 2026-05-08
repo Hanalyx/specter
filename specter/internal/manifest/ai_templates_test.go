@@ -11,7 +11,7 @@ import (
 
 // Body content checks: the v0.11 instruction template must include the
 // preflight self-check, Convention A example, validation gate, and on-demand
-// explain references — the four load-bearing pieces from the BACKLOG synthesis.
+// explain references — the four load-bearing pieces from the v0.11 design.
 func TestAIInstructionBody_ContainsPreflightAndExamples(t *testing.T) {
 	t.Run("spec-manifest/AC-30 instruction body contains preflight and convention A", func(t *testing.T) {
 		body := AIInstructionBody()

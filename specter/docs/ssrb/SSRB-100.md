@@ -60,4 +60,4 @@ REJECT on solution shape, not problem validity. The cross-cutting pattern is rea
 ## 9. References
 
 - GH issue: https://github.com/Hanalyx/specter/issues/100 (closed not-planned)
-- Related specs/code: `BACKLOG.md` "Unscheduled — design work needed first" (annotation-based source-file tracking, generalized provenance)
+- Related design topics: annotation-based source-file tracking; generalized provenance — both open and unscheduled.
