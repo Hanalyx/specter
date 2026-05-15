@@ -1,6 +1,6 @@
 spec:
   id: spec-sync
-  version: "1.1.0"
+  version: "1.2.0"
   status: approved
   tier: 2
 
@@ -29,6 +29,9 @@ spec:
         - "Run spec-coverage on specs + test files"
         - "Unified exit code (0 = pass, 1 = fail)"
         - "Summary report of all phases"
+        - "Strictness routing: `sync --strictness <level>` matches `coverage --strictness <level>` semantics for the coverage phase; `sync --strict` is an alias for `--strictness zero-tolerance` retained for backward compatibility"
+        - "Sync's coverage phase delegates to the strict coverage path (`BuildCoverageReportStrict`), not the weaker `BuildCoverageReportWithResults`; ACs whose annotated tests did not pass (per `.specter-results.json`) demote, matching `coverage --strict` exactly"
+        - "Missing `.specter-results.json` under strict modes (`threshold` or `zero-tolerance`) fails with the same error message as `coverage --strict`"
       excludes:
         - "Git diff analysis (future: only check changed specs)"
         - "PR comment generation"
@@ -57,6 +60,21 @@ spec:
 
     - id: C-05
       description: "MUST support --only <phase> flag that runs prerequisite phases silently (without halting on their failures) then runs the target phase; exit code is based solely on the target phase result"
+      type: technical
+      enforcement: error
+
+    - id: C-06
+      description: "MUST support `--strictness <level>` flag accepting `annotation` | `threshold` | `zero-tolerance`. Semantics match `coverage --strictness` exactly: `annotation` counts source-comment @ac as covered (no test-result enforcement); `threshold` requires annotated ACs to have passing test results AND tier thresholds met; `zero-tolerance` requires every annotated AC's test to pass regardless of tier. The legacy `--strict` boolean flag remains as an alias for `--strictness zero-tolerance` for backward compatibility. When neither flag is provided, the strictness comes from `settings.strictness` in the manifest (default: `annotation`). When both `--strict` and `--strictness` are passed, `--strictness` wins."
+      type: technical
+      enforcement: error
+
+    - id: C-07
+      description: "Under any strict mode (`threshold` or `zero-tolerance`), the coverage phase MUST delegate to `BuildCoverageReportStrict` — the same path `coverage --strictness <level>` uses — not to the weaker `BuildCoverageReportWithResults` path. A workspace whose annotated ACs have failing or missing test results MUST demote in `sync`'s coverage report identically to `coverage --strictness <level>`'s report."
+      type: technical
+      enforcement: error
+
+    - id: C-08
+      description: "Under any strict mode, if `.specter-results.json` is missing, `sync`'s coverage phase MUST fail with the SAME error message as `coverage --strict` emits in the same condition. The message MUST direct the operator to run `specter ingest` first. Under `annotation` mode (or when no strict flag is set), missing results is NOT an error — the manifest-level annotation-counting path proceeds."
       type: technical
       enforcement: error
 
@@ -122,7 +140,58 @@ spec:
       references_constraints: ["C-05"]
       priority: high
 
+    - id: AC-08
+      description: "`specter sync --strictness <level>` is accepted for level ∈ {annotation, threshold, zero-tolerance}. The coverage phase uses that strictness. `sync --strict` is accepted and treated as `--strictness zero-tolerance`. When both flags are passed, `--strictness` wins."
+      inputs:
+        flags_tested: ["--strictness annotation", "--strictness threshold", "--strictness zero-tolerance", "--strict", "--strict --strictness threshold"]
+      expected_output:
+        annotation: { coverage_path: "BuildCoverageReportWithResults_or_annotation_only", strict_demotion: false }
+        threshold: { coverage_path: "BuildCoverageReportStrict", strict_demotion: true }
+        zero_tolerance: { coverage_path: "BuildCoverageReportStrict", strict_demotion: true, ignores_tier_thresholds: true }
+        legacy_strict_alias: "treated as zero-tolerance"
+        both_flags: "--strictness wins"
+      references_constraints: ["C-06"]
+      priority: critical
+
+    - id: AC-09
+      description: "Under `--strictness threshold` or `--strictness zero-tolerance`, sync's coverage phase produces a report identical to `coverage --strictness <level>`'s report — same demotions, same exit semantics, same per-AC status."
+      inputs:
+        workspace: "annotated ACs with mixed pass/fail/missing test results in .specter-results.json"
+        commands_compared: ["specter coverage --strictness zero-tolerance", "specter sync --strictness zero-tolerance"]
+      expected_output:
+        per_ac_status_matches: true
+        coverage_report_identical: true
+      references_constraints: ["C-07"]
+      priority: critical
+
+    - id: AC-10
+      description: "Under `--strictness threshold` or `--strictness zero-tolerance`, when `.specter-results.json` is missing, sync's coverage phase fails with the SAME error message as `coverage --strict` emits. The message references `specter ingest` as the remediation."
+      inputs:
+        workspace: "valid specs, annotated tests, NO .specter-results.json file"
+        commands_compared: ["specter coverage --strict", "specter sync --strict"]
+      expected_output:
+        exit_code_nonzero: true
+        error_message_identical: true
+        message_mentions_specter_ingest: true
+      references_constraints: ["C-08"]
+      priority: critical
+
+    - id: AC-11
+      description: "Under `--strictness annotation` (or with no strict flag set), missing `.specter-results.json` is NOT an error. The annotation-counting coverage path proceeds and the command succeeds if annotation thresholds are met."
+      inputs:
+        workspace: "valid specs, annotated tests, NO .specter-results.json file, --strictness annotation"
+      expected_output:
+        exit_code_zero_when_annotation_thresholds_met: true
+        no_missing_results_error: true
+      references_constraints: ["C-06", "C-08"]
+      priority: high
+
   changelog:
+    - version: "1.2.0"
+      date: "2026-05-15"
+      author: "specter-team"
+      type: minor
+      description: "Add C-06/C-07/C-08 and AC-08..AC-11 — close the strict-mode gap between sync and coverage. sync now supports --strictness <annotation|threshold|zero-tolerance> matching coverage --strictness semantics; --strict remains as zero-tolerance alias. The coverage phase delegates to BuildCoverageReportStrict under any strict mode (was BuildCoverageReportWithResults, the weaker path). Missing .specter-results.json under strict modes fails with the same error message as coverage --strict. v0.13 cycle Section B."
     - version: "1.1.0"
       date: "2026-04-14"
       author: "specter-team"
