@@ -1007,6 +1007,7 @@ func syncCmd() *cobra.Command {
 	var testsGlob string
 	var onlyPhase string
 	var strict bool
+	var strictnessFlag string
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Run full validation pipeline (parse + resolve + check + coverage)",
@@ -1014,6 +1015,15 @@ func syncCmd() *cobra.Command {
 			if onlyPhase != "" && !validSyncPhases[onlyPhase] {
 				fmt.Fprintf(os.Stderr, "error: --only must be one of: parse, resolve, check, coverage\n")
 				return errSilent
+			}
+
+			// spec-sync C-06: validate --strictness value.
+			if strictnessFlag != "" {
+				validStrictness := map[string]bool{"annotation": true, "threshold": true, "zero-tolerance": true}
+				if !validStrictness[strictnessFlag] {
+					fmt.Fprintf(os.Stderr, "error: --strictness %q is not a valid value (allowed: annotation, threshold, zero-tolerance)\n", strictnessFlag)
+					return errSilent
+				}
 			}
 
 			specFiles := discoverSpecs()
@@ -1044,6 +1054,19 @@ func syncCmd() *cobra.Command {
 				WarnOnDraft: m.Settings.WarnOnDraft,
 			}
 
+			// spec-sync C-06: --strictness wins over --strict; fall back
+			// to manifest setting; ultimate default is "annotation". The
+			// legacy --strict bool maps to "zero-tolerance" when
+			// --strictness is not set.
+			effectiveStrictness := strictnessFlag
+			if effectiveStrictness == "" {
+				if strict {
+					effectiveStrictness = "zero-tolerance"
+				} else {
+					effectiveStrictness = m.Settings.Strictness
+				}
+			}
+
 			var results *coverage.ResultsFile
 			if data, err := os.ReadFile(".specter-results.json"); err == nil {
 				var parseErr error
@@ -1060,6 +1083,7 @@ func syncCmd() *cobra.Command {
 				CheckOpts:            checkOpts,
 				OnlyPhase:            onlyPhase,
 				Results:              results,
+				Strictness:           effectiveStrictness, // spec-sync C-06: route coverage phase per strictness
 				CheckTestAnnotations: strict || m.Settings.Strict, // spec-check C-09/AC-12: sync --strict (or settings.strict) routes through
 			})
 
@@ -1106,7 +1130,8 @@ func syncCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
 	cmd.Flags().StringVar(&testsGlob, "tests", "", "Glob pattern for test files")
 	cmd.Flags().StringVar(&onlyPhase, "only", "", "Run only this phase (parse|resolve|check|coverage); prerequisites run without halting")
-	cmd.Flags().BoolVar(&strict, "strict", false, "Treat warnings as errors (also set via settings.strict in specter.yaml)")
+	cmd.Flags().BoolVar(&strict, "strict", false, "Treat warnings as errors (also set via settings.strict in specter.yaml). Alias for --strictness zero-tolerance when --strictness is not set.")
+	cmd.Flags().StringVar(&strictnessFlag, "strictness", "", "Override settings.strictness for the coverage phase. Values: annotation, threshold, zero-tolerance. Matches `coverage --strictness` semantics. When set, wins over --strict.")
 	return cmd
 }
 

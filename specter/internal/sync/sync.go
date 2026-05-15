@@ -200,10 +200,40 @@ func RunSync(input SyncInput) *SyncResult {
 	if thresholds == nil {
 		thresholds = checker.CoverageThresholdByTier
 	}
-	coverageReport := coverage.BuildCoverageReportWithResults(specs, allAnnotations, thresholds, input.Results)
+
+	// spec-sync C-06/C-07: route the coverage phase through
+	// BuildCoverageReportStrict under any strict mode. Annotation
+	// mode (and the default) preserves the legacy
+	// BuildCoverageReportWithResults path.
+	effectiveStrictness := input.Strictness
+	if effectiveStrictness == "" && input.CheckOpts != nil && input.CheckOpts.Strict {
+		// Legacy: --strict boolean without --strictness → zero-tolerance.
+		effectiveStrictness = "zero-tolerance"
+	}
+	useStrictPath := effectiveStrictness == "threshold" || effectiveStrictness == "zero-tolerance"
+
+	var coverageReport *coverage.CoverageReport
+	if useStrictPath {
+		// C-08: missing .specter-results.json under strict mode fails
+		// with ErrMissingResults — the same error message coverage
+		// --strict emits. Surface it as a coverage phase failure.
+		report, strictErr := coverage.BuildCoverageReportStrict(specs, allAnnotations, thresholds, input.Results, true, nil)
+		if strictErr != nil {
+			result.Phases = append(result.Phases, PhaseResult{
+				Phase:   "coverage",
+				Passed:  false,
+				Message: strictErr.Error(),
+			})
+			result.StoppedAt = "coverage"
+			return result
+		}
+		coverageReport = report
+	} else {
+		coverageReport = coverage.BuildCoverageReportWithResults(specs, allAnnotations, thresholds, input.Results)
+	}
 	result.CoverageReport = coverageReport
 
-	// Dependency coverage warnings (C-08)
+	// Dependency coverage warnings (C-08 — spec-coverage, not spec-sync)
 	var edges []coverage.DepEdge
 	for _, e := range graph.Edges {
 		edges = append(edges, coverage.DepEdge{From: e.From, To: e.To})
