@@ -75,7 +75,8 @@ See [RELEASE_PLAN.md](specter/docs/RELEASE_PLAN.md) for the full commit conventi
 
 ```bash
 # Target the current working branch explicitly — do not rely on the repo default.
-# Check specter/BACKLOG.md's header for the current branch name.
+# Find the active cycle by listing release/* branches on GitHub:
+#   gh api repos/Hanalyx/specter/branches --jq '.[].name | select(startswith("release/"))'
 gh pr create --base release/vX.Y.Z --title "..."
 ```
 
@@ -98,7 +99,7 @@ Between releases, `main` is the only branch and PRs target `main` directly. Main
 
 ### Rules
 
-1. **All feature, fix, and doc PRs target the current working branch.** Not `main`. The current branch name is in [BACKLOG.md](specter/BACKLOG.md)'s header.
+1. **All feature, fix, and doc PRs target the current working branch.** Not `main`. Find the active branch by listing `release/*` branches on GitHub (e.g., `gh api repos/Hanalyx/specter/branches --jq '.[].name | select(startswith("release/"))'`).
 2. **The working branch is named per release** — `release/v0.10`, `release/v0.11`, etc. Created at cycle start; deleted after it merges to `main` and the release is tagged.
 3. **Hotfixes are the exception.** A bug in the shipped release on `main` gets fixed via `hotfix/v0.9.3` (or similar) branched off `main`, PR'd to `main`, merged, and tagged. The in-flight working branch later merges `main` forward to absorb the hotfix.
 4. **Tags happen on `main`** after the working branch merges, never on the working branch itself. A tag = "this commit shipped to users."

@@ -115,11 +115,11 @@ pytest --junitxml=test-results.xml -o junit_logging=all -o junit_log_passing_tes
 
 `-o junit_logging=all` captures `print()` output into `<system-out>` for every test case. `specter ingest` reads `<system-out>` and matches the body regex `//\s*@spec\s+([a-z][a-z0-9-]*[a-z0-9])` and `//\s*@ac\s+(AC-\d+)`.
 
-**Why not function names.** `def test_user_create_AC_01_valid_returns_201` emits the JUnit title `test_user_create_AC_01_valid_returns_201`. The regex requires `/` or `:` between `user-create` and `AC-01`. `_` does not match. See the BACKLOG entry "Python Convention A gap" — this may change in a future release.
+**Why not function names.** `def test_user_create_AC_01_valid_returns_201` emits the JUnit title `test_user_create_AC_01_valid_returns_201`. The regex requires `/` or `:` between `user-create` and `AC-01`. `_` does not match. Use Convention B (runtime `print('// @spec ...')`) for Python.
 
 ### Rust / `cargo test`
 
-No first-party ingest flavor today. Work around by emitting Convention B to stdout and parsing manually, or wait for a TAP flavor. Track progress in the BACKLOG.
+No first-party ingest flavor today. Emit Convention B to stdout and parse manually.
 
 ### Runner-log form — Convention B
 
@@ -228,7 +228,7 @@ Migrate whole files at once. A half-migrated file (some tests renamed, some not)
 
 **`AC-1` instead of `AC-01`.** The regex accepts single-digit; the coverage gate compares against the spec, which uses `AC-01`. Zero-pad always.
 
-**`_` between spec id and AC id.** Python users hit this. `_` is not in the regex. Use Convention B or wait for the Python-separator resolution (BACKLOG).
+**`_` between spec id and AC id.** Python users hit this. `_` is not in the regex. Use Convention B.
 
 **Underscore in spec id.** Spec ids are kebab-case. `user_create/AC-01` does not match; `user-create/AC-01` does.
 
@@ -268,4 +268,3 @@ Migrate whole files at once. A half-migrated file (some tests renamed, some not)
 - `CLI_REFERENCE.md` → `specter coverage` (the `--strict`, `--scope`, `--tests` flags)
 - `CLI_REFERENCE.md` → `specter ingest` (JUnit and `go test -json` flavors, `--verbose`)
 - `docs/explainer/v0.10-ci-gated-coverage.md` (design rationale for the two-channel split)
-- `BACKLOG.md` → "Python Convention A gap" (current limitation and candidate resolutions)

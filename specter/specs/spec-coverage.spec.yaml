@@ -518,7 +518,7 @@ spec:
       date: "2026-04-25"
       author: "specter-team"
       type: minor
-      description: "v0.11 settings hardening (paired with spec-manifest 1.8.0). Add C-24/AC-27..28 and C-25/AC-28 for the three-level strictness gate (annotation rejects --strict; zero-tolerance fails on any non-passed annotated AC regardless of tier threshold). Add C-26/AC-29 for zero-tolerance approval_gate enforcement (exit code 3, distinct from strictness exit code 2). Add C-27/AC-30 for empty-test-discovery warning under --strict, upgraded to a hard error under zero-tolerance — closes GH #75 (silent 0% UX hole). Replaces the BUG-3 part 2 entry that used to live in BACKLOG."
+      description: "v0.11 settings hardening (paired with spec-manifest 1.8.0). Add C-24/AC-27..28 and C-25/AC-28 for the three-level strictness gate (annotation rejects --strict; zero-tolerance fails on any non-passed annotated AC regardless of tier threshold). Add C-26/AC-29 for zero-tolerance approval_gate enforcement (exit code 3, distinct from strictness exit code 2). Add C-27/AC-30 for empty-test-discovery warning under --strict, upgraded to a hard error under zero-tolerance — closes GH #75 (silent 0% UX hole)."
     - version: "1.10.0"
       date: "2026-04-23"
       author: "specter-team"

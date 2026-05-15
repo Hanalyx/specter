@@ -1,5 +1,6 @@
 # Build output
 bin/
+dist/
 specter-linux-*
 specter-darwin-*
 specter-windows-*
@@ -28,5 +29,15 @@ vscode-extension/junit.xml
 # Claude Code instructions
 CLAUDE.md
 
+# Codex / agent instructions
+AGENTS.md
+
 # Research (internal)
 research/
+
+# Local docs not yet ready to ship
+docs/DOC_STYLE_GUIDE.md
+docs/roadmap/
+
+# Planning surface — local-only as of 2026-05-07
+BACKLOG.md

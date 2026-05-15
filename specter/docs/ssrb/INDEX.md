@@ -12,6 +12,7 @@ To start a new brief: copy [`TEMPLATE.md`](TEMPLATE.md) to `SSRB-NNN.md` (the nu
 | [098](SSRB-098.md) | AC-level lifecycle `status` field | REJECT | 2026-04-26 |
 | [099](SSRB-099.md) | Coverage inference from `generated_from.test_files` | REJECT | 2026-04-26 |
 | [100](SSRB-100.md) | `spec.kind: audit-matrix` for cross-cutting specs | REJECT | 2026-04-26 |
+| [101](SSRB-101.md) | Source-file governance — annotation (F7) vs `governs:` list (F8) | NEEDS-DESIGN | TBD (target end of v0.16) |
 
 ## Status legend
 

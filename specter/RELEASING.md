@@ -79,5 +79,4 @@ make release-check
 ## Related docs
 
 - `GOTCHAS.md` #18 — the failure mode this gate exists to prevent.
-- `BACKLOG.md` — `@vscode/test-electron` headless integration tests are queued as the proper long-term backstop for the human verification step.
 - `CHANGELOG.md` — release history.

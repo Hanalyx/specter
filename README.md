@@ -28,6 +28,10 @@ $ specter sync
 All checks passed.
 ```
 
+![Specter VS Code extension showing the Coverage tree, the Insights view surfacing coverage gaps, and inline schema diagnostics on a 244-spec project.](specter/docs/images/specter-insights.png)
+
+Specter is content-agnostic. A `.spec.yaml` can describe runtime behavior, data invariants, security policy, schema contracts, architecture rules, or any other component contract — anything with constraints and acceptance criteria. The pipeline validates the shape, not the category.
+
 **→ [Get started with Specter](specter/README.md)**
 
 ---
@@ -96,8 +100,12 @@ The book documents three failure modes that appear again and again in AI-assiste
 
 ```bash
 # Install Specter
-curl -Lo specter.tar.gz https://github.com/Hanalyx/specter/releases/latest/download/specter_Linux_x86_64.tar.gz
-tar xzf specter.tar.gz && sudo mv specter /usr/local/bin/
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m); case "$ARCH" in x86_64) ARCH=amd64 ;; aarch64) ARCH=arm64 ;; esac
+VERSION=$(curl -sL https://api.github.com/repos/Hanalyx/specter/releases/latest | grep '"tag_name"' | head -n1 | cut -d'"' -f4 | sed 's/^v//')
+curl -LO "https://github.com/Hanalyx/specter/releases/download/v${VERSION}/specter_${VERSION}_${OS}_${ARCH}.tar.gz"
+tar xzf "specter_${VERSION}_${OS}_${ARCH}.tar.gz"
+sudo mv specter /usr/local/bin/
 
 # Validate your first spec
 specter parse my-feature.spec.yaml
