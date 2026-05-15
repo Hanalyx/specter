@@ -42,6 +42,17 @@ type SyncInput struct {
 	OnlyPhase            string                // C-05: if set, run prerequisites without halting then run this phase
 	Results              *coverage.ResultsFile // optional: pass-rate-aware coverage for Tier 1
 	CheckTestAnnotations bool                  // spec-check C-09: run CheckTestAnnotations in the check phase (opt-in; `sync --strict` sets this)
+
+	// Strictness routes sync's coverage phase per spec-sync C-06/C-07/C-08.
+	// Accepted values: "" (manifest default), "annotation", "threshold",
+	// "zero-tolerance". "annotation" preserves the legacy
+	// BuildCoverageReportWithResults path. "threshold" and "zero-tolerance"
+	// delegate to BuildCoverageReportStrict — matching `coverage --strictness`
+	// exactly. The legacy boolean flag from CheckOpts.Strict is treated as
+	// "zero-tolerance" when Strictness is not explicitly set.
+	//
+	// Stub: B 1/3 added the field; B 3/3 (implementation) wires it.
+	Strictness string
 }
 
 type FileContent struct {
