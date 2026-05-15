@@ -4,6 +4,8 @@
 
 Specs without validation are just documents. They can contradict each other, reference dependencies that don't exist, have constraints that no test ever covers, and silently rot as code evolves. Specter treats specs as typed artifacts in a dependency graph, subject to the same static analysis you apply to code.
 
+Specter is content-agnostic: a `.spec.yaml` can describe runtime behavior, data invariants, security policy, schema contracts, architecture rules, or any other component contract — the pipeline validates the shape (constraints, ACs, traceability), not the category of rule you are encoding.
+
 ```
 $ specter sync
 
@@ -225,7 +227,7 @@ specter parse user-registration.spec.yaml
 
 ## Annotate Tests
 
-Link test functions to acceptance criteria with two comment lines. Specter reads these annotations to build the traceability matrix.
+Link test functions to acceptance criteria with source comments. `specter coverage` reads these comments to build the traceability matrix.
 
 ```go
 // @spec user-registration
@@ -241,7 +243,7 @@ func TestRegistration_InvalidEmail_Returns422(t *testing.T) {
 }
 ```
 
-Works in any language — the annotations are plain comments.
+For `coverage --strict`, the test runner must also expose the same `(spec_id, ac_id)` pair in its output. Put `spec-id/AC-NN` in the test title, or print `// @spec` and `// @ac` from the test body before running `specter ingest`.
 
 ---
 
@@ -309,13 +311,13 @@ Every package in `internal/` is a pure function — no I/O, no CLI dependencies.
 
 ## Dogfooding
 
-Specter validates its own specs. The tool has 14 specs covering its own pipeline and extension, 192 acceptance criteria, and a large annotated test suite. Every feature was specified before it was implemented.
+Specter validates its own specs. The current dogfood set has 15 specs covering the CLI pipeline and VS Code extension. The strict gate verifies test results with `go test -json`, Jest JUnit output, `specter ingest`, and `coverage --strict`.
 
 ```
 $ specter coverage
 
-Spec Coverage Report — 14 specs · 100% avg coverage
-  Tier 1: 3/3 passing (100%)
+Spec Coverage Report — 15 specs · 99% avg coverage
+  Tier 1: 4/4 passing (100%)
   Tier 2: 9/9 passing (100%)
   Tier 3: 2/2 passing (100%)
 
@@ -324,11 +326,11 @@ Spec ID                                   Tier   ACs      Covered   Coverage   S
 spec-check                                T1     8        8         100%       PASS
 spec-parse                                T1     13       13        100%       PASS
 spec-resolve                              T1     9        9         100%       PASS
-spec-coverage                             T2     18       18        100%       PASS
+spec-coverage                             T2     33       33        100%       PASS
 spec-diff                                 T2     10       10        100%       PASS
 ...
 
-14 specs: 14 passing, 0 failing
+15 specs: 15 passing, 0 failing
 ```
 
 ---

@@ -6,7 +6,7 @@ Specter is a spec compiler toolchain — "a type system for specs." It validates
 
 ## Installation
 
-Install the VS Code extension for the smoothest path — it auto-downloads the CLI and sets PATH. For CLI-only installs (tar.gz, `.deb`, `.rpm`, Windows zip, or build from source), see the [Install section in the root README](../README.md#install). Asset naming pattern: `specter_<version>_<os>_<arch>.<ext>` with lowercase `linux`/`darwin`/`windows` and `amd64`/`arm64`.
+Install the VS Code extension for the smoothest path — it auto-downloads the CLI and sets PATH. For CLI-only installs (tar.gz, `.deb`, `.rpm`, Windows zip, or build from source), see the [Install section in the Specter README](../README.md#install). Asset naming pattern: `specter_<version>_<os>_<arch>.<ext>` with lowercase `linux`/`darwin`/`windows` and `amd64`/`arm64`.
 
 ---
 
@@ -127,7 +127,7 @@ Run structural type-checking rules across the spec dependency graph. Detects sem
 **Synopsis:**
 
 ```
-specter check [--json] [--tier <n>] [--strict]
+specter check [--json] [--tier <n>] [--strict] [--test]
 ```
 
 **Options:**
@@ -137,6 +137,7 @@ specter check [--json] [--tier <n>] [--strict]
 | `--json` | Output diagnostics as JSON. |
 | `--tier <n>` | Override the tier enforcement level for all specs (1, 2, or 3). |
 | `--strict` | Treat warnings as errors. Also configurable via `settings.strict` in `specter.yaml`. |
+| `--test`, `-t` | Cross-reference test-file `@spec` / `@ac` annotations against parsed specs. |
 
 **Diagnostics:**
 
@@ -172,7 +173,7 @@ Generate a spec-to-test traceability matrix. Scans test files for `@spec` and `@
 **Synopsis:**
 
 ```
-specter coverage [--json] [--failing] [--strict] [--scope <domain>] [--tests <glob>]
+specter coverage [--json] [--failing] [--strict] [--scope <domain>] [--tests <glob>] [--strictness <level>] [--quiet]
 ```
 
 **Options:**
@@ -183,7 +184,9 @@ specter coverage [--json] [--failing] [--strict] [--scope <domain>] [--tests <gl
 | `--failing` | — | Show only specs below 100% coverage in the table. Summary header still reflects the full report. When all specs are at 100%, emits a single-line confirmation instead of an empty table. Added in v0.9.2. |
 | `--strict` | — | Require `.specter-results.json` and treat any annotated AC whose status is not `passed` as uncovered, across **all tiers**. Missing file is a hard failure; empty file emits a warning and proceeds. Pairs with `specter ingest`. Added in v0.10. |
 | `--scope <domain>` | — | Narrow `--strict`'s demand to ACs of specs in the named `specter.yaml` domain. Specs outside the domain fall back to v0.9 boolean-passed logic. Enables staged adoption. Requires `--strict`; unknown domain fails fast. Added in v0.10. |
+| `--strictness <level>` | manifest setting | Override `settings.strictness`. Values: `annotation`, `threshold`, `zero-tolerance`. |
 | `--tests <glob>` | auto-discover | Glob pattern for test files. Default discovers `*.test.ts`, `*.test.js`, `*.test.py`, `*_test.go`, `*_test.py`. |
+| `--quiet` | — | Suppress per-AC source-only hints under `--strict`. JSON output still includes `diagnostic_hints`. |
 
 **Annotation format:**
 
@@ -300,12 +303,11 @@ When every spec is at 100%, `--failing` emits a single-line confirmation in plac
 ```
 $ specter coverage --failing
 
-Spec Coverage Report — 14 specs · 100% avg coverage
-  Tier 1: 3/3 passing (100%)
-  Tier 2: 9/9 passing (100%)
-  Tier 3: 2/2 passing (100%)
+Spec Coverage Report — 2 specs · 100% avg coverage
+  Tier 1: 1/1 passing (100%)
+  Tier 2: 1/1 passing (100%)
 
-All 14 specs at 100% coverage.
+All 2 specs at 100% coverage.
 ```
 
 **Example (`--json`):**
@@ -509,6 +511,8 @@ Initialize a `specter.yaml` project manifest, or scaffold a draft `.spec.yaml` f
 ```
 specter init [--name <name>] [--force] [--template <type>]
 specter init --refresh [--dry-run]
+specter init --install-hook
+specter init --ai <tool>
 ```
 
 **Options:**
@@ -520,6 +524,8 @@ specter init --refresh [--dry-run]
 | `--template <type>` | Create a draft `.spec.yaml` from a template instead of a manifest. Types: `api-endpoint`, `service`, `auth`, `data-model`. |
 | `--refresh` | Update only `domains.default.specs` in an existing `specter.yaml`. Preserves every other field — `settings`, `registry`, tier overrides, custom domains. Added in v0.9.2. |
 | `--dry-run` | Used with `--refresh`: print the proposed diff to stdout without writing the file. Added in v0.9.2. |
+| `--install-hook` | Install a git pre-push hook that blocks implementation-only pushes with no `@spec` / `@ac` annotation delta. |
+| `--ai <tool>` | Write an AI assistant instruction file. Values: `claude`, `codex`, `cursor`, `copilot`, `gemini`. |
 
 **Behaviour (v0.9.0+):**
 
@@ -612,8 +618,16 @@ Run pre-flight project health checks before the full pipeline. Reports `PASS`, `
 **Synopsis:**
 
 ```
-specter doctor
+specter doctor [--fix] [--dry-run] [--yes]
 ```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--fix` | Apply known-safe schema-drift rewrites in place. Currently beta-gated. |
+| `--dry-run` | With `--fix`, print what would change without writing files. Skips the beta prompt. |
+| `--yes`, `-y` | Skip the `--fix` beta confirmation prompt for non-interactive use. |
 
 **Checks performed:**
 
@@ -809,14 +823,14 @@ Convert CI-native test output (JUnit XML, `go test -json`) into `.specter-result
 specter ingest [--junit <path>] [--go-test <path>] [--output <path>] [--verbose]
 ```
 
-At least one of `--junit` or `--go-test` is required. Multiple sources can be combined in one invocation — results are merged (worst status wins per AC).
+At least one of `--junit` or `--go-test` is required. Both flags accept glob patterns and may be repeated. Multiple sources can be combined in one invocation; results are merged by the worst-status-wins rule.
 
 **Options:**
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--junit <path>` | — | JUnit XML file (vitest, jest, pytest, playwright). |
-| `--go-test <path>` | — | Newline-delimited JSON from `go test -json`. |
+| `--junit <path>` | — | JUnit XML file (vitest, jest, pytest, playwright). Accepts glob patterns; may be repeated. |
+| `--go-test <path>` | — | Newline-delimited JSON from `go test -json`. Accepts glob patterns; may be repeated. |
 | `--output <path>` | `.specter-results.json` | Where to write the merged results. |
 | `--verbose` | — | Emit one stderr line per dropped testcase (testcases without a recognizable `(spec_id, ac_id)` annotation). Off by default; the summary line is always emitted. |
 
@@ -870,9 +884,10 @@ $ specter ingest --go-test /tmp/go-test.json
 Wrote 34 result entries to .specter-results.json
 
 $ specter coverage --strict
-Spec Coverage Report — 14 specs · 98% avg coverage
+Spec Coverage Report — 15 specs · 99% avg coverage
   Tier 1: 4/4 passing (100%)
-  Tier 2: 9/10 passing (90%)
+  Tier 2: 9/9 passing (100%)
+  Tier 3: 2/2 passing (100%)
 ...
 ```
 
@@ -885,23 +900,35 @@ Pairs with `specter coverage --strict`. Without `ingest`, `--strict` fails with 
 An optional `specter.yaml` file at the project root configures discovery, thresholds, and settings. Specter searches upward from the current directory to find it.
 
 ```yaml
-system: my-project
+schema_version: 1
+system:
+  name: my-project
+  tier: 2
 
-specs_dir: specs       # Where to look for .spec.yaml files (default: .)
+domains:
+  default:
+    tier: 2
+    description: Default domain for my-project specs
+    specs:
+      - user-create
 
 settings:
-  strict: false        # Treat warnings as errors
-  warn_on_draft: false # Warn when draft specs are found
-
-coverage_thresholds:   # Override default tier thresholds
-  1: 100
-  2: 80
-  3: 50
-
-exclude:               # Directory names to skip during discovery
-  - testdata
-  - node_modules
-  - dist
+  specs_dir: specs
+  strict: false
+  warn_on_draft: false
+  strictness: threshold
+  tests_glob:
+    - "**/*_test.go"
+    - "**/*.test.ts"
+  coverage:
+    tier1: 100
+    tier2: 80
+    tier3: 50
+  exclude:
+    - node_modules
+    - dist
+    - .git
+    - vendor
 ```
 
 ---

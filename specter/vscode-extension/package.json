@@ -2,7 +2,7 @@
   "name": "specter-vscode",
   "displayName": "Specter SDD",
   "description": "Spec-Driven Development tooling for VS Code — inline coverage, diagnostics, annotation assistance, and intent drift detection.",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "publisher": "Hanalyx",
   "license": "MIT",
   "engines": {
@@ -201,7 +201,7 @@
     "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
-    "@vscode/vsce": "^3.9.0",
+    "@vscode/vsce": "^3.9.1",
     "eslint": "^8.57.0",
     "jest": "^29.5.0",
     "jest-junit": "^17.0.0",

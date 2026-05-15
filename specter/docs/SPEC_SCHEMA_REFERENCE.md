@@ -58,7 +58,7 @@ These fields must be present inside `spec:`. Omitting any of them is a validatio
 |---|---|---|---|
 | `id` | `string` | Regex: `^[a-z][a-z0-9-]*$` (kebab-case, starts with letter) | Unique identifier for this spec. Used in `depends_on` references and test annotations. |
 | `version` | `string` | Semver: `MAJOR.MINOR.PATCH` with optional pre-release tag. Regex: `^(0\|[1-9]\d*)\.(0\|[1-9]\d*)\.(0\|[1-9]\d*)(-[a-zA-Z0-9.]+)?$` | Semantic version of the spec. Must be quoted in YAML to avoid float interpretation. |
-| `status` | `string` | Enum: `draft`, `review`, `approved`, `deprecated`, `removed` | Lifecycle status. Only `approved` specs are enforced by spec-sync. |
+| `status` | `string` | Enum: `draft`, `review`, `approved`, `deprecated`, `removed` | Lifecycle status. Specter parses and checks all discovered specs. Use `settings.warn_on_draft` and `settings.strict` when draft specs should block release gates. |
 | `tier` | `integer` | Enum: `1`, `2`, `3` | Risk tier. Determines enforcement strictness and coverage thresholds. |
 | `context` | `object` | See [Context Object](#context-object) | What system this spec belongs to and why it exists. |
 | `objective` | `object` | See [Objective Object](#objective-object) | What this spec aims to achieve, including scope boundaries. |
@@ -83,7 +83,8 @@ These fields may be omitted entirely. When absent, Specter does not supply defau
 
 | Field | Type | Description |
 |---|---|---|
-| `title` | `string` | Human-readable display name. Defaults to a titlecased version of `id` when omitted. Used by the VS Code extension tree view, PR rendering, and `specter explain` output. Added in v0.7.0. |
+| `title` | `string` | Human-readable display name. When omitted, consumers should fall back to `id`. Added in v0.7.0. |
+| `coverage_threshold` | `integer` | Per-spec coverage threshold override, 0-100. Overrides the tier default for this spec only. |
 | `depends_on` | `array` of [Dependency Reference](#dependency-reference-object) | Other specs this depends on. Creates edges in the dependency graph. |
 | `environment` | [Environment Object](#environment-object) | Required environment variables and deployment targets. |
 | `tags` | `array` of `string` | Free-form tags for categorization and filtering. |
@@ -94,7 +95,7 @@ These fields may be omitted entirely. When absent, Specter does not supply defau
 
 ## Context Object
 
-Describes **what system** this spec belongs to and **why it exists**. The `context` object allows additional properties beyond those defined below.
+Describes **what system** this spec belongs to and **why it exists**.
 
 | Field | Required | Type | Description |
 |---|---|---|---|
@@ -217,8 +218,8 @@ An acceptance criterion (AC) is a **testable condition** that defines "done." Ea
 | `gap` | No | `boolean` | Default: `false` | `true` if this AC was identified by gap analysis (no existing test covers it). |
 | `priority` | No | `string` | Enum: `critical`, `high`, `medium`, `low` | Implementation priority. |
 | `notes` | No | `string` | -- | Free-form narrative about edge cases, rationale, or non-obvious implementation details. Rendered in the VS Code `@ac` hover and `specter explain` output. Added in v0.7.0. |
-| `approval_gate` | No | `boolean` | Default: `false` | Marks this AC as requiring explicit human approval before it can be considered done. **Specter does not enforce approval semantics** — `specter coverage` counts the AC as covered when a matching `@ac` annotation exists, regardless of whether `approval_gate: true` or `approval_date` is set. Teams wire enforcement into their own PR/CI gates (e.g., a pre-push hook that rejects a diff where any AC has `approval_gate: true && approval_date == null`). Use for ACs whose correctness can't be verified by an automated test alone and require human sign-off. Added in v0.7.0. |
-| `approval_date` | No | `string` | ISO-8601 date: `YYYY-MM-DD` | Date a human verified this AC. Meaningful only in conjunction with `approval_gate: true`. Specter does not read this field — it is metadata for human and CI consumers. Added in v0.7.0. |
+| `approval_gate` | No | `boolean` | Default: `false` | Marks this AC as requiring explicit human approval before it can be considered done. In threshold mode this is metadata. Under `strictness: zero-tolerance`, an AC with `approval_gate: true` and no `approval_date` is demoted and the command exits with the approval-gate failure code. Added in v0.7.0. |
+| `approval_date` | No | `string` | ISO-8601 date: `YYYY-MM-DD` | Date a human verified this AC. Meaningful only in conjunction with `approval_gate: true`. Added in v0.7.0. |
 
 ```yaml
 acceptance_criteria:
@@ -445,19 +446,19 @@ When in doubt, choose the higher (stricter) tier.
 
 ## Status Lifecycle
 
-Specs move through a linear lifecycle. Only `approved` specs are enforced by spec-sync in CI.
+Specs move through a linear lifecycle. Specter checks every discovered, parseable spec by default. Lifecycle status is still useful for review discipline; combine `settings.warn_on_draft: true` with `settings.strict: true` when draft specs should fail release gates.
 
 ```
 draft --> review --> approved --> deprecated --> removed
 ```
 
-| Status | Meaning | Enforced by spec-sync? |
+| Status | Meaning | Default pipeline behavior |
 |---|---|---|
-| `draft` | Work in progress. May be incomplete or rapidly changing. | No |
-| `review` | Complete and submitted for team review. Should not change without discussion. | No |
-| `approved` | Accepted as the source of truth. Implementation must conform. | **Yes** |
-| `deprecated` | Superseded or scheduled for removal. Existing implementations still valid but should migrate. | No |
-| `removed` | No longer active. Kept in version history only. | No |
+| `draft` | Work in progress. May be incomplete or rapidly changing. | Checked. Warns only when `warn_on_draft` is enabled. |
+| `review` | Complete and submitted for team review. Should not change without discussion. | Checked. |
+| `approved` | Accepted as the source of truth. Implementation must conform. | Checked. |
+| `deprecated` | Superseded or scheduled for removal. Existing implementations still valid but should migrate. | Checked unless excluded by project configuration. |
+| `removed` | No longer active. Kept in version history only. | Checked unless excluded by project configuration. |
 
 ---
 

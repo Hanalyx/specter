@@ -204,7 +204,7 @@ func scanFileAnnotations(path, content string, validACs map[string]map[string]bo
 
 // updateMultilineStringState mirrors internal/coverage.updateMultilineStringState.
 // Duplicated rather than imported because internal/coverage already imports
-// internal/checker (cycle). BACKLOG candidate: extract to internal/textscan.
+// internal/checker (cycle). Candidate to extract to internal/textscan.
 func updateMultilineStringState(line string, inBacktick, inTripleDouble, inTripleSingle bool) (bool, bool, bool) {
 	inSingle := false
 	inDouble := false

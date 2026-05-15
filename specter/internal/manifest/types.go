@@ -12,11 +12,10 @@ package manifest
 //
 // SchemaVersion (spec-manifest C-27, v0.12+) records the spec-schema draft
 // this project commits to. Pre-1.0 the value is a placeholder (always 1;
-// see BACKLOG `Schema stability policy`). Locks to the canonical v1 shape
-// at Specter v1.0.0; subsequent breaking schema changes bump the integer
-// and require a `doctor --fix` migration. The field is declared FIRST so
-// gopkg.in/yaml.v3 emits it as the first key in scaffolded manifests
-// (AC-42).
+// the schema is draft during v0.x and locks at v1.0.0). After lock,
+// breaking schema changes bump the integer and require a `doctor --fix`
+// migration. The field is declared FIRST so gopkg.in/yaml.v3 emits it as
+// the first key in scaffolded manifests (AC-42).
 type Manifest struct {
 	SchemaVersion int                     `yaml:"schema_version,omitempty" json:"schema_version,omitempty"`
 	System        SystemConfig            `yaml:"system" json:"system"`

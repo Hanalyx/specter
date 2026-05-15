@@ -250,7 +250,7 @@ The lesson isn't "write more unit tests" alone — the real gap was the absence 
 **What's in place now (v0.8.3+):**
 - `RELEASING.md` documents an 8-step gate. Mandatory before any `vsce publish`.
 - `make release-check` packages the VSIX and prints the checklist. It does not run `vsce publish` — that stays manual so the operator cannot forget step 7 (human sign-off).
-- `BACKLOG.md` queues `@vscode/test-electron` headless integration tests for v0.9 — the proper long-term backstop.
+- Headless `@vscode/test-electron` integration tests are the planned long-term backstop.
 
 **Rule:** Marketplace is a distribution channel, not a test harness. Every publish must ship behavior that has already been verified by a person in a live VS Code window. If that person is me or an AI agent, the verification must be demonstrated (screenshot, recorded session, or reproducible script) — not asserted. The first user to install should be the hundred-and-first person to see the feature work, not the first.
 
