@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "1.9.0"
+  version: "1.10.0"
   status: draft
   tier: 2
 
@@ -187,6 +187,11 @@ spec:
     - id: C-28
       description: "`specter init` (scaffold mode, no `--refresh`) MUST write `schema_version: 1` as the first field in the emitted specter.yaml — ahead of `system:`. `specter init --refresh` MUST leave any existing `schema_version` value byte-unchanged (per C-19 non-destructive refresh, only `domains.default.specs` is touched). Rationale: makes the project's schema commitment visible at the top of the file where operators read first, and aligns with the schema-stability policy that activates the moment `doctor --fix` ships."
       type: business
+      enforcement: error
+
+    - id: C-29
+      description: "`settings.exclude` patterns MUST support glob matching when the pattern contains any glob metacharacter (`*`, `?`). Glob patterns match against the relative path of each candidate directory using the same `**`/`*`/`?` semantics as `settings.tests_glob` (cmd/specter/glob.go matchGlob). Patterns WITHOUT glob metacharacters continue to match by directory name exactly (back-compat with v0.x). Examples: `node_modules` matches any dir named `node_modules` at any depth (back-compat); `.claude/**` matches `.claude/` and everything under it; `**/worktrees` matches any `worktrees` dir at any depth; `tests/fixtures/*` matches direct children of `tests/fixtures/`. Walk implementation MUST exit a matched directory (filepath.SkipDir) the same way as a bare-name match — both forms behave identically in terms of stopping recursion when the matched node is a directory."
+      type: technical
       enforcement: error
 
   acceptance_criteria:
@@ -639,6 +644,32 @@ spec:
       references_constraints: ["C-28"]
       priority: high
 
+    - id: AC-44
+      description: "Bare-name exclude patterns (no glob metacharacters) continue to match by directory name exactly. Back-compat with v0.x: a manifest with `settings.exclude: [node_modules, dist, vendor]` MUST skip any directory named `node_modules`, `dist`, or `vendor` at any depth, regardless of path."
+      inputs:
+        exclude_patterns: ["node_modules", "dist"]
+        workspace_dirs: ["./node_modules", "./src/node_modules", "./dist", "./src/components", "./vendor"]
+      expected_output:
+        skipped: ["./node_modules", "./src/node_modules", "./dist"]
+        not_skipped: ["./src/components", "./vendor"]
+      references_constraints: ["C-29"]
+      priority: critical
+
+    - id: AC-45
+      description: "Exclude patterns containing glob metacharacters (`*`, `?`) match against the relative path of each candidate directory using `**`/`*`/`?` semantics consistent with `settings.tests_glob`. A glob match on a directory MUST cause walk to skip recursion (filepath.SkipDir), matching bare-name behavior."
+      inputs:
+        exclude_patterns_tested:
+          glob_recursive_dir: ".claude/**"
+          glob_anywhere: "**/worktrees"
+          glob_children: "tests/fixtures/*"
+      expected_output:
+        ".claude/** matches": [".claude", ".claude/sessions", ".claude/settings"]
+        "**/worktrees matches": ["worktrees", "src/worktrees", "deep/nested/worktrees"]
+        "tests/fixtures/* matches": ["tests/fixtures/foo", "tests/fixtures/bar"]
+        not_matched: ["src/components", "tests/integration"]
+      references_constraints: ["C-29"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -648,6 +679,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.10.0"
+      date: "2026-05-15"
+      author: "specter-team"
+      type: minor
+      description: "v0.13 C2 — glob support in settings.exclude. Add C-29 and AC-44/AC-45: patterns with glob metacharacters (`*`, `?`) match against paths via `**`/`*`/`?` semantics (consistent with settings.tests_glob). Bare names continue to match by directory name exactly (back-compat). Closes the v0.11 settings-hardening limitation where exclude patterns matched only directory names — `.claude/**`, `**/worktrees`, `tests/fixtures/*` now work as expected."
     - version: "1.9.0"
       date: "2026-04-27"
       author: "specter-team"
