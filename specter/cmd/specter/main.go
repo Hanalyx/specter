@@ -281,10 +281,7 @@ func discoverSpecs(patterns ...string) []string {
 	}
 	// Load manifest to honor settings.exclude and specs_dir.
 	m, manifestRoot, _ := loadManifest()
-	excludeNames := make(map[string]bool)
-	for _, e := range m.ExcludePatterns() {
-		excludeNames[e] = true
-	}
+	excludePatterns := m.ExcludePatterns()
 	// spec-doctor C-10 / GH #93: when no specter.yaml is found, walk
 	// recursively from cwd instead of the manifest default `specs`.
 	// AC-02 reports manifest as WARN/optional; if discovery then required
@@ -304,9 +301,13 @@ func discoverSpecs(patterns ...string) []string {
 			return nil
 		}
 		if info.IsDir() {
-			// Skip by directory name (e.g. ".claude", "node_modules")
-			if excludeNames[info.Name()] {
-				return filepath.SkipDir
+			// spec-manifest C-29: bare-name patterns match by directory
+			// name; glob patterns match against the relative path.
+			relPath := strings.TrimPrefix(path, "./")
+			for _, pat := range excludePatterns {
+				if matchExcludePattern(pat, relPath, info.Name()) {
+					return filepath.SkipDir
+				}
 			}
 			// Skip by path prefix for entries like "tests/fixtures", "testdata"
 			if strings.HasPrefix(path, filepath.Join("tests", "fixtures")) ||
