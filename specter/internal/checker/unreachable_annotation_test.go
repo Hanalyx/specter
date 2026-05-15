@@ -112,6 +112,56 @@ func TestBaz(t *testing.T) {
 	})
 }
 
+// Regression guard: free-floating @ac above a non-test func must NOT
+// be attributed to the next test function (where it would emit a
+// false-positive unreachable_annotation). Surfaced by the v0.13 cycle
+// review (commit 3a, finding #10). Owned by AC-14 (Go reachability
+// correctness).
+//
+// @ac AC-14
+func TestCheckUnreachableAnnotations_FreeFloatingAcAboveNonTest(t *testing.T) {
+	t.Run("spec-check/AC-14 @ac above helper() routes to _unknown, not false-positive unreachable", func(t *testing.T) {
+		testFiles := map[string]string{
+			"mixed_test.go": `package foo
+// @spec foo-spec
+// @ac AC-01
+func helper() {}
+
+// @ac AC-02
+func TestFoo(t *testing.T) {
+	t.Run("foo-spec/AC-02 valid", func(t *testing.T) {})
+}
+`,
+		}
+		diags := CheckUnreachableAnnotations(testFiles, "threshold")
+
+		// AC-01 belongs to helper() (not a test) — must be _unknown,
+		// NOT a false-positive unreachable_annotation against TestFoo.
+		// AC-02 belongs to TestFoo and is reachable via the subtest.
+		var ac01Unknown, ac01FalsePos, ac02FalsePos bool
+		for _, d := range diags {
+			if strings.Contains(d.Message, "AC-01") && d.Kind == "unreachable_annotation_unknown" {
+				ac01Unknown = true
+			}
+			if strings.Contains(d.Message, "AC-01") && d.Kind == "unreachable_annotation" {
+				ac01FalsePos = true
+			}
+			if strings.Contains(d.Message, "AC-02") && d.Kind == "unreachable_annotation" {
+				ac02FalsePos = true
+			}
+		}
+		if !ac01Unknown {
+			t.Errorf("expected AC-01 (above helper()) to emit unreachable_annotation_unknown, got: %+v", diags)
+		}
+		if ac01FalsePos {
+			t.Errorf("AC-01 above helper() must NOT emit unreachable_annotation (false positive), got: %+v", diags)
+		}
+		if ac02FalsePos {
+			t.Errorf("AC-02 is reachable via t.Run(\"foo-spec/AC-02 ...\"), got false-positive unreachable: %+v", diags)
+		}
+	})
+}
+
 // @ac AC-15
 func TestCheckUnreachableAnnotations_PythonReachability(t *testing.T) {
 	t.Run("spec-check/AC-15 Python Convention B (runtime print) is reachable", func(t *testing.T) {
