@@ -167,6 +167,14 @@ func main() {
 	root.SilenceUsage = true
 	root.SilenceErrors = true
 
+	// v0.13 C7: suppress the auto-generated `specter help` subcommand.
+	// `-h`/`--help` and per-subcommand `--help` cover the help surface
+	// without a redundant subcommand cluttering the root listing.
+	root.SetHelpCommand(&cobra.Command{
+		Use:    "no-help",
+		Hidden: true,
+	})
+
 	root.AddCommand(parseCmd())
 	root.AddCommand(resolveCmd())
 	root.AddCommand(checkCmd())
