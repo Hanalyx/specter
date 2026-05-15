@@ -162,6 +162,45 @@ func TestFoo(t *testing.T) {
 	})
 }
 
+// Regression guard: a phantom `it("title", ...)` inside a `/* ... */`
+// docblock must not be registered as a real test entry. Surfaced by
+// the v0.13 cycle review (commit 3b, finding B1). Owned by AC-16.
+//
+// @ac AC-16
+func TestCheckUnreachableAnnotations_TS_BlockCommentItIsIgnored(t *testing.T) {
+	t.Run("spec-check/AC-16 it() inside /* */ block does not register as a real test entry", func(t *testing.T) {
+		testFiles := map[string]string{
+			"docblocked.test.ts": "/*\n * Example usage:\n *   it(\"old example\", () => {});\n */\n// @spec foo-spec\n// @ac AC-01\nit('[foo-spec/AC-01] real test', () => {});\n",
+		}
+		diags := CheckUnreachableAnnotations(testFiles, "zero-tolerance")
+		for _, d := range diags {
+			if d.Kind == "unreachable_annotation" {
+				t.Errorf("expected NO unreachable_annotation (the real it() carries the pair in its title), got false-positive: %+v", d)
+			}
+		}
+	})
+}
+
+// Regression guard: an `// @ac` comment inside a nested `it()` body
+// must be attributed to the it(), not its enclosing describe().
+// Surfaced by the v0.13 cycle review (commit 3b, finding B2). Owned
+// by AC-16.
+//
+// @ac AC-16
+func TestCheckUnreachableAnnotations_TS_NestedAttribution(t *testing.T) {
+	t.Run("spec-check/AC-16 nested it() inside describe(): @ac attributes to innermost", func(t *testing.T) {
+		testFiles := map[string]string{
+			"nested.test.ts": "// @spec foo-spec\ndescribe('payment suite', () => {\n  // @ac AC-01\n  it('[foo-spec/AC-01] valid amount', () => {});\n});\n",
+		}
+		diags := CheckUnreachableAnnotations(testFiles, "zero-tolerance")
+		for _, d := range diags {
+			if d.Kind == "unreachable_annotation" {
+				t.Errorf("expected NO unreachable_annotation (the it() title carries the pair); attribution should pick innermost it() not enclosing describe(). got: %+v", d)
+			}
+		}
+	})
+}
+
 // @ac AC-15
 func TestCheckUnreachableAnnotations_PythonReachability(t *testing.T) {
 	t.Run("spec-check/AC-15 Python Convention B (runtime print) is reachable", func(t *testing.T) {

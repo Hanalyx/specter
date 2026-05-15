@@ -49,11 +49,7 @@ func CheckUnreachableAnnotations(testFiles map[string]string, strictness string)
 		case "go":
 			diags = append(diags, scanGoFile(path, content, strictness)...)
 		case "ts", "js":
-			// Stub for commit 3b — currently treats TS as unsupported,
-			// so files emit unreachable_annotation_unknown rather than
-			// false-positive unreachable_annotation. Real reachability
-			// detection lands in commit 3b.
-			diags = append(diags, emitUnknownForAllAcs(path, content)...)
+			diags = append(diags, scanTsFile(path, content, strictness)...)
 		case "py":
 			// Stub for commit 3c — same reasoning as TS above.
 			diags = append(diags, emitUnknownForAllAcs(path, content)...)
