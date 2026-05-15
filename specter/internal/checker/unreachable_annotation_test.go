@@ -201,6 +201,49 @@ func TestCheckUnreachableAnnotations_TS_NestedAttribution(t *testing.T) {
 	})
 }
 
+// Regression guard: Python's common logger patterns must be recognized
+// as Convention B emitters. A test using LOG.info / self.logger.info /
+// logging.getLogger(__name__).info / my_log.info must not produce a
+// false-positive unreachable_annotation. Surfaced by v0.13 commit 3c
+// agent review (finding M1). Owned by AC-15.
+//
+// @ac AC-15
+func TestCheckUnreachableAnnotations_PythonLoggerPatterns(t *testing.T) {
+	t.Run("spec-check/AC-15 Python common logger patterns are recognized as reachable", func(t *testing.T) {
+		// One test function per common logger idiom. Each emits @spec
+		// and @ac as the logger's string-literal arg.
+		testFiles := map[string]string{
+			"test_loggers.py": `# @spec foo-spec
+# @ac AC-01
+def test_uppercase_log(client):
+    LOG.info('// @spec foo-spec')
+    LOG.info('// @ac AC-01')
+
+# @ac AC-02
+def test_class_logger(client):
+    self.logger.info('// @spec foo-spec')
+    self.logger.info('// @ac AC-02')
+
+# @ac AC-03
+def test_local_logger(client):
+    my_log.info('// @spec foo-spec')
+    my_log.info('// @ac AC-03')
+
+# @ac AC-04
+def test_inline_getlogger(client):
+    logging.getLogger(__name__).info('// @spec foo-spec')
+    logging.getLogger(__name__).info('// @ac AC-04')
+`,
+		}
+		diags := CheckUnreachableAnnotations(testFiles, "zero-tolerance")
+		for _, d := range diags {
+			if d.Kind == "unreachable_annotation" {
+				t.Errorf("expected no unreachable_annotation for known Python logger patterns, got: %+v", d)
+			}
+		}
+	})
+}
+
 // @ac AC-15
 func TestCheckUnreachableAnnotations_PythonReachability(t *testing.T) {
 	t.Run("spec-check/AC-15 Python Convention B (runtime print) is reachable", func(t *testing.T) {

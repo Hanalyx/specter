@@ -31,27 +31,23 @@ import (
 // is the literal's content with quotes stripped.
 //
 // Examples this matches:
-//   it("foo-spec/AC-01 valid", ...)
-//   test('foo-spec/AC-01 valid', ...)
-//   describe("foo-spec/AC-01", ...)
-//   it.skip("foo-spec/AC-01", ...)        — via .skip / .only / .each
-//   it.only('foo-spec/AC-01', ...)
+//
+//	it("foo-spec/AC-01 valid", ...)
+//	test('foo-spec/AC-01 valid', ...)
+//	describe("foo-spec/AC-01", ...)
+//	it.skip("foo-spec/AC-01", ...)        — via .skip / .only / .each
+//	it.only('foo-spec/AC-01', ...)
 //
 // Does NOT match (routes to _unknown via the test-entry detection):
-//   it(name, ...)                          — identifier first arg
-//   it(`[${spec}/${ac}] desc`, ...)        — template literal
-//   it("title with " + suffix, ...)        — concatenation
-//   it(                                    — multi-line call header
-//       "title",
-//       ...
-//   )
+//
+//	it(name, ...)                          — identifier first arg
+//	it(`[${spec}/${ac}] desc`, ...)        — template literal
+//	it("title with " + suffix, ...)        — concatenation
+//	it(                                    — multi-line call header
+//	    "title",
+//	    ...
+//	)
 var reTsTestCall = regexp.MustCompile(`\b(?:it|test|describe)(?:\.\w+)?\s*\(\s*(?:"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)')\s*,`)
-
-// Match an it()/test()/describe() call where the first arg is NOT a
-// bare string literal — i.e., variable, template literal, or
-// expression. We need to detect these to mark the corresponding @ac
-// as ambiguous (routed to _unknown).
-var reTsTestCallAmbiguous = regexp.MustCompile(`\b(?:it|test|describe)(?:\.\w+)?\s*\(\s*[^"'\s)][^,)]*,`)
 
 // Match the entire `it.skip(...)` / `it.only(...)` / etc. prefix to
 // confirm we're looking at a test entry (not, say, `myit(`).

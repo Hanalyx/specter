@@ -51,8 +51,7 @@ func CheckUnreachableAnnotations(testFiles map[string]string, strictness string)
 		case "ts", "js":
 			diags = append(diags, scanTsFile(path, content, strictness)...)
 		case "py":
-			// Stub for commit 3c — same reasoning as TS above.
-			diags = append(diags, emitUnknownForAllAcs(path, content)...)
+			diags = append(diags, scanPyFile(path, content, strictness)...)
 		default:
 			// Truly unsupported language — emit _unknown for any @ac in the file.
 			diags = append(diags, emitUnknownForAllAcs(path, content)...)
