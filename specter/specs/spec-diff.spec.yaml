@@ -1,6 +1,6 @@
 spec:
   id: spec-diff
-  version: "2.0.0"
+  version: "2.1.0"
   status: draft
   tier: 2
   context:
@@ -83,6 +83,12 @@ spec:
       description: "MUST implement DiffCoverageReports as a pure function in internal/diff — no I/O, no subprocess calls. Mirrors C-08's constraint for the spec kind."
       type: technical
       enforcement: error
+
+    - id: C-12
+      description: "`specter diff coverage <baseline> <current>` MUST refuse to read either input file when its on-disk size exceeds `MaxCoverageReportBytes` (16 MiB, matching the `coverage.MaxResultsFileBytes` convention). The cap MUST be enforced BEFORE `json.Unmarshal` allocates on the buffer — `os.ReadFile` followed by an unbounded `json.Unmarshal` over arbitrary multi-GiB JSON OOMs CI runners and is the same defense-in-depth that `coverage.ParseResultsFile` applies on `.specter-results.json`. Error message MUST name the path, the actual byte count, and the cap, so the operator knows why the run refused. Rationale: a malicious or accidentally large coverage report (e.g., a CI artifact rewritten by a hostile workflow, or a JSON blob with deeply nested arrays designed to exhaust the decoder) becomes a denial-of-service vector if the read path is unbounded. v0.13 security audit surfaced this as the M3 gap."
+      type: business
+      enforcement: error
+
   acceptance_criteria:
     - id: AC-01
       description: "path@HEAD~1 is parsed as path=the-path ref=HEAD~1"
@@ -164,7 +170,25 @@ spec:
       references_constraints: ["C-11"]
       priority: high
 
+    - id: AC-15
+      description: "`specter diff coverage baseline.json current.json` with either input file larger than `MaxCoverageReportBytes` (16 MiB) MUST exit non-zero BEFORE `json.Unmarshal` runs on the oversized buffer. The error message MUST name the path, the actual byte count, and the cap (e.g., `coverage report <path> exceeds 16777216 byte limit (got N bytes)`). Files at or under the cap continue to parse as before. No reformatting of the existing output for under-cap inputs; the cap is purely a refusal gate."
+      inputs:
+        scenario_oversize_baseline: "baseline.json is 17 MiB (cap + 1 MiB)"
+        scenario_oversize_current: "current.json is 17 MiB"
+        scenario_at_cap: "both files exactly 16 MiB"
+      expected_output:
+        oversize_exit_nonzero: true
+        oversize_stderr_contains: ["exceeds", "byte limit"]
+        at_cap_exit: 0
+      references_constraints: ["C-12"]
+      priority: high
+
   changelog:
+    - version: "2.1.0"
+      date: "2026-05-16"
+      author: "specter-team"
+      type: minor
+      description: "v0.13 security audit M3 fix — `diff coverage` size cap. Add C-12 + AC-15. The `readCoverageReportFromFile` helper previously did `os.ReadFile` followed by an unbounded `json.Unmarshal`. A malicious or accidentally large coverage JSON file (multi-GiB) would buffer fully into memory before decode, OOMing CI. C-12 mandates a 16 MiB cap (`MaxCoverageReportBytes`, matching `coverage.MaxResultsFileBytes` convention) enforced before `json.Unmarshal`. AC-15 pins the refusal: exit non-zero with stderr naming path, byte count, and cap."
     - version: "2.0.0"
       date: "2026-05-15"
       author: "specter-team"
