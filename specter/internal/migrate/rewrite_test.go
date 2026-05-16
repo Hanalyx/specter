@@ -450,3 +450,123 @@ spec:
 		}
 	})
 }
+
+// @ac AC-31
+// v0.13 D1 — the headline regression guard for C-17 line-targeted
+// deletion. A `description:` block scalar that contains the literal
+// text `trust_level: high` in its prose MUST survive byte-preserved
+// when `--fix` strips the actual `trust_level` key. yaml.v3 reports
+// the description's body as scalar content (not key nodes), so the
+// new mechanism's keyNode.Line lookup never touches it. A content-
+// pattern regex over all source lines (the v0.12 mechanism) would
+// have falsely matched the description line and deleted it — this
+// test is the contract that closes the BETA gate's named gap.
+func TestApply_StringLiteralMentionInDescription_Preserved(t *testing.T) {
+	t.Run("spec-doctor/AC-31 trust_level mention inside description block scalar is byte-preserved", func(t *testing.T) {
+		// Description block scalar contains lines that LOOK like
+		// `trust_level: <value>` declarations but are actually prose.
+		// Indentation is identical to the real key's column to maximize
+		// the false-match risk under the v0.12 regex.
+		yamlIn := `spec:
+  id: legacy-spec
+  version: "1.0.0"
+  status: draft
+  tier: 3
+  description: |
+    The trust_level: high field was removed in v0.6.5.
+    See the migration notes; use tier: instead of trust_level: medium.
+  trust_level: high
+  context:
+    system: test
+    feature: test
+  objective:
+    summary: test
+  constraints:
+    - id: C-01
+      description: "MUST something"
+      type: technical
+      enforcement: error
+  acceptance_criteria:
+    - id: AC-01
+      description: "test"
+      references_constraints: ["C-01"]
+      priority: high
+`
+
+		result, err := Apply([]byte(yamlIn), trustLevelErr)
+		if err != nil {
+			t.Fatalf("Apply error: %v", err)
+		}
+
+		// The rewrite must fire (one applied) and not refuse.
+		if len(result.Applied) != 1 || result.Applied[0] != "strip-trust-level" {
+			t.Fatalf("Applied = %v, want [strip-trust-level]", result.Applied)
+		}
+		if len(result.Unhandled) != 0 {
+			t.Errorf("expected no Unhandled entries, got %v", result.Unhandled)
+		}
+
+		out := string(result.Content)
+
+		// The actual `trust_level: high` key line is gone.
+		if strings.Contains(out, "\n  trust_level: high\n") {
+			t.Errorf("real `trust_level: high` key line must be removed; got:\n%s", out)
+		}
+
+		// The description block scalar's prose lines are byte-preserved.
+		// Both prose lines mention trust_level; the v0.12 regex would
+		// have stripped them.
+		if !strings.Contains(out, "    The trust_level: high field was removed in v0.6.5.") {
+			t.Errorf("description block prose line 1 (mentioning trust_level) was incorrectly stripped; got:\n%s", out)
+		}
+		if !strings.Contains(out, "    See the migration notes; use tier: instead of trust_level: medium.") {
+			t.Errorf("description block prose line 2 (mentioning trust_level) was incorrectly stripped; got:\n%s", out)
+		}
+
+		// The `description: |` line itself survives.
+		if !strings.Contains(out, "  description: |") {
+			t.Errorf("description key line was incorrectly stripped; got:\n%s", out)
+		}
+	})
+}
+
+// v0.13 D1 — multi-document version of AC-31. Doc 0 has a safe
+// trust_level; doc 1 has both a description-block prose mention AND
+// the real key. Both docs must rewrite (one line each from doc 0 and
+// doc 1) without touching the prose mention.
+func TestApply_StringLiteralMention_MultiDoc_Preserved(t *testing.T) {
+	t.Run("spec-doctor/AC-31 description-block prose mention survives across multi-doc files", func(t *testing.T) {
+		yamlIn := `spec:
+  id: doc0
+  trust_level: high
+  context: { system: t, feature: t }
+  objective: { summary: t }
+---
+spec:
+  id: doc1
+  description: |
+    trust_level: low was the old field name.
+  trust_level: medium
+  context: { system: t, feature: t }
+  objective: { summary: t }
+`
+		result, _ := Apply([]byte(yamlIn), trustLevelErr)
+		if len(result.Applied) != 1 {
+			t.Fatalf("expected one rewrite applied (multi-doc all-safe); got %v", result.Applied)
+		}
+		out := string(result.Content)
+
+		// Both real key lines gone.
+		if strings.Contains(out, "trust_level: high") {
+			t.Errorf("doc0 real key not removed; got:\n%s", out)
+		}
+		if strings.Contains(out, "trust_level: medium") {
+			t.Errorf("doc1 real key not removed; got:\n%s", out)
+		}
+
+		// Description prose line preserved.
+		if !strings.Contains(out, "    trust_level: low was the old field name.") {
+			t.Errorf("description prose mention was stripped; got:\n%s", out)
+		}
+	})
+}
