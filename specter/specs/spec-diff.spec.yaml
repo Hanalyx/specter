@@ -1,35 +1,41 @@
 spec:
   id: spec-diff
-  version: "1.0.0"
+  version: "2.0.0"
   status: draft
   tier: 2
   context:
     system: Specter toolchain
-    feature: Semantic spec diff between git revisions
+    feature: Polymorphic Specter-artifact diff
     description: >
-      Compares two git revisions of a spec file and produces a human-readable
-      semantic diff showing added/removed/changed ACs, constraints, and dependency
-      version pins. More useful than a YAML textual diff for PR review.
+      The single diff verb for any Specter artifact. v1.x supported only
+      spec diffs between git revisions; v2.0.0 generalizes to a
+      sub-subcommand pattern `specter diff <kind> <args...>` where each
+      kind handles a different artifact type. v2.0 ships two kinds:
+      `spec` (backward-compat with v1.x semantics) and `doctor` (set-diff
+      between two `doctor --json` outputs).
     assumptions:
-      - "Requires a git repository"
-      - "File paths are specified as path@ref or plain path (reads from disk)"
+      - "spec kind requires a git repository when args carry @ref suffixes"
+      - "doctor kind requires two paths to existing doctor --json files"
+      - "Future kinds (coverage, ingest, check) follow the same shape;
+         no per-subcommand --diff flag scatter (cycle design note)."
   objective:
     summary: >
-      Given two revisions of a spec, show the semantic delta: ACs added/removed/
-      changed, constraints added/removed/changed, dependency version changes,
-      and version bump classification (breaking/additive/patch).
+      Given a kind and the kind's required args, produce a human-readable
+      semantic delta between the two snapshots. The kind determines what
+      "snapshot" means (spec revisions for spec kind, doctor reports for
+      doctor kind, etc.). Output is plain-text with sign-prefix-per-item
+      conventions per kind.
     scope:
       includes:
-        - "Parse spec from git ref via git show <ref>:<path>"
-        - "Compare acceptance_criteria (added, removed, description changed)"
-        - "Compare constraints (added, removed, description changed)"
-        - "Compare depends_on version_range changes"
-        - "Classify overall change as breaking/additive/patch"
-        - "Plain-text output with +/~/- prefix per item"
+        - "spec kind: backward-compat with v1.x — `specter diff <path>[@ref] <path>[@ref]`"
+        - "doctor kind: `specter diff doctor <baseline.json> [current.json]` emits new / resolved / changed issues"
+        - "Sub-subcommand grammar `specter diff <kind> <args...>` with `spec` as the implicit default when args don't match a registered kind"
+        - "Plain-text output with +/~/- prefix per item (spec kind, unchanged from v1.x)"
+        - "doctor kind output: ++ new issue, -- resolved issue, ~~ changed issue"
       excludes:
         - "Three-way merge"
-        - "Diffing non-spec files"
         - "Interactive diff UI"
+        - "Per-subcommand `--diff` flags on other commands — explicitly rejected; diff lives here"
   constraints:
     - id: C-01
       description: "MUST parse the argument format <path>@<ref> — everything before the last @ is the path, everything after is the git ref"
@@ -61,6 +67,18 @@ spec:
       enforcement: error
     - id: C-08
       description: "MUST implement DiffSpecs as a pure function in internal/diff — no I/O, no subprocess calls"
+      type: technical
+      enforcement: error
+    - id: C-09
+      description: "MUST accept `specter diff <kind> <args...>` where <kind> ∈ {spec, doctor}. When the first positional argument matches a known kind, that kind's grammar takes over. When the first positional does NOT match a known kind (i.e., user passed `specter diff <path>` or `specter diff <path1> <path2>`), the spec kind is the implicit default — backward compat with v1.x callers. Cobra subcommand registration handles the dispatch; the `diff` command itself retains its v1.x positional-arg RunE as the fallback."
+      type: technical
+      enforcement: error
+    - id: C-10
+      description: "doctor kind MUST accept two positional arguments: <baseline.json> and optional <current.json> (defaults to `.specter-doctor.json` or runs `doctor --json` if no current path is provided — implementation chooses one). The two are parsed as the structured output of `specter doctor --json`. The diff classifies each issue (a (file, kind, message) triple, or whatever the doctor schema defines) as: NEW (present in current, absent in baseline), RESOLVED (present in baseline, absent in current), CHANGED (present in both with different message or severity). Output prefixes: `++` for NEW, `--` for RESOLVED, `~~` for CHANGED. Exit code 0 always (this is a diagnostic surface, not a gate)."
+      type: technical
+      enforcement: error
+    - id: C-11
+      description: "MUST implement DiffDoctorReports as a pure function in internal/diff — no I/O, no subprocess calls. Mirrors C-08's constraint for the spec kind."
       type: technical
       enforcement: error
   acceptance_criteria:
@@ -105,7 +123,49 @@ spec:
       references_constraints: ["C-08"]
       priority: high
 
+    - id: AC-11
+      description: "`specter diff <path1> <path2>` (no kind argument) invokes the spec kind — backward compat with v1.x. The v1.x test suite for the spec kind continues to pass unchanged."
+      inputs:
+        invocation: "specter diff a.spec.yaml@HEAD~1 a.spec.yaml"
+      expected_output:
+        kind_dispatched: "spec"
+        v1_behavior_preserved: true
+      references_constraints: ["C-09"]
+      priority: critical
+
+    - id: AC-12
+      description: "`specter diff spec <path1> <path2>` explicitly invokes the spec kind; identical behavior to AC-11's implicit form."
+      inputs:
+        invocation: "specter diff spec a.spec.yaml@HEAD~1 a.spec.yaml"
+      expected_output:
+        kind_dispatched: "spec"
+        same_output_as_implicit: true
+      references_constraints: ["C-09"]
+      priority: high
+
+    - id: AC-13
+      description: "`specter diff doctor <baseline.json> <current.json>` reads both JSON files, treats their issue lists as sets, and emits sign-prefixed lines: `++` for issues only in current (NEW), `--` for issues only in baseline (RESOLVED), `~~` for issues in both with different content (CHANGED). Identical files emit empty output."
+      inputs:
+        baseline: 'doctor --json snapshot with issues [{file:"a", kind:"x", msg:"old"}, {file:"b", kind:"y", msg:"same"}]'
+        current:  'doctor --json snapshot with issues [{file:"a", kind:"x", msg:"new"}, {file:"b", kind:"y", msg:"same"}, {file:"c", kind:"z", msg:"added"}]'
+      expected_output:
+        new: ["c kind=z msg=added"]
+        resolved: []
+        changed: ["a kind=x msg=old → new"]
+      references_constraints: ["C-10"]
+      priority: critical
+
+    - id: AC-14
+      description: "DiffDoctorReports(baseline, current) with two identical reports returns empty diff. Pure-function contract per C-11."
+      references_constraints: ["C-11"]
+      priority: high
+
   changelog:
+    - version: "2.0.0"
+      date: "2026-05-15"
+      author: "specter-team"
+      type: major
+      description: "v0.13 C3 — polymorphic `specter diff <kind> <args...>`. v2.0 generalizes the v1.x spec-only diff into a sub-subcommand pattern; first new kind is `doctor` (set-diff between two `doctor --json` outputs). Backward compat preserved: `specter diff <path> <path>` continues to invoke the spec kind. Future kinds (coverage, ingest, check) follow the same shape — `--diff` flags on other commands are explicitly rejected. Adds C-09/C-10/C-11 and AC-11/AC-12/AC-13/AC-14."
     - version: "1.0.0"
       date: "2026-04-14"
       author: "specter-team"

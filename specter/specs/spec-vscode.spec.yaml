@@ -550,7 +550,7 @@ spec:
       version_range: "^1.5.0"
       relationship: requires
     - spec_id: spec-diff
-      version_range: "^1.0.0"
+      version_range: ">=1.0.0 <3.0.0"
       relationship: requires
     - spec_id: spec-explain
       version_range: "^1.0.0"
