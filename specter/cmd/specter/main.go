@@ -2817,17 +2817,25 @@ func modsChanged(prev, curr map[string]time.Time) bool {
 
 // @spec spec-diff
 func diffCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "diff <path>[@<ref>] <path>[@<ref>]",
-		Short: "Show semantic diff of a spec between two git revisions",
-		Long: `Compare two versions of a spec and show a human-readable semantic diff.
+	cmd := &cobra.Command{
+		Use:   "diff <kind?> <path>[@<ref>] <path>[@<ref>]",
+		Short: "Polymorphic diff — spec (default) or coverage",
+		Long: `Show a semantic diff between two snapshots. Polymorphic on the
+optional <kind> argument:
 
-Each argument is either:
+  specter diff <path>[@ref] <path>[@ref]   — spec kind (implicit; backward compat with v1.x)
+  specter diff spec <path>[@ref] <path>[@ref]  — spec kind (explicit)
+  specter diff coverage <baseline.json> <current.json>  — coverage kind (per-spec AC delta)
+
+For the spec kind, each path argument is either:
   path            — read from disk
   path@ref        — read from git (e.g. specs/foo.spec.yaml@HEAD~1)
 
-Example:
-  specter diff specs/engine.spec.yaml@HEAD~5 specs/engine.spec.yaml`,
+Example (spec kind):
+  specter diff specs/engine.spec.yaml@HEAD~5 specs/engine.spec.yaml
+
+Example (coverage kind):
+  specter diff coverage baseline-coverage.json current-coverage.json`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			v1, err := readSpecAtRef(args[0])
@@ -2877,6 +2885,91 @@ Example:
 			return nil
 		},
 	}
+
+	// v0.13 C3: register the coverage kind as a subcommand. Cobra
+	// dispatches to it when invoked as `specter diff coverage ...`.
+	// The parent diffCmd's RunE handles the implicit spec kind for
+	// backward-compat with v1.x callers (`specter diff <path1> <path2>`).
+	cmd.AddCommand(diffCoverageCmd())
+	return cmd
+}
+
+// diffCoverageCmd is the `specter diff coverage` subcommand (spec-diff
+// 2.0.0 C-10). Reads two `coverage --json` files and emits the per-spec
+// AC delta (gained / lost ACs, coverage_pct change, specs added/removed).
+func diffCoverageCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "coverage <baseline.json> <current.json>",
+		Short: "Diff two coverage --json snapshots (per-spec AC delta)",
+		Long: `Read two CoverageReport JSON files and emit the per-spec AC delta.
+
+Each argument is a path to a `+"`coverage --json`"+` output. Useful for tracking
+AC coverage drift between CI runs.
+
+Output:
+  +spec spec-bar               — spec added in current
+  -spec spec-stale             — spec removed in current
+  +spec-foo/AC-02              — AC GAINED coverage in current
+  -spec-foo/AC-03              — AC LOST coverage in current
+  ~spec-foo coverage_pct: 50.0 → 100.0 (passes_threshold: false → true)
+
+Exit code 0 always — this is a diagnostic surface, not a gate.`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			baseline, err := readCoverageReportFromFile(args[0])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error reading %s: %v\n", args[0], err)
+				return errSilent
+			}
+			current, err := readCoverageReportFromFile(args[1])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error reading %s: %v\n", args[1], err)
+				return errSilent
+			}
+
+			diff := specdiff.DiffCoverageReports(*baseline, *current)
+			if diff.IsEmpty() {
+				fmt.Println("coverage reports are identical")
+				return nil
+			}
+
+			for _, spec := range diff.SpecsAdded {
+				fmt.Printf("+spec %s\n", spec)
+			}
+			for _, spec := range diff.SpecsRemoved {
+				fmt.Printf("-spec %s\n", spec)
+			}
+			for _, change := range diff.SpecChanges {
+				for _, ac := range change.GainedACs {
+					fmt.Printf("+%s/%s\n", change.SpecID, ac)
+				}
+				for _, ac := range change.LostACs {
+					fmt.Printf("-%s/%s\n", change.SpecID, ac)
+				}
+				if change.BaselineCoveragePct != change.CurrentCoveragePct ||
+					change.BaselinePassesThreshold != change.CurrentPassesThreshold {
+					fmt.Printf("~%s coverage_pct: %.1f → %.1f (passes_threshold: %v → %v)\n",
+						change.SpecID,
+						change.BaselineCoveragePct, change.CurrentCoveragePct,
+						change.BaselinePassesThreshold, change.CurrentPassesThreshold)
+				}
+			}
+			return nil
+		},
+	}
+}
+
+// readCoverageReportFromFile parses a coverage --json output file.
+func readCoverageReportFromFile(path string) (*coverage.CoverageReport, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read: %w", err)
+	}
+	var rep coverage.CoverageReport
+	if err := json.Unmarshal(data, &rep); err != nil {
+		return nil, fmt.Errorf("parse json: %w", err)
+	}
+	return &rep, nil
 }
 
 // readSpecAtRef reads and parses a spec from disk or from a git ref.

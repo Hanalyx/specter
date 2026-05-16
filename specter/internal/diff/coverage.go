@@ -57,15 +57,86 @@ func (s *SpecCoverageChange) HasDelta() bool {
 // DiffCoverageReports returns the per-spec coverage delta between
 // baseline and current. Pure function — no I/O, no subprocess calls.
 //
-// Stub: real implementation lands in v0.13 C3 commit 3/3. Returning
-// an empty diff here lets the test file compile while keeping every
-// AC-13 / AC-14 assertion red — the contract gap the SDD cycle
-// expects between commit 2 (test) and commit 3 (implementation).
+// Algorithm:
+//  1. Index baseline entries by spec_id.
+//  2. Walk current entries, classifying each as either a SpecChange
+//     (present in both) or a SpecAdded (present only in current).
+//  3. After the walk, any baseline entry whose spec_id wasn't seen
+//     during the walk is a SpecRemoved.
+//  4. For each in-both spec, compute set differences on CoveredACs
+//     to derive GainedACs and LostACs. Capture coverage_pct and
+//     passes_threshold from both sides for downstream reporting.
+//  5. Omit no-op SpecChange entries (a spec where the entry is
+//     bit-identical between reports contributes nothing).
+//
+// Slices in the output are sorted lexicographically for deterministic
+// output — important when this is piped into a `git diff`-style review
+// or compared in tests.
 func DiffCoverageReports(baseline, current coverage.CoverageReport) *CoverageDiff {
-	_ = baseline
-	_ = current
-	return &CoverageDiff{}
+	out := &CoverageDiff{}
+
+	baselineByID := make(map[string]*coverage.SpecCoverageEntry, len(baseline.Entries))
+	for i := range baseline.Entries {
+		e := &baseline.Entries[i]
+		baselineByID[e.SpecID] = e
+	}
+
+	seen := make(map[string]bool, len(current.Entries))
+	for i := range current.Entries {
+		cur := &current.Entries[i]
+		seen[cur.SpecID] = true
+
+		base, inBaseline := baselineByID[cur.SpecID]
+		if !inBaseline {
+			out.SpecsAdded = append(out.SpecsAdded, cur.SpecID)
+			continue
+		}
+
+		change := SpecCoverageChange{
+			SpecID:                  cur.SpecID,
+			BaselineCoveragePct:     base.CoveragePct,
+			CurrentCoveragePct:      cur.CoveragePct,
+			BaselinePassesThreshold: base.PassesThreshold,
+			CurrentPassesThreshold:  cur.PassesThreshold,
+			GainedACs:               setDifference(cur.CoveredACs, base.CoveredACs),
+			LostACs:                 setDifference(base.CoveredACs, cur.CoveredACs),
+		}
+		if change.HasDelta() {
+			out.SpecChanges = append(out.SpecChanges, change)
+		}
+	}
+
+	// Specs removed from current: present in baseline, not seen.
+	for id := range baselineByID {
+		if !seen[id] {
+			out.SpecsRemoved = append(out.SpecsRemoved, id)
+		}
+	}
+
+	sort.Strings(out.SpecsAdded)
+	sort.Strings(out.SpecsRemoved)
+	sort.Slice(out.SpecChanges, func(i, j int) bool {
+		return out.SpecChanges[i].SpecID < out.SpecChanges[j].SpecID
+	})
+	return out
 }
 
-// Use sort to keep emitted slices deterministic — even from the stub.
-var _ = sort.Strings
+// setDifference returns elements in a that are not in b, sorted.
+// O(N+M) via a hash set on b.
+func setDifference(a, b []string) []string {
+	if len(a) == 0 {
+		return nil
+	}
+	bSet := make(map[string]bool, len(b))
+	for _, x := range b {
+		bSet[x] = true
+	}
+	var out []string
+	for _, x := range a {
+		if !bSet[x] {
+			out = append(out, x)
+		}
+	}
+	sort.Strings(out)
+	return out
+}

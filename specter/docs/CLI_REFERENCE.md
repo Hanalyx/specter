@@ -779,17 +779,26 @@ specter watch
 
 ### `specter diff`
 
-Show a semantic diff of a spec between two git revisions (or between any two versions on disk). Classifies the overall change as `breaking`, `additive`, `patch`, or `unchanged`.
+Polymorphic diff verb — the single command for diffing any Specter artifact. Dispatches on an optional first `<kind>` argument; defaults to the `spec` kind for backward compat with v1.x.
 
 **Synopsis:**
 
 ```
-specter diff <path>[@<ref>] <path>[@<ref>]
+specter diff <path>[@<ref>] <path>[@<ref>]              # spec kind (implicit; backward compat)
+specter diff spec <path>[@<ref>] <path>[@<ref>]         # spec kind (explicit)
+specter diff coverage <baseline.json> <current.json>    # coverage kind
 ```
 
-Each argument is `path` (read from disk) or `path@ref` (read from git).
+**Kinds:**
 
-**Change classes:**
+| Kind | Purpose |
+|------|---------|
+| `spec` | Semantic diff between two spec versions (v1.x behavior; default when no kind argument is present). Classifies as `breaking`, `additive`, `patch`, or `unchanged`. |
+| `coverage` | Per-spec AC delta between two `coverage --json` snapshots. Useful for tracking coverage drift across CI runs. |
+
+Future cycles add more kinds (e.g., `ingest`, `check`) under the same `specter diff <kind>` grammar. New diffable artifacts MUST NOT introduce a per-subcommand `--diff` flag — they land as kinds here.
+
+**spec kind — change classes:**
 
 | Class | Meaning |
 |-------|---------|
@@ -798,7 +807,7 @@ Each argument is `path` (read from disk) or `path@ref` (read from git).
 | `patch` | Wording-only changes that don't alter meaning. PATCH version bump. |
 | `unchanged` | No changes detected. |
 
-**Example:**
+**Example — spec kind:**
 
 ```
 $ specter diff specs/auth.spec.yaml@HEAD~3 specs/auth.spec.yaml
@@ -811,6 +820,21 @@ spec spec-auth 1.0.0 → 1.1.0 [additive]
 $ specter diff specs/auth.spec.yaml specs/auth.spec.yaml
 spec spec-auth 1.1.0 → 1.1.0: no changes
 ```
+
+**Example — coverage kind:**
+
+```
+$ specter coverage --json > baseline.json   # later, after changes:
+$ specter coverage --json > current.json
+$ specter diff coverage baseline.json current.json
+
++spec spec-new-feature
++spec-auth/AC-05
+-spec-auth/AC-03
+~spec-auth coverage_pct: 80.0 → 90.0 (passes_threshold: true → true)
+```
+
+Exit code is always 0 for both kinds — diff is a diagnostic surface, not a gate.
 
 ---
 
