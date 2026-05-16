@@ -710,6 +710,35 @@ func checkCmd() *cobra.Command {
 						result.Summary.Info++
 					}
 				}
+
+				// spec-check C-10: under `check --test`, also run the
+				// unreachable_annotation scan. A source-comment @ac
+				// whose enclosing test produces no runner-visible
+				// spec-id/AC-NN token (Convention A) and no runtime
+				// `// @spec` / `// @ac` line (Convention B) would
+				// silently demote under `coverage --strict`. Severity
+				// routes per the manifest's strictness:
+				//
+				//   - annotation:     diagnostics suppressed
+				//   - threshold:      warning (exits 0)
+				//   - zero-tolerance: error   (exits non-zero)
+				//
+				// The _unknown variant (unsupported test shape) is
+				// always a warning regardless of strictness, so the
+				// scan is safe to run even in annotation mode — the
+				// helper handles suppression internally.
+				uaDiags := checker.CheckUnreachableAnnotations(contents, m.Settings.Strictness)
+				result.Diagnostics = append(result.Diagnostics, uaDiags...)
+				for _, d := range uaDiags {
+					switch d.Severity {
+					case "error":
+						result.Summary.Errors++
+					case "warning":
+						result.Summary.Warnings++
+					case "info":
+						result.Summary.Info++
+					}
+				}
 			}
 
 			// Tier conflict warnings (C-14)

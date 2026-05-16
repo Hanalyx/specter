@@ -109,6 +109,68 @@ func TestCheckTest_SyncStrictRoutesThroughCheck(t *testing.T) {
 	})
 }
 
+// spec-check C-10 wiring test — v0.13 F3.
+//
+// CheckUnreachableAnnotations exists in internal/checker/ with full
+// unit coverage. v0.13 pre-release smoke testing caught that the
+// function was never invoked from cmd/specter/ — the headline
+// diagnostic was dead code from the user's perspective. This test
+// is the regression guard: a `check --test` invocation over a test
+// file whose @ac is unreachable (no spec-id/AC-NN token in the test
+// title, no runtime print) MUST emit the unreachable_annotation
+// diagnostic.
+//
+// Strictness routing per C-10: under default `threshold` strictness,
+// severity is warning (exit code remains 0).
+//
+// @ac AC-13
+func TestCheckTest_UnreachableAnnotationFiresFromCLI(t *testing.T) {
+	t.Run("spec-check/AC-13 check --test surfaces unreachable_annotation diagnostic", func(t *testing.T) {
+		// Test function with @ac AC-01 but no runner-visible
+		// spec-id/AC-01 token in the subtest name AND no runtime print
+		// of the annotation. Unreachable per C-10.
+		dir := setupCheckTestDir(t, "real-spec", []string{"AC-01"},
+			"package foo\n\nimport \"testing\"\n\n// @spec real-spec\n// @ac AC-01\nfunc TestFoo(t *testing.T) {\n}\n")
+
+		out, _ := runCLI(t, dir, "check", "--test")
+
+		if !strings.Contains(out, "unreachable_annotation") {
+			t.Errorf("expected unreachable_annotation diagnostic in CLI output; got:\n%s", out)
+		}
+		// Must name the AC so the operator can locate it.
+		if !strings.Contains(out, "AC-01") {
+			t.Errorf("expected diagnostic to name AC-01; got:\n%s", out)
+		}
+	})
+}
+
+// spec-check C-11 wiring test — the @reachable manual marker MUST
+// suppress unreachable_annotation diagnostics for every @ac in the
+// file. Companion to the C-10 wiring test above; verifies the
+// off-switch is reachable end-to-end through the CLI, not just
+// inside the pure function.
+//
+// @ac AC-15
+func TestCheckTest_ReachableManualSuppressesFromCLI(t *testing.T) {
+	t.Run("spec-check/AC-15 // @reachable manual suppresses CLI unreachable_annotation diagnostic", func(t *testing.T) {
+		// Same scenario as the C-10 test, but with the file-level
+		// // @reachable manual marker prepended.
+		dir := setupCheckTestDir(t, "real-spec", []string{"AC-01"},
+			"// @reachable manual\npackage foo\n\nimport \"testing\"\n\n// @spec real-spec\n// @ac AC-01\nfunc TestFoo(t *testing.T) {\n}\n")
+
+		out, code := runCLI(t, dir, "check", "--test")
+
+		if strings.Contains(out, "unreachable_annotation") {
+			t.Errorf("@reachable manual must suppress unreachable_annotation diagnostic; got:\n%s", out)
+		}
+		// File-level marker should also suppress _unknown, so the
+		// run should be clean.
+		if code != 0 {
+			t.Errorf("expected exit 0 when off-switch suppresses all unreachable diagnostics, got %d:\n%s", code, out)
+		}
+	})
+}
+
 // Regression guard: `check` without --test runs today's checks unchanged.
 // Opt-in discipline — adding --test must not change default behavior.
 func TestCheckTest_DefaultBehaviorUnchanged(t *testing.T) {
