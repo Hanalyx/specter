@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -167,6 +168,96 @@ func TestCheckTest_ReachableManualSuppressesFromCLI(t *testing.T) {
 		// run should be clean.
 		if code != 0 {
 			t.Errorf("expected exit 0 when off-switch suppresses all unreachable diagnostics, got %d:\n%s", code, out)
+		}
+	})
+}
+
+// spec-check C-12 / AC-20 — v0.13 H5 security fix.
+//
+// A test file larger than MaxTestFileBytes (4 MiB) discovered under
+// `check --test` MUST be skipped — the file is NOT read into memory,
+// no diagnostics produced for any @ac it contains, a stderr warning
+// names the file, and the run continues with remaining files (exit 0
+// on the skip alone). Closes the H5 audit finding: unreachable
+// scanner read every test file unbounded, exposing OOM via a multi-
+// GiB malicious test file.
+//
+// @ac AC-20
+func TestCheckTest_OversizedTestFileSkipped(t *testing.T) {
+	t.Run("spec-check/AC-20 check --test skips test file larger than MaxTestFileBytes", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSpec(t, dir, "x.spec.yaml", minimalValidSpec("x-spec", 3, "AC-01"))
+
+		// 4 MiB + 1 byte — one past the cap. Content is arbitrary
+		// non-Go bytes; size check must fire before any parse runs.
+		const cap = 4 << 20
+		body := bytes.Repeat([]byte("x"), cap+1)
+		oversized := filepath.Join(dir, "huge_test.go")
+		if err := os.WriteFile(oversized, body, 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		// A small, valid test file with an @ac annotation. This file
+		// MUST still be scanned (skip applies per-file, not whole run).
+		small := "package foo\n\nimport \"testing\"\n\n// @spec x-spec\n// @ac AC-01\nfunc TestSmall(t *testing.T) {\n}\n"
+		if err := os.WriteFile(filepath.Join(dir, "small_test.go"), []byte(small), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		out, code := runCLI(t, dir, "check", "--test")
+
+		// The skip itself must not exit non-zero — other tests still run.
+		// The small file's @ac AC-01 is unreachable (no spec-id/AC-NN in
+		// title) so a warning is expected; warnings don't drive exit
+		// under default threshold strictness.
+		if code != 0 {
+			t.Errorf("oversized test file skip should not drive non-zero exit (got %d); output:\n%s", code, out)
+		}
+
+		// Warning must name the offending file and contain the skip
+		// reason. Per AC-20 the message contains `exceeds` and
+		// `skipping` (operator vocabulary for "this file was not
+		// scanned").
+		if !strings.Contains(out, "huge_test.go") {
+			t.Errorf("expected warning to name the oversized file `huge_test.go`, got:\n%s", out)
+		}
+		if !strings.Contains(out, "exceeds") || !strings.Contains(out, "skipping") {
+			t.Errorf("expected warning to contain `exceeds` and `skipping`, got:\n%s", out)
+		}
+
+		// The small file's annotation MUST have been scanned — confirm
+		// by checking that the unreachable_annotation diagnostic fired
+		// for AC-01 (it has source-only @ac with no runner-visible
+		// token in TestSmall's name).
+		if !strings.Contains(out, "unreachable_annotation") {
+			t.Errorf("expected small_test.go to still be scanned (unreachable_annotation diagnostic for AC-01), got:\n%s", out)
+		}
+	})
+
+	t.Run("spec-check/AC-20 file at exactly the cap is scanned", func(t *testing.T) {
+		// Boundary condition: len == cap (4 MiB) must scan
+		// successfully. Use a valid Go test file padded with comments
+		// up to (but not over) the cap.
+		dir := t.TempDir()
+		writeSpec(t, dir, "x.spec.yaml", minimalValidSpec("x-spec", 3, "AC-01"))
+
+		header := "package foo\n\nimport \"testing\"\n\n// @spec x-spec\n// @ac AC-01\nfunc TestBoundary(t *testing.T) {\n}\n// padding:\n"
+		const cap = 4 << 20
+		padding := bytes.Repeat([]byte("/"), cap-len(header))
+		body := append([]byte(header), padding...)
+		if len(body) > cap {
+			t.Fatalf("padding overshot the cap: %d > %d", len(body), cap)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "boundary_test.go"), body, 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		out, _ := runCLI(t, dir, "check", "--test")
+
+		// At-cap file must NOT be skipped. We verify by checking that
+		// no `exceeds` warning was emitted for boundary_test.go.
+		if strings.Contains(out, "boundary_test.go") && strings.Contains(out, "exceeds") {
+			t.Errorf("at-cap file (4 MiB) must NOT be skipped, got:\n%s", out)
 		}
 	})
 }
