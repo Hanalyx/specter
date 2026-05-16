@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "1.10.0"
+  version: "1.11.0"
   status: draft
   tier: 2
 
@@ -192,6 +192,11 @@ spec:
     - id: C-29
       description: "`settings.exclude` patterns MUST support glob matching when the pattern contains any glob metacharacter (`*`, `?`). Glob patterns match against the relative path of each candidate directory using the same `**`/`*`/`?` semantics as `settings.tests_glob` (cmd/specter/glob.go matchGlob). Patterns WITHOUT glob metacharacters continue to match by directory name exactly (back-compat with v0.x). Examples: `node_modules` matches any dir named `node_modules` at any depth (back-compat); `.claude/**` matches `.claude/` and everything under it; `**/worktrees` matches any `worktrees` dir at any depth; `tests/fixtures/*` matches direct children of `tests/fixtures/`. Walk implementation MUST exit a matched directory (filepath.SkipDir) the same way as a bare-name match — both forms behave identically in terms of stopping recursion when the matched node is a directory."
       type: technical
+      enforcement: error
+
+    - id: C-30
+      description: "`settings.specs_dir` MUST be a workspace-relative path that cannot escape the manifest's directory. ParseManifest MUST reject any of the following with a clear error naming the offending field and the offending value: (a) absolute paths (`filepath.IsAbs(s) == true`), including Windows drive-prefixed and UNC paths; (b) paths containing any `..` segment when split on the OS path separator (forward slash on Unix, backslash or forward slash on Windows); (c) values resolving to outside the manifest's containing directory after lexical cleaning. The empty value is treated as the default (`specs`) and is allowed. The check happens at parse time so every downstream consumer — `discoverSpecs`, `doctor --fix`, `coverage`, `sync` — inherits the guarantee without per-call validation. Rationale: v0.13 security audit H1 surfaced that `discoverSpecs` set `root = m.SpecsDir()` and called `filepath.Walk(root, ...)` with no boundary check; `doctor --fix` then wrote back to absolute paths returned by Walk. A malicious workspace dropping `specter.yaml` with `settings.specs_dir: /home/victim/private` could trigger arbitrary-file overwrite when the operator ran `doctor --fix`. Closing this at parse time is the smallest, most general fix."
+      type: business
       enforcement: error
 
   acceptance_criteria:
@@ -670,6 +675,28 @@ spec:
       references_constraints: ["C-29"]
       priority: high
 
+    - id: AC-46
+      description: "ParseManifest MUST reject `settings.specs_dir` values that could escape the workspace: absolute paths, paths containing any `..` segment, and lexically-cleaned paths that resolve outside the manifest's directory. The empty value (default) MUST continue to parse and resolve to `specs`. Error message MUST name `specs_dir` and the offending value so the operator can correct it. Closes the v0.13 security audit H1 finding — a malicious workspace dropping `specter.yaml` with `settings.specs_dir: /home/victim` previously caused `filepath.Walk` to scan outside the workspace, and `doctor --fix` to write back to absolute paths."
+      inputs:
+        case_absolute_unix: "settings.specs_dir: /etc"
+        case_absolute_windows: "settings.specs_dir: C:\\\\Users\\\\victim"
+        case_parent_traversal: "settings.specs_dir: ../../../home/victim"
+        case_clean_escape: "settings.specs_dir: foo/../../../home/victim"
+        case_relative_ok: "settings.specs_dir: specs"
+        case_nested_ok: "settings.specs_dir: src/specs"
+        case_default: "settings absent"
+      expected_output:
+        absolute_unix_parse_error: true
+        absolute_windows_parse_error: true
+        parent_traversal_parse_error: true
+        clean_escape_parse_error: true
+        relative_ok_parses: true
+        nested_ok_parses: true
+        default_parses_with_specs: true
+        error_message_contains: ["specs_dir"]
+      references_constraints: ["C-30"]
+      priority: critical
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -679,6 +706,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.11.0"
+      date: "2026-05-16"
+      author: "specter-team"
+      type: minor
+      description: "v0.13 security audit H1 fix — workspace-scope `settings.specs_dir`. Add C-30 + AC-46. ParseManifest now rejects absolute paths, paths containing `..` segments, and lexically-cleaned paths that resolve outside the manifest's directory. Closes the arbitrary-write path where a malicious workspace's specter.yaml with `settings.specs_dir: /home/victim` caused filepath.Walk and doctor --fix to operate outside the workspace. Enforced at parse time so every downstream consumer (discoverSpecs, doctor --fix, coverage, sync) inherits the guarantee."
     - version: "1.10.0"
       date: "2026-05-15"
       author: "specter-team"
