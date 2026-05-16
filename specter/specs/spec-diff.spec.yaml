@@ -11,13 +11,15 @@ spec:
       spec diffs between git revisions; v2.0.0 generalizes to a
       sub-subcommand pattern `specter diff <kind> <args...>` where each
       kind handles a different artifact type. v2.0 ships two kinds:
-      `spec` (backward-compat with v1.x semantics) and `doctor` (set-diff
-      between two `doctor --json` outputs).
+      `spec` (backward-compat with v1.x semantics) and `coverage`
+      (set-diff between two `coverage --json` outputs — useful for
+      tracking AC coverage drift between CI runs).
     assumptions:
       - "spec kind requires a git repository when args carry @ref suffixes"
-      - "doctor kind requires two paths to existing doctor --json files"
-      - "Future kinds (coverage, ingest, check) follow the same shape;
-         no per-subcommand --diff flag scatter (cycle design note)."
+      - "coverage kind requires two paths to existing coverage --json files"
+      - "Future kinds (doctor, ingest, check) follow the same shape;
+         no per-subcommand --diff flag scatter (cycle design note).
+         Doctor kind defers until specter doctor grows a --json flag."
   objective:
     summary: >
       Given a kind and the kind's required args, produce a human-readable
@@ -28,10 +30,10 @@ spec:
     scope:
       includes:
         - "spec kind: backward-compat with v1.x — `specter diff <path>[@ref] <path>[@ref]`"
-        - "doctor kind: `specter diff doctor <baseline.json> [current.json]` emits new / resolved / changed issues"
+        - "coverage kind: `specter diff coverage <baseline.json> <current.json>` emits per-spec AC delta (gained / lost / status-changed) plus summary metrics"
         - "Sub-subcommand grammar `specter diff <kind> <args...>` with `spec` as the implicit default when args don't match a registered kind"
         - "Plain-text output with +/~/- prefix per item (spec kind, unchanged from v1.x)"
-        - "doctor kind output: ++ new issue, -- resolved issue, ~~ changed issue"
+        - "coverage kind output: per spec, lines for newly-covered ACs (++), newly-uncovered ACs (--), summary line with coverage_pct delta"
       excludes:
         - "Three-way merge"
         - "Interactive diff UI"
@@ -70,15 +72,15 @@ spec:
       type: technical
       enforcement: error
     - id: C-09
-      description: "MUST accept `specter diff <kind> <args...>` where <kind> ∈ {spec, doctor}. When the first positional argument matches a known kind, that kind's grammar takes over. When the first positional does NOT match a known kind (i.e., user passed `specter diff <path>` or `specter diff <path1> <path2>`), the spec kind is the implicit default — backward compat with v1.x callers. Cobra subcommand registration handles the dispatch; the `diff` command itself retains its v1.x positional-arg RunE as the fallback."
+      description: "MUST accept `specter diff <kind> <args...>` where <kind> ∈ {spec, coverage}. When the first positional argument matches a known kind, that kind's grammar takes over. When the first positional does NOT match a known kind (i.e., user passed `specter diff <path>` or `specter diff <path1> <path2>`), the spec kind is the implicit default — backward compat with v1.x callers. Cobra subcommand registration handles the dispatch; the `diff` command itself retains its v1.x positional-arg RunE as the fallback."
       type: technical
       enforcement: error
     - id: C-10
-      description: "doctor kind MUST accept two positional arguments: <baseline.json> and optional <current.json> (defaults to `.specter-doctor.json` or runs `doctor --json` if no current path is provided — implementation chooses one). The two are parsed as the structured output of `specter doctor --json`. The diff classifies each issue (a (file, kind, message) triple, or whatever the doctor schema defines) as: NEW (present in current, absent in baseline), RESOLVED (present in baseline, absent in current), CHANGED (present in both with different message or severity). Output prefixes: `++` for NEW, `--` for RESOLVED, `~~` for CHANGED. Exit code 0 always (this is a diagnostic surface, not a gate)."
+      description: "coverage kind MUST accept two positional arguments: <baseline.json> and <current.json>, each the structured output of `specter coverage --json` (a CoverageReport). The diff iterates per-spec entries, classifying AC-level changes: GAINED (in current.CoveredACs, not in baseline.CoveredACs), LOST (in baseline.CoveredACs, not in current.CoveredACs). It also computes coverage_pct delta per spec. Output: one block per spec with non-empty delta — `+SpecID/AC-NN` lines for gained, `-SpecID/AC-NN` for lost, plus a summary line `~SpecID coverage_pct: 80.0 → 90.0 (passes_threshold: false → true)`. Specs absent from one report but present in the other are reported with prefix `+spec SpecID` or `-spec SpecID`. Identical reports emit empty output. Exit code 0 always (this is a diagnostic surface, not a gate)."
       type: technical
       enforcement: error
     - id: C-11
-      description: "MUST implement DiffDoctorReports as a pure function in internal/diff — no I/O, no subprocess calls. Mirrors C-08's constraint for the spec kind."
+      description: "MUST implement DiffCoverageReports as a pure function in internal/diff — no I/O, no subprocess calls. Mirrors C-08's constraint for the spec kind."
       type: technical
       enforcement: error
   acceptance_criteria:
@@ -144,19 +146,21 @@ spec:
       priority: high
 
     - id: AC-13
-      description: "`specter diff doctor <baseline.json> <current.json>` reads both JSON files, treats their issue lists as sets, and emits sign-prefixed lines: `++` for issues only in current (NEW), `--` for issues only in baseline (RESOLVED), `~~` for issues in both with different content (CHANGED). Identical files emit empty output."
+      description: "`specter diff coverage <baseline.json> <current.json>` reads both CoverageReport JSON files and emits per-spec AC delta: `+spec-foo/AC-01` for GAINED, `-spec-foo/AC-02` for LOST. Per-spec summary line `~spec-foo coverage_pct: 80.0 → 90.0` when coverage_pct or passes_threshold changes. Specs added (in current, not in baseline) emit `+spec spec-bar`; specs removed emit `-spec spec-bar`. Identical reports emit empty output."
       inputs:
-        baseline: 'doctor --json snapshot with issues [{file:"a", kind:"x", msg:"old"}, {file:"b", kind:"y", msg:"same"}]'
-        current:  'doctor --json snapshot with issues [{file:"a", kind:"x", msg:"new"}, {file:"b", kind:"y", msg:"same"}, {file:"c", kind:"z", msg:"added"}]'
+        baseline: 'CoverageReport with entries [{spec_id:"spec-foo", covered_acs:["AC-01"], uncovered_acs:["AC-02"], coverage_pct:50.0, passes_threshold:false}]'
+        current:  'CoverageReport with entries [{spec_id:"spec-foo", covered_acs:["AC-01","AC-02"], uncovered_acs:[], coverage_pct:100.0, passes_threshold:true}, {spec_id:"spec-bar", covered_acs:["AC-01"], coverage_pct:100.0, passes_threshold:true}]'
       expected_output:
-        new: ["c kind=z msg=added"]
-        resolved: []
-        changed: ["a kind=x msg=old → new"]
+        gained: ["spec-foo/AC-02"]
+        lost: []
+        spec_added: ["spec-bar"]
+        spec_removed: []
+        pct_changed: ["spec-foo coverage_pct: 50.0 → 100.0 (passes_threshold: false → true)"]
       references_constraints: ["C-10"]
       priority: critical
 
     - id: AC-14
-      description: "DiffDoctorReports(baseline, current) with two identical reports returns empty diff. Pure-function contract per C-11."
+      description: "DiffCoverageReports(baseline, current) with two identical CoverageReports returns empty diff. Pure-function contract per C-11; no I/O."
       references_constraints: ["C-11"]
       priority: high
 
@@ -165,7 +169,7 @@ spec:
       date: "2026-05-15"
       author: "specter-team"
       type: major
-      description: "v0.13 C3 — polymorphic `specter diff <kind> <args...>`. v2.0 generalizes the v1.x spec-only diff into a sub-subcommand pattern; first new kind is `doctor` (set-diff between two `doctor --json` outputs). Backward compat preserved: `specter diff <path> <path>` continues to invoke the spec kind. Future kinds (coverage, ingest, check) follow the same shape — `--diff` flags on other commands are explicitly rejected. Adds C-09/C-10/C-11 and AC-11/AC-12/AC-13/AC-14."
+      description: "v0.13 C3 — polymorphic `specter diff <kind> <args...>`. v2.0 generalizes the v1.x spec-only diff into a sub-subcommand pattern; first new kind is `coverage` (set-diff between two `coverage --json` CoverageReports — useful for tracking AC coverage drift across CI runs). Backward compat preserved: `specter diff <path> <path>` continues to invoke the spec kind. Doctor kind was originally planned but deferred until `specter doctor` grows a `--json` flag in a future cycle. Future kinds (doctor, ingest, check) follow the same shape — `--diff` flags on other commands are explicitly rejected. Adds C-09/C-10/C-11 and AC-11/AC-12/AC-13/AC-14."
     - version: "1.0.0"
       date: "2026-04-14"
       author: "specter-team"
