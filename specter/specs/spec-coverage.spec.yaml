@@ -1,6 +1,6 @@
 spec:
   id: spec-coverage
-  version: "1.12.0"
+  version: "1.13.0"
   status: approved
   tier: 2
 
@@ -175,6 +175,11 @@ spec:
 
     - id: C-28
       description: "Under `--strict`, when an annotated AC has at least one matching `@ac` source-file annotation but no matching entry in `.specter-results.json` for that (spec_id, ac_id) pair, `specter coverage` MUST emit a per-AC stderr hint of the form `hint: <spec-id>/<AC-NN> has source annotation in <file>:<line> but no matching pass in .specter-results.json — did your test runner emit a runner-visible annotation (Convention A: spec-id/AC-NN in the test name; Convention B: print '// @spec'/'// @ac' from the test body)?`. One hint per affected (spec_id, ac_id) pair, printed before the coverage table. Limit to the first 5 affected pairs to keep CI logs compact. Suppress entirely with `--quiet`. Under `--json`, surface as a top-level `diagnostic_hints` array (no stderr hint). Closes the GH #80 confusion where Python users with source-only `# @ac` comments saw `--strict` exit non-zero with no signal about the missing runtime channel."
+      type: business
+      enforcement: error
+
+    - id: C-29
+      description: "`specter coverage --json` MUST exit with the same process exit code that `specter coverage` (text mode) would exit with for the same workspace state, flags, and strictness setting. Specifically: zero-tolerance non-passed annotated AC → exit 2 (matches C-25); zero-tolerance `approval_gate: true` with unset `approval_date` → exit 3 (matches C-26); threshold-mode failure (Summary.Failing > 0) → exit non-zero (errSilent path); parse failure → exit non-zero. The JSON document is always emitted to stdout BEFORE the exit-code decision runs, so machine consumers see structured state in every case. Rationale: pre-v0.13 JSON mode returned nil whenever the report serialized successfully, so `coverage --strict --json` exited 0 on the very strictness violations that `coverage --strict` (text mode) exited 2/3 on. CI consumers reading `--json` could not gate on it. The gap surfaced during v0.13.0 D3 audit."
       type: business
       enforcement: error
 
@@ -508,7 +513,26 @@ spec:
       references_constraints: ["C-28"]
       priority: high
 
+    - id: AC-34
+      description: "Workspace at `settings.strictness == zero-tolerance` with one annotated AC carrying a `.specter-results.json` entry of `status: failed`: running `specter coverage --strict --json` MUST exit with code 2 (the same code text mode produces under AC-28). The JSON document is fully emitted to stdout before the exit. In the same workspace shape with an AC carrying `approval_gate: true` and unset `approval_date`, `coverage --strict --json` MUST exit with code 3 (matches AC-29 text-mode exit). In a workspace with `strictness == threshold` where a spec falls below its tier threshold, `coverage --json` MUST exit non-zero (matches text mode). JSON and text modes are exit-code equivalent for every gate-relevant state."
+      inputs:
+        scenario_zero_tolerance_failed: "settings.strictness=zero-tolerance, one annotated AC with results status=failed, --json flag"
+        scenario_zero_tolerance_approval: "settings.strictness=zero-tolerance, one AC approval_gate=true approval_date unset, --json flag"
+        scenario_threshold_fail: "settings.strictness=threshold, spec below tier threshold, --json flag"
+      expected_output:
+        failed_exit_code: 2
+        approval_gate_exit_code: 3
+        threshold_fail_exit_code: "non-zero"
+        json_document_emitted: true
+      references_constraints: ["C-29"]
+      priority: critical
+
   changelog:
+    - version: "1.13.0"
+      date: "2026-05-06"
+      author: "specter-team"
+      type: minor
+      description: "v0.13 D3 — coverage --strict --json / text exit-code parity. Add C-29 + AC-34. Pre-v0.13 JSON mode returned nil whenever the report serialized successfully, so `coverage --strict --json` exited 0 on zero-tolerance non-passed (text-mode exit 2 per C-25) and zero-tolerance approval_gate violations (text-mode exit 3 per C-26). CI consumers reading --json could not gate on it. The JSON branch now runs the same zero-tolerance non-passed → os.Exit(2), approval_gate → os.Exit(3), and threshold-failure → errSilent checks text mode runs, AFTER emitting the JSON document so machine consumers see structured state in every state."
     - version: "1.12.0"
       date: "2026-04-27"
       author: "specter-team"
