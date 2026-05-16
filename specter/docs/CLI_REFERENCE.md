@@ -118,6 +118,48 @@ graph BT
 
 **Exit codes:** `0` = no issues. `1` = one or more errors.
 
+#### `specter resolve dependents <spec-id>`
+
+Reverse traversal of the dependency graph: returns all specs whose `depends_on` includes the given spec id (direct dependents only). Bare `specter resolve` keeps its build-and-validate behavior; this sub-subcommand switches to query mode.
+
+Exit code 0 even when no dependents exist (an empty set is a valid result); non-zero only when the spec id does not exist in the resolved graph.
+
+**Synopsis:**
+
+```
+specter resolve dependents <spec-id> [--json]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--json` | Output as JSON: `{"spec_id": "<id>", "dependents": ["<id1>", ...]}` |
+
+**Example:**
+
+```
+$ specter resolve dependents spec-parse
+spec-check
+spec-coverage
+spec-doctor
+spec-explain
+spec-manifest
+spec-resolve
+spec-reverse
+spec-sync
+spec-vscode
+
+$ specter resolve dependents leaf-spec     # no dependents → empty, exit 0
+$ echo $?
+0
+
+$ specter resolve dependents unknown-spec  # not in graph → error, exit 1
+error: spec "unknown-spec" not found in graph
+```
+
+Future operations (`dependencies` for forward traversal, `cycles` for cycle enumeration, etc.) follow the same `specter resolve <op>` pattern.
+
 ---
 
 ### `specter check`

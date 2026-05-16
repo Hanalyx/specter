@@ -557,6 +557,78 @@ func resolveCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
 	cmd.Flags().BoolVar(&dotOutput, "dot", false, "Output graph in DOT format")
 	cmd.Flags().BoolVar(&mermaidOutput, "mermaid", false, "Output graph in Mermaid format (renders in GitHub PRs)")
+
+	// v0.13 C4: register `resolve dependents <spec-id>` as a flat
+	// sub-subcommand. Bare `specter resolve` (no sub-subcommand)
+	// preserves the v1.x build-and-validate behavior — backward
+	// compat. Future operations (`dependencies`, `cycles`, `roots`)
+	// follow the same pattern. Architectural note: graph queries
+	// MUST NOT be implemented as flags on `resolve` (e.g.
+	// `--dependents`) — they MUST land as sub-subcommands here.
+	cmd.AddCommand(resolveDependentsCmd())
+	return cmd
+}
+
+// resolveDependentsCmd is the `specter resolve dependents` subcommand
+// (spec-resolve 1.2.0 C-11/C-12). Reverse traversal of the dependency
+// graph: returns the specs whose depends_on includes the given spec id.
+func resolveDependentsCmd() *cobra.Command {
+	var jsonOutput bool
+	cmd := &cobra.Command{
+		Use:   "dependents <spec-id>",
+		Short: "List specs that depend on the given spec",
+		Long: `Reverse traversal of the dependency graph: returns all specs whose
+depends_on includes the given spec id (direct dependents only).
+
+Exit code 0 even when no dependents exist (an empty set is a valid result);
+exit code non-zero only when the spec id does not exist in the resolved graph.
+
+Future operations (` + "`dependencies`" + `, ` + "`cycles`" + `, ` + "`roots`" + `) will land as sibling
+subcommands. Graph queries do not surface as flags on ` + "`resolve`" + ` —
+they nest here as sub-subcommands.
+
+Example:
+  specter resolve dependents spec-parse   # show what depends on spec-parse`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			specID := args[0]
+
+			files := discoverSpecs()
+			if len(files) == 0 {
+				fmt.Print(noSpecsMessage())
+				return errSilent
+			}
+			inputs, _, hasErrors := parseAllSpecs(files)
+			if hasErrors {
+				fmt.Fprintln(os.Stderr, "\nFix parse errors before resolving dependencies.")
+				return errSilent
+			}
+
+			graph := resolver.ResolveSpecs(inputs)
+
+			dependents, err := resolver.DependentsOf(graph, specID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return errSilent
+			}
+
+			if jsonOutput {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				_ = enc.Encode(map[string]any{
+					"spec_id":    specID,
+					"dependents": dependents,
+				})
+				return nil
+			}
+
+			for _, d := range dependents {
+				fmt.Println(d)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output as JSON")
 	return cmd
 }
 
