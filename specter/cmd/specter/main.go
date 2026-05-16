@@ -692,6 +692,17 @@ func checkCmd() *cobra.Command {
 				testFiles := discoverTestFiles("")
 				contents := make(map[string]string, len(testFiles))
 				for _, path := range testFiles {
+					// spec-check C-12 / AC-20: refuse to read test files
+					// over MaxTestFileBytes (4 MiB). os.Stat first so an
+					// oversized file is never buffered. Skip is per-file
+					// (not fatal); emit a stderr warning naming the file
+					// so the operator knows that file was not scanned.
+					if info, statErr := os.Stat(path); statErr == nil && info.Size() > checker.MaxTestFileBytes {
+						fmt.Fprintf(os.Stderr,
+							"warn: test file %s exceeds %d byte limit (got %d bytes); skipping\n",
+							path, checker.MaxTestFileBytes, info.Size())
+						continue
+					}
 					data, err := os.ReadFile(path)
 					if err != nil {
 						continue
@@ -853,6 +864,17 @@ func coverageCmd() *cobra.Command {
 			}
 			var allAnnotations []coverage.AnnotationMatch
 			for _, f := range testFiles {
+				// spec-check C-12: same per-file size cap as `check --test`.
+				// Coverage's annotation extractor (ExtractAnnotations) reads
+				// the full file content; an unbounded read is the same DoS
+				// surface as the unreachable scanner. Skip oversized files
+				// per-file (not fatal); emit a stderr warning.
+				if info, statErr := os.Stat(f); statErr == nil && info.Size() > checker.MaxTestFileBytes {
+					fmt.Fprintf(os.Stderr,
+						"warn: test file %s exceeds %d byte limit (got %d bytes); skipping\n",
+						f, checker.MaxTestFileBytes, info.Size())
+					continue
+				}
 				data, err := os.ReadFile(f)
 				if err != nil {
 					continue
@@ -2587,6 +2609,17 @@ func explainCmd() *cobra.Command {
 			testFiles := discoverTestFiles("")
 			var allAnnotations []coverage.AnnotationMatch
 			for _, f := range testFiles {
+				// spec-check C-12: same per-file size cap as `check --test`.
+				// Coverage's annotation extractor (ExtractAnnotations) reads
+				// the full file content; an unbounded read is the same DoS
+				// surface as the unreachable scanner. Skip oversized files
+				// per-file (not fatal); emit a stderr warning.
+				if info, statErr := os.Stat(f); statErr == nil && info.Size() > checker.MaxTestFileBytes {
+					fmt.Fprintf(os.Stderr,
+						"warn: test file %s exceeds %d byte limit (got %d bytes); skipping\n",
+						f, checker.MaxTestFileBytes, info.Size())
+					continue
+				}
 				data, err := os.ReadFile(f)
 				if err != nil {
 					continue

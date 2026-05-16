@@ -34,6 +34,22 @@ import (
 	"strings"
 )
 
+// MaxTestFileBytes caps the on-disk size of any test file the CLI
+// reads for annotation scanning (CheckTestAnnotations per C-09 and
+// CheckUnreachableAnnotations per C-10). Files larger than this
+// cap MUST be skipped — the unreachable scanner reads the full file
+// content into a string and passes it to go/parser.ParseFile (Go),
+// regex+state-machine (TS/JS), or regex+indentation (Python). A
+// 4 GiB malicious test file would OOM the process; `go/parser`
+// allocates an AST proportional to file size.
+//
+// 4 MiB is conservative — real test files are well under that. The
+// constant lives here because the CLI's test-file read site
+// (cmd/specter/main.go) consumes it.
+//
+// spec-check C-12 (v1.5.0).
+const MaxTestFileBytes = 4 << 20 // 4 MiB
+
 // CheckUnreachableAnnotations scans testFiles for source-comment @ac
 // annotations whose enclosing test produces no runner-visible
 // spec-id/AC-NN token, and returns the resulting diagnostics per C-10.
