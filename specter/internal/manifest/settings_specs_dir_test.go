@@ -5,7 +5,6 @@
 package manifest
 
 import (
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -26,20 +25,21 @@ func TestParseManifest_SpecsDir_RejectsAbsolutePath(t *testing.T) {
 		}
 	})
 
-	t.Run("spec-manifest/AC-46 specs_dir rejects absolute Windows path", func(t *testing.T) {
-		// Windows drive-letter paths should be rejected on every platform.
-		// filepath.IsAbs(`C:\Users\victim`) returns true on Windows; on
-		// Unix it returns false. We need a platform-independent rejection,
-		// so the impl must also check for drive-letter prefix patterns.
-		if runtime.GOOS != "windows" {
-			t.Skip("Windows-specific path; impl uses filepath.IsAbs which is GOOS-dependent — skip on non-Windows")
-		}
+	// Platform-independent rejection of Windows drive-letter paths via
+	// the explicit drive-letter check in validateSpecsDir. Does NOT
+	// carry the AC-46 token in the subtest name because skipping on
+	// non-Windows would pollute strict coverage (status: skipped). The
+	// Unix absolute case above covers AC-46's canonical evidence.
+	t.Run("Windows drive-letter path rejected on every platform", func(t *testing.T) {
 		_, err := ParseManifest(`system: { name: x }
 settings:
   specs_dir: C:\Users\victim
 `)
 		if err == nil {
-			t.Fatal("expected error for Windows absolute path, got nil")
+			t.Fatal("expected error for Windows drive-letter path, got nil")
+		}
+		if !strings.Contains(err.Error(), "specs_dir") {
+			t.Errorf("expected error to name `specs_dir`, got: %v", err)
 		}
 	})
 }

@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -84,6 +85,12 @@ func ParseManifest(yamlContent string) (*Manifest, error) {
 		return nil, err
 	}
 
+	// C-30 (v0.13 security audit H1): refuse specs_dir values that
+	// could escape the workspace.
+	if err := validateSpecsDir(m.Settings.SpecsDir); err != nil {
+		return nil, err
+	}
+
 	return &m, nil
 }
 
@@ -124,6 +131,59 @@ func validateStrictness(s *Settings) error {
 	if !contains(validStrictnessValues, s.Strictness) {
 		return fmt.Errorf("settings.strictness: %q is not a valid value (allowed: %s)",
 			s.Strictness, strings.Join(validStrictnessValues, ", "))
+	}
+	return nil
+}
+
+// validateSpecsDir refuses settings.specs_dir values that could escape
+// the workspace. Per spec-manifest C-30 (v0.13 security audit H1):
+//
+//   - Empty string → allowed (default "specs" applied by SpecsDir())
+//   - Absolute path (filepath.IsAbs, including Windows drive-letter
+//     and forward-slash absolutes) → rejected
+//   - Path containing a ".." segment (split on / or \) → rejected
+//   - Lexically-cleaned path that starts with ".." or "/" → rejected
+//
+// Rationale: a malicious workspace's specter.yaml setting
+// specs_dir: /home/victim or specs_dir: ../../../home/victim caused
+// filepath.Walk and doctor --fix to operate outside the workspace.
+// Catching this at parse time means every downstream consumer
+// inherits the guarantee.
+func validateSpecsDir(s string) error {
+	if s == "" {
+		return nil
+	}
+	// Absolute on the current GOOS. Also catch forward-slash leading
+	// absolutes on Windows where filepath.IsAbs only returns true for
+	// drive-letter forms (`C:\...`). And catch `\\server\share` UNC.
+	if filepath.IsAbs(s) || strings.HasPrefix(s, "/") || strings.HasPrefix(s, `\\`) {
+		return fmt.Errorf("settings.specs_dir: %q must be a workspace-relative path, not absolute", s)
+	}
+	// Windows drive-letter form on non-Windows builds (e.g. "C:\foo"
+	// would not be flagged as absolute on Linux). Reject explicitly so
+	// the manifest is portable.
+	if len(s) >= 2 && s[1] == ':' &&
+		((s[0] >= 'A' && s[0] <= 'Z') || (s[0] >= 'a' && s[0] <= 'z')) {
+		return fmt.Errorf("settings.specs_dir: %q must be a workspace-relative path, not a Windows drive-letter path", s)
+	}
+	// Reject any segment equal to "..". Split on both separators
+	// because a Windows path with forward slashes on Linux still wants
+	// to be rejected.
+	segments := strings.FieldsFunc(s, func(r rune) bool { return r == '/' || r == '\\' })
+	for _, seg := range segments {
+		if seg == ".." {
+			return fmt.Errorf("settings.specs_dir: %q must not contain `..` segments — paths must resolve inside the workspace", s)
+		}
+	}
+	// Defense-in-depth: lexical clean must not produce a path that
+	// escapes. filepath.Clean("foo/../../bar") returns "../bar", which
+	// we catch via the ".." prefix below — but we already filtered raw
+	// ".." segments above, so this catches the (rare) cases where
+	// cleaning still ends up rooted. Use forward-slash-form for the
+	// portability test.
+	cleaned := filepath.ToSlash(filepath.Clean(s))
+	if strings.HasPrefix(cleaned, "../") || cleaned == ".." || strings.HasPrefix(cleaned, "/") {
+		return fmt.Errorf("settings.specs_dir: %q resolves outside the workspace after cleaning", s)
 	}
 	return nil
 }
