@@ -934,7 +934,7 @@ func coverageCmd() *cobra.Command {
 				report.DiagnosticHints = coverage.DiagnoseSourceOnlyACs(allAnnotations, results, specs)
 			}
 
-			// spec-coverage C-30 / v0.13 D2: surface non-canonical `status`
+			// spec-coverage C-30 / v0.13 D2: surface unrecognized `status`
 			// values in .specter-results.json. Populated regardless of
 			// strictness so --json always carries the array; stderr
 			// printing happens later under non-quiet.
@@ -1026,14 +1026,14 @@ func coverageCmd() *cobra.Command {
 			}
 
 			// spec-coverage C-30 / v0.13 D2: emit one stderr warning per
-			// unique non-canonical `status` value in `.specter-results.json`.
+			// unique unrecognized `status` value in `.specter-results.json`.
 			// Printed ABOVE the table. Suppressed under --quiet. The same
 			// data is in report.InvalidStatusWarnings so --json carries it
 			// regardless of --quiet — JSON consumers see structured state.
 			if !quiet && len(report.InvalidStatusWarnings) > 0 {
 				for _, w := range report.InvalidStatusWarnings {
 					fmt.Fprintf(os.Stderr,
-						"warning: .specter-results.json contains %d entries with status=%q — not in canonical enum (passed|failed|skipped|errored); treated as not-passed\n",
+						"warning: .specter-results.json contains %d entries with status=%q — not a recognized status (passed|failed|skipped|errored); treated as not-passed\n",
 						w.Count, w.Status)
 				}
 			}

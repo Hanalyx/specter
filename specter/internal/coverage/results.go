@@ -82,11 +82,11 @@ func (rf *ResultsFile) passed(specID, acID string) bool {
 }
 
 // InvalidStatuses scans the parsed results and returns a map of unique
-// non-canonical `status` values to their occurrence counts. The canonical
+// unrecognized `status` values to their occurrence counts. The documented
 // enum is {passed, failed, skipped, errored} per C-21; any other non-empty
 // value is reported here.
 //
-// Parsing behavior is unchanged — non-canonical values still derive
+// Parsing behavior is unchanged — unrecognized values still derive
 // `Passed = false` in ParseResultsFile (treated as not-passed). This
 // helper is purely diagnostic; the CLI surfaces the result as a stderr
 // warning (text mode) or `invalid_status_warnings` array (--json) so

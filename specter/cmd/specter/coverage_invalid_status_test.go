@@ -1,4 +1,4 @@
-// CLI integration tests for v0.13 D2 — non-canonical status value
+// CLI integration tests for v0.13 D2 — unrecognized status value
 // diagnostic for .specter-results.json (spec-coverage 1.14.0 C-30 / AC-35).
 //
 // @spec spec-coverage
@@ -13,13 +13,13 @@ import (
 )
 
 // AC-35 default: stderr warning naming the offending value AND the
-// canonical enum, printed BEFORE the coverage table. Exit-code
+// documented enum, printed BEFORE the coverage table. Exit-code
 // behavior unchanged from today (status="pass" still treated as not-
 // passed and demotes under --strict).
 //
 // @ac AC-35
 func TestCoverageInvalidStatus_DefaultEmitsWarningAboveTable(t *testing.T) {
-	t.Run("spec-coverage/AC-35 invalid status emits stderr warning naming the value and the canonical enum", func(t *testing.T) {
+	t.Run("spec-coverage/AC-35 unrecognized status emits stderr warning naming the value and the documented enum", func(t *testing.T) {
 		dir := t.TempDir()
 		writeManifestWithStrictness(t, dir, "threshold")
 		writeSpec(t, dir, "my-spec.spec.yaml", minimalValidSpec("my-spec", 2, "AC-01"))
@@ -27,7 +27,8 @@ func TestCoverageInvalidStatus_DefaultEmitsWarningAboveTable(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "foo_test.go"), []byte(testFile), 0644); err != nil {
 			t.Fatal(err)
 		}
-		// status: "pass" — the canonical typo case.
+		// status: "pass" — the common typo case (canonical example
+		// from the C-30 rationale).
 		results := `{"results": [
 			{"spec_id": "my-spec", "ac_id": "AC-01", "status": "pass", "test_name": "TestFoo"}
 		]}`
@@ -37,13 +38,13 @@ func TestCoverageInvalidStatus_DefaultEmitsWarningAboveTable(t *testing.T) {
 
 		out, _ := runCLI(t, dir, "coverage", "--strict")
 
-		// Warning must name the offending value `"pass"` AND the canonical
+		// Warning must name the offending value `"pass"` AND the documented
 		// enum so the operator can self-diagnose.
 		if !strings.Contains(out, `"pass"`) {
 			t.Errorf("expected warning to name the offending value `\"pass\"`, got:\n%s", out)
 		}
 		if !strings.Contains(out, "passed|failed|skipped|errored") {
-			t.Errorf("expected warning to name the canonical enum `passed|failed|skipped|errored`, got:\n%s", out)
+			t.Errorf("expected warning to name the documented enum `passed|failed|skipped|errored`, got:\n%s", out)
 		}
 
 		// Warning must appear ABOVE the coverage table (same ordering
@@ -85,10 +86,9 @@ func TestCoverageInvalidStatus_QuietSuppressesStderrWarning(t *testing.T) {
 
 		out, _ := runCLI(t, dir, "coverage", "--strict", "--quiet")
 
-		// Under --quiet, the warning line must be absent. Both the
-		// canonical-enum string AND the offending value must be missing
-		// from the diagnostic line (we still allow the literal "pass" to
-		// appear in other contexts, so we require the conjunction).
+		// Under --quiet, the warning line must be absent. The documented-
+		// enum string is unique to this warning, so its absence is the
+		// strongest signal that the warning was suppressed.
 		if strings.Contains(out, "passed|failed|skipped|errored") {
 			t.Errorf("--quiet must suppress invalid-status warning; got:\n%s", out)
 		}
@@ -109,7 +109,7 @@ func TestCoverageInvalidStatus_JsonSurfacesInvalidStatusWarnings(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "foo_test.go"), []byte(testFile), 0644); err != nil {
 			t.Fatal(err)
 		}
-		// Two entries with the SAME non-canonical value → one warning
+		// Two entries with the SAME unrecognized value → one warning
 		// with count=2. Aggregation rule per C-30.
 		results := `{"results": [
 			{"spec_id": "my-spec", "ac_id": "AC-01", "status": "pass", "test_name": "TestFoo"},
