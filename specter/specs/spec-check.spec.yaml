@@ -1,6 +1,6 @@
 spec:
   id: spec-check
-  version: "1.3.0"
+  version: "1.4.0"
   status: approved
   tier: 1
 
@@ -41,7 +41,6 @@ spec:
         - "Gap detection (uncovered input paths, Phase 8)"
         - "Cross-project analysis"
         - "Auto-fixing or auto-resolution of conflicts"
-        - "Per-file off-switch syntax for unreachable_annotation — design pending; ships in a follow-up spec change once syntax is decided"
 
   constraints:
     - id: C-01
@@ -91,6 +90,11 @@ spec:
 
     - id: C-10
       description: "Under `check --test` / `-t`, MUST detect source-comment `@ac` annotations that will NOT be visible to `specter ingest`'s runner-output regex and emit an `unreachable_annotation` diagnostic naming `file:line`. A source annotation is unreachable when the test in which it lives produces no runner-visible token matching `<spec-id>/<AC-NN>` — either in the runner-visible test title (Convention A) or in a runtime-emitted `// @spec` / `// @ac` line (Convention B). Language-aware reachability MUST be implemented for Go (`testing.T.Run` subtest names, `t.Log` / `fmt.Println` calls inside the test body), TS/Jest/Vitest (`describe` / `it` / `test` titles, `console.log` calls), and Python (function names cannot carry `/` or `:`; reachability inferred from `print` / `logging` calls inside the function body). For unsupported test shapes (custom runners, non-standard test helpers), the checker MUST emit `unreachable_annotation_unknown` (a softer diagnostic) rather than a false-positive `unreachable_annotation`. Severity routing: under `settings.strictness: zero-tolerance`, `unreachable_annotation` is `error`; under `threshold`, `warning`; under `annotation`, suppressed. `unreachable_annotation_unknown` is always `warning` regardless of strictness mode."
+      type: technical
+      enforcement: error
+
+    - id: C-11
+      description: "Per-file off-switch for unreachable_annotation. A test file containing a `// @reachable manual` marker (or `# @reachable manual` for Python, matching the language's existing annotation comment convention) at any line MUST suppress BOTH `unreachable_annotation` AND `unreachable_annotation_unknown` diagnostics for every `@ac` source comment in that file. Rationale: when the runner shape is custom (test framework not in the supported set, dynamically-generated tests, or tests that emit pairs via a non-standard channel), the operator asserts they've manually verified the tests cover the annotated ACs. The marker is file-level scope (one declaration per file). The marker MUST follow the existing `// @<keyword> <value>` grammar shared with `@spec` and `@ac` — no new equals-sign or namespace syntax. Future values for `@reachable` (e.g., `disabled`) are reserved; `manual` is the only value v0.13 ships."
       type: technical
       enforcement: error
 
@@ -307,7 +311,27 @@ spec:
       references_constraints: ["C-10"]
       priority: critical
 
+    - id: AC-19
+      description: "A test file containing the `// @reachable manual` marker (or `# @reachable manual` for Python) at any line MUST suppress BOTH `unreachable_annotation` AND `unreachable_annotation_unknown` diagnostics for every `@ac` source comment in that file, regardless of strictness mode. The marker is file-level scope — one declaration anywhere in the file opts the whole file out. Files WITHOUT the marker behave per C-10 (existing reachability + strictness routing)."
+      inputs:
+        with_marker: "Go test file containing `// @reachable manual` near the top; has source-only @ac that would otherwise be flagged"
+        without_marker: "Identical file but without the marker"
+      expected_output:
+        with_marker:
+          unreachable_annotation_emitted: false
+          unreachable_annotation_unknown_emitted: false
+          regardless_of_strictness: true
+        without_marker:
+          baseline_C10_behavior_preserved: true
+      references_constraints: ["C-11"]
+      priority: high
+
   changelog:
+    - version: "1.4.0"
+      date: "2026-05-15"
+      author: "specter-team"
+      type: minor
+      description: "v0.13 A4 — `// @reachable manual` per-file off-switch for unreachable_annotation. Add C-11/AC-19. A test file declaring the marker suppresses BOTH `unreachable_annotation` AND `unreachable_annotation_unknown` for every @ac in that file, regardless of strictness mode. Follows the existing `// @<keyword> <value>` grammar shared with `@spec` and `@ac` — no new syntax. Used when the runner shape is custom or the operator has manually verified coverage."
     - version: "1.3.0"
       date: "2026-05-15"
       author: "specter-team"

@@ -40,10 +40,22 @@ import (
 //
 // strictness must be one of "annotation", "threshold", or
 // "zero-tolerance"; unknown values are treated as "threshold".
+//
+// spec-check C-11: files containing `// @reachable manual` (or
+// `# @reachable manual` for Python) have BOTH unreachable_annotation
+// and unreachable_annotation_unknown suppressed for every @ac in the
+// file, regardless of strictness. The check happens here, before any
+// per-language scanner runs — the operator's manual-coverage
+// assertion overrides every diagnostic class.
 func CheckUnreachableAnnotations(testFiles map[string]string, strictness string) []CheckDiagnostic {
 	var diags []CheckDiagnostic
 
 	for path, content := range testFiles {
+		// spec-check C-11: file-level off-switch.
+		if hasReachableManualMarker(content) {
+			continue
+		}
+
 		lang := detectLanguage(path)
 		switch lang {
 		case "go":
@@ -59,6 +71,34 @@ func CheckUnreachableAnnotations(testFiles map[string]string, strictness string)
 	}
 
 	return diags
+}
+
+// hasReachableManualMarker reports whether the test file content
+// contains the `@reachable manual` directive — file-level scope per
+// spec-check C-11. Accepts both `// @reachable manual` (Go/TS/JS) and
+// `# @reachable manual` (Python) comment prefixes, matching the
+// existing `@spec` / `@ac` grammar.
+func hasReachableManualMarker(content string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		// Strip leading comment marker.
+		switch {
+		case strings.HasPrefix(trimmed, "// "):
+			trimmed = strings.TrimPrefix(trimmed, "// ")
+		case strings.HasPrefix(trimmed, "//"):
+			trimmed = strings.TrimPrefix(trimmed, "//")
+		case strings.HasPrefix(trimmed, "# "):
+			trimmed = strings.TrimPrefix(trimmed, "# ")
+		case strings.HasPrefix(trimmed, "#"):
+			trimmed = strings.TrimPrefix(trimmed, "#")
+		default:
+			continue
+		}
+		if strings.TrimSpace(trimmed) == "@reachable manual" {
+			return true
+		}
+	}
+	return false
 }
 
 // detectLanguage returns "go" | "ts" | "js" | "py" | "unknown" based

@@ -244,6 +244,79 @@ def test_inline_getlogger(client):
 	})
 }
 
+// AC-19: `// @reachable manual` marker suppresses both
+// unreachable_annotation and unreachable_annotation_unknown for
+// every @ac in the file, regardless of strictness mode.
+//
+// @ac AC-19
+func TestCheckUnreachableAnnotations_ReachableManualMarker(t *testing.T) {
+	t.Run("spec-check/AC-19 Go file with // @reachable manual suppresses all diagnostics", func(t *testing.T) {
+		// The body has @ac but no Convention A subtest name and no
+		// Convention B emit. Without the marker, this would emit
+		// unreachable_annotation. With the marker, it's suppressed.
+		testFiles := map[string]string{
+			"manual_test.go": `package foo
+// @reachable manual
+// @spec foo-spec
+// @ac AC-01
+func TestFoo(t *testing.T) {
+	t.Run("happy path", func(t *testing.T) {})
+}
+`,
+		}
+
+		// Test under zero-tolerance (the strictest mode) to prove
+		// the marker overrides severity routing.
+		diags := CheckUnreachableAnnotations(testFiles, "zero-tolerance")
+		for _, d := range diags {
+			if d.Kind == "unreachable_annotation" || d.Kind == "unreachable_annotation_unknown" {
+				t.Errorf("expected marker to suppress all reachability diagnostics, got: %+v", d)
+			}
+		}
+	})
+
+	t.Run("spec-check/AC-19 Python file with # @reachable manual suppresses all diagnostics", func(t *testing.T) {
+		testFiles := map[string]string{
+			"test_manual.py": `# @reachable manual
+# @spec foo-spec
+# @ac AC-01
+def test_something(client):
+    assert True
+`,
+		}
+		diags := CheckUnreachableAnnotations(testFiles, "zero-tolerance")
+		for _, d := range diags {
+			if d.Kind == "unreachable_annotation" || d.Kind == "unreachable_annotation_unknown" {
+				t.Errorf("expected Python # @reachable manual to suppress diagnostics, got: %+v", d)
+			}
+		}
+	})
+
+	t.Run("spec-check/AC-19 file WITHOUT marker still emits diagnostics (baseline preserved)", func(t *testing.T) {
+		// Same content as the first sub-test but without the marker.
+		// Confirms the suppression is marker-gated, not a regression.
+		testFiles := map[string]string{
+			"unreachable_test.go": `package foo
+// @spec foo-spec
+// @ac AC-01
+func TestFoo(t *testing.T) {
+	t.Run("happy path", func(t *testing.T) {})
+}
+`,
+		}
+		diags := CheckUnreachableAnnotations(testFiles, "zero-tolerance")
+		var found bool
+		for _, d := range diags {
+			if d.Kind == "unreachable_annotation" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected unreachable_annotation WITHOUT the marker (baseline behavior); got: %+v", diags)
+		}
+	})
+}
+
 // @ac AC-15
 func TestCheckUnreachableAnnotations_PythonReachability(t *testing.T) {
 	t.Run("spec-check/AC-15 Python Convention B (runtime print) is reachable", func(t *testing.T) {
