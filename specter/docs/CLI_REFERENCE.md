@@ -424,7 +424,8 @@ specter sync [--json] [--tests <glob>] [--only <phase>] [--strict]
 | `--json` | Output the pipeline result as JSON. |
 | `--tests <glob>` | Glob pattern for test files. |
 | `--only <phase>` | Run only one phase: `parse`, `resolve`, `check`, or `coverage`. Prerequisites run without halting on failure. |
-| `--strict` | Treat warnings as errors. |
+| `--strict` | Treat warnings as errors. Alias for `--strictness zero-tolerance` when `--strictness` is not set. |
+| `--strictness <level>` | Override `settings.strictness` for the coverage phase. Values: `annotation`, `threshold`, `zero-tolerance`. Matches `coverage --strictness` semantics exactly — sync's coverage phase delegates to the strict path so demotions match. When both `--strict` and `--strictness` are passed, `--strictness` wins. |
 
 **Example:**
 
