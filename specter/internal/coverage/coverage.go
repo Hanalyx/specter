@@ -87,6 +87,24 @@ type CoverageReport struct {
 	// in the JSON document when --json. Limited to the first 5 affected
 	// pairs to keep CI logs compact.
 	DiagnosticHints []SourceOnlyHint `json:"diagnostic_hints,omitempty"`
+	// InvalidStatusWarnings carries spec-coverage C-30 (v0.13 D2)
+	// diagnostics for `.specter-results.json` entries whose `status` field
+	// falls outside the canonical enum (passed | failed | skipped |
+	// errored). Each entry names a unique non-canonical value plus the
+	// number of result entries that used it. The CLI emits one stderr
+	// line per entry (suppressed under --quiet) and surfaces this array
+	// under --json regardless of --quiet. Populated by the CLI from
+	// ResultsFile.InvalidStatuses() — the builder is pure and doesn't
+	// own the results-file lifecycle.
+	InvalidStatusWarnings []InvalidStatusWarning `json:"invalid_status_warnings,omitempty"`
+}
+
+// InvalidStatusWarning names a non-canonical `status` value observed in
+// `.specter-results.json` plus the number of result entries that used it.
+// Spec-coverage C-30 / AC-35.
+type InvalidStatusWarning struct {
+	Status string `json:"status"`
+	Count  int    `json:"count"`
 }
 
 // SourceOnlyHint names a (spec_id, ac_id) pair that has source-file

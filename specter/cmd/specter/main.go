@@ -934,6 +934,24 @@ func coverageCmd() *cobra.Command {
 				report.DiagnosticHints = coverage.DiagnoseSourceOnlyACs(allAnnotations, results, specs)
 			}
 
+			// spec-coverage C-30 / v0.13 D2: surface non-canonical `status`
+			// values in .specter-results.json. Populated regardless of
+			// strictness so --json always carries the array; stderr
+			// printing happens later under non-quiet.
+			if results != nil {
+				if invalid := results.InvalidStatuses(); len(invalid) > 0 {
+					keys := make([]string, 0, len(invalid))
+					for k := range invalid {
+						keys = append(keys, k)
+					}
+					sort.Strings(keys)
+					for _, k := range keys {
+						report.InvalidStatusWarnings = append(report.InvalidStatusWarnings,
+							coverage.InvalidStatusWarning{Status: k, Count: invalid[k]})
+					}
+				}
+			}
+
 			// GH #94 — under zero-tolerance, demote ACs that violate the
 			// approval_gate contract (approval_gate: true with unset
 			// approval_date) so the report reflects the same enforcement
@@ -1005,6 +1023,19 @@ func coverageCmd() *cobra.Command {
 
 			if hasErrors {
 				return errSilent
+			}
+
+			// spec-coverage C-30 / v0.13 D2: emit one stderr warning per
+			// unique non-canonical `status` value in `.specter-results.json`.
+			// Printed ABOVE the table. Suppressed under --quiet. The same
+			// data is in report.InvalidStatusWarnings so --json carries it
+			// regardless of --quiet — JSON consumers see structured state.
+			if !quiet && len(report.InvalidStatusWarnings) > 0 {
+				for _, w := range report.InvalidStatusWarnings {
+					fmt.Fprintf(os.Stderr,
+						"warning: .specter-results.json contains %d entries with status=%q — not in canonical enum (passed|failed|skipped|errored); treated as not-passed\n",
+						w.Count, w.Status)
+				}
 			}
 
 			// AC-31 / AC-33: per-AC source-only hints are printed to stderr
