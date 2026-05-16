@@ -1,6 +1,6 @@
 spec:
   id: spec-resolve
-  version: "1.1.0"
+  version: "1.2.0"
   status: approved
   tier: 1
 
@@ -22,9 +22,11 @@ spec:
 
   objective:
     summary: >
-      Build a directed dependency graph from all .spec.yaml files in a project.
-      Detect and report circular dependencies, dangling references, and semver
-      version incompatibilities.
+      Build, validate, and operate on the spec dependency graph from all
+      .spec.yaml files in a project. Detect and report circular
+      dependencies, dangling references, and semver version
+      incompatibilities. Support read-only graph queries via flat
+      sub-subcommands of `specter resolve`.
     scope:
       includes:
         - "Discover all .spec.yaml files recursively from project root"
@@ -37,6 +39,7 @@ spec:
         - "DOT graph output (--dot)"
         - "Mermaid graph output (--mermaid, renders in GitHub PRs)"
         - "Dangling-reference suggestions: Levenshtein closest match + suggested fix path"
+        - "Read-only graph queries via `specter resolve <op>` flat sub-subcommands. First operation: `dependents <spec-id>` (reverse traversal — which specs depend on this one). Bare `specter resolve` keeps current build-and-validate behavior; presence of a sub-subcommand switches to query mode."
       excludes:
         - "Semantic conflict detection (that is spec-check)"
         - "Transitive dependency flattening"
@@ -90,6 +93,21 @@ spec:
 
     - id: C-10
       description: "MUST enrich dangling_reference diagnostics with: list of existing spec IDs, Levenshtein-distance closest match(es), and a suggested fix file path"
+      type: technical
+      enforcement: error
+
+    - id: C-11
+      description: "MUST support `specter resolve <op> <args...>` flat sub-subcommands for read-only graph queries. Operations land as sibling subcommands of `resolve`; the FIRST operation is `dependents <spec-id>` which performs reverse traversal of the dependency graph (returns all specs whose `depends_on` includes the given spec id). Bare `specter resolve` (no sub-subcommand) preserves the v1.x build-and-validate behavior — backward compat for v1.x callers. Cobra subcommand registration handles dispatch. Architectural decision: graph queries MUST NOT be implemented as flags on `resolve` (e.g., `--dependents`, `--callers-of`); they MUST land as sub-subcommands here. Future operations (`dependencies`, `cycles`, `roots`, etc.) follow the same pattern. Reference: `docs/roadmap/v0.13.0.md` Design Note 'Graph queries nest under specter resolve'."
+      type: technical
+      enforcement: error
+
+    - id: C-12
+      description: "`specter resolve dependents <spec-id>` MUST output the set of spec IDs whose `depends_on` includes `<spec-id>` (direct dependents only; transitive ancestors are NOT included in v0.13 — a future flag may add `--transitive`). When `<spec-id>` has no dependents, exit 0 with no output (an empty set is a valid result). When `<spec-id>` does not exist in the resolved graph, fail with `error: spec '<spec-id>' not found in graph` and exit non-zero. Output format: one spec_id per line, sorted lexicographically. Supports `--json` for structured output: `{\"spec_id\": \"<id>\", \"dependents\": [\"<id1>\", \"<id2>\", ...]}`."
+      type: technical
+      enforcement: error
+
+    - id: C-13
+      description: "MUST implement DependentsOf as a pure function in internal/resolver — no I/O, no subprocess calls. Takes (graph, spec_id) and returns []string of direct dependents."
       type: technical
       enforcement: error
 
@@ -204,7 +222,73 @@ spec:
       references_constraints: ["C-10"]
       priority: high
 
+    - id: AC-10
+      description: "`specter resolve dependents <spec-id>` returns the set of direct dependents (specs whose depends_on includes the given spec_id), one per line sorted lexicographically. Exit 0."
+      inputs:
+        graph:
+          - "spec-a depends_on: []"
+          - "spec-b depends_on: [spec-a]"
+          - "spec-c depends_on: [spec-a, spec-b]"
+        command: "specter resolve dependents spec-a"
+      expected_output:
+        stdout_lines: ["spec-b", "spec-c"]
+        exit_code: 0
+      references_constraints: ["C-11", "C-12"]
+      priority: critical
+
+    - id: AC-11
+      description: "`specter resolve dependents <spec-id>` for a spec with no dependents (a leaf node in the dependents-tree, i.e., nothing depends on it) emits no output and exits 0. An empty set is a valid result, not an error."
+      inputs:
+        graph:
+          - "spec-a depends_on: []"
+          - "spec-b depends_on: [spec-a]"
+        command: "specter resolve dependents spec-b"
+      expected_output:
+        stdout_lines: []
+        exit_code: 0
+      references_constraints: ["C-12"]
+      priority: high
+
+    - id: AC-12
+      description: "`specter resolve dependents <unknown-spec-id>` emits `error: spec '<id>' not found in graph` to stderr and exits non-zero. Unknown spec IDs are operator errors, not empty sets."
+      inputs:
+        graph:
+          - "spec-a depends_on: []"
+        command: "specter resolve dependents spec-z"
+      expected_output:
+        stderr_contains: "not found in graph"
+        exit_code_nonzero: true
+      references_constraints: ["C-12"]
+      priority: high
+
+    - id: AC-13
+      description: "Bare `specter resolve` (no sub-subcommand) preserves the v1.x build-and-validate behavior. Backward compat with v1.x callers — the dependents subcommand MUST NOT shadow the parent command's existing RunE."
+      inputs:
+        graph: "valid 3-spec graph"
+        command: "specter resolve"
+      expected_output:
+        builds_graph_and_emits_diagnostics: true
+        no_breaking_change_for_v1_callers: true
+      references_constraints: ["C-11"]
+      priority: critical
+
+    - id: AC-14
+      description: "DependentsOf(graph, spec_id) is a pure function returning []string of direct dependents — no I/O, no subprocess calls. Mirrors the C-13 purity contract."
+      inputs:
+        graph: "in-memory SpecGraph"
+        spec_id: "spec-a"
+      expected_output:
+        return_type: "[]string"
+        determinism: "sorted lexicographically"
+      references_constraints: ["C-13"]
+      priority: high
+
   changelog:
+    - version: "1.2.0"
+      date: "2026-05-15"
+      author: "specter-team"
+      type: minor
+      description: "v0.13 C4 — add `specter resolve dependents <spec-id>` query operation. Adds C-11/C-12/C-13 and AC-10..AC-14: flat sub-subcommand for read-only graph queries (reverse traversal of depends_on); bare `specter resolve` keeps v1.x build-and-validate behavior. First operation: `dependents`; future ops (`dependencies`, `cycles`, `roots`) follow the same pattern. No new top-level verb — preserves pipeline grammar parse → resolve → check → coverage → sync."
     - version: "1.1.0"
       date: "2026-04-14"
       author: "specter-team"
