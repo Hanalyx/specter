@@ -3135,7 +3135,21 @@ Exit code 0 always — this is a diagnostic surface, not a gate.`,
 }
 
 // readCoverageReportFromFile parses a coverage --json output file.
+//
+// spec-diff C-12 (v2.1.0): MaxCoverageReportBytes (16 MiB) caps the
+// input size BEFORE json.Unmarshal allocates. A malicious or
+// accidentally huge JSON file would otherwise buffer fully into memory
+// and could OOM the process. The size check uses os.Stat to avoid
+// reading even one byte of an oversized file.
 func readCoverageReportFromFile(path string) (*coverage.CoverageReport, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("stat: %w", err)
+	}
+	if info.Size() > coverage.MaxCoverageReportBytes {
+		return nil, fmt.Errorf("coverage report %s exceeds %d byte limit (got %d bytes)",
+			path, coverage.MaxCoverageReportBytes, info.Size())
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read: %w", err)

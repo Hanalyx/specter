@@ -99,6 +99,14 @@ type CoverageReport struct {
 	InvalidStatusWarnings []InvalidStatusWarning `json:"invalid_status_warnings,omitempty"`
 }
 
+// MaxCoverageReportBytes caps the on-disk size of a CoverageReport JSON
+// file before json.Unmarshal allocates on it. Mirrors MaxResultsFileBytes
+// (16 MiB) on .specter-results.json. Defense against the same DoS class
+// — a malicious or accidentally huge CoverageReport buffered fully into
+// memory before decode would OOM the process. Consumed by
+// `specter diff coverage` per spec-diff C-12 (v2.1.0).
+const MaxCoverageReportBytes = 16 << 20 // 16 MiB
+
 // InvalidStatusWarning names an unrecognized `status` value observed in
 // `.specter-results.json` plus the number of result entries that used it.
 // Spec-coverage C-30 / AC-35.
