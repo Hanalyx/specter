@@ -1,6 +1,6 @@
 spec:
   id: spec-check
-  version: "1.4.0"
+  version: "1.5.0"
   status: approved
   tier: 1
 
@@ -96,6 +96,11 @@ spec:
     - id: C-11
       description: "Per-file off-switch for unreachable_annotation. A test file containing a `// @reachable manual` marker (or `# @reachable manual` for Python, matching the language's existing annotation comment convention) at any line MUST suppress BOTH `unreachable_annotation` AND `unreachable_annotation_unknown` diagnostics for every `@ac` source comment in that file. Rationale: when the runner shape is custom (test framework not in the supported set, dynamically-generated tests, or tests that emit pairs via a non-standard channel), the operator asserts they've manually verified the tests cover the annotated ACs. The marker is file-level scope (one declaration per file). The marker MUST follow the existing `// @<keyword> <value>` grammar shared with `@spec` and `@ac` — no new equals-sign or namespace syntax. Future values for `@reachable` (e.g., `disabled`) are reserved; `manual` is the only value v0.13 ships."
       type: technical
+      enforcement: error
+
+    - id: C-12
+      description: "When reading test files for the annotation scanners (`CheckTestAnnotations` per C-09 and `CheckUnreachableAnnotations` per C-10), the CLI MUST refuse to read any test file whose on-disk size exceeds `MaxTestFileBytes` (4 MiB). The check MUST use `os.Stat` BEFORE `os.ReadFile`, so an oversized file is never buffered into memory. Files at or under the cap continue to scan as before. Oversized files MUST be skipped (not fatal — `check --test` proceeds with the remaining files) and the skip MUST emit a stderr warning naming the file path and byte count so the operator knows that file was not scanned. Rationale: the unreachable scanner reads every discovered test file via `os.ReadFile` and passes the full string to `go/parser.ParseFile` (Go), `strings.Split` over regex (TS / Python). A 4 GiB malicious or accidental test file OOMs Specter; `go/parser` allocates an AST proportional to file size. The 4 MiB cap is conservative — real test files are well under that. Mirrors the existing `parser.maxSpecBytes` (1 MiB) and `coverage.MaxResultsFileBytes` (16 MiB) pattern; v0.13 security audit surfaced this as the H5 gap because the unreachable scanner was the only v0.13 surface that didn't inherit a size cap."
+      type: business
       enforcement: error
 
   depends_on:
@@ -326,7 +331,26 @@ spec:
       references_constraints: ["C-11"]
       priority: high
 
+    - id: AC-20
+      description: "A test file larger than `MaxTestFileBytes` (4 MiB) discovered during `check --test` MUST be skipped — the file is NOT read into memory (size check via `os.Stat` precedes `os.ReadFile`), no diagnostics are produced for any `@ac` it contains, and a stderr warning names the file path and byte count. The check MUST NOT exit non-zero on the skip alone; remaining test files continue to scan. Files at or under the cap behave unchanged."
+      inputs:
+        scenario_oversize: "test file of 5 MiB (1 MiB over the cap)"
+        scenario_at_cap: "test file of exactly 4 MiB"
+      expected_output:
+        oversize_skipped: true
+        oversize_no_diagnostics: true
+        oversize_stderr_contains: ["exceeds", "skipping"]
+        oversize_exit_code: 0
+        at_cap_scanned: true
+      references_constraints: ["C-12"]
+      priority: critical
+
   changelog:
+    - version: "1.5.0"
+      date: "2026-05-16"
+      author: "specter-team"
+      type: minor
+      description: "v0.13 security audit H5 fix — test-file size cap for the annotation scanners. Add C-12 + AC-20. The v0.13 F3 work introduced `CheckUnreachableAnnotations`, which is invoked under `check --test` and reads every discovered test file via `os.ReadFile` before passing the full string to `go/parser.ParseFile` (Go), regex+state-machine (TS/JS), or regex+indentation (Python). A 4 GiB malicious test file OOMs Specter. C-12 mandates a 4 MiB cap (`MaxTestFileBytes`) checked via `os.Stat` BEFORE `os.ReadFile`. Oversized files are SKIPPED (not fatal); a stderr warning names the file. Real test files are well under 4 MiB. Mirrors the existing `parser.maxSpecBytes` (1 MiB) and `coverage.MaxResultsFileBytes` (16 MiB) defense-in-depth pattern."
     - version: "1.4.0"
       date: "2026-05-15"
       author: "specter-team"
