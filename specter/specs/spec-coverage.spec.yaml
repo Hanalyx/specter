@@ -1,6 +1,6 @@
 spec:
   id: spec-coverage
-  version: "1.13.0"
+  version: "1.14.0"
   status: approved
   tier: 2
 
@@ -180,6 +180,11 @@ spec:
 
     - id: C-29
       description: "`specter coverage --json` MUST exit with the same process exit code that `specter coverage` (text mode) would exit with for the same workspace state, flags, and strictness setting. Specifically: zero-tolerance non-passed annotated AC → exit 2 (matches C-25); zero-tolerance `approval_gate: true` with unset `approval_date` → exit 3 (matches C-26); threshold-mode failure (Summary.Failing > 0) → exit non-zero (errSilent path); parse failure → exit non-zero. The JSON document is always emitted to stdout BEFORE the exit-code decision runs, so machine consumers see structured state in every case. Rationale: pre-v0.13 JSON mode returned nil whenever the report serialized successfully, so `coverage --strict --json` exited 0 on the very strictness violations that `coverage --strict` (text mode) exited 2/3 on. CI consumers reading `--json` could not gate on it. The gap surfaced during v0.13.0 D3 audit."
+      type: business
+      enforcement: error
+
+    - id: C-30
+      description: "ParseResultsFile MUST track entries whose `status` field carries a value outside the canonical enum declared in C-21 (`passed | failed | skipped | errored`). `ResultsFile.InvalidStatuses()` returns a map of unique non-canonical status values to their occurrence counts. `specter coverage` MUST emit a stderr warning enumerating these BEFORE the coverage table when present, of the form `warning: .specter-results.json contains N entries with status=\"<value>\" — not in canonical enum (passed|failed|skipped|errored); treated as not-passed`. One warning per unique non-canonical value. Under `--json`, surface as a top-level `invalid_status_warnings` array (each entry `{status, count}`). Suppressed under `--quiet` (matches the C-28 hint suppression contract). Parsing behavior is unchanged: non-canonical statuses still derive `Passed = false`, so today's silent-failed behavior holds — but the operator now sees the typo. Rationale: the canonical case is `status: \"pass\"` (typo missing `ed`). Pre-v0.13 a typo silently demoted the AC under `--strict` with no diagnostic; the operator chased a phantom strict failure. The bug class generalizes to any non-canonical value (case differences, plural/singular slips, foreign-runtime statuses like `\"ok\"`). Limit the per-mode behavior to a warning (not an error) so legitimate value drift across runners doesn't fail a build; the operator still sees the signal."
       type: business
       enforcement: error
 
@@ -527,7 +532,27 @@ spec:
       references_constraints: ["C-29"]
       priority: critical
 
+    - id: AC-35
+      description: "Workspace with `.specter-results.json` containing one entry `{spec_id: my-spec, ac_id: AC-01, status: \"pass\"}` (typo missing `ed`) for an annotated AC: running `specter coverage --strict` emits a stderr line containing the literal `\"pass\"` AND the canonical enum (`passed|failed|skipped|errored`), printed BEFORE the coverage table. Parsing behavior is unchanged — the AC remains demoted as not-passed, so exit code matches today (non-zero under --strict). Under `--quiet`, the stderr warning is suppressed but exit behavior is unchanged. Under `--json`, the warning appears as a top-level `invalid_status_warnings` array entry `{status: \"pass\", count: 1}` regardless of `--quiet`. Multiple distinct invalid values produce one warning line per unique value (counts aggregated)."
+      inputs:
+        scenario_default: ".specter-results.json: {status:\"pass\"} for annotated AC-01"
+        scenario_quiet: "same + --quiet"
+        scenario_json: "same + --json"
+      expected_output:
+        default_stderr_contains: ["\"pass\"", "passed|failed|skipped|errored"]
+        default_warning_above_table: true
+        quiet_stderr_no_warning: true
+        json_invalid_status_warnings: "[{status:\"pass\", count:1}]"
+        exit_code_unchanged: "matches today's behavior (non-zero under --strict, since pass is treated as failed)"
+      references_constraints: ["C-30"]
+      priority: high
+
   changelog:
+    - version: "1.14.0"
+      date: "2026-05-16"
+      author: "specter-team"
+      type: minor
+      description: "v0.13 D2 — non-canonical `status` value diagnostic for .specter-results.json. Add C-30 + AC-35. Before this change, an entry with `status: \"pass\"` (canonical typo, missing `ed`) silently derived `Passed = false` in ParseResultsFile and demoted the AC under --strict with no diagnostic — operator chased a phantom strict failure. ParseResultsFile now tracks every non-canonical status value; ResultsFile.InvalidStatuses() returns a {value: count} map. The CLI emits one stderr warning per unique non-canonical value before the table (suppressed under --quiet) and surfaces the same data as an invalid_status_warnings array in --json output (always, regardless of --quiet). Parsing behavior is preserved — non-canonical values still treated as failed — so this is a pure-diagnostic addition with no behavior break."
     - version: "1.13.0"
       date: "2026-05-06"
       author: "specter-team"
