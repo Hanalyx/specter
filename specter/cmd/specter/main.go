@@ -275,6 +275,15 @@ func tryOpenBrowser(link string) bool {
 
 // --- Helpers ---
 
+// pluralize returns word with a trailing "s" when n != 1.
+// Used by reverse's summary line (C-13) and other count-aware output.
+func pluralize(word string, n int) string {
+	if n == 1 {
+		return word
+	}
+	return word + "s"
+}
+
 func discoverSpecs(patterns ...string) []string {
 	if len(patterns) > 0 && patterns[0] != "" {
 		return patterns
@@ -1410,26 +1419,23 @@ func reverseCmd() *cobra.Command {
 				}
 			}
 
+			// spec-reverse 1.3.0 C-13: single-line summary after the
+			// per-spec output. Pluralizes naturally (constraint vs
+			// constraints) to read like English.
 			gapCount := result.Summary.GapsDetected
-			fmt.Printf("\nSummary: %d spec(s) generated, %d constraint(s), %d assertion(s), %d gap(s)\n",
-				result.Summary.SpecsGenerated, result.Summary.ConstraintsFound,
-				result.Summary.AssertionsFound, gapCount)
-			if gapCount > 0 {
-				fmt.Printf("\n%d AC(s) need triage — reverse extracts structure but not intent. Until triaged, these ACs count as uncovered and `specter sync` will fail.\n", gapCount)
-				fmt.Println()
-				fmt.Println("Next steps:")
-				// Pick first generated spec to show a concrete example
-				if len(result.Specs) > 0 {
-					example := result.Specs[0].Spec.ID
-					fmt.Printf("  1. Triage gaps in one spec:     specter explain %s\n", example)
-					fmt.Printf("  2. Fill in each gap AC's description and remove the `gap: true` flag.\n")
-					fmt.Printf("  3. Run parse to validate:        specter parse %s/%s\n", outputDir, result.Specs[0].FileName)
-				} else {
-					fmt.Printf("  1. Open a generated spec and triage its gap ACs (fill description, remove gap: true)\n")
-					fmt.Printf("  2. Run: specter explain <spec-id>   to see annotation examples per AC\n")
-					fmt.Printf("  3. Run: specter parse <spec-file>   to validate your edits\n")
-				}
-				fmt.Printf("  4. Run sync to check the whole corpus: specter sync\n")
+			fmt.Printf("\nFound %d %s, %d %s, %d %s across %d %s.\n",
+				result.Summary.ConstraintsFound, pluralize("constraint", result.Summary.ConstraintsFound),
+				result.Summary.AssertionsFound, pluralize("assertion", result.Summary.AssertionsFound),
+				gapCount, pluralize("gap", gapCount),
+				result.Summary.SpecsGenerated, pluralize("file", result.Summary.SpecsGenerated))
+
+			// spec-reverse 1.3.0 C-14: single-line handoff pointing
+			// at `specter explain <first-spec-id>` for gap triage in
+			// each generated draft. Suppressed under --json (handled
+			// at the top of this RunE).
+			if len(result.Specs) > 0 {
+				firstID := result.Specs[0].Spec.ID
+				fmt.Printf("Run `specter explain %s` to triage gaps in each generated draft.\n", firstID)
 			}
 
 			return nil
