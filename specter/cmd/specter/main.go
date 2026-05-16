@@ -952,11 +952,52 @@ func coverageCmd() *cobra.Command {
 			// parse failed. Downstream consumers (VS Code extension) branch on
 			// ParseErrors vs Entries to decide what to render. Exit code, not
 			// stdout presence, signals pass/fail.
+			//
+			// v0.13 D3: align JSON and text exit-code semantics. Pre-v0.13
+			// JSON mode returned nil whenever parse succeeded, even when text
+			// mode would have exited non-zero on threshold failures or
+			// zero-tolerance violations. CI consumers reading --json couldn't
+			// rely on exit code to gate. Now JSON mode runs the SAME exit
+			// checks text mode runs (in the same order): zero-tolerance
+			// non-passed (exit 2), approval_gate (exit 3), threshold (exit 1).
 			if jsonOutput {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
 				_ = enc.Encode(report)
 				if hasErrors {
+					return errSilent
+				}
+				// Mirror the text-mode exit checks. The os.Exit calls
+				// preserve their distinct exit codes (2 and 3) for
+				// downstream CI consumers that distinguish violation
+				// classes.
+				if effectiveStrictness == "zero-tolerance" {
+					if results != nil {
+						nonPassed := 0
+						for _, r := range results.Results {
+							if r.Status != "" && r.Status != "passed" {
+								nonPassed++
+							}
+						}
+						if nonPassed > 0 {
+							fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d annotated AC(s) did not pass\n", nonPassed)
+							os.Exit(2)
+						}
+					}
+					gateViolations := 0
+					for _, s := range specs {
+						for _, ac := range s.AcceptanceCriteria {
+							if ac.ApprovalGate && ac.ApprovalDate == "" {
+								gateViolations++
+							}
+						}
+					}
+					if gateViolations > 0 {
+						fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d AC(s) carry approval_gate=true with unset approval_date\n", gateViolations)
+						os.Exit(3)
+					}
+				}
+				if report.Summary.Failing > 0 {
 					return errSilent
 				}
 				return nil
