@@ -8,7 +8,7 @@
 //   - SpecsAdded:   spec present in current, absent in baseline
 //   - SpecsRemoved: spec present in baseline, absent in current
 //   - SpecChanges:  per-spec AC delta (GAINED / LOST) plus
-//                   coverage_pct and passes_threshold transitions
+//     coverage_pct and passes_threshold transitions
 //
 // @spec spec-diff
 package diff

@@ -23,7 +23,7 @@
 //   - Only DOCUMENTED commands are checked. Hidden commands
 //     (prePushCheckCmd) and external completion helpers are exempt.
 //   - Per-command flag tables in CLI_REFERENCE.md are matched by the
-//     `### `specter <name>`` heading.
+//     `### `specter <name>“ heading.
 //   - Both long flags (e.g. `--strict`) and short aliases (e.g. `-s`)
 //     are normalized to their long-form name for comparison.
 //
@@ -158,7 +158,7 @@ func registeredFlagNames(cmd *cobra.Command) map[string]bool {
 	return out
 }
 
-// reHeading matches `### `specter <name>`` headings. The name captures
+// reHeading matches `### `specter <name>“ headings. The name captures
 // only the first word after specter — `specter doctor` not
 // `specter doctor --fix`.
 var reHeading = regexp.MustCompile("^### `specter\\s+([a-zA-Z][a-zA-Z0-9-]*)`")

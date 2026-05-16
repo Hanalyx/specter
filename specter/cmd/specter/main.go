@@ -1214,7 +1214,7 @@ func syncCmd() *cobra.Command {
 				CheckOpts:            checkOpts,
 				OnlyPhase:            onlyPhase,
 				Results:              results,
-				Strictness:           effectiveStrictness, // spec-sync C-06: route coverage phase per strictness
+				Strictness:           effectiveStrictness,         // spec-sync C-06: route coverage phase per strictness
 				CheckTestAnnotations: strict || m.Settings.Strict, // spec-check C-09/AC-12: sync --strict (or settings.strict) routes through
 			})
 
@@ -3022,7 +3022,7 @@ func diffCoverageCmd() *cobra.Command {
 		Short: "Diff two coverage --json snapshots (per-spec AC delta)",
 		Long: `Read two CoverageReport JSON files and emit the per-spec AC delta.
 
-Each argument is a path to a `+"`coverage --json`"+` output. Useful for tracking
+Each argument is a path to a ` + "`coverage --json`" + ` output. Useful for tracking
 AC coverage drift between CI runs.
 
 Output:
