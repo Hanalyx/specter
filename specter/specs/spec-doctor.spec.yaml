@@ -1,6 +1,6 @@
 spec:
   id: spec-doctor
-  version: "1.8.0"
+  version: "1.9.0"
   status: draft
   tier: 2
 
@@ -109,13 +109,18 @@ spec:
       enforcement: error
 
     - id: C-15
-      description: "When a spec rewrite predicate matches but the targeted value is structurally unsafe for line-based deletion, `--fix` MUST emit an `unhandled` diagnostic naming the file and the reason instead of producing a partial rewrite. The file MUST remain byte-unchanged. The underlying invariant for line-based deletion is `the value occupies exactly one source line` — refusal MUST trigger when ANY of the following hold: (a) `Node.Kind` is not `ScalarNode` (sequence, mapping, alias); (b) `Node.Style` is `LiteralStyle` or `FoldedStyle` (block scalars `|`/`>`); (c) the value's source span exceeds one line — folded plain scalars, multi-line quoted scalars, or any source-shape where a non-blank/non-comment line at greater indentation than the key follows the value's first line. Detection MUST iterate every YAML document in the file (via `yaml.Decoder` for multi-document files) — the rewrite predicate fires per parse-error per file, but the safety check MUST cover every document so that an unsafe shape in document N>0 still refuses the whole-file rewrite. The summary MUST split into two blocks: `doctor --fix: N file(s) rewritten` (successful) and `doctor --fix: N file(s) need manual edit` (refused), with each manual-edit entry on its own line in the form `  skip <file> — <reason>`. Rationale: the line-based regex deletion in C-11 is byte-preserving (its strength) but unsafe on values that span multiple lines (its weakness); refusal is safer than corruption. Earlier wording (v1.5.0) enumerated specific unsafe shapes; this version (v1.6.0) names the underlying invariant so future YAML idioms that span lines without a block-scalar indicator (folded plain, quoted multi-line) are correctly refused."
+      description: "When a spec rewrite predicate matches but the targeted value is structurally unsafe for line-targeted deletion, `--fix` MUST emit an `unhandled` diagnostic naming the file and the reason instead of producing a partial rewrite. The file MUST remain byte-unchanged. The underlying invariant for line-targeted deletion is `the value occupies exactly one source line` — refusal MUST trigger when ANY of the following hold: (a) `Node.Kind` is not `ScalarNode` (sequence, mapping, alias); (b) `Node.Style` is `LiteralStyle` or `FoldedStyle` (block scalars `|`/`>`); (c) the value's source span exceeds one line — folded plain scalars, multi-line quoted scalars, or any source-shape where a non-blank/non-comment line at greater indentation than the key follows the value's first line. Detection MUST iterate every YAML document in the file (via `yaml.Decoder` for multi-document files) — the rewrite predicate fires per parse-error per file, but the safety check MUST cover every document so that an unsafe shape in document N>0 still refuses the whole-file rewrite. The summary MUST split into two blocks: `doctor --fix: N file(s) rewritten` (successful) and `doctor --fix: N file(s) need manual edit` (refused), with each manual-edit entry on its own line in the form `  skip <file> — <reason>`. Rationale: line-targeted deletion (C-17) is byte-preserving (its strength) but a single deleted line cannot represent a value that spans multiple lines (its limit); refusal is safer than corruption. Earlier wording (v1.5.0) enumerated specific unsafe shapes; v1.6.0 named the underlying invariant so future YAML idioms that span lines without a block-scalar indicator (folded plain, quoted multi-line) are correctly refused. v1.9.0 retains the same invariant under the new deletion mechanism."
       type: business
       enforcement: error
 
     - id: C-16
-      description: "`specter doctor --fix` is a BETA feature in v0.12. Before applying any rewrite or canonicalization, `--fix` MUST print a clearly-marked `[BETA]` warning to stderr describing (a) the known string-literal corruption gap (regex deletion can strip lines inside descriptions or other string scalars that mention the deprecated field name), (b) the recommendation to commit spec files BEFORE running so changes can be diffed and reverted, and (c) `--dry-run` as a safe preview path. After the warning, `--fix` MUST prompt the operator on stdin with `Continue? (y/N): ` and MUST require an affirmative response (`y` or `yes`, case-insensitive) to proceed. Any other input — empty/Enter, `n`/`no`, or any non-affirmative string — MUST exit 0 with a `Aborted. No files modified.` line and no on-disk changes. The `--yes` (or `-y`) CLI flag MUST bypass both the warning and the prompt for non-interactive use (CI, scripted migrations). When stdin is not a terminal AND `--yes` is not set, `--fix` MUST refuse with an explicit error directing the operator to either run interactively or pass `--yes` — and the refusal MUST happen BEFORE reading any stdin content (i.e., piping `y\\n` from a non-TTY does NOT bypass the gate; the gate is keyed on the terminal capability of stdin, not on what content arrives). TTY detection MUST use a stdin filedescriptor mode check (e.g., `os.Stdin.Stat()` returning a character-device mode) rather than EOF-on-empty heuristics. `--dry-run` MUST be exempt from the prompt — preview mode is read-only. Rationale: the known string-literal corruption gap can damage spec documentation that mentions deprecated field names in prose; gating the destructive path behind explicit acknowledgment is the right safety posture while that gap remains open. The TTY-not-EOF clarification closes a regression where `echo y | specter doctor --fix` would silently rewrite files (the EOF-on-empty heuristic only refused empty pipes; piped affirmative content slipped through)."
+      description: "`specter doctor --fix` is a BETA feature in v0.12. Before applying any rewrite or canonicalization, `--fix` MUST print a clearly-marked `[BETA]` warning to stderr describing (a) that `--fix` rewrites spec files in place and that the source repository should be committed first so changes can be diffed and reverted, and (b) `--dry-run` as a safe preview path. After the warning, `--fix` MUST prompt the operator on stdin with `Continue? (y/N): ` and MUST require an affirmative response (`y` or `yes`, case-insensitive) to proceed. Any other input — empty/Enter, `n`/`no`, or any non-affirmative string — MUST exit 0 with a `Aborted. No files modified.` line and no on-disk changes. The `--yes` (or `-y`) CLI flag MUST bypass both the warning and the prompt for non-interactive use (CI, scripted migrations). When stdin is not a terminal AND `--yes` is not set, `--fix` MUST refuse with an explicit error directing the operator to either run interactively or pass `--yes` — and the refusal MUST happen BEFORE reading any stdin content (i.e., piping `y\\n` from a non-TTY does NOT bypass the gate; the gate is keyed on the terminal capability of stdin, not on what content arrives). TTY detection MUST use a stdin filedescriptor mode check (e.g., `os.Stdin.Stat()` returning a character-device mode) rather than EOF-on-empty heuristics. `--dry-run` MUST be exempt from the prompt — preview mode is read-only. Rationale (v1.9.0+): the v0.12 string-literal corruption gap was closed by C-17 (line-targeted deletion via yaml.v3 `Node.Line`). The BETA prompt is retained for v0.13 as soak-time conservatism on a destructive operation; retirement is scheduled for v0.14 once the new mechanism has user-visible track record. The TTY-not-EOF clarification (v1.7.0) closes a regression where `echo y | specter doctor --fix` would silently rewrite files."
       type: business
+      enforcement: error
+
+    - id: C-17
+      description: "When `--fix` applies a rewrite that deletes a key/value line in a `.spec.yaml`, the deletion mechanism MUST identify the source line by yaml.v3 `Node.Line` (the absolute line number reported by the parser for the key node) and remove EXACTLY that line, NOT by matching the line content against a regex over all source lines. Rationale: a content-pattern regex over every line falsely matches the deprecated field name when it appears inside a string-literal value (e.g., a `description:` block scalar that mentions `trust_level: high` in prose). The yaml.v3 parser already knows which lines are keys and which are scalar content; the deletion MUST use that knowledge. Multi-document YAML files MUST collect line numbers from every document's key node before any deletion. The structural-safety invariant in C-15 (value occupies exactly one source line) MUST still hold — refusal is unchanged. Closes the v0.12 BETA gate's named string-literal corruption gap."
+      type: technical
       enforcement: error
 
   acceptance_criteria:
@@ -447,6 +452,26 @@ spec:
       references_constraints: ["C-16"]
       priority: critical
 
+    - id: AC-31
+      description: "Spec file with `trust_level: high` at the spec.* level AND a `description:` block scalar (style `|` or `>`) whose body contains a line resembling a key/value declaration of the deprecated field (e.g., `The trust_level: high field was removed in v0.6.5.`): `specter doctor --fix` MUST remove ONLY the actual `trust_level` key line, leaving every line inside the description block scalar byte-preserved. The mention inside the string literal is not a YAML key — yaml.v3 reports it as part of the description's scalar content — so the line-targeted deletion (C-17) skips it. Regression guard: a content-pattern regex over all source lines would falsely delete the description line; the new mechanism must not. Combined with C-15, the rewrite is byte-safe across the corpus of `.spec.yaml` files that mention the deprecated field in prose."
+      inputs:
+        file_before: |
+          spec:
+            id: my-spec
+            version: "1.0.0"
+            description: |
+              The trust_level: high field was removed in v0.6.5.
+              Use tier: instead.
+            trust_level: high
+            tier: 3
+      expected_output:
+        trust_level_key_line_removed: true
+        description_block_byte_preserved: true
+        applied: ["strip-trust-level"]
+        unhandled_empty: true
+      references_constraints: ["C-17"]
+      priority: critical
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -459,6 +484,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.9.0"
+      date: "2026-05-16"
+      author: "specter-team"
+      type: minor
+      description: "v0.13 D1 — close the BETA gate's string-literal corruption gap via line-targeted deletion. Add C-17 + AC-31. The v0.12 `stripTrustLevel` rewrite used a content-pattern regex (`^\\s+trust_level\\s*:\\s*\\S.*$`) over every source line; a description block scalar that mentioned `trust_level: high` in prose would be falsely matched and the documentation line stripped. C-17 mandates that line-deleting rewrites identify the source line by yaml.v3 `Node.Line` (the absolute line number reported by the parser for the actual key node), removing EXACTLY that line. The parser already knows which lines are keys and which are scalar content — the deletion uses that knowledge. C-15's structural-safety invariant (value occupies exactly one source line) is preserved verbatim — multi-line value shapes still refuse. C-16 rationale updated: the BETA prompt is retained for v0.13 as soak-time conservatism on a destructive operation, with retirement targeted for v0.14. The BETA warning text drops the now-untrue `string-literal corruption gap` claim and keeps the `commit first / --dry-run` recommendation."
     - version: "1.8.0"
       date: "2026-04-29"
       author: "specter-team"
