@@ -362,7 +362,7 @@ func collectAstGoTestFuncs(fset *token.FileSet, file *ast.File) astGoTestFuncs {
 }
 
 // isTestingTParam reports whether a function parameter has type
-// *testing.T (with any identifier name). Recognises the form
+// *testing.T (with any identifier name). Recognizes the form
 // `name *testing.T` plus `*testing.T` (bare type, no parameter name).
 func isTestingTParam(field *ast.Field) bool {
 	if field == nil {

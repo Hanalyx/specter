@@ -149,9 +149,5 @@ func TestCoverageJsonExit_ThresholdFailure_MatchesTextExitNonzero(t *testing.T) 
 			t.Errorf("expected valid JSON document on stdout despite non-zero exit, got parse error: %v\noutput:\n%s", err, out)
 		}
 
-		// Sanity: parse_errors absent (we have valid specs); summary.failing > 0.
-		if strings.Contains(out, `"parse_errors"`) {
-			// parse_errors may legitimately appear but we want the failure to be threshold, not parse.
-		}
 	})
 }
