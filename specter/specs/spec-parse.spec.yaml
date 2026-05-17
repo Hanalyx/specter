@@ -1,6 +1,6 @@
 spec:
   id: spec-parse
-  version: "1.1.0"
+  version: "1.2.0"
   status: approved
   tier: 1
 
@@ -79,6 +79,11 @@ spec:
 
     - id: C-09
       description: "MUST produce human-readable error messages that name the invalid field and describe the fix, not raw JSON Schema paths or validator internals"
+      type: technical
+      enforcement: error
+
+    - id: C-10
+      description: "MUST validate, at parse time, that every entry in `acceptance_criteria[].references_constraints[]` names a constraint id declared in the same spec's `constraints[]` block. Dangling references (e.g., `references_constraints: [\"C-99\"]` when no `C-99` constraint exists) MUST produce a `dangling_reference` ParseError naming the AC id and the offending constraint id. Rationale: a spec whose AC claims to reference a constraint that doesn't exist is internally inconsistent; catching this at parse time prevents the contradiction from reaching the coverage pipeline. JSON Schema cannot express the cross-reference (it sees `references_constraints` as a string array, not as ids that must match siblings), so the parser enforces it after schema validation succeeds."
       type: technical
       enforcement: error
 
@@ -214,7 +219,66 @@ spec:
       references_constraints: ["C-09"]
       priority: high
 
+    - id: AC-14
+      description: "Spec with an unknown field inside the `context:` block (e.g., `context.platform: foo`) returns a ParseError. additionalProperties enforcement extends beyond the top-level spec object into every nested mapping the schema declares. Regression guard for the v0.7.0 tightening that closed a hole where unknown sub-fields silently parsed."
+      inputs:
+        yaml: "valid spec with `context.platform: not-a-field` added"
+      expected_output:
+        parse_errors_count: ">= 1"
+        path_contains: "context"
+      references_constraints: ["C-03"]
+      priority: high
+
+    - id: AC-15
+      description: "Spec whose AC declares the metadata fields `notes`, `approval_gate`, and `approval_date` parses successfully (the fields are preserved on the resulting SpecAST). When `approval_date` carries a non-ISO-8601 value (e.g., `\"yesterday\"`), the parse MUST return a ParseError naming the AC id and the field; the schema's `format: date` keyword backs the validation."
+      inputs:
+        case_valid: "AC with notes='x', approval_gate: true, approval_date: '2026-01-15'"
+        case_invalid: "AC with approval_date: 'yesterday'"
+      expected_output:
+        valid_parses: true
+        invalid_parse_errors_count: ">= 1"
+      references_constraints: ["C-01"]
+      priority: high
+
+    - id: AC-16
+      description: "Spec with an AC that declares `references_constraints: [\"C-99\"]` while no `C-99` constraint exists in the same spec's `constraints[]` block MUST return a `dangling_reference` ParseError naming both the AC id and the offending constraint id. JSON Schema cannot express the cross-reference; the parser runs `validateReferencedConstraints` after schema validation succeeds. Valid references (every `C-NN` in `references_constraints` matches a declared constraint) MUST pass."
+      inputs:
+        yaml: "spec with constraints C-01..C-03 and an AC referencing C-99"
+      expected_output:
+        parse_errors_count: ">= 1"
+        error_type: "dangling_reference"
+        message_contains: "C-99"
+      references_constraints: ["C-10"]
+      priority: critical
+
+    - id: AC-17
+      description: "Spec MAY declare an optional `title:` string at the top level (sibling of `id`, `version`, `status`). When present, it parses and is preserved on the SpecAST; when absent, the parse succeeds without error. Title is a free-form human-readable name, distinct from the kebab-case `id`. Schema enforces `title` is a string when present; no constraint on length or pattern beyond that."
+      inputs:
+        case_with: "spec with `title: \"My Custom Title\"`"
+        case_without: "spec with no `title` field"
+      expected_output:
+        with_title_value: "My Custom Title"
+        without_title_parse_ok: true
+      references_constraints: ["C-01"]
+      priority: medium
+
+    - id: AC-18
+      description: "The SpecAST `ValidateEnums()` helper validates enum-typed fields (status / tier-shape / constraint.type / constraint.enforcement / AC.priority) at the Go layer in addition to JSON Schema's enum keyword. A valid spec passes `ValidateEnums()` with nil error; a spec whose `status` is outside `{draft, approved, deprecated}` (etc.) returns an error naming the field. Rationale: defense in depth — schema validation runs at parse, enum re-validation runs at every code path that constructs a SpecAST so internal mutations (e.g., reverse compiler synthesis) can't produce schema-invalid output that bypasses the parser."
+      inputs:
+        case_valid: "valid SpecAST → ValidateEnums returns nil"
+        case_invalid_status: "SpecAST with status=`banana` → returns error mentioning `status`"
+      expected_output:
+        valid_returns_nil: true
+        invalid_returns_error_containing: "status"
+      references_constraints: ["C-01"]
+      priority: high
+
   changelog:
+    - version: "1.2.0"
+      date: "2026-05-16"
+      author: "specter-team"
+      type: minor
+      description: "v0.13 pre-release follow-up — lift v0.7.0 parse behaviors into the spec. Add C-10 (dangling references_constraints rejected at parse time, error type `dangling_reference`; the check runs after JSON Schema validation because the schema can't express the cross-reference). Add AC-14..AC-18 documenting parse behaviors that were tested in `parse_test.go` and `validate_test.go` since v0.7.0 but never lifted to the spec: AC-14 (additionalProperties enforcement in nested `context:` block), AC-15 (AC metadata fields + approval_date format), AC-16 (dangling references_constraints check, refs C-10), AC-17 (optional `title:` at spec root), AC-18 (Go-side `ValidateEnums()` helper as defense-in-depth alongside schema validation). Surfaced by v0.13 pre-release `check --test` runs which flagged the source-comment `@ac AC-14..AC-18` references as `unknown_ac_ref` — the tests were referencing real, implemented behavior; the spec was just behind."
     - version: "1.1.0"
       date: "2026-04-14"
       author: "specter-team"

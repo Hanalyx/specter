@@ -81,6 +81,40 @@ func (rf *ResultsFile) passed(specID, acID string) bool {
 	return true
 }
 
+// InvalidStatuses scans the parsed results and returns a map of unique
+// unrecognized `status` values to their occurrence counts. The documented
+// enum is {passed, failed, skipped, errored} per C-21; any other non-empty
+// value is reported here.
+//
+// Parsing behavior is unchanged — unrecognized values still derive
+// `Passed = false` in ParseResultsFile (treated as not-passed). This
+// helper is purely diagnostic; the CLI surfaces the result as a stderr
+// warning (text mode) or `invalid_status_warnings` array (--json) so
+// the operator can spot typos like `status: "pass"` that pre-v0.14
+// silently demoted ACs under --strict.
+//
+// C-30 (AC-35). Returns nil-safe (zero map for a nil receiver).
+func (rf *ResultsFile) InvalidStatuses() map[string]int {
+	if rf == nil {
+		return nil
+	}
+	var out map[string]int
+	for _, r := range rf.Results {
+		if r.Status == "" {
+			continue
+		}
+		switch r.Status {
+		case "passed", "failed", "skipped", "errored":
+			continue
+		}
+		if out == nil {
+			out = make(map[string]int)
+		}
+		out[r.Status]++
+	}
+	return out
+}
+
 // status returns the canonical status for a (spec, AC), or "unknown" if no
 // entry exists. Under --strict (BuildCoverageReportStrict with strict=true),
 // "unknown" is treated as uncovered — the point of --strict is that every

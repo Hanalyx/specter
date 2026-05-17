@@ -116,61 +116,53 @@ func Apply(content []byte, parseErrors []coverage.ParseErrorEntry) (Result, erro
 	return result, nil
 }
 
-// stripTrustLevel removes a `trust_level: <plain-scalar>` line under the
-// `spec:` key. Operates line-by-line to preserve surrounding formatting
-// (comments, blank lines, etc.) — yaml.v3 round-trip would reformat the
-// whole document, which violates AC-12's byte-preservation intent for
-// other fields.
+// stripTrustLevel removes the `trust_level: <plain-scalar>` line under
+// the `spec:` key, by yaml.v3 key-node line number (NOT by content-
+// pattern regex). yaml.v3 already knows which source lines are keys
+// and which are scalar content, so a mention of `trust_level: high`
+// inside a description block scalar is never matched. C-17 mandates
+// this mechanism; C-15 mandates refusal when the value's shape would
+// require multi-line deletion.
 //
-// Refuses (returns reason) when yaml.v3 inspection determines the
-// value's YAML shape is unsafe for line-based deletion: block scalar
-// (`|` / `>`), sequence value, mapping value, anchor/alias. Per
-// spec-doctor C-15. Plain scalar values (`high`, `"high"`, `0.5`)
-// continue to rewrite as before.
+// Refuses (returns reason) when the value's YAML shape is unsafe:
+// block scalar (`|` / `>`), sequence/mapping value, anchor/alias, or
+// any plain/quoted scalar whose source span exceeds one line. Plain
+// scalar values on a single line (`high`, `"high"`, `0.5`) rewrite as
+// before; surrounding lines (comments, blank lines, description blocks)
+// are byte-preserved.
 func stripTrustLevel(content []byte) ([]byte, bool, string) {
-	safe, reason := canSafelyStripTrustLevel(content)
-	if !safe {
+	lines, reason := trustLevelLineSet(content)
+	if reason != "" {
 		return content, false, reason
 	}
-	// Safe to apply line-based deletion. The regex matches any indented
-	// `trust_level:` key with a non-whitespace value on the same line —
-	// yaml.v3 has already confirmed there's no continuation content.
-	lines := strings.Split(string(content), "\n")
-	out := make([]string, 0, len(lines))
-	changed := false
-	re := regexp.MustCompile(`^\s+trust_level\s*:\s*\S.*$`)
-	for _, line := range lines {
-		if re.MatchString(line) {
-			changed = true
-			continue // drop the line
-		}
-		out = append(out, line)
-	}
-	if !changed {
+	if len(lines) == 0 {
 		return content, false, ""
 	}
-	return []byte(strings.Join(out, "\n")), true, ""
+	return deleteSourceLines(content, lines), true, ""
 }
 
-// canSafelyStripTrustLevel uses yaml.v3 to inspect the YAML shape of the
-// `spec.trust_level` value (if present) in every document of the file.
-// Returns (true, "") only when EVERY document's trust_level (if any) is a
-// plain scalar AND occupies exactly one source line. Returns (false,
-// reason) on the first document that fails any of the checks.
+// trustLevelLineSet inspects every YAML document in `content` and
+// returns the set of (1-based) source line numbers occupied by the
+// `spec.trust_level` key. yaml.v3 reports the key node's absolute line
+// number across the stream, so multi-document files yield the correct
+// per-doc lines.
 //
-// Spec-doctor C-15 (v1.6.0):
+// Returns (nil, reason) on the first document whose trust_level value
+// has a structurally unsafe shape (C-15): non-scalar value, block
+// scalar `|`/`>`, or a scalar whose source span exceeds one line.
+// Whole-file refusal is intentional — partial rewrite across documents
+// is not byte-safe.
 //
-//   - (a) Kind != ScalarNode → refuse (sequence/mapping/alias)
-//   - (b) Style is Literal/Folded → refuse (block scalar `|`/`>`)
-//   - (c) value's source span > one line → refuse (folded plain scalar,
-//     multi-line quoted scalar)
+// Returns (nil, "yaml parse failed: ...") when the file does not parse
+// as YAML — specter parse has already reported the error; refuse rather
+// than slice lines out of an unparseable file.
 //
-// Multi-document handling (AC-23): yaml.Decoder iterates each document;
-// the safety check runs on each. The rewrite is per-file, so a single
-// unsafe document forces refusal of the whole file — partial rewrite
-// across documents is not byte-safe.
-func canSafelyStripTrustLevel(content []byte) (bool, string) {
+// Returns ([], "") when no document declares trust_level (no-op).
+//
+// C-17 (v1.9.0).
+func trustLevelLineSet(content []byte) ([]int, string) {
 	dec := yaml.NewDecoder(bytes.NewReader(content))
+	var lines []int
 	for {
 		var doc yaml.Node
 		err := dec.Decode(&doc)
@@ -178,60 +170,79 @@ func canSafelyStripTrustLevel(content []byte) (bool, string) {
 			break
 		}
 		if err != nil {
-			// File doesn't parse as YAML. Specter parse already reported
-			// the error; refuse cautiously rather than slice lines out of
-			// an unparseable file.
-			return false, "yaml parse failed: " + err.Error()
+			return nil, "yaml parse failed: " + err.Error()
 		}
-		if reason, ok := canSafelyStripTrustLevelInDoc(content, &doc); !ok {
-			return false, reason
+		line, reason := docTrustLevelLine(content, &doc)
+		if reason != "" {
+			return nil, reason
+		}
+		if line > 0 {
+			lines = append(lines, line)
 		}
 	}
-	return true, ""
+	return lines, ""
 }
 
-// canSafelyStripTrustLevelInDoc runs the safety check on one document.
-// Returns ("", true) for a safe plain scalar or absent key; (reason,
-// false) for unsafe shapes.
-func canSafelyStripTrustLevelInDoc(content []byte, doc *yaml.Node) (string, bool) {
+// docTrustLevelLine inspects one document and returns the key-node
+// source line for the `spec.trust_level` key. Returns (0, "") when the
+// key is absent. Returns (0, reason) for any unsafe shape per C-15:
+//
+//   - (a) Kind != ScalarNode (sequence, mapping, alias)
+//   - (b) Style is Literal/Folded (block scalars `|` / `>`)
+//   - (c) value's source span exceeds one line (folded plain scalar,
+//     multi-line quoted scalar, plain-scalar continuation)
+func docTrustLevelLine(content []byte, doc *yaml.Node) (int, string) {
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
-		return "", true
+		return 0, ""
 	}
 	root := doc.Content[0]
 	spec := findMappingValue(root, "spec")
 	if spec == nil || spec.Kind != yaml.MappingNode {
-		// No spec mapping → no trust_level to strip; the regex will find
-		// nothing in this doc. Treat as safe no-op.
-		return "", true
+		return 0, ""
 	}
 	keyNode, val := findMappingKeyValue(spec, "trust_level")
 	if val == nil {
-		return "", true
+		return 0, ""
 	}
 	if val.Kind != yaml.ScalarNode {
 		switch val.Kind {
 		case yaml.SequenceNode:
-			return "trust_level value is not a scalar (sequence)", false
+			return 0, "trust_level value is not a scalar (sequence)"
 		case yaml.MappingNode:
-			return "trust_level value is not a scalar (mapping)", false
+			return 0, "trust_level value is not a scalar (mapping)"
 		case yaml.AliasNode:
-			return "trust_level value is not a scalar (alias)", false
+			return 0, "trust_level value is not a scalar (alias)"
 		default:
-			return "trust_level value is not a scalar", false
+			return 0, "trust_level value is not a scalar"
 		}
 	}
 	if val.Style == yaml.LiteralStyle || val.Style == yaml.FoldedStyle {
-		return "trust_level uses a block scalar", false
+		return 0, "trust_level uses a block scalar"
 	}
-	// AC-21/22 line-span check. yaml.v3 reports the value's start position
-	// via Node.Line; this walks the source to verify the value occupies
-	// only that one line. Catches folded plain scalars and multi-line
-	// quoted scalars that pass the kind/style checks but would still
-	// orphan continuation lines under line-based deletion.
 	if !valueOccupiesOneSourceLine(content, val.Line, keyNode.Column) {
-		return "trust_level value spans multiple lines", false
+		return 0, "trust_level value spans multiple lines"
 	}
-	return "", true
+	return keyNode.Line, ""
+}
+
+// deleteSourceLines returns content with the (1-based) line numbers in
+// lineNums removed. All other bytes are byte-preserved. C-17 line-
+// targeted deletion mechanism: callers obtain lineNums from yaml.v3
+// Node.Line so string-literal contents of the source are never touched.
+func deleteSourceLines(content []byte, lineNums []int) []byte {
+	skip := make(map[int]bool, len(lineNums))
+	for _, n := range lineNums {
+		skip[n] = true
+	}
+	src := strings.Split(string(content), "\n")
+	out := make([]string, 0, len(src))
+	for i, line := range src {
+		if skip[i+1] { // i is 0-based; yaml.v3 Line is 1-based
+			continue
+		}
+		out = append(out, line)
+	}
+	return []byte(strings.Join(out, "\n"))
 }
 
 // valueOccupiesOneSourceLine returns true when the value rooted at

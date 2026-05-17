@@ -1,6 +1,6 @@
 spec:
   id: spec-reverse
-  version: "1.2.0"
+  version: "1.3.0"
   status: draft
   tier: 2
 
@@ -44,6 +44,8 @@ spec:
         - "Provenance tracking via generated_from metadata"
         - "Output validation via parser.ParseSpec() round-trip"
         - "Auto-detection of language adapter from file extensions"
+        - "Summary report after extraction: counts of constraints, assertions, gaps, and files needing attention"
+        - "Handoff line pointing first-time users at `specter explain <spec-id>` to triage gaps in each generated draft"
       excludes:
         - "AI-assisted gap filling or context generation"
         - "Tree-sitter or full AST parsing"
@@ -112,6 +114,16 @@ spec:
       description: "MUST set FileName to a path that mirrors the source directory structure relative to the scan root — e.g. a source file at src/auth/login.ts produces FileName 'auth/login.spec.yaml', not 'login.spec.yaml'"
       type: technical
       enforcement: error
+
+    - id: C-13
+      description: "After successful extraction (non-empty result, not --json mode), `specter reverse` MUST emit a single-line summary to stdout AFTER the per-spec output blocks: `Found N constraints, M assertions, K gaps across P file(s).` where N is the total constraint count across all generated specs, M is the total assertion (AC reference) count, K is the count of ACs with `gap: true`, P is the number of source files that produced at least one spec. Counts are zero when nothing was extracted; in that case the summary line is omitted (the existing 'no specs extracted' messaging already covers the empty case)."
+      type: business
+      enforcement: error
+
+    - id: C-14
+      description: "After the C-13 summary line (and only when at least one spec was generated, non-empty result), `specter reverse` MUST emit a handoff line: `Run \\`specter explain <first-spec-id>\\` to triage gaps in each generated draft.` where <first-spec-id> is the id of the lexicographically-first generated spec (or any deterministic choice; first-by-creation-order is acceptable as long as the choice is reproducible across runs over identical input). The line is suppressed under --json output to keep machine-readable output clean. Rationale: closes the v0.2 carry-over UX gap where `reverse` ended silently and left first-time users without a next-step."
+      type: business
+      enforcement: warning
 
   acceptance_criteria:
     - id: AC-01
@@ -282,12 +294,52 @@ spec:
       references_constraints: ["C-12"]
       priority: high
 
+    - id: AC-17
+      description: "After extracting 2 specs from 2 source files (total: 5 constraints, 8 assertions, 1 gap), `specter reverse` (non-JSON mode) emits a single line `Found 5 constraints, 8 assertions, 1 gap across 2 file(s).` AFTER the per-spec output blocks."
+      inputs:
+        extracted_specs:
+          - "auth.spec.yaml: 3 constraints, 5 assertions, 0 gaps, source=auth/login.ts"
+          - "users.spec.yaml: 2 constraints, 3 assertions, 1 gap, source=users/list.ts"
+      expected_output:
+        summary_line: "Found 5 constraints, 8 assertions, 1 gap across 2 file(s)."
+        position: "after per-spec output, before handoff"
+      references_constraints: ["C-13"]
+      priority: high
+
+    - id: AC-18
+      description: "When at least one spec is generated and the command is not --json, `specter reverse` MUST emit a handoff line directing the operator at `specter explain <id>` for gap triage."
+      inputs:
+        extracted_specs: ["auth.spec.yaml", "users.spec.yaml"]
+        json_mode: false
+      expected_output:
+        handoff_line_emitted: true
+        handoff_line_contains: "specter explain"
+        handoff_references_a_generated_spec_id: true
+      references_constraints: ["C-14"]
+      priority: high
+
+    - id: AC-19
+      description: "Under --json output mode, the C-13 summary line and C-14 handoff line are BOTH suppressed — JSON callers consume the structured payload only. Pure machine-readable output."
+      inputs:
+        extracted_specs: ["auth.spec.yaml"]
+        json_mode: true
+      expected_output:
+        summary_line_emitted: false
+        handoff_line_emitted: false
+      references_constraints: ["C-13", "C-14"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
       relationship: requires
 
   changelog:
+    - version: "1.3.0"
+      date: "2026-05-15"
+      author: "specter-team"
+      type: minor
+      description: "v0.13 C5+C6 — `specter reverse` UX polish. Add C-13/AC-17 (summary line after extraction: counts of constraints, assertions, gaps, file count). Add C-14/AC-18 (handoff line pointing at `specter explain <id>` for gap triage). Both suppressed under --json (AC-19). Closes the pre-v0.3 carry-over where `reverse` ended silently and left first-time users without a next step."
     - version: "1.2.0"
       date: "2026-04-16"
       author: "specter-team"

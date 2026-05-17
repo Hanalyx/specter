@@ -1,6 +1,6 @@
 spec:
   id: spec-check
-  version: "1.2.0"
+  version: "1.5.0"
   status: approved
   tier: 1
 
@@ -35,12 +35,12 @@ spec:
         - "Tier-aware severity (Tier 1 = error, Tier 3 = warning)"
         - "Diagnostic output with spec ID, constraint ID, and explanation"
         - "Test-annotation cross-reference (opt-in via --test / -t): scan test files, flag @spec and @ac references that do not match any parsed spec"
+        - "Unreachable annotation detection (opt-in via --test / -t): scan test files, flag source-comment @ac annotations whose runner-visible test title or runtime output does not carry the corresponding `spec-id/AC-NN` pair (would silently demote under `coverage --strict`)"
       excludes:
         - "Semantic conflict detection (AI-assisted, Phase 8)"
         - "Gap detection (uncovered input paths, Phase 8)"
         - "Cross-project analysis"
         - "Auto-fixing or auto-resolution of conflicts"
-        - "Source-only annotation detection — deferred to v0.12 `unreachable_annotation`"
 
   constraints:
     - id: C-01
@@ -86,6 +86,21 @@ spec:
     - id: C-09
       description: "MUST support opt-in test-annotation cross-reference mode (`check --test` / `-t`) that scans test files for `@spec <id>` and `@ac AC-NN` source comments, and emits diagnostics for references that do not resolve. Diagnostic kinds: `unknown_spec_ref` (no spec with that id), `unknown_ac_ref` (spec exists but AC id is not declared), `malformed_ac_id` (AC id fails `^AC-\\d{2,}$`). Scanner skips lines inside multi-line string literals (TS/JS template, Python triple-quote) — annotations there are payload. Cascade rule: when `@spec` is unknown, child `@ac` lines under it are not separately checked. Ordering rule: `@ac` lines before any `@spec` are not checked. Repeat `@ac` mentions of the same id emit one diagnostic per occurrence (no dedup)."
       type: technical
+      enforcement: error
+
+    - id: C-10
+      description: "Under `check --test` / `-t`, MUST detect source-comment `@ac` annotations that will NOT be visible to `specter ingest`'s runner-output regex and emit an `unreachable_annotation` diagnostic naming `file:line`. A source annotation is unreachable when the test in which it lives produces no runner-visible token matching `<spec-id>/<AC-NN>` — either in the runner-visible test title (Convention A) or in a runtime-emitted `// @spec` / `// @ac` line (Convention B). Language-aware reachability MUST be implemented for Go (`testing.T.Run` subtest names, `t.Log` / `fmt.Println` calls inside the test body), TS/Jest/Vitest (`describe` / `it` / `test` titles, `console.log` calls), and Python (function names cannot carry `/` or `:`; reachability inferred from `print` / `logging` calls inside the function body). For unsupported test shapes (custom runners, non-standard test helpers), the checker MUST emit `unreachable_annotation_unknown` (a softer diagnostic) rather than a false-positive `unreachable_annotation`. Severity routing: under `settings.strictness: zero-tolerance`, `unreachable_annotation` is `error`; under `threshold`, `warning`; under `annotation`, suppressed. `unreachable_annotation_unknown` is always `warning` regardless of strictness mode."
+      type: technical
+      enforcement: error
+
+    - id: C-11
+      description: "Per-file off-switch for unreachable_annotation. A test file containing a `// @reachable manual` marker (or `# @reachable manual` for Python, matching the language's existing annotation comment convention) at any line MUST suppress BOTH `unreachable_annotation` AND `unreachable_annotation_unknown` diagnostics for every `@ac` source comment in that file. Rationale: when the runner shape is custom (test framework not in the supported set, dynamically-generated tests, or tests that emit pairs via a non-standard channel), the operator asserts they've manually verified the tests cover the annotated ACs. The marker is file-level scope (one declaration per file). The marker MUST follow the existing `// @<keyword> <value>` grammar shared with `@spec` and `@ac` — no new equals-sign or namespace syntax. Future values for `@reachable` (e.g., `disabled`) are reserved; `manual` is the only value v0.13 ships."
+      type: technical
+      enforcement: error
+
+    - id: C-12
+      description: "When reading test files for the annotation scanners (`CheckTestAnnotations` per C-09 and `CheckUnreachableAnnotations` per C-10), the CLI MUST refuse to read any test file whose on-disk size exceeds `MaxTestFileBytes` (4 MiB). The check MUST use `os.Stat` BEFORE `os.ReadFile`, so an oversized file is never buffered into memory. Files at or under the cap continue to scan as before. Oversized files MUST be skipped (not fatal — `check --test` proceeds with the remaining files) and the skip MUST emit a stderr warning naming the file path and byte count so the operator knows that file was not scanned. Rationale: the unreachable scanner reads every discovered test file via `os.ReadFile` and passes the full string to `go/parser.ParseFile` (Go), `strings.Split` over regex (TS / Python). A 4 GiB malicious or accidental test file OOMs Specter; `go/parser` allocates an AST proportional to file size. The 4 MiB cap is conservative — real test files are well under that. Mirrors the existing `parser.maxSpecBytes` (1 MiB) and `coverage.MaxResultsFileBytes` (16 MiB) pattern; v0.13 security audit surfaced this as the H5 gap because the unreachable scanner was the only v0.13 surface that didn't inherit a size cap."
+      type: business
       enforcement: error
 
   depends_on:
@@ -231,7 +246,121 @@ spec:
       references_constraints: ["C-09"]
       priority: high
 
+    - id: AC-13
+      description: "`specter check --test` on a test file that declares `// @spec foo-spec` and `// @ac AC-01` in source comments but produces no runner-visible `foo-spec/AC-01` token in either the test title (Convention A) or runtime output (Convention B) emits an `unreachable_annotation` diagnostic naming `file:line` of the `@ac` line."
+      inputs:
+        test_file: "Go test function with `// @spec foo-spec` + `// @ac AC-01` source comments; subtest name does not include `foo-spec/AC-01`; no runtime `// @spec` / `// @ac` prints"
+      expected_output:
+        diagnostic_kind: "unreachable_annotation"
+        names_file_line: true
+        exit_code_nonzero_under_zero_tolerance: true
+      references_constraints: ["C-10"]
+      priority: critical
+
+    - id: AC-14
+      description: "Go: a test that uses `t.Run(\"foo-spec/AC-01 ...\", ...)` is reachable (no diagnostic emitted). A Go test that declares `// @ac AC-01` but uses a subtest name without `foo-spec/AC-01` AND does NOT print `// @spec` / `// @ac` from the body is unreachable."
+      inputs:
+        reachable_via_subtest: "test body: t.Run(\"foo-spec/AC-01 valid input\", ...)"
+        reachable_via_runtime_print: "test body: fmt.Println(\"// @spec foo-spec\"); fmt.Println(\"// @ac AC-01\")"
+        unreachable: "source comments only; subtest name does not carry the pair; no body prints"
+      expected_output:
+        reachable_cases_no_diagnostic: true
+        unreachable_case_emits_unreachable_annotation: true
+      references_constraints: ["C-10"]
+      priority: high
+
+    - id: AC-15
+      description: "Python: a test that prints `// @spec foo-spec` and `// @ac AC-01` to stdout (Convention B) is reachable when JUnit XML is generated with `-o junit_logging=all`. A Python test declaring source comments only (no runtime prints) is unreachable — pytest function names cannot carry `/` or `:` so Convention A is structurally unavailable for Python."
+      inputs:
+        reachable: "Python test function body: print('// @spec foo-spec'); print('// @ac AC-01')"
+        unreachable: "Python test with source `# @ac AC-01` comment only, no print calls"
+      expected_output:
+        reachable_case_no_diagnostic: true
+        unreachable_case_emits_unreachable_annotation: true
+      references_constraints: ["C-10"]
+      priority: high
+
+    - id: AC-16
+      description: "TS/Jest/Vitest: a test that uses `it('[foo-spec/AC-01] desc', ...)` or `describe('foo-spec/AC-01', ...)` is reachable. A TS test declaring `// @ac AC-01` in source comments but using a title that does not carry the pair AND no `console.log('// @spec ...')` body call is unreachable."
+      inputs:
+        reachable_via_title: "it('[foo-spec/AC-01] valid input returns 200', ...)"
+        reachable_via_runtime_log: "console.log('// @spec foo-spec'); console.log('// @ac AC-01')"
+        unreachable: "source comments only; title does not carry the pair; no body logs"
+      expected_output:
+        reachable_cases_no_diagnostic: true
+        unreachable_case_emits_unreachable_annotation: true
+      references_constraints: ["C-10"]
+      priority: high
+
+    - id: AC-17
+      description: "For test shapes the language-aware parsers do not recognize (custom test runners, non-standard helper functions, dynamically-generated tests), `check --test` emits `unreachable_annotation_unknown` (severity: warning, always) rather than `unreachable_annotation` (which would be a false positive)."
+      inputs:
+        test_file: "uses a custom test runner that registers tests dynamically via reflection; no recognizable subtest call pattern"
+      expected_output:
+        diagnostic_kind: "unreachable_annotation_unknown"
+        severity: "warning"
+        no_unreachable_annotation_diagnostic: true
+      references_constraints: ["C-10"]
+      priority: medium
+
+    - id: AC-18
+      description: "Severity routing through strictness modes: an unreachable_annotation under `settings.strictness: zero-tolerance` is `error` and fails the command; under `threshold`, `warning` (exits 0); under `annotation`, suppressed entirely. `unreachable_annotation_unknown` is `warning` in all three modes."
+      inputs:
+        unreachable_under_zero_tolerance: "settings.strictness: zero-tolerance + unreachable annotation"
+        unreachable_under_threshold: "settings.strictness: threshold + unreachable annotation"
+        unreachable_under_annotation: "settings.strictness: annotation + unreachable annotation"
+      expected_output:
+        zero_tolerance: { severity: "error", exit_code_nonzero: true }
+        threshold: { severity: "warning", exit_code_zero: true }
+        annotation: { diagnostic_suppressed: true, exit_code_zero: true }
+      references_constraints: ["C-10"]
+      priority: critical
+
+    - id: AC-19
+      description: "A test file containing the `// @reachable manual` marker (or `# @reachable manual` for Python) at any line MUST suppress BOTH `unreachable_annotation` AND `unreachable_annotation_unknown` diagnostics for every `@ac` source comment in that file, regardless of strictness mode. The marker is file-level scope — one declaration anywhere in the file opts the whole file out. Files WITHOUT the marker behave per C-10 (existing reachability + strictness routing)."
+      inputs:
+        with_marker: "Go test file containing `// @reachable manual` near the top; has source-only @ac that would otherwise be flagged"
+        without_marker: "Identical file but without the marker"
+      expected_output:
+        with_marker:
+          unreachable_annotation_emitted: false
+          unreachable_annotation_unknown_emitted: false
+          regardless_of_strictness: true
+        without_marker:
+          baseline_C10_behavior_preserved: true
+      references_constraints: ["C-11"]
+      priority: high
+
+    - id: AC-20
+      description: "A test file larger than `MaxTestFileBytes` (4 MiB) discovered during `check --test` MUST be skipped — the file is NOT read into memory (size check via `os.Stat` precedes `os.ReadFile`), no diagnostics are produced for any `@ac` it contains, and a stderr warning names the file path and byte count. The check MUST NOT exit non-zero on the skip alone; remaining test files continue to scan. Files at or under the cap behave unchanged."
+      inputs:
+        scenario_oversize: "test file of 5 MiB (1 MiB over the cap)"
+        scenario_at_cap: "test file of exactly 4 MiB"
+      expected_output:
+        oversize_skipped: true
+        oversize_no_diagnostics: true
+        oversize_stderr_contains: ["exceeds", "skipping"]
+        oversize_exit_code: 0
+        at_cap_scanned: true
+      references_constraints: ["C-12"]
+      priority: critical
+
   changelog:
+    - version: "1.5.0"
+      date: "2026-05-16"
+      author: "specter-team"
+      type: minor
+      description: "v0.13 security audit H5 fix — test-file size cap for the annotation scanners. Add C-12 + AC-20. The v0.13 F3 work introduced `CheckUnreachableAnnotations`, which is invoked under `check --test` and reads every discovered test file via `os.ReadFile` before passing the full string to `go/parser.ParseFile` (Go), regex+state-machine (TS/JS), or regex+indentation (Python). A 4 GiB malicious test file OOMs Specter. C-12 mandates a 4 MiB cap (`MaxTestFileBytes`) checked via `os.Stat` BEFORE `os.ReadFile`. Oversized files are SKIPPED (not fatal); a stderr warning names the file. Real test files are well under 4 MiB. Mirrors the existing `parser.maxSpecBytes` (1 MiB) and `coverage.MaxResultsFileBytes` (16 MiB) defense-in-depth pattern."
+    - version: "1.4.0"
+      date: "2026-05-15"
+      author: "specter-team"
+      type: minor
+      description: "v0.13 A4 — `// @reachable manual` per-file off-switch for unreachable_annotation. Add C-11/AC-19. A test file declaring the marker suppresses BOTH `unreachable_annotation` AND `unreachable_annotation_unknown` for every @ac in that file, regardless of strictness mode. Follows the existing `// @<keyword> <value>` grammar shared with `@spec` and `@ac` — no new syntax. Used when the runner shape is custom or the operator has manually verified coverage."
+    - version: "1.3.0"
+      date: "2026-05-15"
+      author: "specter-team"
+      type: minor
+      description: "Add C-10 and AC-13..AC-18 — `unreachable_annotation` diagnostic for v0.13 cycle. Detects source-comment `@ac` annotations whose corresponding test produces no runner-visible `<spec-id>/<AC-NN>` token (via test title or runtime print), which would silently demote under `coverage --strict`. Language-aware reachability for Go/TS/Jest/Vitest/Python; unsupported test shapes emit `unreachable_annotation_unknown` (always warning) rather than false-positive `unreachable_annotation`. Severity routes through `settings.strictness`: zero-tolerance=error, threshold=warning, annotation=suppressed. Per-file off-switch syntax (originally A4 in v0.13.0.md) deferred to a follow-up spec change once the marker form is decided."
     - version: "1.2.0"
       date: "2026-04-25"
       author: "specter-team"

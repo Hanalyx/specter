@@ -1,35 +1,43 @@
 spec:
   id: spec-diff
-  version: "1.0.0"
+  version: "2.1.0"
   status: draft
   tier: 2
   context:
     system: Specter toolchain
-    feature: Semantic spec diff between git revisions
+    feature: Polymorphic Specter-artifact diff
     description: >
-      Compares two git revisions of a spec file and produces a human-readable
-      semantic diff showing added/removed/changed ACs, constraints, and dependency
-      version pins. More useful than a YAML textual diff for PR review.
+      The single diff verb for any Specter artifact. v1.x supported only
+      spec diffs between git revisions; v2.0.0 generalizes to a
+      sub-subcommand pattern `specter diff <kind> <args...>` where each
+      kind handles a different artifact type. v2.0 ships two kinds:
+      `spec` (backward-compat with v1.x semantics) and `coverage`
+      (set-diff between two `coverage --json` outputs — useful for
+      tracking AC coverage drift between CI runs).
     assumptions:
-      - "Requires a git repository"
-      - "File paths are specified as path@ref or plain path (reads from disk)"
+      - "spec kind requires a git repository when args carry @ref suffixes"
+      - "coverage kind requires two paths to existing coverage --json files"
+      - "Future kinds (doctor, ingest, check) follow the same shape;
+         no per-subcommand --diff flag scatter (cycle design note).
+         Doctor kind defers until specter doctor grows a --json flag."
   objective:
     summary: >
-      Given two revisions of a spec, show the semantic delta: ACs added/removed/
-      changed, constraints added/removed/changed, dependency version changes,
-      and version bump classification (breaking/additive/patch).
+      Given a kind and the kind's required args, produce a human-readable
+      semantic delta between the two snapshots. The kind determines what
+      "snapshot" means (spec revisions for spec kind, doctor reports for
+      doctor kind, etc.). Output is plain-text with sign-prefix-per-item
+      conventions per kind.
     scope:
       includes:
-        - "Parse spec from git ref via git show <ref>:<path>"
-        - "Compare acceptance_criteria (added, removed, description changed)"
-        - "Compare constraints (added, removed, description changed)"
-        - "Compare depends_on version_range changes"
-        - "Classify overall change as breaking/additive/patch"
-        - "Plain-text output with +/~/- prefix per item"
+        - "spec kind: backward-compat with v1.x — `specter diff <path>[@ref] <path>[@ref]`"
+        - "coverage kind: `specter diff coverage <baseline.json> <current.json>` emits per-spec AC delta (gained / lost / status-changed) plus summary metrics"
+        - "Sub-subcommand grammar `specter diff <kind> <args...>` with `spec` as the implicit default when args don't match a registered kind"
+        - "Plain-text output with +/~/- prefix per item (spec kind, unchanged from v1.x)"
+        - "coverage kind output: per spec, lines for newly-covered ACs (++), newly-uncovered ACs (--), summary line with coverage_pct delta"
       excludes:
         - "Three-way merge"
-        - "Diffing non-spec files"
         - "Interactive diff UI"
+        - "Per-subcommand `--diff` flags on other commands — explicitly rejected; diff lives here"
   constraints:
     - id: C-01
       description: "MUST parse the argument format <path>@<ref> — everything before the last @ is the path, everything after is the git ref"
@@ -63,6 +71,24 @@ spec:
       description: "MUST implement DiffSpecs as a pure function in internal/diff — no I/O, no subprocess calls"
       type: technical
       enforcement: error
+    - id: C-09
+      description: "MUST accept `specter diff <kind> <args...>` where <kind> ∈ {spec, coverage}. When the first positional argument matches a known kind, that kind's grammar takes over. When the first positional does NOT match a known kind (i.e., user passed `specter diff <path>` or `specter diff <path1> <path2>`), the spec kind is the implicit default — backward compat with v1.x callers. Cobra subcommand registration handles the dispatch; the `diff` command itself retains its v1.x positional-arg RunE as the fallback."
+      type: technical
+      enforcement: error
+    - id: C-10
+      description: "coverage kind MUST accept two positional arguments: <baseline.json> and <current.json>, each the structured output of `specter coverage --json` (a CoverageReport). The diff iterates per-spec entries, classifying AC-level changes: GAINED (in current.CoveredACs, not in baseline.CoveredACs), LOST (in baseline.CoveredACs, not in current.CoveredACs). It also computes coverage_pct delta per spec. Output: one block per spec with non-empty delta — `+SpecID/AC-NN` lines for gained, `-SpecID/AC-NN` for lost, plus a summary line `~SpecID coverage_pct: 80.0 → 90.0 (passes_threshold: false → true)`. Specs absent from one report but present in the other are reported with prefix `+spec SpecID` or `-spec SpecID`. Identical reports emit empty output. Exit code 0 always (this is a diagnostic surface, not a gate)."
+      type: technical
+      enforcement: error
+    - id: C-11
+      description: "MUST implement DiffCoverageReports as a pure function in internal/diff — no I/O, no subprocess calls. Mirrors C-08's constraint for the spec kind."
+      type: technical
+      enforcement: error
+
+    - id: C-12
+      description: "`specter diff coverage <baseline> <current>` MUST refuse to read either input file when its on-disk size exceeds `MaxCoverageReportBytes` (16 MiB, matching the `coverage.MaxResultsFileBytes` convention). The cap MUST be enforced BEFORE `json.Unmarshal` allocates on the buffer — `os.ReadFile` followed by an unbounded `json.Unmarshal` over arbitrary multi-GiB JSON OOMs CI runners and is the same defense-in-depth that `coverage.ParseResultsFile` applies on `.specter-results.json`. Error message MUST name the path, the actual byte count, and the cap, so the operator knows why the run refused. Rationale: a malicious or accidentally large coverage report (e.g., a CI artifact rewritten by a hostile workflow, or a JSON blob with deeply nested arrays designed to exhaust the decoder) becomes a denial-of-service vector if the read path is unbounded. v0.13 security audit surfaced this as the M3 gap."
+      type: business
+      enforcement: error
+
   acceptance_criteria:
     - id: AC-01
       description: "path@HEAD~1 is parsed as path=the-path ref=HEAD~1"
@@ -105,7 +131,69 @@ spec:
       references_constraints: ["C-08"]
       priority: high
 
+    - id: AC-11
+      description: "`specter diff <path1> <path2>` (no kind argument) invokes the spec kind — backward compat with v1.x. The v1.x test suite for the spec kind continues to pass unchanged."
+      inputs:
+        invocation: "specter diff a.spec.yaml@HEAD~1 a.spec.yaml"
+      expected_output:
+        kind_dispatched: "spec"
+        v1_behavior_preserved: true
+      references_constraints: ["C-09"]
+      priority: critical
+
+    - id: AC-12
+      description: "`specter diff spec <path1> <path2>` explicitly invokes the spec kind; identical behavior to AC-11's implicit form."
+      inputs:
+        invocation: "specter diff spec a.spec.yaml@HEAD~1 a.spec.yaml"
+      expected_output:
+        kind_dispatched: "spec"
+        same_output_as_implicit: true
+      references_constraints: ["C-09"]
+      priority: high
+
+    - id: AC-13
+      description: "`specter diff coverage <baseline.json> <current.json>` reads both CoverageReport JSON files and emits per-spec AC delta: `+spec-foo/AC-01` for GAINED, `-spec-foo/AC-02` for LOST. Per-spec summary line `~spec-foo coverage_pct: 80.0 → 90.0` when coverage_pct or passes_threshold changes. Specs added (in current, not in baseline) emit `+spec spec-bar`; specs removed emit `-spec spec-bar`. Identical reports emit empty output."
+      inputs:
+        baseline: 'CoverageReport with entries [{spec_id:"spec-foo", covered_acs:["AC-01"], uncovered_acs:["AC-02"], coverage_pct:50.0, passes_threshold:false}]'
+        current:  'CoverageReport with entries [{spec_id:"spec-foo", covered_acs:["AC-01","AC-02"], uncovered_acs:[], coverage_pct:100.0, passes_threshold:true}, {spec_id:"spec-bar", covered_acs:["AC-01"], coverage_pct:100.0, passes_threshold:true}]'
+      expected_output:
+        gained: ["spec-foo/AC-02"]
+        lost: []
+        spec_added: ["spec-bar"]
+        spec_removed: []
+        pct_changed: ["spec-foo coverage_pct: 50.0 → 100.0 (passes_threshold: false → true)"]
+      references_constraints: ["C-10"]
+      priority: critical
+
+    - id: AC-14
+      description: "DiffCoverageReports(baseline, current) with two identical CoverageReports returns empty diff. Pure-function contract per C-11; no I/O."
+      references_constraints: ["C-11"]
+      priority: high
+
+    - id: AC-15
+      description: "`specter diff coverage baseline.json current.json` with either input file larger than `MaxCoverageReportBytes` (16 MiB) MUST exit non-zero BEFORE `json.Unmarshal` runs on the oversized buffer. The error message MUST name the path, the actual byte count, and the cap (e.g., `coverage report <path> exceeds 16777216 byte limit (got N bytes)`). Files at or under the cap continue to parse as before. No reformatting of the existing output for under-cap inputs; the cap is purely a refusal gate."
+      inputs:
+        scenario_oversize_baseline: "baseline.json is 17 MiB (cap + 1 MiB)"
+        scenario_oversize_current: "current.json is 17 MiB"
+        scenario_at_cap: "both files exactly 16 MiB"
+      expected_output:
+        oversize_exit_nonzero: true
+        oversize_stderr_contains: ["exceeds", "byte limit"]
+        at_cap_exit: 0
+      references_constraints: ["C-12"]
+      priority: high
+
   changelog:
+    - version: "2.1.0"
+      date: "2026-05-16"
+      author: "specter-team"
+      type: minor
+      description: "v0.13 security audit M3 fix — `diff coverage` size cap. Add C-12 + AC-15. The `readCoverageReportFromFile` helper previously did `os.ReadFile` followed by an unbounded `json.Unmarshal`. A malicious or accidentally large coverage JSON file (multi-GiB) would buffer fully into memory before decode, OOMing CI. C-12 mandates a 16 MiB cap (`MaxCoverageReportBytes`, matching `coverage.MaxResultsFileBytes` convention) enforced before `json.Unmarshal`. AC-15 pins the refusal: exit non-zero with stderr naming path, byte count, and cap."
+    - version: "2.0.0"
+      date: "2026-05-15"
+      author: "specter-team"
+      type: major
+      description: "v0.13 C3 — polymorphic `specter diff <kind> <args...>`. v2.0 generalizes the v1.x spec-only diff into a sub-subcommand pattern; first new kind is `coverage` (set-diff between two `coverage --json` CoverageReports — useful for tracking AC coverage drift across CI runs). Backward compat preserved: `specter diff <path> <path>` continues to invoke the spec kind. Doctor kind was originally planned but deferred until `specter doctor` grows a `--json` flag in a future cycle. Future kinds (doctor, ingest, check) follow the same shape — `--diff` flags on other commands are explicitly rejected. Adds C-09/C-10/C-11 and AC-11/AC-12/AC-13/AC-14."
     - version: "1.0.0"
       date: "2026-04-14"
       author: "specter-team"

@@ -343,8 +343,15 @@ func TestDoctor_Fix_BetaGate_YesProceeds(t *testing.T) {
 			if !strings.Contains(stderr.String(), "[BETA]") {
 				t.Errorf("expected [BETA] warning in stderr; got:\n%s", stderr.String())
 			}
-			if !strings.Contains(strings.ToLower(stderr.String()), "known limitation") {
-				t.Errorf("expected warning to name the known limitation; got:\n%s", stderr.String())
+			// v0.13 D1 / spec-doctor 1.9.0: the warning's recommendation
+			// block survives (commit-first / --dry-run / --yes). The
+			// "known limitation" paragraph was dropped because C-17
+			// closed the string-literal corruption gap.
+			if !strings.Contains(stderr.String(), "Commit your spec files BEFORE running") {
+				t.Errorf("expected warning to name the commit-first recommendation; got:\n%s", stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "--dry-run") {
+				t.Errorf("expected warning to name --dry-run as preview path; got:\n%s", stderr.String())
 			}
 			if !strings.Contains(stderr.String(), "Continue? (y/N)") {
 				t.Errorf("expected `Continue? (y/N)` prompt; got:\n%s", stderr.String())

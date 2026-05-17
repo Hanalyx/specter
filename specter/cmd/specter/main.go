@@ -167,6 +167,14 @@ func main() {
 	root.SilenceUsage = true
 	root.SilenceErrors = true
 
+	// v0.13 C7: suppress the auto-generated `specter help` subcommand.
+	// `-h`/`--help` and per-subcommand `--help` cover the help surface
+	// without a redundant subcommand cluttering the root listing.
+	root.SetHelpCommand(&cobra.Command{
+		Use:    "no-help",
+		Hidden: true,
+	})
+
 	root.AddCommand(parseCmd())
 	root.AddCommand(resolveCmd())
 	root.AddCommand(checkCmd())
@@ -267,16 +275,22 @@ func tryOpenBrowser(link string) bool {
 
 // --- Helpers ---
 
+// pluralize returns word with a trailing "s" when n != 1.
+// Used by reverse's summary line (C-13) and other count-aware output.
+func pluralize(word string, n int) string {
+	if n == 1 {
+		return word
+	}
+	return word + "s"
+}
+
 func discoverSpecs(patterns ...string) []string {
 	if len(patterns) > 0 && patterns[0] != "" {
 		return patterns
 	}
 	// Load manifest to honor settings.exclude and specs_dir.
 	m, manifestRoot, _ := loadManifest()
-	excludeNames := make(map[string]bool)
-	for _, e := range m.ExcludePatterns() {
-		excludeNames[e] = true
-	}
+	excludePatterns := m.ExcludePatterns()
 	// spec-doctor C-10 / GH #93: when no specter.yaml is found, walk
 	// recursively from cwd instead of the manifest default `specs`.
 	// AC-02 reports manifest as WARN/optional; if discovery then required
@@ -296,9 +310,13 @@ func discoverSpecs(patterns ...string) []string {
 			return nil
 		}
 		if info.IsDir() {
-			// Skip by directory name (e.g. ".claude", "node_modules")
-			if excludeNames[info.Name()] {
-				return filepath.SkipDir
+			// spec-manifest C-29: bare-name patterns match by directory
+			// name; glob patterns match against the relative path.
+			relPath := strings.TrimPrefix(path, "./")
+			for _, pat := range excludePatterns {
+				if matchExcludePattern(pat, relPath, info.Name()) {
+					return filepath.SkipDir
+				}
 			}
 			// Skip by path prefix for entries like "tests/fixtures", "testdata"
 			if strings.HasPrefix(path, filepath.Join("tests", "fixtures")) ||
@@ -548,6 +566,78 @@ func resolveCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
 	cmd.Flags().BoolVar(&dotOutput, "dot", false, "Output graph in DOT format")
 	cmd.Flags().BoolVar(&mermaidOutput, "mermaid", false, "Output graph in Mermaid format (renders in GitHub PRs)")
+
+	// v0.13 C4: register `resolve dependents <spec-id>` as a flat
+	// sub-subcommand. Bare `specter resolve` (no sub-subcommand)
+	// preserves the v1.x build-and-validate behavior — backward
+	// compat. Future operations (`dependencies`, `cycles`, `roots`)
+	// follow the same pattern. Architectural note: graph queries
+	// MUST NOT be implemented as flags on `resolve` (e.g.
+	// `--dependents`) — they MUST land as sub-subcommands here.
+	cmd.AddCommand(resolveDependentsCmd())
+	return cmd
+}
+
+// resolveDependentsCmd is the `specter resolve dependents` subcommand
+// (spec-resolve 1.2.0 C-11/C-12). Reverse traversal of the dependency
+// graph: returns the specs whose depends_on includes the given spec id.
+func resolveDependentsCmd() *cobra.Command {
+	var jsonOutput bool
+	cmd := &cobra.Command{
+		Use:   "dependents <spec-id>",
+		Short: "List specs that depend on the given spec",
+		Long: `Reverse traversal of the dependency graph: returns all specs whose
+depends_on includes the given spec id (direct dependents only).
+
+Exit code 0 even when no dependents exist (an empty set is a valid result);
+exit code non-zero only when the spec id does not exist in the resolved graph.
+
+Future operations (` + "`dependencies`" + `, ` + "`cycles`" + `, ` + "`roots`" + `) will land as sibling
+subcommands. Graph queries do not surface as flags on ` + "`resolve`" + ` —
+they nest here as sub-subcommands.
+
+Example:
+  specter resolve dependents spec-parse   # show what depends on spec-parse`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			specID := args[0]
+
+			files := discoverSpecs()
+			if len(files) == 0 {
+				fmt.Print(noSpecsMessage())
+				return errSilent
+			}
+			inputs, _, hasErrors := parseAllSpecs(files)
+			if hasErrors {
+				fmt.Fprintln(os.Stderr, "\nFix parse errors before resolving dependencies.")
+				return errSilent
+			}
+
+			graph := resolver.ResolveSpecs(inputs)
+
+			dependents, err := resolver.DependentsOf(graph, specID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return errSilent
+			}
+
+			if jsonOutput {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				_ = enc.Encode(map[string]any{
+					"spec_id":    specID,
+					"dependents": dependents,
+				})
+				return nil
+			}
+
+			for _, d := range dependents {
+				fmt.Println(d)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output as JSON")
 	return cmd
 }
 
@@ -602,6 +692,17 @@ func checkCmd() *cobra.Command {
 				testFiles := discoverTestFiles("")
 				contents := make(map[string]string, len(testFiles))
 				for _, path := range testFiles {
+					// spec-check C-12 / AC-20: refuse to read test files
+					// over MaxTestFileBytes (4 MiB). os.Stat first so an
+					// oversized file is never buffered. Skip is per-file
+					// (not fatal); emit a stderr warning naming the file
+					// so the operator knows that file was not scanned.
+					if info, statErr := os.Stat(path); statErr == nil && info.Size() > checker.MaxTestFileBytes {
+						fmt.Fprintf(os.Stderr,
+							"warn: test file %s exceeds %d byte limit (got %d bytes); skipping\n",
+							path, checker.MaxTestFileBytes, info.Size())
+						continue
+					}
 					data, err := os.ReadFile(path)
 					if err != nil {
 						continue
@@ -611,6 +712,35 @@ func checkCmd() *cobra.Command {
 				taDiags := checker.CheckTestAnnotations(contents, specs)
 				result.Diagnostics = append(result.Diagnostics, taDiags...)
 				for _, d := range taDiags {
+					switch d.Severity {
+					case "error":
+						result.Summary.Errors++
+					case "warning":
+						result.Summary.Warnings++
+					case "info":
+						result.Summary.Info++
+					}
+				}
+
+				// spec-check C-10: under `check --test`, also run the
+				// unreachable_annotation scan. A source-comment @ac
+				// whose enclosing test produces no runner-visible
+				// spec-id/AC-NN token (Convention A) and no runtime
+				// `// @spec` / `// @ac` line (Convention B) would
+				// silently demote under `coverage --strict`. Severity
+				// routes per the manifest's strictness:
+				//
+				//   - annotation:     diagnostics suppressed
+				//   - threshold:      warning (exits 0)
+				//   - zero-tolerance: error   (exits non-zero)
+				//
+				// The _unknown variant (unsupported test shape) is
+				// always a warning regardless of strictness, so the
+				// scan is safe to run even in annotation mode — the
+				// helper handles suppression internally.
+				uaDiags := checker.CheckUnreachableAnnotations(contents, m.Settings.Strictness)
+				result.Diagnostics = append(result.Diagnostics, uaDiags...)
+				for _, d := range uaDiags {
 					switch d.Severity {
 					case "error":
 						result.Summary.Errors++
@@ -734,6 +864,17 @@ func coverageCmd() *cobra.Command {
 			}
 			var allAnnotations []coverage.AnnotationMatch
 			for _, f := range testFiles {
+				// spec-check C-12: same per-file size cap as `check --test`.
+				// Coverage's annotation extractor (ExtractAnnotations) reads
+				// the full file content; an unbounded read is the same DoS
+				// surface as the unreachable scanner. Skip oversized files
+				// per-file (not fatal); emit a stderr warning.
+				if info, statErr := os.Stat(f); statErr == nil && info.Size() > checker.MaxTestFileBytes {
+					fmt.Fprintf(os.Stderr,
+						"warn: test file %s exceeds %d byte limit (got %d bytes); skipping\n",
+						f, checker.MaxTestFileBytes, info.Size())
+					continue
+				}
 				data, err := os.ReadFile(f)
 				if err != nil {
 					continue
@@ -844,6 +985,24 @@ func coverageCmd() *cobra.Command {
 				report.DiagnosticHints = coverage.DiagnoseSourceOnlyACs(allAnnotations, results, specs)
 			}
 
+			// spec-coverage C-30 / v0.13 D2: surface unrecognized `status`
+			// values in .specter-results.json. Populated regardless of
+			// strictness so --json always carries the array; stderr
+			// printing happens later under non-quiet.
+			if results != nil {
+				if invalid := results.InvalidStatuses(); len(invalid) > 0 {
+					keys := make([]string, 0, len(invalid))
+					for k := range invalid {
+						keys = append(keys, k)
+					}
+					sort.Strings(keys)
+					for _, k := range keys {
+						report.InvalidStatusWarnings = append(report.InvalidStatusWarnings,
+							coverage.InvalidStatusWarning{Status: k, Count: invalid[k]})
+					}
+				}
+			}
+
 			// GH #94 — under zero-tolerance, demote ACs that violate the
 			// approval_gate contract (approval_gate: true with unset
 			// approval_date) so the report reflects the same enforcement
@@ -862,6 +1021,14 @@ func coverageCmd() *cobra.Command {
 			// parse failed. Downstream consumers (VS Code extension) branch on
 			// ParseErrors vs Entries to decide what to render. Exit code, not
 			// stdout presence, signals pass/fail.
+			//
+			// v0.13 D3: align JSON and text exit-code semantics. Pre-v0.13
+			// JSON mode returned nil whenever parse succeeded, even when text
+			// mode would have exited non-zero on threshold failures or
+			// zero-tolerance violations. CI consumers reading --json couldn't
+			// rely on exit code to gate. Now JSON mode runs the SAME exit
+			// checks text mode runs (in the same order): zero-tolerance
+			// non-passed (exit 2), approval_gate (exit 3), threshold (exit 1).
 			if jsonOutput {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
@@ -869,11 +1036,57 @@ func coverageCmd() *cobra.Command {
 				if hasErrors {
 					return errSilent
 				}
+				// Mirror the text-mode exit checks. The os.Exit calls
+				// preserve their distinct exit codes (2 and 3) for
+				// downstream CI consumers that distinguish violation
+				// classes.
+				if effectiveStrictness == "zero-tolerance" {
+					if results != nil {
+						nonPassed := 0
+						for _, r := range results.Results {
+							if r.Status != "" && r.Status != "passed" {
+								nonPassed++
+							}
+						}
+						if nonPassed > 0 {
+							fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d annotated AC(s) did not pass\n", nonPassed)
+							os.Exit(2)
+						}
+					}
+					gateViolations := 0
+					for _, s := range specs {
+						for _, ac := range s.AcceptanceCriteria {
+							if ac.ApprovalGate && ac.ApprovalDate == "" {
+								gateViolations++
+							}
+						}
+					}
+					if gateViolations > 0 {
+						fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d AC(s) carry approval_gate=true with unset approval_date\n", gateViolations)
+						os.Exit(3)
+					}
+				}
+				if report.Summary.Failing > 0 {
+					return errSilent
+				}
 				return nil
 			}
 
 			if hasErrors {
 				return errSilent
+			}
+
+			// spec-coverage C-30 / v0.13 D2: emit one stderr warning per
+			// unique unrecognized `status` value in `.specter-results.json`.
+			// Printed ABOVE the table. Suppressed under --quiet. The same
+			// data is in report.InvalidStatusWarnings so --json carries it
+			// regardless of --quiet — JSON consumers see structured state.
+			if !quiet && len(report.InvalidStatusWarnings) > 0 {
+				for _, w := range report.InvalidStatusWarnings {
+					fmt.Fprintf(os.Stderr,
+						"warning: .specter-results.json contains %d entries with status=%q — not a recognized status (passed|failed|skipped|errored); treated as not-passed\n",
+						w.Count, w.Status)
+				}
 			}
 
 			// AC-31 / AC-33: per-AC source-only hints are printed to stderr
@@ -1007,6 +1220,7 @@ func syncCmd() *cobra.Command {
 	var testsGlob string
 	var onlyPhase string
 	var strict bool
+	var strictnessFlag string
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Run full validation pipeline (parse + resolve + check + coverage)",
@@ -1014,6 +1228,15 @@ func syncCmd() *cobra.Command {
 			if onlyPhase != "" && !validSyncPhases[onlyPhase] {
 				fmt.Fprintf(os.Stderr, "error: --only must be one of: parse, resolve, check, coverage\n")
 				return errSilent
+			}
+
+			// spec-sync C-06: validate --strictness value.
+			if strictnessFlag != "" {
+				validStrictness := map[string]bool{"annotation": true, "threshold": true, "zero-tolerance": true}
+				if !validStrictness[strictnessFlag] {
+					fmt.Fprintf(os.Stderr, "error: --strictness %q is not a valid value (allowed: annotation, threshold, zero-tolerance)\n", strictnessFlag)
+					return errSilent
+				}
 			}
 
 			specFiles := discoverSpecs()
@@ -1044,6 +1267,19 @@ func syncCmd() *cobra.Command {
 				WarnOnDraft: m.Settings.WarnOnDraft,
 			}
 
+			// spec-sync C-06: --strictness wins over --strict; fall back
+			// to manifest setting; ultimate default is "annotation". The
+			// legacy --strict bool maps to "zero-tolerance" when
+			// --strictness is not set.
+			effectiveStrictness := strictnessFlag
+			if effectiveStrictness == "" {
+				if strict {
+					effectiveStrictness = "zero-tolerance"
+				} else {
+					effectiveStrictness = m.Settings.Strictness
+				}
+			}
+
 			var results *coverage.ResultsFile
 			if data, err := os.ReadFile(".specter-results.json"); err == nil {
 				var parseErr error
@@ -1060,6 +1296,7 @@ func syncCmd() *cobra.Command {
 				CheckOpts:            checkOpts,
 				OnlyPhase:            onlyPhase,
 				Results:              results,
+				Strictness:           effectiveStrictness,         // spec-sync C-06: route coverage phase per strictness
 				CheckTestAnnotations: strict || m.Settings.Strict, // spec-check C-09/AC-12: sync --strict (or settings.strict) routes through
 			})
 
@@ -1106,7 +1343,8 @@ func syncCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
 	cmd.Flags().StringVar(&testsGlob, "tests", "", "Glob pattern for test files")
 	cmd.Flags().StringVar(&onlyPhase, "only", "", "Run only this phase (parse|resolve|check|coverage); prerequisites run without halting")
-	cmd.Flags().BoolVar(&strict, "strict", false, "Treat warnings as errors (also set via settings.strict in specter.yaml)")
+	cmd.Flags().BoolVar(&strict, "strict", false, "Treat warnings as errors (also set via settings.strict in specter.yaml). Alias for --strictness zero-tolerance when --strictness is not set.")
+	cmd.Flags().StringVar(&strictnessFlag, "strictness", "", "Override settings.strictness for the coverage phase. Values: annotation, threshold, zero-tolerance. Matches `coverage --strictness` semantics. When set, wins over --strict.")
 	return cmd
 }
 
@@ -1304,26 +1542,23 @@ func reverseCmd() *cobra.Command {
 				}
 			}
 
+			// spec-reverse 1.3.0 C-13: single-line summary after the
+			// per-spec output. Pluralizes naturally (constraint vs
+			// constraints) to read like English.
 			gapCount := result.Summary.GapsDetected
-			fmt.Printf("\nSummary: %d spec(s) generated, %d constraint(s), %d assertion(s), %d gap(s)\n",
-				result.Summary.SpecsGenerated, result.Summary.ConstraintsFound,
-				result.Summary.AssertionsFound, gapCount)
-			if gapCount > 0 {
-				fmt.Printf("\n%d AC(s) need triage — reverse extracts structure but not intent. Until triaged, these ACs count as uncovered and `specter sync` will fail.\n", gapCount)
-				fmt.Println()
-				fmt.Println("Next steps:")
-				// Pick first generated spec to show a concrete example
-				if len(result.Specs) > 0 {
-					example := result.Specs[0].Spec.ID
-					fmt.Printf("  1. Triage gaps in one spec:     specter explain %s\n", example)
-					fmt.Printf("  2. Fill in each gap AC's description and remove the `gap: true` flag.\n")
-					fmt.Printf("  3. Run parse to validate:        specter parse %s/%s\n", outputDir, result.Specs[0].FileName)
-				} else {
-					fmt.Printf("  1. Open a generated spec and triage its gap ACs (fill description, remove gap: true)\n")
-					fmt.Printf("  2. Run: specter explain <spec-id>   to see annotation examples per AC\n")
-					fmt.Printf("  3. Run: specter parse <spec-file>   to validate your edits\n")
-				}
-				fmt.Printf("  4. Run sync to check the whole corpus: specter sync\n")
+			fmt.Printf("\nFound %d %s, %d %s, %d %s across %d %s.\n",
+				result.Summary.ConstraintsFound, pluralize("constraint", result.Summary.ConstraintsFound),
+				result.Summary.AssertionsFound, pluralize("assertion", result.Summary.AssertionsFound),
+				gapCount, pluralize("gap", gapCount),
+				result.Summary.SpecsGenerated, pluralize("file", result.Summary.SpecsGenerated))
+
+			// spec-reverse 1.3.0 C-14: single-line handoff pointing
+			// at `specter explain <first-spec-id>` for gap triage in
+			// each generated draft. Suppressed under --json (handled
+			// at the top of this RunE).
+			if len(result.Specs) > 0 {
+				firstID := result.Specs[0].Spec.ID
+				fmt.Printf("Run `specter explain %s` to triage gaps in each generated draft.\n", firstID)
 			}
 
 			return nil
@@ -2106,10 +2341,6 @@ func confirmFixWithUser(stdin io.Reader, isTTY bool, stderr io.Writer) (bool, er
 	fmt.Fprintln(stderr, "  This command rewrites your .spec.yaml files in place to repair known")
 	fmt.Fprintln(stderr, "  schema drift (currently: strip the v0.6.5-removed `trust_level` field).")
 	fmt.Fprintln(stderr)
-	fmt.Fprintln(stderr, "  Known limitation: when `trust_level: <value>` appears inside a string")
-	fmt.Fprintln(stderr, "  literal (e.g., a description block scalar mentioning the deprecated")
-	fmt.Fprintln(stderr, "  field), the deletion may strip that documentation line too.")
-	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, "  Recommended:")
 	fmt.Fprintln(stderr, "    - Commit your spec files BEFORE running so changes can be diffed.")
 	fmt.Fprintln(stderr, "    - Use --dry-run to preview changes without writing.")
@@ -2378,6 +2609,17 @@ func explainCmd() *cobra.Command {
 			testFiles := discoverTestFiles("")
 			var allAnnotations []coverage.AnnotationMatch
 			for _, f := range testFiles {
+				// spec-check C-12: same per-file size cap as `check --test`.
+				// Coverage's annotation extractor (ExtractAnnotations) reads
+				// the full file content; an unbounded read is the same DoS
+				// surface as the unreachable scanner. Skip oversized files
+				// per-file (not fatal); emit a stderr warning.
+				if info, statErr := os.Stat(f); statErr == nil && info.Size() > checker.MaxTestFileBytes {
+					fmt.Fprintf(os.Stderr,
+						"warn: test file %s exceeds %d byte limit (got %d bytes); skipping\n",
+						f, checker.MaxTestFileBytes, info.Size())
+					continue
+				}
 				data, err := os.ReadFile(f)
 				if err != nil {
 					continue
@@ -2783,17 +3025,25 @@ func modsChanged(prev, curr map[string]time.Time) bool {
 
 // @spec spec-diff
 func diffCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "diff <path>[@<ref>] <path>[@<ref>]",
-		Short: "Show semantic diff of a spec between two git revisions",
-		Long: `Compare two versions of a spec and show a human-readable semantic diff.
+	cmd := &cobra.Command{
+		Use:   "diff <kind?> <path>[@<ref>] <path>[@<ref>]",
+		Short: "Polymorphic diff — spec (default) or coverage",
+		Long: `Show a semantic diff between two snapshots. Polymorphic on the
+optional <kind> argument:
 
-Each argument is either:
+  specter diff <path>[@ref] <path>[@ref]   — spec kind (implicit; backward compat with v1.x)
+  specter diff spec <path>[@ref] <path>[@ref]  — spec kind (explicit)
+  specter diff coverage <baseline.json> <current.json>  — coverage kind (per-spec AC delta)
+
+For the spec kind, each path argument is either:
   path            — read from disk
   path@ref        — read from git (e.g. specs/foo.spec.yaml@HEAD~1)
 
-Example:
-  specter diff specs/engine.spec.yaml@HEAD~5 specs/engine.spec.yaml`,
+Example (spec kind):
+  specter diff specs/engine.spec.yaml@HEAD~5 specs/engine.spec.yaml
+
+Example (coverage kind):
+  specter diff coverage baseline-coverage.json current-coverage.json`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			v1, err := readSpecAtRef(args[0])
@@ -2843,6 +3093,105 @@ Example:
 			return nil
 		},
 	}
+
+	// v0.13 C3: register the coverage kind as a subcommand. Cobra
+	// dispatches to it when invoked as `specter diff coverage ...`.
+	// The parent diffCmd's RunE handles the implicit spec kind for
+	// backward-compat with v1.x callers (`specter diff <path1> <path2>`).
+	cmd.AddCommand(diffCoverageCmd())
+	return cmd
+}
+
+// diffCoverageCmd is the `specter diff coverage` subcommand (spec-diff
+// 2.0.0 C-10). Reads two `coverage --json` files and emits the per-spec
+// AC delta (gained / lost ACs, coverage_pct change, specs added/removed).
+func diffCoverageCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "coverage <baseline.json> <current.json>",
+		Short: "Diff two coverage --json snapshots (per-spec AC delta)",
+		Long: `Read two CoverageReport JSON files and emit the per-spec AC delta.
+
+Each argument is a path to a ` + "`coverage --json`" + ` output. Useful for tracking
+AC coverage drift between CI runs.
+
+Output:
+  +spec spec-bar               — spec added in current
+  -spec spec-stale             — spec removed in current
+  +spec-foo/AC-02              — AC GAINED coverage in current
+  -spec-foo/AC-03              — AC LOST coverage in current
+  ~spec-foo coverage_pct: 50.0 → 100.0 (passes_threshold: false → true)
+
+Exit code 0 always — this is a diagnostic surface, not a gate.`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			baseline, err := readCoverageReportFromFile(args[0])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error reading %s: %v\n", args[0], err)
+				return errSilent
+			}
+			current, err := readCoverageReportFromFile(args[1])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error reading %s: %v\n", args[1], err)
+				return errSilent
+			}
+
+			diff := specdiff.DiffCoverageReports(*baseline, *current)
+			if diff.IsEmpty() {
+				fmt.Println("coverage reports are identical")
+				return nil
+			}
+
+			for _, spec := range diff.SpecsAdded {
+				fmt.Printf("+spec %s\n", spec)
+			}
+			for _, spec := range diff.SpecsRemoved {
+				fmt.Printf("-spec %s\n", spec)
+			}
+			for _, change := range diff.SpecChanges {
+				for _, ac := range change.GainedACs {
+					fmt.Printf("+%s/%s\n", change.SpecID, ac)
+				}
+				for _, ac := range change.LostACs {
+					fmt.Printf("-%s/%s\n", change.SpecID, ac)
+				}
+				if change.BaselineCoveragePct != change.CurrentCoveragePct ||
+					change.BaselinePassesThreshold != change.CurrentPassesThreshold {
+					fmt.Printf("~%s coverage_pct: %.1f → %.1f (passes_threshold: %v → %v)\n",
+						change.SpecID,
+						change.BaselineCoveragePct, change.CurrentCoveragePct,
+						change.BaselinePassesThreshold, change.CurrentPassesThreshold)
+				}
+			}
+			return nil
+		},
+	}
+}
+
+// readCoverageReportFromFile parses a coverage --json output file.
+//
+// spec-diff C-12 (v2.1.0): MaxCoverageReportBytes (16 MiB) caps the
+// input size BEFORE json.Unmarshal allocates. A malicious or
+// accidentally huge JSON file would otherwise buffer fully into memory
+// and could OOM the process. The size check uses os.Stat to avoid
+// reading even one byte of an oversized file.
+func readCoverageReportFromFile(path string) (*coverage.CoverageReport, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("stat: %w", err)
+	}
+	if info.Size() > coverage.MaxCoverageReportBytes {
+		return nil, fmt.Errorf("coverage report %s exceeds %d byte limit (got %d bytes)",
+			path, coverage.MaxCoverageReportBytes, info.Size())
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read: %w", err)
+	}
+	var rep coverage.CoverageReport
+	if err := json.Unmarshal(data, &rep); err != nil {
+		return nil, fmt.Errorf("parse json: %w", err)
+	}
+	return &rep, nil
 }
 
 // readSpecAtRef reads and parses a spec from disk or from a git ref.

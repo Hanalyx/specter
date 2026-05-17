@@ -4,6 +4,70 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 ---
 
+## v0.13.0 — 2026-05-16
+
+**Theme: unreachable_annotation diagnostic + cycle cleanup.**
+
+Headline feature: F3 — `unreachable_annotation` diagnostic. When a test file carries `// @ac AC-NN` but the test produces no runner-visible spec-id/AC-NN token (neither in the subtest title nor as a runtime print of `// @spec` / `// @ac`), `specter check --test` now emits the diagnostic naming `file:line`. Pre-v0.13 the annotation would silently demote under `coverage --strict` with no signal — the same docs-vs-code drift class the v0.10.x CHANGELOG flagged. Covers Go (via `go/ast` + `ast.CommentMap`), TypeScript / Jest / Vitest (regex + block-comment state machine), and Python (regex + indentation). File-level off-switch: `// @reachable manual` (`# @reachable manual` for Python) suppresses both `unreachable_annotation` and `unreachable_annotation_unknown` for every `@ac` in the file.
+
+### Added
+
+#### F3 — unreachable_annotation diagnostic (spec-check 1.3.0 → 1.5.0, C-10/C-11/C-12, AC-13..AC-20)
+
+- `specter check --test` now runs the language-aware reachability scanner. Severity routes per `settings.strictness`: `annotation` suppresses; `threshold` (default) emits a warning (exit 0); `zero-tolerance` emits an error (exit non-zero).
+- `unreachable_annotation_unknown` (always a warning, never an error) fires when the test shape is not recognized by any language-aware parser — operator may add `// @reachable manual` to assert manual verification.
+- New CLI integration tests (`cmd/specter/check_test.go::TestCheckTest_UnreachableAnnotationFiresFromCLI` + `TestCheckTest_ReachableManualSuppressesFromCLI`) pin the wiring so future refactors can't re-orphan the diagnostic.
+
+#### `specter diff coverage <baseline.json> <current.json>` (spec-diff 1.x → 2.1.0)
+
+Polymorphic `diff` verb. First new kind is `coverage` — compares two `coverage --json` snapshots, emits per-spec AC delta (`+SpecID/AC-NN` gained, `-SpecID/AC-NN` lost, `~SpecID coverage_pct: X → Y`). Useful for tracking AC drift between CI runs. Backward compat preserved: `specter diff <path> <path>` continues to invoke the spec-comparison kind.
+
+#### `specter resolve dependents <spec-id>` (spec-resolve)
+
+Reverse dependency-graph query — "which specs depend on this one?" Companion to the existing `dependencies` operation.
+
+#### Bundled enhancements
+
+- `specter sync --strictness <annotation|threshold|zero-tolerance>` — explicit per-invocation override. Sync's strict-mode behavior now matches `coverage`'s; pre-v0.13 was a silent gap.
+- `settings.exclude` accepts glob patterns (`.claude/**`, `**/worktrees`, `tests/fixtures/*`) in addition to bare directory names. (spec-manifest C-29)
+- `specter reverse` emits a summary line and `specter explain` handoff at the end of a non-JSON run.
+- `specter check --test` now lifts AC-14..AC-18 onto spec-parse (v0.7.0 parse behaviors that had test annotations but no spec ACs — closes the spec-vs-code drift in the opposite direction from F3).
+- Auto-generated `specter help` subcommand suppressed (use `--help` or top-level `specter help`).
+- CLI-flags ↔ `docs/CLI_REFERENCE.md` parity test catches the class where a flag is registered but undocumented.
+
+### Fixed
+
+- **D1 — `doctor --fix` no longer corrupts description-block prose** (spec-doctor 1.9.0, C-17). The v0.12 rewrite used a content-pattern regex over every source line; a `description: |` block scalar mentioning `trust_level: high` in prose would be falsely matched and the doc line stripped. Now uses `yaml.v3 Node.Line` for exact-line deletion. The BETA warning's "Known limitation" claim removed; the BETA prompt itself is retained for v0.13 as soak time on a destructive operation.
+- **D2 — Unrecognized `status` value diagnostic** (spec-coverage 1.14.0, C-30, AC-35). A `.specter-results.json` entry with `status: "pass"` (typo missing `ed`) previously demoted the AC silently under `--strict` with no signal. `coverage` now emits a stderr warning per unique unrecognized value (`warning: .specter-results.json contains N entries with status="pass" — not a recognized status (passed|failed|skipped|errored); treated as not-passed`) and exposes the data as a top-level `invalid_status_warnings` array under `--json`.
+- **D3 — `coverage --strict --json` exit-code parity** (spec-coverage 1.13.0, C-29, AC-34). Pre-v0.13, JSON mode exited 0 on zero-tolerance violations that text mode exited 2 (non-passed AC) or 3 (approval_gate unset). CI consumers reading `--json` could not gate on it. The JSON branch now runs the same exit checks text mode runs, after emitting the structured document.
+- **D4 — `internal/migrate/rewrite.go` C-10 → C-11 comment.** One-character documentation fix.
+
+### Security
+
+Three priority findings from the pre-release security audit closed this cycle (artifact at `docs/release-testing/v0.13.0-security.md`):
+
+- **H1 — `settings.specs_dir` workspace-scope** (spec-manifest 1.11.0, C-30, AC-46). `ParseManifest` refuses absolute paths, Windows drive-letter form (on every platform), `..` segments, and lexical-clean escapes. Closes the arbitrary-write path where a malicious workspace's `specter.yaml` with `settings.specs_dir: /home/victim` caused `filepath.Walk` and `doctor --fix` to operate outside the workspace.
+- **H5 — `MaxTestFileBytes` (4 MiB) cap on test files** (spec-check 1.5.0, C-12, AC-20). v0.13's F3 scanner reads every discovered test file via `os.ReadFile` and passes the full string to `go/parser.ParseFile` (Go), regex+state-machine (TS/JS), or regex+indentation (Python). A 4 GiB malicious test file would OOM the process; `go/parser` allocates an AST proportional to file size. The cap is enforced via `os.Stat` BEFORE `os.ReadFile`, so oversized files are never buffered into memory. Skip is per-file (not fatal); stderr warning names the file.
+- **M3 — `MaxCoverageReportBytes` (16 MiB) cap on `diff coverage` inputs** (spec-diff 2.1.0, C-12, AC-15). v0.13's new `diff coverage` subcommand previously did unbounded `os.ReadFile` followed by `json.Unmarshal`; multi-GiB JSON inputs would OOM CI. Now matches the existing `coverage.MaxResultsFileBytes` defense-in-depth pattern.
+
+Defenses verified intact during the audit: GHA SHA pinning, BETA-gate TTY detection (not EOF-on-empty), pre-push hook SHA validation, manifest 64 KiB + results-file 16 MiB caps, XML DTD rejection, RE2 regex immunity to ReDoS across all 82 regex sites, webview CSP with per-render nonce, execFile (not exec), settings machine-scope, no extension telemetry.
+
+Two HIGH findings remain as v0.14 follow-ups:
+- **H3** — VS Code extension does not verify cosign signatures on the downloaded binary (signatures already published; consumer needs `sigstore-js` integration).
+- **H4** — VS Code `capabilities.untrustedWorkspaces.supported: "limited"` declared in `package.json` but no code path checks `vscode.workspace.isTrusted` before downloading/executing the binary.
+
+### Pre-release validation
+
+- **Real-world test against 12 open-source repos** (`docs/release-testing/v0.13.0-realworld.md`): 0 crashes, 0 validation errors across 29,973 files / 4,156 generated specs / 32,752 extracted assertions. 5.5× the v0.2.x baseline of 5,434 files.
+- **Feature smoke test** (`docs/release-testing/v0.13.0-smoke.md`): 16/16 pass across D1/D2/D3/C2/C4/C5+C6/B/F3/A4 surfaces. Reproducible harness at `scripts/smoketest_v013.sh`.
+- **Spec coverage** via `make dogfood-strict`: 15/15 specs at 100% (spec-check 20/20 with the new AC-20, spec-diff 15/15 with AC-15, spec-manifest 45/46 — only pre-existing AC-29 uncovered).
+
+### Deferred to v0.14
+
+E1 / E2 / E3 — major-version migration PRs (`eslint` 8 → 10 flat-config, `typescript` 5 → 6, `jest` 29 → 30) bundled into v0.14 to keep v0.13 focused. v0.12.1 / v0.13 cumulatively absorbed 28 dependabot bumps; the three majors deserve dedicated revert paths.
+
+---
+
 ## v0.12.1 — 2026-05-07
 
 **Theme: release-infra hardening + user-facing docs parity.**

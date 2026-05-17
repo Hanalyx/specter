@@ -3,7 +3,10 @@ package sync
 
 import (
 	"fmt"
+	"strings"
 	"testing"
+
+	"github.com/Hanalyx/specter/internal/coverage"
 )
 
 func validSpecYAML(id string, tier int, deps string) string {
@@ -261,4 +264,127 @@ func TestOnlyPhase_Parse_StopsAfterParse(t *testing.T) {
 	if !result.Passed {
 		t.Error("expected pass for --only parse with valid spec")
 	}
+}
+
+// AC-08: --strictness <level> is accepted at all three levels; --strict
+// is treated as zero-tolerance alias. The test passes inputs and
+// confirms SyncInput accepts the Strictness field.
+//
+// @ac AC-08
+func TestSyncStrictness_AcceptedLevels(t *testing.T) {
+	for _, level := range []string{"annotation", "threshold", "zero-tolerance"} {
+		t.Run("spec-sync/AC-08 --strictness "+level+" is accepted by SyncInput", func(t *testing.T) {
+			result := RunSync(SyncInput{
+				SpecFiles:  []FileContent{{Path: "a.yaml", Content: validSpecYAML("a", 2, "")}},
+				TestFiles:  []FileContent{{Path: "a.test.ts", Content: testFileContent("a", "AC-01")}},
+				Strictness: level,
+			})
+			// The minimum contract for this AC: SyncInput accepts the
+			// field without panic. Behavioral assertions live in AC-09
+			// (parity with coverage --strict) and AC-10/AC-11
+			// (missing-results behavior).
+			if result == nil {
+				t.Errorf("RunSync returned nil for Strictness=%q", level)
+			}
+		})
+	}
+}
+
+// AC-09: sync's coverage phase under strict mode produces a report
+// identical to `coverage --strictness <level>` on the same workspace.
+// The probe: a Tier 2 spec with one annotated AC whose .specter-results.json
+// entry says "failed". Under BuildCoverageReportWithResults (the current
+// sync path), Tier 2 doesn't demote on failing results; under
+// BuildCoverageReportStrict, it does. After commit 3 wires sync to the
+// strict path, sync's report MUST demote the AC matching coverage.
+//
+// @ac AC-09
+func TestSyncStrictness_CoverageMatchesStrictPath(t *testing.T) {
+	t.Run("spec-sync/AC-09 sync --strictness threshold demotes failing-test AC matching coverage --strict", func(t *testing.T) {
+		results := &coverage.ResultsFile{
+			Results: []coverage.ResultEntry{
+				{SpecID: "a", ACID: "AC-01", Status: "failed", Passed: false},
+			},
+		}
+
+		result := RunSync(SyncInput{
+			SpecFiles:  []FileContent{{Path: "a.yaml", Content: validSpecYAML("a", 2, "")}},
+			TestFiles:  []FileContent{{Path: "a.test.ts", Content: testFileContent("a", "AC-01")}},
+			Results:    results,
+			Strictness: "threshold",
+		})
+
+		// The contract: under strict mode, a failing AC must demote
+		// and sync's coverage phase must fail. Currently sync uses
+		// BuildCoverageReportWithResults which doesn't demote Tier 2;
+		// the test fails until commit 3 wires the strict path.
+		if result.Passed {
+			t.Errorf("expected sync --strictness threshold to fail on AC-01 with failed test result, got pass")
+		}
+		if result.CoverageReport == nil {
+			t.Fatal("expected coverage report")
+		}
+		if result.CoverageReport.Summary.Failing == 0 {
+			t.Errorf("expected at least one spec to be failing under strict mode, got Failing=%d", result.CoverageReport.Summary.Failing)
+		}
+	})
+}
+
+// AC-10: missing .specter-results.json under strict mode fails with
+// the SAME error message as coverage --strict (ErrMissingResults).
+// The test asserts the coverage phase fails and the message mentions
+// `specter ingest`.
+//
+// @ac AC-10
+func TestSyncStrictness_MissingResultsUnderStrict(t *testing.T) {
+	t.Run("spec-sync/AC-10 sync --strictness zero-tolerance with missing results fails with ingest hint", func(t *testing.T) {
+		result := RunSync(SyncInput{
+			SpecFiles:  []FileContent{{Path: "a.yaml", Content: validSpecYAML("a", 2, "")}},
+			TestFiles:  []FileContent{{Path: "a.test.ts", Content: testFileContent("a", "AC-01")}},
+			Results:    nil, // simulates missing .specter-results.json
+			Strictness: "zero-tolerance",
+		})
+
+		if result.Passed {
+			t.Errorf("expected sync --strictness zero-tolerance to fail when Results is nil, got pass")
+		}
+		// Find the coverage phase result and verify the message.
+		var coveragePhase *PhaseResult
+		for i := range result.Phases {
+			if result.Phases[i].Phase == "coverage" {
+				coveragePhase = &result.Phases[i]
+			}
+		}
+		if coveragePhase == nil {
+			t.Fatal("expected coverage phase result")
+		}
+		if coveragePhase.Passed {
+			t.Error("expected coverage phase to fail under strict mode with missing Results")
+		}
+		// AC-10 requires the message reference specter ingest. The
+		// exact wording comes from coverage.ErrMissingResults.
+		if !strings.Contains(coveragePhase.Message, "specter ingest") {
+			t.Errorf("expected coverage phase message to mention `specter ingest`, got: %q", coveragePhase.Message)
+		}
+	})
+}
+
+// AC-11: under annotation mode (or no strict flag), missing
+// .specter-results.json is NOT an error. The annotation-counting
+// path proceeds.
+//
+// @ac AC-11
+func TestSyncStrictness_MissingResultsUnderAnnotation(t *testing.T) {
+	t.Run("spec-sync/AC-11 sync --strictness annotation with missing results succeeds", func(t *testing.T) {
+		result := RunSync(SyncInput{
+			SpecFiles:  []FileContent{{Path: "a.yaml", Content: validSpecYAML("a", 2, "")}},
+			TestFiles:  []FileContent{{Path: "a.test.ts", Content: testFileContent("a", "AC-01")}},
+			Results:    nil,
+			Strictness: "annotation",
+		})
+
+		if !result.Passed {
+			t.Errorf("expected sync --strictness annotation with missing Results to pass (annotation-count path), got fail at %q with phases %+v", result.StoppedAt, result.Phases)
+		}
+	})
 }

@@ -101,7 +101,15 @@ jobs:
         run: bin/specter coverage
 
       - name: Full sync gate
-        run: bin/specter sync
+        # v0.13 spec-sync 1.2.0 C-06/C-07: sync inherits manifest's
+        # settings.strictness (default `threshold`), which under C-08
+        # requires .specter-results.json. This Tier 2 gate is the
+        # lightweight non-strict variant; Tier 1 (make dogfood-strict
+        # via the ci.yml job, plus the unit-test job above) covers the
+        # strict path via ingest → coverage --strict. Explicit
+        # --strictness annotation keeps this step independent of the
+        # results file.
+        run: bin/specter sync --strictness annotation
 
   # --- Tier 3: Real-World Validation ---
   tier3-realworld:

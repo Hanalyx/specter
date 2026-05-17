@@ -49,3 +49,82 @@ func TestParseResultsFile_RejectsOversizedInput(t *testing.T) {
 		}
 	})
 }
+
+// v0.13 D2 — C-30: ResultsFile.InvalidStatuses() returns a map of
+// unrecognized status values to their occurrence counts. The documented
+// enum is {passed, failed, skipped, errored} per C-21.
+//
+// @ac AC-35
+func TestResultsFile_InvalidStatuses(t *testing.T) {
+	t.Run("spec-coverage/AC-35 InvalidStatuses returns map of unrecognized values to counts", func(t *testing.T) {
+		// Three entries with the same typo, one with a different typo,
+		// one valid entry. Expected: {"pass": 3, "OK": 1}.
+		body := []byte(`{"results": [
+			{"spec_id": "a", "ac_id": "AC-01", "status": "pass"},
+			{"spec_id": "a", "ac_id": "AC-02", "status": "pass"},
+			{"spec_id": "b", "ac_id": "AC-01", "status": "pass"},
+			{"spec_id": "b", "ac_id": "AC-02", "status": "OK"},
+			{"spec_id": "c", "ac_id": "AC-01", "status": "passed"}
+		]}`)
+		rf, err := ParseResultsFile(body)
+		if err != nil {
+			t.Fatalf("unexpected parse error: %v", err)
+		}
+
+		got := rf.InvalidStatuses()
+		if got["pass"] != 3 {
+			t.Errorf("expected 3 entries with status=pass, got %d (full map: %v)", got["pass"], got)
+		}
+		if got["OK"] != 1 {
+			t.Errorf("expected 1 entry with status=OK, got %d (full map: %v)", got["OK"], got)
+		}
+		if _, ok := got["passed"]; ok {
+			t.Errorf("expected `passed` to NOT appear in InvalidStatuses (it is in the documented enum), got map: %v", got)
+		}
+		if len(got) != 2 {
+			t.Errorf("expected exactly 2 unique unrecognized values, got %d: %v", len(got), got)
+		}
+	})
+
+	t.Run("spec-coverage/AC-35 InvalidStatuses empty when all entries use documented enum values or boolean back-compat", func(t *testing.T) {
+		body := []byte(`{"results": [
+			{"spec_id": "a", "ac_id": "AC-01", "status": "passed"},
+			{"spec_id": "a", "ac_id": "AC-02", "status": "failed"},
+			{"spec_id": "b", "ac_id": "AC-01", "status": "skipped"},
+			{"spec_id": "b", "ac_id": "AC-02", "status": "errored"},
+			{"spec_id": "c", "ac_id": "AC-01", "passed": true}
+		]}`)
+		rf, err := ParseResultsFile(body)
+		if err != nil {
+			t.Fatalf("unexpected parse error: %v", err)
+		}
+		got := rf.InvalidStatuses()
+		if len(got) != 0 {
+			t.Errorf("expected empty map when all statuses are in the documented enum, got: %v", got)
+		}
+	})
+
+	t.Run("spec-coverage/AC-35 InvalidStatuses tolerates nil receiver", func(t *testing.T) {
+		var rf *ResultsFile
+		got := rf.InvalidStatuses()
+		if len(got) != 0 {
+			t.Errorf("expected empty map for nil receiver, got: %v", got)
+		}
+	})
+
+	t.Run("spec-coverage/AC-35 unrecognized status still derives Passed=false (preserves today's demotion behavior)", func(t *testing.T) {
+		body := []byte(`{"results": [
+			{"spec_id": "a", "ac_id": "AC-01", "status": "pass"}
+		]}`)
+		rf, err := ParseResultsFile(body)
+		if err != nil {
+			t.Fatalf("unexpected parse error: %v", err)
+		}
+		if len(rf.Results) != 1 {
+			t.Fatalf("expected 1 result entry, got %d", len(rf.Results))
+		}
+		if rf.Results[0].Passed {
+			t.Errorf("expected status=`pass` (unrecognized) to derive Passed=false, got Passed=true — behavior break")
+		}
+	})
+}
