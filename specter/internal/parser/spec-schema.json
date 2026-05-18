@@ -36,7 +36,7 @@
         "status": {
           "type": "string",
           "enum": ["draft", "review", "approved", "deprecated", "removed"],
-          "description": "Lifecycle status. Only 'approved' specs are enforced by spec-sync."
+          "description": "Lifecycle status. Specter parses and checks all discovered specs; status is informational. Use settings.warn_on_draft and settings.strict when draft specs should block release gates."
         },
 
         "tier": {
