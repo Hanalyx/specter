@@ -244,6 +244,74 @@ Migrate whole files at once. A half-migrated file (some tests renamed, some not)
 
 ---
 
+## Suppressing `unreachable_annotation` per-file
+
+Added in v0.13.0.
+
+`specter check --test` runs a language-aware reachability scanner that
+catches source-comment `@ac` declarations whose enclosing test produces
+no runner-visible token. The diagnostic name is `unreachable_annotation`
+(and `unreachable_annotation_unknown` when the test shape is custom).
+
+**Suppress for an entire file** by placing the marker anywhere in the
+file (top of file is conventional):
+
+| Language family | Marker line |
+|---|---|
+| Go, TypeScript, JavaScript, Rust | `// @reachable manual` |
+| Python, shell, YAML | `# @reachable manual` |
+
+The marker is file-level scope. One declaration anywhere in the file
+opts every `@ac` in that file out of BOTH `unreachable_annotation` and
+`unreachable_annotation_unknown`, regardless of `settings.strictness`.
+
+**When to use the marker:**
+
+- The test runner is custom (not Go's `testing`, Jest/Vitest, or
+  pytest) and the scanner can't recognize the test shape.
+- Tests are dynamically generated and the `@ac` lives on the generator,
+  not on a recognizable test function.
+- The operator has manually verified that the test does cover the
+  annotated ACs through some out-of-band channel.
+
+**Don't use it as a noise-suppressor.** If the diagnostic fires because
+a real Go subtest title is missing the `<spec-id>/AC-NN` token, fix the
+subtest title — the marker disables a real signal. The same applies to
+TypeScript `describe`/`it` titles and pytest `print()` lines.
+
+**Strictness routing** (when the marker is absent):
+
+- `settings.strictness: annotation` — diagnostics suppressed (exit 0).
+- `settings.strictness: threshold` (default) — `warning` (exit 0).
+- `settings.strictness: zero-tolerance` — `error` (exit non-zero).
+
+`unreachable_annotation_unknown` is always a `warning` regardless of
+strictness — the scanner can't tell whether the test really covers the
+AC, only that no language-aware parser recognized the shape.
+
+Example (Go test with a custom helper that hides the subtest from
+go/ast's recognition):
+
+```go
+// @reachable manual
+package foo
+
+import "testing"
+
+// @spec my-spec
+// @ac AC-01
+func TestThing(t *testing.T) {
+    runWithCustomHelper(t, "my-spec/AC-01")
+}
+```
+
+Without the marker, `check --test` would emit
+`unreachable_annotation_unknown` because `go/ast` can't unwrap
+`runWithCustomHelper` to see whether the test title carries
+`my-spec/AC-01`. The marker asserts the operator has verified it does.
+
+---
+
 ## Troubleshooting
 
 **Symptom**: `specter ingest` reports `Scanned N; extracted 0; dropped N`.
@@ -260,6 +328,14 @@ Migrate whole files at once. A half-migrated file (some tests renamed, some not)
 **Symptom**: pytest tests don't produce annotation entries.
 **Cause**: pytest isn't capturing `print()` output in the JUnit XML by default.
 **Fix**: `pytest --junitxml=out.xml -o junit_logging=all -o junit_log_passing_tests=True`.
+
+**Symptom**: `specter check --test` emits `unreachable_annotation` for a test that you believe does cover the AC.
+**Cause**: The test title or test body doesn't carry the `<spec-id>/AC-NN` token in a form the scanner recognizes (Convention A in the subtest title, or Convention B as a runtime print). The scanner reports the source `@ac` is unreachable because `specter ingest` would not extract a matching pair from this test's runner output.
+**Fix**: Add the spec-id/AC-NN token to the subtest title (Convention A), or print `// @spec <id>` / `// @ac AC-NN` from the test body (Convention B). If the test legitimately covers the AC through a channel the scanner can't see, use `// @reachable manual` (or `# @reachable manual` for Python) at the top of the file. Documented in "Suppressing `unreachable_annotation` per-file" above.
+
+**Symptom**: `specter check --test` emits `unreachable_annotation_unknown` rather than `unreachable_annotation`.
+**Cause**: The test file is in a language the language-aware reachability scanner doesn't have a parser for (anything other than Go, TypeScript / Jest / Vitest, or Python), OR the test shape (custom helpers, table-driven tests with non-literal names, dynamically-generated tests) is structurally unrecognized.
+**Fix**: `_unknown` is always a `warning` regardless of strictness mode — it does not fail any gate. If you've manually verified the test does cover the AC, add `// @reachable manual` at the top of the file to silence both `_unknown` and the `unreachable_annotation` diagnostic for that file.
 
 ---
 

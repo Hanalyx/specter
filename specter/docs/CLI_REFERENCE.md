@@ -188,6 +188,10 @@ specter check [--json] [--tier <n>] [--strict] [--test]
 | `orphan_constraint` | T1=error, T2=warning, T3=info | A constraint is not referenced by any acceptance criterion. Individual constraints may override severity via `constraint.enforcement`. |
 | `structural_conflict` | error (override via `constraint.enforcement`) | An upstream constraint requires something that a downstream AC handles as absent. |
 | `tier_conflict` | warning | A higher-tier spec depends on a lower-tier spec (e.g., Tier 1 depends on Tier 3). |
+| `unknown_spec_ref` | error (under `--test`) | A test annotates `@spec <id>` but no spec with that ID was parsed. Emitted only under `--test`. |
+| `unknown_ac_ref` | error (under `--test`) | A test annotates `@ac AC-NN` but the spec has no AC with that ID. Emitted only under `--test`. |
+| `unreachable_annotation` | by `settings.strictness`: annotation→suppressed, threshold→warning, zero-tolerance→error | Source-comment `@ac` whose enclosing test produces no runner-visible `<spec-id>/AC-NN` token (Convention A) and no runtime print (Convention B). Such annotations would silently demote under `coverage --strict`. Per-file off-switch: `// @reachable manual` (`# @reachable manual` for Python). Added in v0.13.0. |
+| `unreachable_annotation_unknown` | warning (regardless of strictness) | The reachability scanner could not recognize the test shape (custom helper, non-Go/TS/Python language, dynamically-generated tests). Soft form of the above; never fails a gate. Same off-switch suppresses it. Added in v0.13.0. |
 
 When a constraint has a `type` (e.g. `security`, `performance`), it appears in parentheses after the constraint ID so diagnostics can be grouped by category.
 
