@@ -3026,13 +3026,11 @@ func modsChanged(prev, curr map[string]time.Time) bool {
 // @spec spec-diff
 func diffCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "diff <kind?> <path>[@<ref>] <path>[@<ref>]",
+		Use:   "diff <path>[@<ref>] <path>[@<ref>]",
 		Short: "Polymorphic diff — spec (default) or coverage",
-		Long: `Show a semantic diff between two snapshots. Polymorphic on the
-optional <kind> argument:
+		Long: `Show a semantic diff between two snapshots:
 
-  specter diff <path>[@ref] <path>[@ref]   — spec kind (implicit; backward compat with v1.x)
-  specter diff spec <path>[@ref] <path>[@ref]  — spec kind (explicit)
+  specter diff <path>[@ref] <path>[@ref]   — spec kind (default; backward compat with v1.x)
   specter diff coverage <baseline.json> <current.json>  — coverage kind (per-spec AC delta)
 
 For the spec kind, each path argument is either:
