@@ -1,6 +1,6 @@
 spec:
   id: spec-diff
-  version: "2.1.0"
+  version: "2.2.0"
   status: draft
   tier: 2
   context:
@@ -141,16 +141,18 @@ spec:
       references_constraints: ["C-09"]
       priority: critical
 
-    - id: AC-12
-      description: "`specter diff spec <path1> <path2>` explicitly invokes the spec kind; identical behavior to AC-11's implicit form."
-      inputs:
-        invocation: "specter diff spec a.spec.yaml@HEAD~1 a.spec.yaml"
-      expected_output:
-        kind_dispatched: "spec"
-        same_output_as_implicit: true
-      references_constraints: ["C-09"]
-      priority: high
-
+    # AC-12 REMOVED in v2.2.0 (v0.13.2 patch). Originally promised an
+    # explicit `specter diff spec <path1> <path2>` form. The form was
+    # never implemented — the cobra ExactArgs(2) check rejects 3-arg
+    # invocations, and a 2-arg `diff spec foo.yaml` misroutes "spec"
+    # into readSpecAtRef. The implicit form (AC-11) is the only
+    # working invocation today and is sufficient. The explicit form
+    # would shadow the polymorphic subcommand-dispatch pattern (where
+    # `diff coverage` is the registered subcommand and any future
+    # kinds would be additional subcommands), so re-introducing a
+    # `spec` subcommand would also collide with the cobra dispatch
+    # logic. Dropped to retract the false promise rather than add
+    # code to satisfy it.
     - id: AC-13
       description: "`specter diff coverage <baseline.json> <current.json>` reads both CoverageReport JSON files and emits per-spec AC delta: `+spec-foo/AC-01` for GAINED, `-spec-foo/AC-02` for LOST. Per-spec summary line `~spec-foo coverage_pct: 80.0 → 90.0` when coverage_pct or passes_threshold changes. Specs added (in current, not in baseline) emit `+spec spec-bar`; specs removed emit `-spec spec-bar`. Identical reports emit empty output."
       inputs:
@@ -184,6 +186,11 @@ spec:
       priority: high
 
   changelog:
+    - version: "2.2.0"
+      date: "2026-05-18"
+      author: "specter-team"
+      type: minor
+      description: "v0.13.2 patch — retract AC-12 (the never-implemented explicit `specter diff spec <a> <b>` form). The cobra ExactArgs(2) check rejected 3-arg invocations and a 2-arg `diff spec foo.yaml` misrouted args[0]=\"spec\" into readSpecAtRef. The implicit AC-11 form remains the working invocation. Surfaced by the v0.13 post-ship review (Agent 2 finding #1) as the same drift class F3 was — spec promises behavior CLI doesn't implement. Dropping the false promise is preferred over adding code to satisfy it because re-introducing a `spec` subcommand would collide with the polymorphic subcommand-dispatch pattern where `coverage` is the registered kind. Help text at cmd/specter/main.go:3035 simultaneously updated to drop the explicit form line."
     - version: "2.1.0"
       date: "2026-05-16"
       author: "specter-team"
