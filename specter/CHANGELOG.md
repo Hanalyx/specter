@@ -4,6 +4,24 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 ---
 
+## v0.13.1 — 2026-05-17
+
+**Theme: hotfix — finish the v0.12.1 status-claim docs/code parity work.**
+
+The v0.12.1 cycle (commit `b0ba292`, 2026-05-07) updated `SPEC_SCHEMA_REFERENCE.md` and `FAQ.md` to drop the misleading claim that "only 'approved' specs are enforced by spec-sync" — Specter's actual behavior is that every parseable spec is checked. That fix landed on the human-facing docs but **missed the embedded JSON schema description at `internal/parser/spec-schema.json:39`**, which is the source `specter explain schema spec.status` and the VS Code extension's schema tooltip read from.
+
+Bug report from a third-party adopter (the Yoke project) running v0.13.0 surfaced the gap: `specter explain schema spec.status` still output the misleading claim, and operators reading it assumed `coverage --strict` would honor `status: draft`. It doesn't (and never did).
+
+### Fixed
+
+- **Schema description text** (`internal/parser/spec-schema.json:39`). Updated to match the v0.12.1 canonical text from `SPEC_SCHEMA_REFERENCE.md`: *"Lifecycle status. Specter parses and checks all discovered specs; status is informational. Use settings.warn_on_draft and settings.strict when draft specs should block release gates."* Closes the docs-vs-code drift class instance that `b0ba292` left incomplete. The VS Code extension picks this up via the next binary refresh.
+
+### Not in this patch
+
+The bug reporter's secondary ask — a way to have `coverage --strict` *actually* exempt draft specs from CI gates ("scaffolding lands first, per-area implementation is staged over weeks or months") — is a legitimate adoption-time feature request, but not a docs bug. Status-aware gating (e.g., `coverage --enforce-status approved` or `--exclude-status draft`) is a feature design discussion for a future minor release, gated on the feature-universality test from the project memory (does this generalize beyond one adopter?). Tracked as a follow-up; not blocking the v0.13.1 docs correction.
+
+---
+
 ## v0.13.0 — 2026-05-16
 
 **Theme: unreachable_annotation diagnostic + cycle cleanup.**
