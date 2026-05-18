@@ -316,7 +316,7 @@
         "approval_gate": {
           "type": "boolean",
           "default": false,
-          "description": "True when this AC requires explicit human approval before it can be considered done. Specter does not enforce approval semantics — teams wire this into their own PR/CI gates. See approval_date for when the approval was granted."
+          "description": "Marks this AC as requiring explicit human approval before it can be considered done. In threshold mode this is metadata. Under settings.strictness: zero-tolerance, an AC with approval_gate: true and no approval_date is demoted and coverage exits with the approval-gate failure code (3). See approval_date for when the approval was granted."
         },
         "approval_date": {
           "type": "string",
