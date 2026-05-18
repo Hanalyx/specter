@@ -4,6 +4,36 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 ---
 
+## v0.13.2 — 2026-05-18
+
+**Theme: post-ship review patch — close two remaining spec-vs-code drift instances + one user-facing docs gap.**
+
+A four-agent post-ship review of v0.13.0 + v0.13.1 surfaced 22 findings. Three meet the CLAUDE.md patch-trigger criteria ("documentation correction that materially misleads users"); they ship in this patch. The remaining 19 are cosmetic, design-pending, or in-scope for v0.14.
+
+### Fixed
+
+- **`approval_gate` schema description corrected** (`internal/parser/spec-schema.json:319`). The embedded schema claimed *"Specter does not enforce approval semantics — teams wire this into their own PR/CI gates."* Since v0.11.1 (GH #94 hotfix), `coverage` actually enforces `approval_gate` under zero-tolerance — an AC with `approval_gate: true` and unset `approval_date` is demoted and exits with code 3. `SPEC_SCHEMA_REFERENCE.md:221` already carried the correct text; the embedded schema was missed by the v0.11.1 update. Same shape as the v0.13.1 fix for `spec.status` — completes the b0ba292 sweep across all schema-field descriptions. `specter explain schema spec.acceptance_criteria.items.approval_gate` and the VS Code schema tooltip now match the documented behavior.
+
+- **`specter diff spec <a> <b>` ghost form retracted** (spec-diff 2.1.0 → 2.2.0, AC-12 removed; `cmd/specter/main.go:3029-3046`). v0.13.0 promised an explicit `diff spec <a> <b>` form parallel to the implicit `diff <a> <b>`. The form was never implemented: cobra `ExactArgs(2)` rejects 3-arg invocations, and 2-arg `diff spec foo.yaml` misroutes `args[0]="spec"` into `readSpecAtRef` (which fails with "no such file"). The implicit form (AC-11) is the only invocation users have been using and is sufficient. Retracting the false promise is preferred over adding code because re-introducing a `spec` subcommand would collide with the polymorphic subcommand-dispatch pattern (where `coverage` is the registered kind). This is the third instance of the same drift class F3 surfaced in this cycle — spec-vs-code parity is now closed across every v0.13 spec change.
+
+### Added
+
+- **`// @reachable manual` documented in user-facing docs** (`docs/TEST_ANNOTATION_REFERENCE.md`, `internal/explain/annotation_reference.md`, `docs/CLI_REFERENCE.md`). v0.13.0 shipped the file-level off-switch for `unreachable_annotation` but the marker was only documented inside the spec — a user encountering the diagnostic in CI had no docs path to the escape hatch. The reference doc now carries: (a) a new "Suppressing `unreachable_annotation` per-file" section with the marker syntax per language family, scope semantics, when to use vs. when not to use, and strictness routing; (b) two new "Troubleshooting" entries for both `unreachable_annotation` and `unreachable_annotation_unknown`. The embedded mirror used by `specter explain annotation` is byte-for-byte updated via the existing parity test. The `check` command's Diagnostics table in CLI_REFERENCE also gains rows for both new diagnostic kinds (plus the pre-existing-but-undocumented `unknown_spec_ref` / `unknown_ac_ref` under `--test`).
+
+### Not in this patch (tracked for v0.14)
+
+The audit also identified items requiring design discussion rather than patching:
+
+- `settings.exclude` glob patterns don't apply to test-file discovery (`discoverTestFiles` ignores `m.Settings.Exclude`). Spec C-29 frames broad coverage; code applies narrowly.
+- `coverage_threshold: 0` silently falls through to the tier default (Yoke bug reporter's secondary issue). Decision pending: `*int` with explicit-presence detection vs. schema `minimum: 1` vs. docs-only.
+- `parse` and `doctor` silently no-op when ParseManifest rejects a manifest (H1 error swallow at `main.go:292`). Security holds; UX is inconsistent.
+
+### Audit context
+
+Post-ship review used four parallel general-purpose agents covering: (1) feature behavior end-to-end, (2) spec-vs-code drift hunt, (3) docs parity, (4) bug/security fix boundary verification. No critical findings; two High (both addressed in this patch); four Medium (three addressed, four deferred); fourteen Low / Informational. The full finding set is captured in conversation history; a future schema-docs parity test (scheduled v0.17 D1) will mechanically catch the b0ba292-class drift going forward.
+
+---
+
 ## v0.13.1 — 2026-05-17
 
 **Theme: hotfix — finish the v0.12.1 status-claim docs/code parity work.**
