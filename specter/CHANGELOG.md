@@ -4,6 +4,22 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 ---
 
+## v0.13.3 — 2026-06-10
+
+**Theme: DX patch — a non-misleading `sync` missing-results message.**
+
+External adopter (Kensa) feedback on the v0.13 strict-coverage behavior. Under a strict mode, `specter sync`'s coverage phase fails when `.specter-results.json` is absent — but the error reused `coverage --strict`'s wording (`--strict requires .specter-results.json …`), naming a `--strict` flag the sync operator usually never passed. Under `sync` the strict mode comes from the manifest default (`threshold`), not an explicit flag, so the message pointed at the wrong lever. Patch-trigger: documentation/UX correction that materially misleads users.
+
+### Fixed
+
+- **`sync` missing-results message now names the active strictness mode and offers both remedies** (spec-sync 1.2.0 → 1.3.0, C-08/AC-10; `internal/sync/sync.go`). Under `threshold` / `zero-tolerance` with no `.specter-results.json`, sync now emits `strictness "threshold" requires .specter-results.json — run 'specter ingest' first, or use --strictness annotation for structural coverage`. The rewrite is gated on `errors.Is(err, coverage.ErrMissingResults)`, so **`coverage --strict`'s own message is unchanged**. Also corrects spec-sync C-06's stale parenthetical: the manifest default is `threshold` (per spec-manifest C-24), not `annotation`.
+
+### Added
+
+- **`docs/explainer/v0.13-sync-strict-coverage.md`** — a developer explainer for the v0.13 `sync` strict-coverage results-file requirement: the intent (v0.13 closed the gap where `sync` ignored `strictness` while `coverage` honored it), the local-vs-CI hazard during a partial-version upgrade, and three remedies (ingest before `sync`, split a structural `sync --strictness annotation` gate from a separate `coverage --strict` gate, or set `strictness: annotation`).
+
+---
+
 ## v0.13.2 — 2026-05-18
 
 **Theme: post-ship review patch — close two remaining spec-vs-code drift instances + one user-facing docs gap.**
