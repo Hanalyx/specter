@@ -1,6 +1,6 @@
 spec:
   id: spec-sync
-  version: "1.2.0"
+  version: "1.3.0"
   status: approved
   tier: 2
 
@@ -31,7 +31,7 @@ spec:
         - "Summary report of all phases"
         - "Strictness routing: `sync --strictness <level>` matches `coverage --strictness <level>` semantics for the coverage phase; `sync --strict` is an alias for `--strictness zero-tolerance` retained for backward compatibility"
         - "Sync's coverage phase delegates to the strict coverage path (`BuildCoverageReportStrict`), not the weaker `BuildCoverageReportWithResults`; ACs whose annotated tests did not pass (per `.specter-results.json`) demote, matching `coverage --strict` exactly"
-        - "Missing `.specter-results.json` under strict modes (`threshold` or `zero-tolerance`) fails with the same error message as `coverage --strict`"
+        - "Missing `.specter-results.json` under strict modes (`threshold` or `zero-tolerance`) fails the coverage phase with a message naming the active strictness mode and the two remedies — run `specter ingest`, or use `--strictness annotation` for structural coverage — without attributing the requirement to a `--strict` flag the operator may not have passed"
       excludes:
         - "Git diff analysis (future: only check changed specs)"
         - "PR comment generation"
@@ -64,7 +64,7 @@ spec:
       enforcement: error
 
     - id: C-06
-      description: "MUST support `--strictness <level>` flag accepting `annotation` | `threshold` | `zero-tolerance`. Semantics match `coverage --strictness` exactly: `annotation` counts source-comment @ac as covered (no test-result enforcement); `threshold` requires annotated ACs to have passing test results AND tier thresholds met; `zero-tolerance` requires every annotated AC's test to pass regardless of tier. The legacy `--strict` boolean flag remains as an alias for `--strictness zero-tolerance` for backward compatibility. When neither flag is provided, the strictness comes from `settings.strictness` in the manifest (default: `annotation`). When both `--strict` and `--strictness` are passed, `--strictness` wins."
+      description: "MUST support `--strictness <level>` flag accepting `annotation` | `threshold` | `zero-tolerance`. Semantics match `coverage --strictness` exactly: `annotation` counts source-comment @ac as covered (no test-result enforcement); `threshold` requires annotated ACs to have passing test results AND tier thresholds met; `zero-tolerance` requires every annotated AC's test to pass regardless of tier. The legacy `--strict` boolean flag remains as an alias for `--strictness zero-tolerance` for backward compatibility. When neither flag is provided, the strictness comes from `settings.strictness` in the manifest (default: `threshold`, per spec-manifest C-24). When both `--strict` and `--strictness` are passed, `--strictness` wins."
       type: technical
       enforcement: error
 
@@ -74,7 +74,7 @@ spec:
       enforcement: error
 
     - id: C-08
-      description: "Under any strict mode, if `.specter-results.json` is missing, `sync`'s coverage phase MUST fail with the SAME error message as `coverage --strict` emits in the same condition. The message MUST direct the operator to run `specter ingest` first. Under `annotation` mode (or when no strict flag is set), missing results is NOT an error — the manifest-level annotation-counting path proceeds."
+      description: "Under any strict mode, if `.specter-results.json` is missing, `sync`'s coverage phase MUST fail with a message that (a) names the active strictness mode (`threshold` or `zero-tolerance`) and (b) directs the operator to EITHER run `specter ingest` first OR use `--strictness annotation` for structural coverage. The message MUST NOT attribute the requirement to a `--strict` flag: in `sync` the strictness usually comes from the manifest default rather than an explicit flag, so the `coverage --strict` wording (`--strict requires .specter-results.json`) — correct for `coverage --strict`, where the operator did pass `--strict` — misdirects the fix here. Under `annotation` mode (or when no strict flag is set), missing results is NOT an error — the manifest-level annotation-counting path proceeds."
       type: technical
       enforcement: error
 
@@ -165,14 +165,16 @@ spec:
       priority: critical
 
     - id: AC-10
-      description: "Under `--strictness threshold` or `--strictness zero-tolerance`, when `.specter-results.json` is missing, sync's coverage phase fails with the SAME error message as `coverage --strict` emits. The message references `specter ingest` as the remediation."
+      description: "Under `--strictness threshold` or `--strictness zero-tolerance`, when `.specter-results.json` is missing, sync's coverage phase fails with a message that (a) names the active strictness mode, (b) references `specter ingest` as one remedy, and (c) offers `--strictness annotation` as the alternative remedy. The message MUST NOT claim `--strict` was required, since the strictness may come from the manifest default."
       inputs:
         workspace: "valid specs, annotated tests, NO .specter-results.json file"
-        commands_compared: ["specter coverage --strict", "specter sync --strict"]
+        command: "specter sync --strictness zero-tolerance"
       expected_output:
         exit_code_nonzero: true
-        error_message_identical: true
+        message_names_strictness_mode: true
         message_mentions_specter_ingest: true
+        message_offers_strictness_annotation: true
+        message_does_not_reference_strict_flag: true
       references_constraints: ["C-08"]
       priority: critical
 
@@ -187,6 +189,11 @@ spec:
       priority: high
 
   changelog:
+    - version: "1.3.0"
+      date: "2026-06-10"
+      author: "specter-team"
+      type: minor
+      description: "Amend C-08/AC-10: sync's missing-.specter-results.json message now names the active strictness mode and offers `--strictness annotation` as an alternative remedy, instead of reusing coverage's `--strict requires ...` wording verbatim. The old message attributed the requirement to a `--strict` flag the operator never passed — under sync the strictness usually comes from the manifest default `threshold` — which misdirected the fix. Also corrects C-06's stale parenthetical: the manifest default is `threshold` (per spec-manifest C-24), not `annotation`. Driven by external adopter (Kensa) feedback on the v0.13 sync strict-coverage explainer. Behavior of `coverage --strict` is unchanged."
     - version: "1.2.0"
       date: "2026-05-15"
       author: "specter-team"
