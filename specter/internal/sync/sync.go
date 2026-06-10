@@ -6,6 +6,7 @@
 package sync
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/Hanalyx/specter/internal/checker"
@@ -202,8 +203,9 @@ func RunSync(input SyncInput) *SyncResult {
 	}
 
 	// spec-sync C-06/C-07: route the coverage phase through
-	// BuildCoverageReportStrict under any strict mode. Annotation
-	// mode (and the default) preserves the legacy
+	// BuildCoverageReportStrict under any strict mode (threshold or
+	// zero-tolerance — which includes the manifest default threshold,
+	// per spec-manifest C-24). Annotation mode preserves the legacy
 	// BuildCoverageReportWithResults path.
 	effectiveStrictness := input.Strictness
 	if effectiveStrictness == "" && input.CheckOpts != nil && input.CheckOpts.Strict {
@@ -214,15 +216,24 @@ func RunSync(input SyncInput) *SyncResult {
 
 	var coverageReport *coverage.CoverageReport
 	if useStrictPath {
-		// C-08: missing .specter-results.json under strict mode fails
-		// with ErrMissingResults — the same error message coverage
-		// --strict emits. Surface it as a coverage phase failure.
 		report, strictErr := coverage.BuildCoverageReportStrict(specs, allAnnotations, thresholds, input.Results, true, nil)
 		if strictErr != nil {
+			// C-08: missing .specter-results.json under strict mode
+			// fails the coverage phase. Surface a sync-specific message
+			// that names the active strictness mode and offers both
+			// remedies. Unlike `coverage --strict`, sync's strict mode
+			// usually comes from the manifest default rather than an
+			// explicit flag, so the message MUST NOT attribute the
+			// requirement to `--strict` (coverage.ErrMissingResults's
+			// wording, correct only where the operator passed --strict).
+			msg := strictErr.Error()
+			if errors.Is(strictErr, coverage.ErrMissingResults) {
+				msg = fmt.Sprintf("strictness %q requires .specter-results.json — run 'specter ingest' first, or use --strictness annotation for structural coverage", effectiveStrictness)
+			}
 			result.Phases = append(result.Phases, PhaseResult{
 				Phase:   "coverage",
 				Passed:  false,
-				Message: strictErr.Error(),
+				Message: msg,
 			})
 			result.StoppedAt = "coverage"
 			return result

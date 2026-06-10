@@ -330,14 +330,15 @@ func TestSyncStrictness_CoverageMatchesStrictPath(t *testing.T) {
 	})
 }
 
-// AC-10: missing .specter-results.json under strict mode fails with
-// the SAME error message as coverage --strict (ErrMissingResults).
-// The test asserts the coverage phase fails and the message mentions
-// `specter ingest`.
+// AC-10: missing .specter-results.json under strict mode fails the
+// coverage phase with a message that names the active strictness mode,
+// references `specter ingest`, and offers `--strictness annotation` as
+// the alternative remedy — and does NOT attribute the requirement to a
+// `--strict` flag the sync operator never passed.
 //
 // @ac AC-10
 func TestSyncStrictness_MissingResultsUnderStrict(t *testing.T) {
-	t.Run("spec-sync/AC-10 sync --strictness zero-tolerance with missing results fails with ingest hint", func(t *testing.T) {
+	t.Run("spec-sync/AC-10 sync --strictness zero-tolerance with missing results fails with mode-named, non-misleading hint", func(t *testing.T) {
 		result := RunSync(SyncInput{
 			SpecFiles:  []FileContent{{Path: "a.yaml", Content: validSpecYAML("a", 2, "")}},
 			TestFiles:  []FileContent{{Path: "a.test.ts", Content: testFileContent("a", "AC-01")}},
@@ -361,10 +362,22 @@ func TestSyncStrictness_MissingResultsUnderStrict(t *testing.T) {
 		if coveragePhase.Passed {
 			t.Error("expected coverage phase to fail under strict mode with missing Results")
 		}
-		// AC-10 requires the message reference specter ingest. The
-		// exact wording comes from coverage.ErrMissingResults.
-		if !strings.Contains(coveragePhase.Message, "specter ingest") {
-			t.Errorf("expected coverage phase message to mention `specter ingest`, got: %q", coveragePhase.Message)
+		msg := coveragePhase.Message
+		// (a) names the active strictness mode.
+		if !strings.Contains(msg, "zero-tolerance") {
+			t.Errorf("expected message to name the active strictness mode %q, got: %q", "zero-tolerance", msg)
+		}
+		// (b) references specter ingest as one remedy.
+		if !strings.Contains(msg, "specter ingest") {
+			t.Errorf("expected message to mention `specter ingest`, got: %q", msg)
+		}
+		// (c) offers --strictness annotation as the alternative remedy.
+		if !strings.Contains(msg, "--strictness annotation") {
+			t.Errorf("expected message to offer `--strictness annotation`, got: %q", msg)
+		}
+		// MUST NOT misattribute the requirement to a --strict flag.
+		if strings.Contains(msg, "--strict requires") {
+			t.Errorf("message must not attribute the requirement to `--strict` in sync, got: %q", msg)
 		}
 	})
 }
