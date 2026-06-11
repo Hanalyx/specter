@@ -1,6 +1,6 @@
 spec:
   id: spec-coverage
-  version: "1.14.0"
+  version: "1.15.0"
   status: approved
   tier: 2
 
@@ -185,6 +185,16 @@ spec:
 
     - id: C-30
       description: "ParseResultsFile MUST track entries whose `status` field carries a value outside the documented enum declared in C-21 (`passed | failed | skipped | errored`). `ResultsFile.InvalidStatuses()` returns a map of unique unrecognized status values to their occurrence counts. `specter coverage` MUST emit a stderr warning enumerating these BEFORE the coverage table when present, of the form `warning: .specter-results.json contains N entries with status=\"<value>\" — not a recognized status (passed|failed|skipped|errored); treated as not-passed`. One warning per unique unrecognized value. Under `--json`, surface as a top-level `invalid_status_warnings` array (each entry `{status, count}`). Suppressed under `--quiet` (matches the C-28 hint suppression contract). Parsing behavior is unchanged: unrecognized statuses still derive `Passed = false`, so today's silent-failed behavior holds — but the operator now sees the typo. Rationale: the common case is `status: \"pass\"` (typo missing `ed`). Pre-v0.13 a typo silently demoted the AC under `--strict` with no diagnostic; the operator chased a phantom strict failure. The bug class generalizes to any value outside the documented enum (case differences, plural/singular slips, foreign-runtime statuses like `\"ok\"`). Limit the per-mode behavior to a warning (not an error) so legitimate value drift across runners doesn't fail a build; the operator still sees the signal."
+      type: business
+      enforcement: error
+
+    - id: C-31
+      description: "An effective strictness of `threshold` or `zero-tolerance` — whether set by the `--strictness` flag or by `settings.strictness` in the manifest (default `threshold`, per spec-manifest C-24) — MUST route `specter coverage` through the same strict path the `--strict` flag uses (`BuildCoverageReportStrict` with strict mode enabled): a missing `.specter-results.json` is a hard failure (C-20), annotated ACs without a `status: passed` results entry demote across all tiers (C-19), and the strict-path diagnostics (C-22 empty-results warning, C-27 empty-discovery warning, C-28 source-only hints) apply identically regardless of how the strict mode was enabled. An effective strictness of `annotation` preserves the annotation-counting path. This makes `--strict` and `--strictness threshold` behaviorally identical, as AC-27's shortcut contract requires, and matches the routing `sync`'s coverage phase has used since spec-sync 1.2.0 (C-07). Rationale: pre-1.15.0 the strict path keyed solely on the `--strict` boolean, so `coverage --strictness threshold` silently tolerated missing results and counted failed Tier 2/3 annotations as covered — `sync` and `coverage` disagreed on the same workspace, breaking spec-sync AC-09."
+      type: technical
+      enforcement: error
+
+    - id: C-32
+      description: "When the strict path is enabled without the operator passing `--strict` (i.e. via `--strictness` or the manifest setting), a missing `.specter-results.json` MUST fail with a message that (a) names the active strictness mode and (b) offers both remedies — run `specter ingest` first, or use `--strictness annotation` for structural coverage — mirroring spec-sync C-08. The message MUST NOT attribute the requirement to a `--strict` flag the operator never passed. When the operator DID pass `--strict`, the existing C-20 message (`--strict requires .specter-results.json — run 'specter ingest' first`) is preserved unchanged."
       type: business
       enforcement: error
 
@@ -547,7 +557,40 @@ spec:
       references_constraints: ["C-30"]
       priority: high
 
+    - id: AC-36
+      description: "Workspace with a Tier 2 spec, two annotated ACs, and a `.specter-results.json` where AC-01 is `failed` and AC-02 is `passed`: `specter coverage --strictness threshold` (no `--strict` flag) demotes AC-01 to uncovered, exactly as `specter coverage --strict` does on the same workspace — same report, same exit code. The same applies when the strictness comes from `settings.strictness: threshold` in the manifest with no flags at all. Under `--strictness zero-tolerance` (no `--strict`), the report demotes identically AND the run exits 2 per C-25 — the report and the exit code agree."
+      inputs:
+        workspace: "Tier 2 spec, ACs AC-01 (failed in results) + AC-02 (passed in results), both annotated"
+        commands_compared: ["coverage --strict", "coverage --strictness threshold", "coverage (manifest strictness: threshold)"]
+      expected_output:
+        report_identical_across_commands: true
+        ac01_demoted_in_all: true
+        zero_tolerance_report_demotes_and_exits_2: true
+      references_constraints: ["C-31"]
+      priority: critical
+
+    - id: AC-37
+      description: "Workspace with annotated tests and NO `.specter-results.json`: `specter coverage --strictness threshold` (and plain `specter coverage` under the manifest default `threshold`) exits non-zero with a message that names the active strictness mode, references `specter ingest`, and offers `--strictness annotation` — and does NOT claim `--strict` was required. `specter coverage --strict` on the same workspace keeps the existing C-20 wording (`--strict requires .specter-results.json`). `specter coverage --strictness annotation` succeeds with no missing-results error."
+      inputs:
+        workspace: "valid specs, annotated tests, NO .specter-results.json"
+        commands: ["coverage --strictness threshold", "coverage (manifest default)", "coverage --strict", "coverage --strictness annotation"]
+      expected_output:
+        strictness_modes_exit_nonzero: true
+        message_names_strictness_mode: true
+        message_mentions_specter_ingest: true
+        message_offers_strictness_annotation: true
+        message_does_not_reference_strict_flag: true
+        strict_flag_keeps_c20_wording: true
+        annotation_mode_no_error: true
+      references_constraints: ["C-31", "C-32"]
+      priority: critical
+
   changelog:
+    - version: "1.15.0"
+      date: "2026-06-11"
+      author: "specter-team"
+      type: minor
+      description: "Strictness wiring parity with sync — add C-31 + C-32 and AC-36/AC-37. Pre-1.15.0 the strict coverage path keyed solely on the `--strict` boolean: `coverage --strictness threshold` (or the manifest default `threshold` with no flags) computed an effective strictness but never routed it into BuildCoverageReportStrict, so it tolerated a missing `.specter-results.json` and counted failed Tier 2/3 annotations as covered, while `sync --strictness threshold` on the same workspace demoted and failed — breaking AC-27's shortcut contract and spec-sync AC-09's parity promise. C-31 routes any effective strictness of `threshold`/`zero-tolerance` through the strict path regardless of source (flag or manifest). C-32 gives the no-flag missing-results failure a mode-aware message mirroring spec-sync C-08 (names the active mode, offers `specter ingest` or `--strictness annotation`), preserving the C-20 wording when `--strict` was explicitly passed. Found during the 2026-06-11 six-finding review (finding 2)."
     - version: "1.14.0"
       date: "2026-05-16"
       author: "specter-team"
