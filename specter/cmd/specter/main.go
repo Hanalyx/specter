@@ -1242,7 +1242,26 @@ func syncCmd() *cobra.Command {
 			}
 			var testContents []specsync.FileContent
 			for _, f := range testFiles {
-				data, _ := os.ReadFile(f)
+				// spec-sync C-10: same per-file size cap as `check --test`
+				// (spec-check C-12). Sync buffers every test file for the
+				// check and coverage phases; an unbounded read is the same
+				// OOM surface the v0.13 H5 fix closed for check, coverage,
+				// and explain. os.Stat first so an oversized file is never
+				// buffered. Skip is per-file (not fatal); emit a stderr
+				// warning naming the file.
+				if info, statErr := os.Stat(f); statErr == nil && info.Size() > checker.MaxTestFileBytes {
+					fmt.Fprintf(os.Stderr,
+						"warn: test file %s exceeds %d byte limit (got %d bytes); skipping\n",
+						f, checker.MaxTestFileBytes, info.Size())
+					continue
+				}
+				data, err := os.ReadFile(f)
+				if err != nil {
+					// spec-sync C-10: unreadable test file — warn and skip
+					// rather than silently appending empty content.
+					fmt.Fprintf(os.Stderr, "warn: could not read test file %s: %v; skipping\n", f, err)
+					continue
+				}
 				testContents = append(testContents, specsync.FileContent{Path: f, Content: string(data)})
 			}
 
@@ -1289,7 +1308,7 @@ func syncCmd() *cobra.Command {
 				CheckTestAnnotations: strict || m.Settings.Strict, // spec-check C-09/AC-12: sync --strict (or settings.strict) routes through
 			})
 
-			// spec-sync C-09: zero-tolerance violations exit with the same
+			// spec-sync C-10: zero-tolerance violations exit with the same
 			// distinct codes `coverage` uses (2 = non-passed annotated AC,
 			// 3 = approval_gate violation), in text and --json modes alike.
 			// Called after output is emitted so machine consumers see the
