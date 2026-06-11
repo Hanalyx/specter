@@ -1,6 +1,6 @@
 spec:
   id: spec-vscode
-  version: "1.6.0"
+  version: "1.7.0"
   status: draft
   tier: 2
 
@@ -322,7 +322,7 @@ spec:
       priority: medium
 
     - id: AC-22
-      description: "Multi-root workspace: each workspace folder has its own SpecterClient, DiagnosticCollection, and manifest. Diagnostics from folder A do not appear in folder B."
+      description: "Multi-root workspace: each workspace folder has its own SpecterClient, DiagnosticCollection, manifest, and coverage report (see AC-54). Diagnostics from folder A do not appear in folder B."
       references_constraints: ["C-06"]
       priority: high
 
@@ -377,7 +377,7 @@ spec:
       priority: high
 
     - id: AC-33
-      description: "Clicking a spec node or a test-file leaf in the Coverage sidebar opens the corresponding file in an editor tab. The spec node uses the path from CoverageReport entries[*].specFile (new in coverage v1.5.0); the test-file leaf uses entry.testFiles[i]. Relative paths emitted by the CLI are resolved against the workspace folder root before being passed to vscode.Uri.file. Previously, test-file leaves rendered as undefined/null (runtime shape mismatch) or passed a relative path straight to Uri.file, which produced a non-existent '/watch_test.go' URI and the 'file not found' editor error."
+      description: "Clicking a spec node or a test-file leaf in the Coverage sidebar opens the corresponding file in an editor tab. The spec node uses the path from CoverageReport entries[*].specFile (new in coverage v1.5.0); the test-file leaf uses entry.testFiles[i]. Relative paths emitted by the CLI are resolved against the OWNING workspace folder — the folder whose coverage run produced the report, specifically the directory of that folder's specter.yaml manifest, which is the CLI's working directory — once, at report-ingestion time, so stored reports carry absolute paths. In a single-folder workspace this is indistinguishable from resolving against the first workspace folder (the pre-1.7.0 behavior); in a multi-root workspace, resolving against the first folder produces URIs inside the wrong folder and is prohibited. Previously, test-file leaves rendered as undefined/null (runtime shape mismatch) or passed a relative path straight to Uri.file, which produced a non-existent '/watch_test.go' URI and the 'file not found' editor error."
       references_constraints: ["C-10"]
       priority: high
 
@@ -539,6 +539,29 @@ spec:
       references_constraints: ["C-29"]
       priority: critical
 
+    - id: AC-54
+      description: "Multi-root workspace: coverage reports are isolated per workspace folder. Folder B's coverage run does not overwrite folder A's report — each folder's report is stored under the same per-folder key as its SpecterClient and DiagnosticCollection. Paths inside a folder's report (entries[*].specFile, entries[*].testFiles[*], parseErrors[*].file) are resolved into the owning folder at ingestion time, so folder B's coverage parse-error diagnostics carry URIs inside folder B — never folder A. Aggregate views (status bar, Coverage sidebar, Insights) render the merged entries and parse errors of all stored reports. Removing a workspace folder removes its report from the store. With a single workspace folder, the merged view is identical to that folder's report — single-root behavior is unchanged."
+      inputs:
+        folder_a: "/ws/alpha (manifest at /ws/alpha/specter.yaml, spec spec-a, parse error in specs/broken.spec.yaml)"
+        folder_b: "/ws/beta (manifest at /ws/beta/specter.yaml, spec spec-b)"
+      expected_output:
+        folder_a_report_survives_folder_b_run: true
+        folder_a_parse_error_uri: "/ws/alpha/specs/broken.spec.yaml"
+        merged_view_contains: ["spec-a", "spec-b"]
+      references_constraints: ["C-05", "C-06"]
+      priority: high
+
+    - id: AC-55
+      description: "Saving a .spec.yaml file re-runs `specter coverage --json` for the saved file's workspace folder and replaces that folder's stored report wholesale — through the same ingestion path the initial activation load uses (path normalization, parse-error diagnostics, status bar and tree refresh). Per-entry splicing is prohibited: the pre-1.7.0 implementation extracted entries[0] of the fresh whole-workspace report and wrote it into the saved spec's slot, corrupting the report (and the status bar and notifications derived from it) whenever the saved spec was not the report's first entry, and pushing duplicate entries when the spec ID matched nothing. Gating the refresh on a `// @spec` slash-comment regex over the saved YAML is likewise prohibited — normal `#`-commented spec files never match that shape, so the refresh only fired (incorrectly) for specs whose prose happened to embed slash-comment examples. The below-threshold notification (AC-18) is evaluated against the fresh report's entry whose specFile matches the saved document's path."
+      inputs:
+        workspace: "specs spec-alpha and spec-zulu; user saves spec-zulu.spec.yaml"
+      expected_output:
+        folder_report_replaced_wholesale: true
+        spec_alpha_entry_overwritten_by_splice: false
+        notification_entry_matched_by: "specFile == saved document path"
+      references_constraints: ["C-04", "C-19"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.1.0"
@@ -557,6 +580,28 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.7.0"
+      date: "2026-06-11"
+      author: "specter-team"
+      type: minor
+      description: >
+        Multi-root coverage isolation + on-save whole-report refresh.
+        Amend AC-33: CLI-emitted relative paths resolve against the OWNING
+        workspace folder (the manifest's directory — the CLI's cwd) once at
+        report-ingestion time, not against the first workspace folder. The
+        prior wording said "the workspace folder root" without naming which
+        folder in a multi-root workspace; the implementation read it as
+        workspaceFolders[0], sending folder B's paths into folder A. Amend
+        AC-22 to name the per-folder coverage report alongside the
+        per-folder client, collection, and manifest. Add AC-54 (per-folder
+        report isolation: folder B's run does not overwrite folder A's
+        report; parse-error diagnostics resolve into the owning folder;
+        aggregate views merge all folders' reports; removing a folder
+        removes its report; single-root behavior unchanged). Add AC-55
+        (saving a spec replaces the saved file's folder report wholesale
+        via the same ingestion path as the initial load; the entries[0]
+        splice and the slash-comment regex trigger are prohibited; the
+        AC-18 notification evaluates the fresh entry matched by specFile).
     - version: "1.6.0"
       date: "2026-04-28"
       author: "specter-team"
