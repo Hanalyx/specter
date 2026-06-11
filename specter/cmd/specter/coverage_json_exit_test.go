@@ -133,6 +133,12 @@ func TestCoverageJsonExit_ThresholdFailure_MatchesTextExitNonzero(t *testing.T) 
 		if err := os.WriteFile(filepath.Join(dir, "t1_test.go"), []byte(testFile), 0644); err != nil {
 			t.Fatal(err)
 		}
+		// C-31: threshold strictness routes the strict path, which requires
+		// a results file before any report (and its JSON) can be built.
+		results := `{"results": [{"spec_id": "tier1-spec", "ac_id": "AC-01", "status": "passed", "test_name": "TestT1"}]}`
+		if err := os.WriteFile(filepath.Join(dir, ".specter-results.json"), []byte(results), 0644); err != nil {
+			t.Fatal(err)
+		}
 
 		out, code := runCLI(t, dir, "coverage", "--json")
 		if code == 0 {

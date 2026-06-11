@@ -150,8 +150,15 @@ export class SpecterClient {
     // The CLI has no --spec filter; specID arg is preserved for API
     // compatibility but currently has no effect. Filter callers-side if needed.
     void specID;
+    // --strictness annotation: the sidebar is a structural coverage view.
+    // Since spec-coverage 1.15.0 (C-31) the manifest default `threshold`
+    // routes plain `coverage` through the strict path, which hard-fails
+    // without .specter-results.json and emits no JSON. Annotation mode
+    // preserves the "JSON document on every run" contract this method is
+    // built on (and is byte-identical to the pre-1.15.0 default path,
+    // including Tier-1 pass-awareness when a results file exists).
     return this.enqueue(signal =>
-      this.runAllowingNonZero(['coverage', '--json'], signal).then(({ stdout }) => {
+      this.runAllowingNonZero(['coverage', '--json', '--strictness', 'annotation'], signal).then(({ stdout }) => {
         // Locate the JSON document — the CLI may print warn-level lines to
         // stderr that execFile sometimes folds into stdout depending on
         // platform. JSON output always begins with '{'.
