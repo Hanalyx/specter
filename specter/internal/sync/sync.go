@@ -32,6 +32,13 @@ type SyncResult struct {
 	CheckResult         *checker.CheckResult                 `json:"check_result,omitempty"`
 	CoverageReport      *coverage.CoverageReport             `json:"coverage_report,omitempty"`
 	DepCoverageWarnings []coverage.DependencyCoverageWarning `json:"dep_coverage_warnings,omitempty"`
+
+	// spec-sync C-09: zero-tolerance violation counts, mirrored from
+	// spec-coverage C-25/C-26. The CLI maps a non-zero
+	// ZeroToleranceNonPassed to exit code 2 and a non-zero
+	// ApprovalGateViolations to exit code 3, matching `coverage`.
+	ZeroToleranceNonPassed int `json:"zero_tolerance_non_passed,omitempty"`
+	ApprovalGateViolations int `json:"approval_gate_violations,omitempty"`
 }
 
 // SyncInput provides spec and test file contents.
@@ -244,12 +251,46 @@ func RunSync(input SyncInput) *SyncResult {
 	}
 	result.CoverageReport = coverageReport
 
+	// spec-sync C-09 / spec-coverage GH #94: under zero-tolerance the
+	// report demotes approval_gate violations so the report and the
+	// exit signal agree — same demotion `coverage` applies.
+	if effectiveStrictness == "zero-tolerance" {
+		coverage.DemoteApprovalGateViolations(coverageReport, specs)
+	}
+
 	// Dependency coverage warnings (C-08 — spec-coverage, not spec-sync)
 	var edges []coverage.DepEdge
 	for _, e := range graph.Edges {
 		edges = append(edges, coverage.DepEdge{From: e.From, To: e.To})
 	}
 	result.DepCoverageWarnings = coverage.CheckDependencyCoverage(edges, coverageReport)
+
+	// spec-sync C-09: zero-tolerance enforces the same two gates as
+	// `coverage` (spec-coverage C-25/C-26), in the same order, BEFORE
+	// the tier-threshold check — a failing annotated AC fails the run
+	// even when the demoted coverage still clears the tier threshold
+	// (the pre-1.4.0 false-green: one passing + one failing AC on a
+	// Tier 3 spec passed at 50%).
+	if effectiveStrictness == "zero-tolerance" {
+		if nonPassed := coverage.CountNonPassed(input.Results); nonPassed > 0 {
+			result.ZeroToleranceNonPassed = nonPassed
+			result.Phases = append(result.Phases, PhaseResult{
+				Phase: "coverage", Passed: false,
+				Message: fmt.Sprintf("zero-tolerance strictness — %d annotated AC(s) did not pass", nonPassed),
+			})
+			result.StoppedAt = "coverage"
+			return result
+		}
+		if gateViolations := coverage.CountApprovalGateViolations(specs); gateViolations > 0 {
+			result.ApprovalGateViolations = gateViolations
+			result.Phases = append(result.Phases, PhaseResult{
+				Phase: "coverage", Passed: false,
+				Message: fmt.Sprintf("zero-tolerance strictness — %d AC(s) carry approval_gate=true with unset approval_date", gateViolations),
+			})
+			result.StoppedAt = "coverage"
+			return result
+		}
+	}
 
 	if coverageReport.Summary.Failing > 0 {
 		result.Phases = append(result.Phases, PhaseResult{

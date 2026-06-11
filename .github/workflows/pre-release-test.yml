@@ -98,10 +98,15 @@ jobs:
         run: bin/specter check
 
       - name: Coverage thresholds
-        run: bin/specter coverage
+        # spec-coverage 1.15.0 C-31: coverage inherits manifest
+        # settings.strictness (default `threshold`), which requires
+        # .specter-results.json — same routing as sync below. Explicit
+        # --strictness annotation keeps this step independent of the
+        # results file.
+        run: bin/specter coverage --strictness annotation
 
       - name: Full sync gate
-        # v0.13 spec-sync 1.2.0 C-06/C-07: sync inherits manifest's
+        # spec-sync C-06/C-07: sync inherits manifest's
         # settings.strictness (default `threshold`), which under C-08
         # requires .specter-results.json. This Tier 2 gate is the
         # lightweight non-strict variant; Tier 1 (make dogfood-strict

@@ -1,6 +1,6 @@
 spec:
   id: spec-sync
-  version: "1.3.0"
+  version: "1.4.0"
   status: approved
   tier: 2
 
@@ -76,6 +76,11 @@ spec:
     - id: C-08
       description: "Under any strict mode, if `.specter-results.json` is missing, `sync`'s coverage phase MUST fail with a message that (a) names the active strictness mode (`threshold` or `zero-tolerance`) and (b) directs the operator to EITHER run `specter ingest` first OR use `--strictness annotation` for structural coverage. The message MUST NOT attribute the requirement to a `--strict` flag: in `sync` the strictness usually comes from the manifest default rather than an explicit flag, so the `coverage --strict` wording (`--strict requires .specter-results.json`) — correct for `coverage --strict`, where the operator did pass `--strict` — misdirects the fix here. Under `annotation` mode (or when no strict flag is set), missing results is NOT an error — the manifest-level annotation-counting path proceeds."
       type: technical
+      enforcement: error
+
+    - id: C-09
+      description: "Under an effective strictness of `zero-tolerance`, sync's coverage phase MUST enforce the same two zero-tolerance gates `coverage` enforces (spec-coverage C-25/C-26), in the same order: (a) any annotated AC with a results-file status other than `passed` fails the coverage phase and the process exits with code 2, even when every spec meets its tier coverage threshold; (b) any AC carrying `approval_gate: true` with an unset `approval_date` is demoted in the coverage report (spec-coverage GH #94 semantics — the report and the exit signal agree) and, when no code-2 violation is present, the process exits with code 3. Both gates apply identically under `--json` (mirroring spec-coverage C-29's text/JSON exit parity). C-03's contract is unchanged — exit 0 still means all phases passed; codes 2 and 3 refine the failure exit so CI can distinguish violation classes exactly as it can with `coverage`. Rationale: pre-1.4.0, sync routed zero-tolerance through the strict report path but gated only on tier thresholds (Summary.Failing), so a Tier 3 spec with one passing and one failing annotated AC passed sync at 50% while `coverage --strictness zero-tolerance` exited 2 on the same workspace — a false-green in the primary CI command, contradicting C-06 and AC-09."
+      type: business
       enforcement: error
 
   depends_on:
@@ -188,7 +193,40 @@ spec:
       references_constraints: ["C-06", "C-08"]
       priority: high
 
+    - id: AC-12
+      description: "Tier 3 spec with two annotated ACs where `.specter-results.json` marks AC-01 `passed` and AC-02 `failed`: `specter sync --strictness zero-tolerance` fails the coverage phase and exits with code 2, even though 50% coverage meets the Tier 3 threshold. The phase message names the zero-tolerance violation (not a threshold failure). `specter coverage --strictness zero-tolerance` on the same workspace also exits 2 — the two commands agree. Under `--strictness threshold`, the same workspace passes sync (demoted coverage 50% meets the Tier 3 threshold of 50%)."
+      inputs:
+        workspace: "Tier 3 spec, ACs AC-01 (passed) + AC-02 (failed in results), both annotated"
+        commands: ["sync --strictness zero-tolerance", "sync --strictness zero-tolerance --json", "coverage --strictness zero-tolerance"]
+      expected_output:
+        sync_exit_code: 2
+        json_exit_code: 2
+        phase_message_names_zero_tolerance: true
+        matches_coverage_exit: true
+        threshold_mode_passes: true
+      references_constraints: ["C-06", "C-09"]
+      priority: critical
+
+    - id: AC-13
+      description: "Workspace where every annotated AC's test passed but one AC carries `approval_gate: true` with an unset `approval_date`: `specter sync --strictness zero-tolerance` demotes that AC in the coverage report, fails the coverage phase, and exits with code 3. `specter coverage --strictness zero-tolerance` on the same workspace also exits 3. Under `--strictness threshold`, `approval_gate` remains metadata-only and sync passes."
+      inputs:
+        workspace: "spec with AC-01 approval_gate: true, no approval_date; results mark AC-01 passed"
+        commands: ["sync --strictness zero-tolerance", "sync --strictness zero-tolerance --json", "coverage --strictness zero-tolerance"]
+      expected_output:
+        sync_exit_code: 3
+        json_exit_code: 3
+        report_demotes_gated_ac: true
+        matches_coverage_exit: true
+        threshold_mode_passes: true
+      references_constraints: ["C-07", "C-09"]
+      priority: critical
+
   changelog:
+    - version: "1.4.0"
+      date: "2026-06-11"
+      author: "specter-team"
+      type: minor
+      description: "Add C-09 + AC-12/AC-13 — close the zero-tolerance false-green gap. Pre-1.4.0, sync routed `zero-tolerance` through BuildCoverageReportStrict (C-07) but its only coverage gate was the tier-threshold check (Summary.Failing > 0): a Tier 3 spec with one passing and one failing annotated AC passed sync at 50% while `coverage --strictness zero-tolerance` exited 2 on the same workspace, and approval_gate violations (spec-coverage C-26) were never checked or demoted in sync at all. C-09 requires sync's coverage phase to enforce both zero-tolerance gates with the same exit codes (2 for non-passed annotated ACs, 3 for approval_gate violations), the same report demotion, and the same text/JSON parity as coverage — making AC-09's 'same exit semantics' explicit and mechanical. Found during the 2026-06-11 six-finding review (finding 1)."
     - version: "1.3.0"
       date: "2026-06-10"
       author: "specter-team"
