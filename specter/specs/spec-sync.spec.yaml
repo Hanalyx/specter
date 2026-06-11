@@ -1,6 +1,6 @@
 spec:
   id: spec-sync
-  version: "1.4.0"
+  version: "1.5.0"
   status: approved
   tier: 2
 
@@ -81,6 +81,11 @@ spec:
     - id: C-09
       description: "Under an effective strictness of `zero-tolerance`, sync's coverage phase MUST enforce the same two zero-tolerance gates `coverage` enforces (spec-coverage C-25/C-26), in the same order: (a) any annotated AC with a results-file status other than `passed` fails the coverage phase and the process exits with code 2, even when every spec meets its tier coverage threshold; (b) any AC carrying `approval_gate: true` with an unset `approval_date` is demoted in the coverage report (spec-coverage GH #94 semantics — the report and the exit signal agree) and, when no code-2 violation is present, the process exits with code 3. Both gates apply identically under `--json` (mirroring spec-coverage C-29's text/JSON exit parity). C-03's contract is unchanged — exit 0 still means all phases passed; codes 2 and 3 refine the failure exit so CI can distinguish violation classes exactly as it can with `coverage`. Rationale: pre-1.4.0, sync routed zero-tolerance through the strict report path but gated only on tier thresholds (Summary.Failing), so a Tier 3 spec with one passing and one failing annotated AC passed sync at 50% while `coverage --strictness zero-tolerance` exited 2 on the same workspace — a false-green in the primary CI command, contradicting C-06 and AC-09."
       type: business
+      enforcement: error
+
+    - id: C-10
+      description: "Sync's test-file discovery MUST apply the same per-file size cap as `check --test` (spec-check C-12, `checker.MaxTestFileBytes`, 4 MiB). Each discovered test file is stat-guarded BEFORE it is read — an oversized file is never buffered into memory. A file over the cap is skipped per-file with a stderr warning naming the file, the limit, and the actual size; the skip MUST NOT fail the run. A test file that cannot be read (I/O error) is likewise skipped with a stderr warning, not fatal. Spec files are exempt: neither `check` nor `coverage` caps spec-file reads, and sync matches that parity."
+      type: technical
       enforcement: error
 
   depends_on:
@@ -221,7 +226,25 @@ spec:
       references_constraints: ["C-07", "C-09"]
       priority: critical
 
+    - id: AC-14
+      description: "A discovered test file larger than `checker.MaxTestFileBytes` (4 MiB) is skipped by `sync` with a stderr warning that names the file and contains `exceeds` and `skipping`; the file is never read into memory. The run does not fail because of the skip: sync exits 0 and the coverage phase counts annotations from the remaining (in-cap) test files."
+      inputs:
+        workspace: "valid spec with AC-01, one test file > 4 MiB, one small test file annotating AC-01"
+        command: "specter sync --strictness annotation"
+      expected_output:
+        exit_code: 0
+        warning_names_oversized_file: true
+        warning_contains: ["exceeds", "skipping"]
+        coverage_counts_remaining_files: true
+      references_constraints: ["C-10"]
+      priority: high
+
   changelog:
+    - version: "1.5.0"
+      date: "2026-06-11"
+      author: "specter-team"
+      type: minor
+      description: "Add C-10/AC-14: sync's test-file discovery applies the same per-file size cap as `check --test` (spec-check C-12, checker.MaxTestFileBytes, 4 MiB) — stat-guard before read, skip oversized files per-file with a stderr warning, never fail the run on the skip. Also: unreadable test files warn and skip instead of being silently ignored. Closes the gap left by the v0.13 hardening commit (8b76961), which guarded check, coverage, and explain but never touched sync's read loop — a large test artifact could OOM the primary CI command. Spec files remain uncapped, matching check/coverage parity."
     - version: "1.4.0"
       date: "2026-06-11"
       author: "specter-team"
