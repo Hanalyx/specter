@@ -230,7 +230,7 @@ specter coverage [--json] [--failing] [--strict] [--scope <domain>] [--tests <gl
 | `--failing` | — | Show only specs below 100% coverage in the table. Summary header still reflects the full report. When all specs are at 100%, emits a single-line confirmation instead of an empty table. Added in v0.9.2. |
 | `--strict` | — | Require `.specter-results.json` and treat any annotated AC whose status is not `passed` as uncovered, across **all tiers**. Missing file is a hard failure; empty file emits a warning and proceeds. Pairs with `specter ingest`. Added in v0.10. |
 | `--scope <domain>` | — | Narrow `--strict`'s demand to ACs of specs in the named `specter.yaml` domain. Specs outside the domain fall back to v0.9 boolean-passed logic. Enables staged adoption. Requires `--strict`; unknown domain fails fast. Added in v0.10. |
-| `--strictness <level>` | manifest setting | Override `settings.strictness`. Values: `annotation`, `threshold`, `zero-tolerance`. |
+| `--strictness <level>` | manifest setting | Override `settings.strictness`. Values: `annotation`, `threshold`, `zero-tolerance`. `threshold` and `zero-tolerance` route through the same strict path as `--strict` — `.specter-results.json` is required (the error names the active mode and offers both remedies) and non-passed annotated ACs demote across all tiers. Because the manifest default is `threshold`, plain `specter coverage` behaves strictly unless `settings.strictness: annotation` is set. `annotation` keeps structural annotation counting. `--strict` is the backwards-compatible shortcut for `--strictness threshold`. |
 | `--tests <glob>` | auto-discover | Glob pattern for test files. Default discovers `*.test.ts`, `*.test.js`, `*.test.py`, `*_test.go`, `*_test.py`. |
 | `--quiet` | — | Suppress per-AC source-only hints under `--strict`. JSON output still includes `diagnostic_hints`. |
 
@@ -434,6 +434,8 @@ When specs fail to parse, the report carries a `parse_errors` array and a groupe
 **Exit codes:**
 - `0` — all specs parsed AND all meet their coverage thresholds
 - `1` — one or more specs failed to parse, OR one or more specs are below threshold
+- `2` — zero-tolerance strictness: an annotated AC has a results-file status other than `passed`
+- `3` — zero-tolerance strictness: an AC carries `approval_gate: true` with an unset `approval_date`
 
 **Consuming the JSON programmatically:**
 
@@ -495,7 +497,7 @@ All checks passed.
   run: specter sync
 ```
 
-**Exit codes:** `0` = all phases pass. `1` = any phase fails.
+**Exit codes:** `0` = all phases pass. `1` = any phase fails. Under `--strictness zero-tolerance`, the coverage phase refines the failure exit to match `coverage`: `2` = an annotated AC did not pass, `3` = `approval_gate: true` with unset `approval_date`.
 
 ---
 

@@ -46,6 +46,13 @@ func TestCoverage_JSON_EmitsReportOnParseFailure(t *testing.T) {
       priority: high
 `
 		writeSpec(t, dir, "broken.spec.yaml", broken)
+		// C-31: the manifest default `threshold` routes the strict path,
+		// which hard-fails on a missing results file before the report is
+		// built. This test pins the parse-failure JSON contract (C-10), so
+		// satisfy the results-file precondition with an empty-but-valid file.
+		if err := os.WriteFile(filepath.Join(dir, ".specter-results.json"), []byte(`{"results": []}`), 0644); err != nil {
+			t.Fatal(err)
+		}
 
 		out, code := runCLI(t, dir, "coverage", "--json")
 		if code == 0 {
@@ -112,6 +119,11 @@ func TestCoverage_JSON_SpecCandidatesCount(t *testing.T) {
 `
 		writeSpec(t, dir, "one.spec.yaml", broken)
 		writeSpec(t, dir, "two.spec.yaml", broken)
+		// C-31: satisfy the strict path's results-file precondition (see
+		// TestCoverage_JSON_EmitsReportOnParseFailure).
+		if err := os.WriteFile(filepath.Join(dir, ".specter-results.json"), []byte(`{"results": []}`), 0644); err != nil {
+			t.Fatal(err)
+		}
 
 		out, code := runCLI(t, dir, "coverage", "--json")
 		if code == 0 {
@@ -161,6 +173,11 @@ func TestCoverage_JSON_ParseErrorPatterns(t *testing.T) {
 `
 		writeSpec(t, dir, "a.spec.yaml", broken)
 		writeSpec(t, dir, "b.spec.yaml", broken)
+		// C-31: satisfy the strict path's results-file precondition (see
+		// TestCoverage_JSON_EmitsReportOnParseFailure).
+		if err := os.WriteFile(filepath.Join(dir, ".specter-results.json"), []byte(`{"results": []}`), 0644); err != nil {
+			t.Fatal(err)
+		}
 
 		out, _ := runCLI(t, dir, "coverage", "--json")
 		start := strings.Index(out, "{")
@@ -188,7 +205,7 @@ func TestCoverage_JSON_HappyPath(t *testing.T) {
 		dir := t.TempDir()
 		writeSpec(t, dir, "good.spec.yaml", minimalValidSpec("good-spec", 3))
 
-		out, _ := runCLI(t, dir, "coverage", "--json")
+		out, _ := runCLI(t, dir, "coverage", "--strictness", "annotation", "--json")
 
 		start := strings.Index(out, "{")
 		end := strings.LastIndex(out, "}")
@@ -221,7 +238,7 @@ func TestCoverage_Table_HasSummaryHeader(t *testing.T) {
 		writeSpec(t, dir, "alpha.spec.yaml", minimalValidSpec("alpha", 2, "AC-01"))
 		writeSpec(t, dir, "beta.spec.yaml", minimalValidSpec("beta", 3, "AC-01"))
 
-		out, _ := runCLI(t, dir, "coverage")
+		out, _ := runCLI(t, dir, "coverage", "--strictness", "annotation")
 
 		// Header must include the em-dash form AND the spec count.
 		if !strings.Contains(out, "Spec Coverage Report — 2 specs") {
@@ -262,7 +279,7 @@ func TestCoverage_Table_SortsWorstFirst(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		out, _ := runCLI(t, dir, "coverage")
+		out, _ := runCLI(t, dir, "coverage", "--strictness", "annotation")
 
 		// The failing spec must appear before the complete spec in the output.
 		failingIdx := strings.Index(out, "failing-t2")
@@ -296,7 +313,7 @@ func TestCoverage_Failing_HidesPassingEntries(t *testing.T) {
 		// failing: no annotations, 0% covered
 		writeSpec(t, dir, "failing.spec.yaml", minimalValidSpec("failing", 2, "AC-01"))
 
-		out, _ := runCLI(t, dir, "coverage", "--failing")
+		out, _ := runCLI(t, dir, "coverage", "--strictness", "annotation", "--failing")
 
 		// Must still print the summary header (reflects full report).
 		if !strings.Contains(out, "Spec Coverage Report") {
@@ -338,7 +355,7 @@ func TestCoverage_Failing_AllPassing_SingleLine(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		out, _ := runCLI(t, dir, "coverage", "--failing")
+		out, _ := runCLI(t, dir, "coverage", "--strictness", "annotation", "--failing")
 		if !strings.Contains(out, "All 2 specs at 100% coverage.") {
 			t.Errorf("expected single-line confirmation, got:\n%s", out)
 		}
@@ -360,7 +377,7 @@ func TestCoverage_Table_TruncatesLongSpecIDs(t *testing.T) {
 		writeSpec(t, dir, "long.spec.yaml", minimalValidSpec(longID, 2, "AC-01"))
 
 		// Table output MUST contain a truncated form, with an ellipsis.
-		tableOut, _ := runCLI(t, dir, "coverage")
+		tableOut, _ := runCLI(t, dir, "coverage", "--strictness", "annotation")
 		if !strings.Contains(tableOut, "…") {
 			t.Errorf("expected ellipsis in truncated output; got:\n%s", tableOut)
 		}
@@ -369,7 +386,7 @@ func TestCoverage_Table_TruncatesLongSpecIDs(t *testing.T) {
 		}
 
 		// JSON output MUST contain the full ID unchanged.
-		jsonOut, _ := runCLI(t, dir, "coverage", "--json")
+		jsonOut, _ := runCLI(t, dir, "coverage", "--strictness", "annotation", "--json")
 		if !strings.Contains(jsonOut, longID) {
 			t.Errorf("--json output must contain full spec ID, got:\n%s", jsonOut)
 		}
@@ -418,7 +435,7 @@ func TestCoverage_Strict_FailedResultDemotesTier2(t *testing.T) {
 		_ = os.WriteFile(filepath.Join(dir, ".specter-results.json"), []byte(results), 0644)
 
 		// Non-strict: tier 2 annotation alone counts as covered → passes.
-		out, code := runCLI(t, dir, "coverage", "--tests", "tests/*_test.go")
+		out, code := runCLI(t, dir, "coverage", "--strictness", "annotation", "--tests", "tests/*_test.go")
 		if code != 0 {
 			t.Fatalf("non-strict should pass (tier 2 annotation-only); got exit=%d\n%s", code, out)
 		}

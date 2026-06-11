@@ -76,13 +76,19 @@ build-all:
 	GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.version=$(VERSION)" -o $(BINARY)-darwin-arm64 ./cmd/specter/
 	GOOS=windows GOARCH=amd64 go build -ldflags "-X main.version=$(VERSION)" -o $(BINARY)-windows-amd64.exe ./cmd/specter/
 
-# Run specter against its own specs (full pipeline)
+# Run specter against its own specs (full pipeline).
+# This is the lightweight annotation-counting gate: coverage and sync run
+# with --strictness annotation so the target stays independent of
+# .specter-results.json (the manifest default `threshold` routes both
+# commands through the strict path, which requires the results file —
+# spec-coverage C-31 / spec-sync C-06). The strict-pipeline variant is
+# `make dogfood-strict` below.
 dogfood: build
 	./$(BINARY) parse specs/*.spec.yaml
 	./$(BINARY) resolve
 	./$(BINARY) check
-	./$(BINARY) coverage
-	./$(BINARY) sync
+	./$(BINARY) coverage --strictness annotation
+	./$(BINARY) sync --strictness annotation
 
 # Mechanical eval gate — Specter dogfoods its own --strict on itself.
 # Runs go test -json and jest (with jest-junit reporter), feeds both

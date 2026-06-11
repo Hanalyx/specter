@@ -57,15 +57,15 @@ jobs:
           bin/specter parse specs/*.spec.yaml
           bin/specter resolve
           bin/specter check
-          bin/specter coverage
-          # v0.13 spec-sync 1.2.0 C-06/C-07: sync inherits manifest's
-          # settings.strictness (default `threshold`), which under
-          # C-08 requires .specter-results.json. This lightweight gate
-          # validates the spec graph + non-strict coverage path;
+          # spec-coverage 1.15.0 C-31 / spec-sync C-06: both coverage and
+          # sync inherit manifest settings.strictness (default `threshold`),
+          # which requires .specter-results.json. This lightweight gate
+          # validates the spec graph + annotation-counting coverage path;
           # `make dogfood-strict` below covers the strict-pipeline
           # variant via ingest → coverage --strict. Explicit
-          # `--strictness annotation` keeps this step independent of
+          # `--strictness annotation` keeps these steps independent of
           # the results file.
+          bin/specter coverage --strictness annotation
           bin/specter sync --strictness annotation
 
       # Mechanical eval gate: jest + go test -json → ingest → coverage --strict.

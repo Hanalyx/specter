@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -911,9 +912,20 @@ func coverageCmd() *cobra.Command {
 				return errSilent
 			}
 
-			// C-27: empty test discovery under --strict surfaces a warning.
-			// Under zero-tolerance, the warning becomes a hard error.
-			if strict && len(allAnnotations) == 0 {
+			// C-31: the strict path keys on the EFFECTIVE strictness, not
+			// just the --strict boolean. `--strictness threshold` (or the
+			// manifest default `threshold`, per spec-manifest C-24) routes
+			// through BuildCoverageReportStrict exactly as --strict does —
+			// the same routing sync's coverage phase uses (spec-sync C-07).
+			// Pre-1.15.0 this keyed solely on the flag, so `--strictness
+			// threshold` silently tolerated missing results and counted
+			// failed Tier 2/3 annotations as covered while `sync` failed
+			// the same workspace.
+			strictPath := strict || effectiveStrictness == "threshold" || effectiveStrictness == "zero-tolerance"
+
+			// C-27: empty test discovery under the strict path surfaces a
+			// warning. Under zero-tolerance, the warning becomes a hard error.
+			if strictPath && len(allAnnotations) == 0 {
 				fmt.Fprintln(os.Stderr, "warn: no test files contained @spec/@ac annotations — coverage will report 0% for every spec")
 				fmt.Fprintln(os.Stderr, "      set settings.tests_glob in specter.yaml or pass --tests <glob>")
 				if effectiveStrictness == "zero-tolerance" {
@@ -958,14 +970,23 @@ func coverageCmd() *cobra.Command {
 			// failure — warn the operator about the likely cause (tests
 			// without runner-visible annotations) and point at the
 			// conventions doc BEFORE the report prints.
-			if strict && results != nil && len(results.Results) == 0 {
+			if strictPath && results != nil && len(results.Results) == 0 {
 				fmt.Fprintln(os.Stderr, "warn: no (spec_id, ac_id) pairs were extracted from test output — tests likely don't carry runner-visible annotations")
 				fmt.Fprintln(os.Stderr, "      see docs/explainer/v0.10-ci-gated-coverage.md, Conventions A and B")
 			}
 
-			report, strictErr := coverage.BuildCoverageReportStrict(specs, allAnnotations, m.CoverageThresholds(), results, strict, scopedSpecs)
+			report, strictErr := coverage.BuildCoverageReportStrict(specs, allAnnotations, m.CoverageThresholds(), results, strictPath, scopedSpecs)
 			if strictErr != nil {
-				fmt.Fprintf(os.Stderr, "error: %s\n", strictErr.Error())
+				// C-32: when the strict path came from --strictness or the
+				// manifest (not the --strict flag), the missing-results
+				// failure names the active strictness mode and offers both
+				// remedies — mirroring spec-sync C-08. The C-20 wording is
+				// preserved when the operator explicitly passed --strict.
+				msg := strictErr.Error()
+				if errors.Is(strictErr, coverage.ErrMissingResults) && !strict {
+					msg = fmt.Sprintf("strictness %q requires .specter-results.json — run 'specter ingest' first, or use --strictness annotation for structural coverage", effectiveStrictness)
+				}
+				fmt.Fprintf(os.Stderr, "error: %s\n", msg)
 				return errSilent
 			}
 			report.ParseErrors = parseErrors
@@ -981,7 +1002,7 @@ func coverageCmd() *cobra.Command {
 			// cause that v0.10's mechanical demotion otherwise leaves silent.
 			// Always populate report.DiagnosticHints so --json carries them;
 			// stderr printing happens later under non-json + non-quiet.
-			if strict {
+			if strictPath {
 				report.DiagnosticHints = coverage.DiagnoseSourceOnlyACs(allAnnotations, results, specs)
 			}
 
@@ -1014,7 +1035,7 @@ func coverageCmd() *cobra.Command {
 			// recompute CoveragePct + PassesThreshold per entry, recompute
 			// Summary.Passing / Summary.Failing.
 			if effectiveStrictness == "zero-tolerance" {
-				demoteApprovalGateViolations(report, specs)
+				coverage.DemoteApprovalGateViolations(report, specs)
 			}
 
 			// C-10: --json emits the report in every state, including when
@@ -1041,27 +1062,11 @@ func coverageCmd() *cobra.Command {
 				// downstream CI consumers that distinguish violation
 				// classes.
 				if effectiveStrictness == "zero-tolerance" {
-					if results != nil {
-						nonPassed := 0
-						for _, r := range results.Results {
-							if r.Status != "" && r.Status != "passed" {
-								nonPassed++
-							}
-						}
-						if nonPassed > 0 {
-							fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d annotated AC(s) did not pass\n", nonPassed)
-							os.Exit(2)
-						}
+					if nonPassed := coverage.CountNonPassed(results); nonPassed > 0 {
+						fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d annotated AC(s) did not pass\n", nonPassed)
+						os.Exit(2)
 					}
-					gateViolations := 0
-					for _, s := range specs {
-						for _, ac := range s.AcceptanceCriteria {
-							if ac.ApprovalGate && ac.ApprovalDate == "" {
-								gateViolations++
-							}
-						}
-					}
-					if gateViolations > 0 {
+					if gateViolations := coverage.CountApprovalGateViolations(specs); gateViolations > 0 {
 						fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d AC(s) carry approval_gate=true with unset approval_date\n", gateViolations)
 						os.Exit(3)
 					}
@@ -1092,7 +1097,7 @@ func coverageCmd() *cobra.Command {
 			// AC-31 / AC-33: per-AC source-only hints are printed to stderr
 			// ABOVE the table when --strict is on, --quiet is off, and we're
 			// not in --json mode (JSON consumers see them in DiagnosticHints).
-			if strict && !quiet && len(report.DiagnosticHints) > 0 {
+			if strictPath && !quiet && len(report.DiagnosticHints) > 0 {
 				for _, h := range report.DiagnosticHints {
 					loc := h.File
 					if h.Line > 0 {
@@ -1173,27 +1178,11 @@ func coverageCmd() *cobra.Command {
 			// C-26 / AC-29: zero-tolerance also fails on approval_gate=true with
 			// unset approval_date. Exit code 3 distinguishes approval-gate violation.
 			if effectiveStrictness == "zero-tolerance" {
-				if results != nil {
-					nonPassed := 0
-					for _, r := range results.Results {
-						if r.Status != "" && r.Status != "passed" {
-							nonPassed++
-						}
-					}
-					if nonPassed > 0 {
-						fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d annotated AC(s) did not pass\n", nonPassed)
-						os.Exit(2)
-					}
+				if nonPassed := coverage.CountNonPassed(results); nonPassed > 0 {
+					fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d annotated AC(s) did not pass\n", nonPassed)
+					os.Exit(2)
 				}
-				gateViolations := 0
-				for _, s := range specs {
-					for _, ac := range s.AcceptanceCriteria {
-						if ac.ApprovalGate && ac.ApprovalDate == "" {
-							gateViolations++
-						}
-					}
-				}
-				if gateViolations > 0 {
+				if gateViolations := coverage.CountApprovalGateViolations(specs); gateViolations > 0 {
 					fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d AC(s) carry approval_gate=true with unset approval_date\n", gateViolations)
 					os.Exit(3)
 				}
@@ -1210,7 +1199,7 @@ func coverageCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&failingOnly, "failing", false, "Show only specs below 100% coverage in the table (summary header still reflects the full report)")
 	cmd.Flags().BoolVar(&strict, "strict", false, "Require .specter-results.json and treat any non-passed annotated AC as uncovered (all tiers)")
 	cmd.Flags().StringVar(&scope, "scope", "", "Narrow --strict demand to specs in the named domain from specter.yaml (specs outside the domain fall back to v0.9 boolean-passed logic). Requires --strict.")
-	cmd.Flags().StringVar(&strictnessFlag, "strictness", "", "Override settings.strictness in specter.yaml (annotation | threshold | zero-tolerance)")
+	cmd.Flags().StringVar(&strictnessFlag, "strictness", "", "Override settings.strictness in specter.yaml (annotation | threshold | zero-tolerance). threshold and zero-tolerance route through the same strict path as --strict; --strict is a shortcut for --strictness threshold.")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress per-AC source-only hints under --strict (the diagnostic_hints array still appears in --json output)")
 	return cmd
 }
@@ -1300,6 +1289,22 @@ func syncCmd() *cobra.Command {
 				CheckTestAnnotations: strict || m.Settings.Strict, // spec-check C-09/AC-12: sync --strict (or settings.strict) routes through
 			})
 
+			// spec-sync C-09: zero-tolerance violations exit with the same
+			// distinct codes `coverage` uses (2 = non-passed annotated AC,
+			// 3 = approval_gate violation), in text and --json modes alike.
+			// Called after output is emitted so machine consumers see the
+			// structured state before the exit (spec-coverage C-29 pattern).
+			zeroToleranceExit := func() {
+				if result.ZeroToleranceNonPassed > 0 {
+					fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d annotated AC(s) did not pass\n", result.ZeroToleranceNonPassed)
+					os.Exit(2)
+				}
+				if result.ApprovalGateViolations > 0 {
+					fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d AC(s) carry approval_gate=true with unset approval_date\n", result.ApprovalGateViolations)
+					os.Exit(3)
+				}
+			}
+
 			if jsonOutput {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
@@ -1309,6 +1314,7 @@ func syncCmd() *cobra.Command {
 					"stopped_at": result.StoppedAt,
 				})
 				if !result.Passed {
+					zeroToleranceExit()
 					return errSilent
 				}
 				return nil
@@ -1335,6 +1341,7 @@ func syncCmd() *cobra.Command {
 				fmt.Println("All checks passed.")
 			} else {
 				fmt.Printf("Pipeline failed at %s phase.\n", result.StoppedAt)
+				zeroToleranceExit()
 				return errSilent
 			}
 			return nil
@@ -1883,77 +1890,6 @@ func runInitAI(tool string) error {
 		fmt.Println("Detected existing AGENTS.md — CLAUDE.md uses @AGENTS.md import to avoid duplicating the template.")
 	}
 	return nil
-}
-
-// demoteApprovalGateViolations is the v0.11.1 fix for GH #94. Under
-// strictness=zero-tolerance, an AC with approval_gate: true and unset
-// approval_date is a demotion — it must show up in the report as
-// uncovered, not just trigger the exit-3 code path. Walks the report
-// in place: moves violating ACs from CoveredACs to UncoveredACs,
-// recomputes per-entry CoveragePct + PassesThreshold, and recomputes
-// Summary.Passing / Summary.Failing.
-//
-// v0.11.0 emitted the exit code but left the report identical to
-// threshold mode — operator-visible report stayed PASS while the run
-// exited 3. This function aligns the report with the exit signal.
-func demoteApprovalGateViolations(report *coverage.CoverageReport, specs []schema.SpecAST) {
-	// Build (specID → set of AC IDs to demote) from the spec AST.
-	violations := make(map[string]map[string]bool)
-	for i := range specs {
-		s := &specs[i]
-		var demoted map[string]bool
-		for _, ac := range s.AcceptanceCriteria {
-			if ac.ApprovalGate && ac.ApprovalDate == "" {
-				if demoted == nil {
-					demoted = make(map[string]bool)
-				}
-				demoted[ac.ID] = true
-			}
-		}
-		if demoted != nil {
-			violations[s.ID] = demoted
-		}
-	}
-	if len(violations) == 0 {
-		return
-	}
-
-	// Walk report entries and demote.
-	report.Summary.Passing = 0
-	report.Summary.Failing = 0
-	for i := range report.Entries {
-		e := &report.Entries[i]
-		demoted := violations[e.SpecID]
-		if demoted == nil {
-			if e.PassesThreshold {
-				report.Summary.Passing++
-			} else {
-				report.Summary.Failing++
-			}
-			continue
-		}
-		var keptCovered []string
-		for _, acID := range e.CoveredACs {
-			if demoted[acID] {
-				e.UncoveredACs = append(e.UncoveredACs, acID)
-				continue
-			}
-			keptCovered = append(keptCovered, acID)
-		}
-		e.CoveredACs = keptCovered
-		if e.TotalACs > 0 {
-			e.CoveragePct = float64(len(e.CoveredACs)) * 100 / float64(e.TotalACs)
-		} else {
-			e.CoveragePct = 0
-		}
-		// PassesThreshold uses the per-tier threshold the entry was built with.
-		e.PassesThreshold = int(e.CoveragePct) >= e.Threshold
-		if e.PassesThreshold {
-			report.Summary.Passing++
-		} else {
-			report.Summary.Failing++
-		}
-	}
 }
 
 // extractFencedBody pulls the in-fence body out of a freshly-rendered template,
