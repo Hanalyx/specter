@@ -92,6 +92,163 @@ export function resolveWorkspacePathPure(
 }
 
 // ---------------------------------------------------------------------------
+// AC-33 / AC-54: ingestion-time path normalization + per-folder report store
+// ---------------------------------------------------------------------------
+
+/**
+ * Injectable path operations so the helpers below stay platform-agnostic
+ * in tests (POSIX semantics) while the production caller passes node's
+ * `path.resolve` / `path.isAbsolute`. Same convention as
+ * resolveWorkspacePathPure.
+ */
+export interface PathOps {
+  resolve: (base: string, p: string) => string;
+  isAbsolute: (p: string) => boolean;
+}
+
+/**
+ * AC-33 (v1.7.0): resolve every CLI-emitted relative path in a coverage
+ * report — entries[*].specFile, entries[*].testFiles[*], and
+ * parseErrors[*].file — against the OWNING folder's root (the manifest's
+ * directory, which is the CLI's cwd), once, at report-ingestion time.
+ * Stored reports therefore carry absolute paths and downstream consumers
+ * (sidebar click-to-open, hover, parse-error diagnostics, Insights) need
+ * no folder context. Absolute paths pass through untouched, so the
+ * first-folder fallback in resolveWorkspacePath becomes a no-op.
+ *
+ * Pure: returns a new report, never mutates the input. Defensive against
+ * the Go CLI's `omitempty` nulls (testFiles/entries may be null at
+ * runtime despite the TypeScript types).
+ */
+export function normalizeReportPaths(
+  report: CoverageReport,
+  folderRoot: string,
+  ops: PathOps,
+): CoverageReport {
+  const abs = (p: string): string =>
+    p && !ops.isAbsolute(p) ? ops.resolve(folderRoot, p) : p;
+
+  return {
+    ...report,
+    entries: (report.entries ?? []).map(e => ({
+      ...e,
+      specFile: e.specFile ? abs(e.specFile) : e.specFile,
+      testFiles: e.testFiles ? e.testFiles.map(abs) : e.testFiles,
+    })),
+    parseErrors: report.parseErrors
+      ? report.parseErrors.map(pe => ({ ...pe, file: abs(pe.file) }))
+      : report.parseErrors,
+  };
+}
+
+/**
+ * AC-54 (v1.7.0): per-workspace-folder coverage reports, keyed the same
+ * way as the per-folder SpecterClient / DiagnosticCollection maps. Fixes
+ * the multi-root bug where a single module-global report meant the last
+ * folder's coverage run silently overwrote every other folder's.
+ *
+ * Reports are normalized via normalizeReportPaths at set() time, so
+ * everything read back from the store carries absolute paths rooted in
+ * the owning folder.
+ */
+export class CoverageReportStore {
+  private readonly reports = new Map<string, CoverageReport>();
+
+  constructor(private readonly ops: PathOps) {}
+
+  /** Normalize against the owning folder root (AC-33), then store (AC-54). */
+  set(key: string, report: CoverageReport, folderRoot: string): void {
+    this.reports.set(key, normalizeReportPaths(report, folderRoot, this.ops));
+  }
+
+  get(key: string): CoverageReport | undefined {
+    return this.reports.get(key);
+  }
+
+  /** Folder removed from the workspace — drop its report (AC-54). */
+  delete(key: string): void {
+    this.reports.delete(key);
+  }
+
+  get size(): number {
+    return this.reports.size;
+  }
+
+  /**
+   * Aggregate view for the status bar, Coverage sidebar, and Insights.
+   * Single-folder workspaces get their stored report back by identity —
+   * byte-for-byte the pre-1.7.0 single-root behavior. Returns null when
+   * nothing is stored (the sidebar's "coverage not run yet" state).
+   * Optional fields (parseErrors, specCandidatesCount,
+   * parseErrorPatterns) stay absent unless at least one folder's report
+   * defined them, preserving the tri-state sidebar logic (AC-28/29/30).
+   */
+  merged(): CoverageReport | null {
+    if (this.reports.size === 0) return null;
+    const all = Array.from(this.reports.values());
+    if (all.length === 1) return all[0];
+
+    const withParseErrors = all.filter(r => r.parseErrors !== undefined);
+    const withCandidates = all.filter(r => r.specCandidatesCount !== undefined);
+    const withPatterns = all.filter(r => r.parseErrorPatterns !== undefined);
+    const sum = (pick: (r: CoverageReport) => number | undefined): number =>
+      all.reduce((s, r) => s + (pick(r) ?? 0), 0);
+
+    return {
+      entries: all.flatMap(r => r.entries ?? []),
+      summary: {
+        totalSpecs: sum(r => r.summary?.totalSpecs),
+        passing: sum(r => r.summary?.passing),
+        failing: sum(r => r.summary?.failing),
+        fullyCovered: sum(r => r.summary?.fullyCovered),
+        partiallyCovered: sum(r => r.summary?.partiallyCovered),
+        uncovered: sum(r => r.summary?.uncovered),
+      },
+      parseErrors: withParseErrors.length > 0
+        ? withParseErrors.flatMap(r => r.parseErrors ?? [])
+        : undefined,
+      specCandidatesCount: withCandidates.length > 0
+        ? withCandidates.reduce((s, r) => s + (r.specCandidatesCount ?? 0), 0)
+        : undefined,
+      parseErrorPatterns: withPatterns.length > 0
+        ? withPatterns.flatMap(r => r.parseErrorPatterns ?? [])
+        : undefined,
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AC-55: locate the saved spec's fresh coverage entry by specFile
+// ---------------------------------------------------------------------------
+
+/**
+ * AC-55 (v1.7.0): after an on-save coverage refresh, find the entry for
+ * the saved .spec.yaml by its file path — never by position (the old
+ * entries[0] splice) and never by a regex-derived spec ID. Exact match
+ * first; falls back to trailing-path suffix match in either direction so
+ * a CLI-relative stored path still matches an absolute editor path (same
+ * tolerance as matchFileInIndex). Returns undefined when nothing
+ * matches — the caller must not fabricate or duplicate entries.
+ */
+export function findEntryBySpecFile(
+  entries: ReadonlyArray<SpecCoverageEntry>,
+  absPath: string,
+): SpecCoverageEntry | undefined {
+  const norm = absPath.replace(/\\/g, '/');
+  let suffixHit: SpecCoverageEntry | undefined;
+  for (const e of entries) {
+    const f = e.specFile;
+    if (!f) continue;
+    if (f === absPath) return e;
+    const fNorm = f.replace(/\\/g, '/');
+    if (!suffixHit && (norm.endsWith('/' + fNorm) || fNorm.endsWith('/' + norm))) {
+      suffixHit = e;
+    }
+  }
+  return suffixHit;
+}
+
+// ---------------------------------------------------------------------------
 // AC-32: covering-files lookup for @ac hovers
 // ---------------------------------------------------------------------------
 

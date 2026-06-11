@@ -128,22 +128,8 @@ export class DiagnosticReplacer {
   }
 }
 
-// ---------------------------------------------------------------------------
-// AC-04: Extract @spec IDs from a test file to scope coverage runs
-// ---------------------------------------------------------------------------
-
-/**
- * Scans `content` for `// @spec <id>` annotations and returns the unique
- * list of spec IDs found.  Used to scope `specter coverage --spec <id>`
- * to only the specs referenced in the saved test file.
- */
-export function shouldRunCoverageForFile(content: string): string[] {
-  const ids: string[] = [];
-  const pattern = /\/\/\s*@spec\s+(\S+)/g;
-  let m: RegExpExecArray | null;
-  while ((m = pattern.exec(content)) !== null) {
-    const id = m[1];
-    if (!ids.includes(id)) ids.push(id);
-  }
-  return ids;
-}
+// shouldRunCoverageForFile was removed in v1.7.0 (spec-vscode AC-55): it
+// regex-scanned saved YAML for `// @spec` slash comments — a shape normal
+// #-commented spec files never match — to scope a per-spec coverage run
+// the CLI never supported. The on-save hook now refreshes the saved
+// file's folder report wholesale; see extension.ts.

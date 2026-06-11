@@ -91,6 +91,15 @@ export class SpecterClient {
 
   constructor(private readonly opts: ClientOptions) {}
 
+  /**
+   * The directory the CLI runs in (the manifest's directory — see run()).
+   * CLI-emitted relative paths are relative to this, so it is the
+   * resolution root for report-path normalization (AC-33, AC-54).
+   */
+  get cliCwd(): string {
+    return path.dirname(this.opts.manifestPath);
+  }
+
   /** Enqueue a task, ensuring it runs after the previous one completes. */
   private enqueue<T>(task: (signal: AbortSignal) => Promise<T>): Promise<T> {
     const controller = new AbortController();
@@ -146,10 +155,10 @@ export class SpecterClient {
    * etc. silently read `undefined` — a latent bug that would have become
    * a crash the moment any code iterated `coveredACs`.
    */
-  coverage(specID?: string): Promise<CoverageResult> {
-    // The CLI has no --spec filter; specID arg is preserved for API
-    // compatibility but currently has no effect. Filter callers-side if needed.
-    void specID;
+  coverage(): Promise<CoverageResult> {
+    // The CLI has no per-spec filter — coverage() always returns the
+    // whole-workspace report. Callers filter the result if they need a
+    // single spec's entry (see findEntryBySpecFile, AC-55).
     // --strictness annotation: the sidebar is a structural coverage view.
     // Since spec-coverage 1.15.0 (C-31) the manifest default `threshold`
     // routes plain `coverage` through the strict path, which hard-fails

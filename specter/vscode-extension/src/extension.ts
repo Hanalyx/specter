@@ -16,7 +16,7 @@ import {
   downloadChecksums,
   isBinaryFile,
 } from './binaryDiscovery';
-import { buildDiagnostics, buildCoverageParseDiagnostics, DiagnosticReplacer, shouldRunCoverageForFile } from './diagnostics';
+import { buildDiagnostics, buildCoverageParseDiagnostics, DiagnosticReplacer } from './diagnostics';
 import { matchRemovedFieldDiagnostic, isLineSafeToDelete } from './quickFix';
 import {
   buildSpecCompletions,
@@ -37,6 +37,8 @@ import {
   formatSyncCompletion,
   resolveWorkspacePathPure,
   matchFileInIndex,
+  CoverageReportStore,
+  findEntryBySpecFile,
 } from './coverage';
 import { buildConstraintHover, resolveDefinitionTarget } from './navigation';
 import { buildInsightCards, computeInsightsStatus, formatSpecContextForAI, shouldShowWalkthrough } from './insights';
@@ -58,7 +60,18 @@ const clients = new Map<string, SpecterClient>();
 const diagnosticReplacers = new Map<string, DiagnosticReplacer>();
 const diagnosticCollections = new Map<string, vscode.DiagnosticCollection>();
 let specIndex: SpecIndex = { specs: {} };
-let coverageReport: CoverageReport | null = null;
+// AC-54 (v1.7.0): per-folder coverage reports, keyed like `clients`. The
+// pre-1.7.0 single module-global meant the last folder's coverage run
+// silently overwrote every other folder's report in a multi-root
+// workspace. Paths inside each stored report are normalized to absolute
+// against the owning folder's CLI cwd at ingestion time (AC-33), so
+// downstream consumers need no folder context. Aggregate views read
+// coverageReports.merged() — identical to the folder's own report in a
+// single-root workspace.
+const coverageReports = new CoverageReportStore({
+  resolve: (base, p) => path.resolve(base, p),
+  isAbsolute: p => path.isAbsolute(p),
+});
 // Folders where the most recent coverage run failed (parse errors or
 // process-level failure). Consulted by specter.runSync to emit an honest
 // completion message — see AC-31.
@@ -252,6 +265,10 @@ function teardownFolder(folder: vscode.WorkspaceFolder): void {
   diagnosticCollections.get(key)?.dispose();
   diagnosticCollections.delete(key);
   diagnosticReplacers.delete(key);
+  // AC-54: a removed folder's report must not linger in the merged view.
+  coverageReports.delete(key);
+  coverageErrorFolders.delete(key);
+  treeProvider?.refresh();
 }
 
 // ---------------------------------------------------------------------------
@@ -481,13 +498,16 @@ async function maybePromptAddCliToShellPath(
 async function runCoverageForFolder(key: string, client: SpecterClient): Promise<void> {
   try {
     const result = await client.coverage();
-    coverageReport = result as unknown as CoverageReport;
-    updateSpecIndex(coverageReport);
+    // AC-54: store under the folder key; AC-33: normalize CLI-relative
+    // paths against the owning folder's CLI cwd at ingestion time.
+    coverageReports.set(key, result as unknown as CoverageReport, client.cliCwd);
+    const report = coverageReports.get(key)!;
+    updateSpecIndex(report);
 
     // v0.9.0: parse errors flow through the report now, not a rejected
     // promise. Distinguish "CLI ran but parses failed" from the happy path
     // so the sidebar + status bar reflect the real state.
-    const parseErrors = coverageReport.parseErrors ?? [];
+    const parseErrors = report.parseErrors ?? [];
     pushCoverageParseDiagnostics(key, parseErrors);
     if (parseErrors.length > 0) {
       outputChannel?.appendLine(
@@ -500,7 +520,7 @@ async function runCoverageForFolder(key: string, client: SpecterClient): Promise
       setStatusBarError('Specter: parse errors. Click to view details.');
       coverageErrorFolders.add(key);
     } else {
-      updateStatusBar(coverageReport);
+      updateStatusBar(coverageReports.merged());
       coverageErrorFolders.delete(key);
     }
     treeProvider?.refresh();
@@ -534,9 +554,11 @@ function pushCoverageParseDiagnostics(
   dc.clear();
   const grouped = buildCoverageParseDiagnostics(parseErrors as { file: string; path?: string; type?: string; message: string; line?: number; column?: number }[]);
   for (const { file, diagnostics } of grouped) {
-    const abs = path.isAbsolute(file)
-      ? file
-      : path.resolve(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '', file);
+    // AC-54: parse-error paths arrive absolute — normalized against the
+    // OWNING folder at report-ingestion time (AC-33). resolveWorkspacePath
+    // is a no-op for absolute paths; it remains only as a safety net for
+    // a path that somehow skipped ingestion.
+    const abs = resolveWorkspacePath(file);
     const uri = vscode.Uri.file(abs);
     const vsDiags = diagnostics.map(d => {
       const range = new vscode.Range(
@@ -596,8 +618,8 @@ function updateSpecIndex(report: CoverageReport): void {
   }
 }
 
-function updateStatusBar(report: CoverageReport): void {
-  if (!statusBarItem) return;
+function updateStatusBar(report: CoverageReport | null): void {
+  if (!statusBarItem || !report) return;
   const entries = report.entries ?? [];
   const hasT1OrT2Failure = entries.some(
     e => !e.passesThreshold && (e.tier === 1 || e.tier === 2),
@@ -685,7 +707,7 @@ function registerProviders(ctx: vscode.ExtensionContext): void {
         // which made every `@ac` hover display as "uncovered" — a UX
         // regression caught by the quality audit (H3).
         const coveredByFiles = resolveCoveringFiles(
-          coverageReport,
+          coverageReports.merged(),
           specID,
           m[1],
           doc.uri.fsPath,
@@ -869,6 +891,7 @@ function registerProviders(ctx: vscode.ExtensionContext): void {
     vscode.window.registerFileDecorationProvider({
       provideFileDecoration(uri) {
         if (!uri.fsPath.endsWith('.spec.yaml')) return;
+        const coverageReport = coverageReports.merged();
         if (!coverageReport) return;
 
         const specID = guessSpecIDFromFile(uri.fsPath);
@@ -891,6 +914,7 @@ function registerProviders(ctx: vscode.ExtensionContext): void {
   ctx.subscriptions.push(
     vscode.languages.registerCodeLensProvider(specYamlSelector, {
       provideCodeLenses(doc) {
+        const coverageReport = coverageReports.merged();
         if (!coverageReport) return [];
         const specID = guessSpecIDFromFile(doc.uri.fsPath);
         if (!specID) return [];
@@ -995,29 +1019,32 @@ function registerDiagnosticHooks(ctx: vscode.ExtensionContext): void {
         });
         replacer.replace(doc.uri.fsPath, diags.map(d => toVscodeDiagnostic(d)));
 
-        // Scoped coverage run
-        const specIDs = shouldRunCoverageForFile(doc.getText());
-        for (const specID of specIDs) {
-          const result = await client.coverage(specID);
-          if (coverageReport) {
-            if (!coverageReport.entries) coverageReport.entries = [];
-            const idx = coverageReport.entries.findIndex(e => e.specID === specID);
-            const newEntry = (result as any).entries?.[0];
-            if (newEntry) {
-              if (idx >= 0) coverageReport.entries[idx] = newEntry;
-              else coverageReport.entries.push(newEntry);
-            }
-            updateStatusBar(coverageReport);
-            treeProvider?.refresh();
+        // AC-55: whole-report refresh for the saved file's folder — the
+        // same ingestion path the initial activation load uses (path
+        // normalization, parse-error diagnostics, status bar and tree
+        // refresh). The pre-1.7.0 implementation regex-scanned the saved
+        // YAML for `// @spec` slash comments (a shape normal #-commented
+        // spec files never match) and spliced the fresh report's
+        // entries[0] into the matched spec's slot — corrupting the report
+        // whenever the saved spec wasn't the report's first entry.
+        const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
+        if (folder) {
+          const key = createClientKey(folder.uri.fsPath);
+          await runCoverageForFolder(key, client);
 
-            // Notification discipline (AC-18)
-            if (newEntry && !newEntry.passesThreshold) {
-              const kind = classifyNotification({
-                tier: newEntry.tier,
-                droppedBelowThreshold: true,
-              });
-              maybeNotify(specID, kind.kind, newEntry.tier);
-            }
+          // Notification discipline (AC-18), evaluated against the fresh
+          // report's entry for the saved spec — located by specFile, not
+          // by position or regex-derived ID (AC-55).
+          const fresh = coverageReports.get(key);
+          const entry = fresh
+            ? findEntryBySpecFile(fresh.entries ?? [], doc.uri.fsPath)
+            : undefined;
+          if (entry && !entry.passesThreshold) {
+            const kind = classifyNotification({
+              tier: entry.tier,
+              droppedBelowThreshold: true,
+            });
+            maybeNotify(entry.specID, kind.kind, entry.tier);
           }
         }
 
@@ -1097,6 +1124,8 @@ function registerCommands(ctx: vscode.ExtensionContext): void {
   // AC-13: Insights panel
   ctx.subscriptions.push(
     vscode.commands.registerCommand('specter.openInsights', () => {
+      // AC-54: aggregate view across all folders' reports.
+      const coverageReport = coverageReports.merged();
       if (!coverageReport) {
         vscode.window.showInformationMessage('Specter coverage not yet loaded.');
         return;
@@ -1577,11 +1606,15 @@ type TreeElement = { kind: 'spec'; specID: string; file: string; children: TreeE
   | { kind: 'parseErrorFile'; file: string; message: string; line?: number };
 
 /**
- * AC-33 (v0.9.0): resolve a CLI-emitted relative path against the first
- * workspace folder so `vscode.Uri.file` produces an openable absolute URI.
- * Passing a relative path directly to `Uri.file` treats it as absolute from
- * '/' and silently yields a non-existent URI — the "file not found" path
- * users hit when clicking a leaf in the Coverage sidebar.
+ * AC-33 (v1.7.0): report paths are normalized to absolute against the
+ * OWNING folder's CLI cwd at ingestion time (see CoverageReportStore), so
+ * this is a no-op for everything read from the store. It remains as a
+ * safety net for a relative path that somehow skipped ingestion: passing
+ * a relative path directly to `Uri.file` treats it as absolute from '/'
+ * and silently yields a non-existent URI — the "file not found" path
+ * users hit when clicking a leaf in the Coverage sidebar (v0.9.0). The
+ * first-folder fallback here is only correct for single-root workspaces,
+ * which is exactly the case ingestion-time normalization can't get wrong.
  */
 function resolveWorkspacePath(p: string): string {
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -1691,7 +1724,7 @@ class SpecterTreeProvider implements vscode.TreeDataProvider<TreeElement> {
       this.parentMap = new WeakMap<object, TreeElement>();
       this.fileIndex = new Map<string, TreeElement>();
 
-      const roots = buildCoverageTreeRoot(coverageReport);
+      const roots = buildCoverageTreeRoot(coverageReports.merged());
       const built: TreeElement[] = roots.map(n => {
         if (n.kind === 'message') {
           return { kind: 'message' as const, label: n.label, detail: n.detail, iconId: n.iconId };
