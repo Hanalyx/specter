@@ -1,6 +1,6 @@
 spec:
   id: spec-resolve
-  version: "1.2.0"
+  version: "1.3.0"
   status: approved
   tier: 1
 
@@ -57,7 +57,7 @@ spec:
       enforcement: warning
 
     - id: C-03
-      description: "MUST detect ALL circular dependencies, not just the first one found"
+      description: "MUST detect ALL circular dependencies, not just the first one found — including overlapping cycles that share an edge or a node, and disjoint cycles. Reporting MUST be deterministic regardless of input order or map iteration order: each cycle path is rotated to start at its lexicographically smallest spec ID, and the set of cycles is sorted lexicographically. Simple-cycle enumeration is capped at 1000 cycles per resolve (dense SCCs can contain exponentially many simple cycles); the cap is deterministic because enumeration order is deterministic."
       type: technical
       enforcement: error
 
@@ -283,7 +283,24 @@ spec:
       references_constraints: ["C-13"]
       priority: high
 
+    - id: AC-15
+      description: "Two cycles sharing an edge (theta graph: a->x->b->a and a->y->b->a share edge b->a) are BOTH reported as separate circular_dependency diagnostics, deterministically — independent of map iteration order. Cycle paths are canonical: each path starts (and ends) at the lexicographically smallest spec ID in its cycle, and the set of cycles is sorted lexicographically. The same guarantee applies to cycles sharing a node and to disjoint cycles."
+      inputs:
+        specs: ["a.spec.yaml (depends on x, y)", "x.spec.yaml (depends on b)", "y.spec.yaml (depends on b)", "b.spec.yaml (depends on a)"]
+      expected_output:
+        type: "Diagnostic[]"
+        kind: "circular_dependency"
+        cycle_paths: [["a", "x", "b", "a"], ["a", "y", "b", "a"]]
+        deterministic_across_runs: true
+      references_constraints: ["C-03", "C-04"]
+      priority: critical
+
   changelog:
+    - version: "1.3.0"
+      date: "2026-06-11"
+      author: "specter-team"
+      type: minor
+      description: "Strengthen C-03 and add AC-15 — overlapping cycles. The previous white/grey/black DFS silently skipped edges into fully-processed (black) nodes, so two cycles sharing an edge (theta graph) dropped one cycle depending on map iteration order. C-03 now requires ALL simple cycles including edge-sharing, node-sharing, and disjoint overlaps, with deterministic canonical output (cycles rotated to start at lexicographically smallest spec ID, sorted lexicographically) and a documented enumeration cap of 1000 simple cycles per resolve."
     - version: "1.2.0"
       date: "2026-05-15"
       author: "specter-team"
