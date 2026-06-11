@@ -1199,7 +1199,7 @@ func coverageCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&failingOnly, "failing", false, "Show only specs below 100% coverage in the table (summary header still reflects the full report)")
 	cmd.Flags().BoolVar(&strict, "strict", false, "Require .specter-results.json and treat any non-passed annotated AC as uncovered (all tiers)")
 	cmd.Flags().StringVar(&scope, "scope", "", "Narrow --strict demand to specs in the named domain from specter.yaml (specs outside the domain fall back to v0.9 boolean-passed logic). Requires --strict.")
-	cmd.Flags().StringVar(&strictnessFlag, "strictness", "", "Override settings.strictness in specter.yaml (annotation | threshold | zero-tolerance). threshold and zero-tolerance route through the same strict path as --strict; --strict is a shortcut for --strictness threshold.")
+	cmd.Flags().StringVar(&strictnessFlag, "strictness", "", "Override settings.strictness in specter.yaml (annotation | threshold | zero-tolerance). threshold and zero-tolerance route through the same strict path as --strict; --strict is equivalent to --strictness threshold under the default manifest strictness and does not override a manifest-set level.")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress per-AC source-only hints under --strict (the diagnostic_hints array still appears in --json output)")
 	return cmd
 }
