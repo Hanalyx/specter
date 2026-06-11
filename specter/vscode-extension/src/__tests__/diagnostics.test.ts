@@ -3,7 +3,7 @@
 // Tests for diagnostic lifecycle: debounce, atomic replacement, and on-save
 // triggering of the correct specter commands.
 
-import { buildDiagnostics, buildCoverageParseDiagnostics, DiagnosticReplacer, shouldRunCoverageForFile } from '../diagnostics';
+import { buildDiagnostics, buildCoverageParseDiagnostics, DiagnosticReplacer } from '../diagnostics';
 import type { SpecterParseError, SpecterCheckDiagnostic, CoverageParseError } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -133,31 +133,9 @@ describe('[spec-vscode/AC-04] DiagnosticReplacer', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// AC-04: Coverage scoped to affected spec when a test file is saved
-// ---------------------------------------------------------------------------
-
-// @ac AC-04
-describe('[spec-vscode/AC-04] shouldRunCoverageForFile', () => {
-  it('returns the spec IDs found in @spec annotations in a test file', () => {
-    const content = `
-// @spec payment-create-intent
-// @ac AC-01
-function testCreateIntent() {}
-
-// @spec auth-verify-token
-// @ac AC-02
-function testVerifyToken() {}
-    `.trim();
-    const specIDs = shouldRunCoverageForFile(content);
-    expect(specIDs).toContain('payment-create-intent');
-    expect(specIDs).toContain('auth-verify-token');
-  });
-
-  it('returns empty array for files with no @spec annotations', () => {
-    expect(shouldRunCoverageForFile('function testSomething() {}')).toHaveLength(0);
-  });
-});
+// shouldRunCoverageForFile tests removed in v1.7.0 — the helper is gone
+// (spec-vscode AC-55: on-save refreshes the saved file's folder report
+// wholesale; the slash-comment regex trigger is prohibited).
 
 // ---------------------------------------------------------------------------
 // AC-34 (v0.9.0): coverage parse_errors → per-file VS Code diagnostics
