@@ -7,6 +7,8 @@ package resolver
 
 import (
 	"fmt"
+	"slices"
+	"sort"
 
 	"github.com/Hanalyx/specter/internal/schema"
 	"github.com/Masterminds/semver/v3"
@@ -174,71 +176,207 @@ func ResolveSpecs(inputs []SpecInput) *SpecGraph {
 	return graph
 }
 
-// findCycles uses DFS to find all cycles in the graph.
+// maxCycles caps simple-cycle enumeration (C-03). Dense strongly connected
+// components can contain exponentially many simple cycles; spec graphs are
+// small in practice, but the cap bounds pathological inputs. The cap is
+// deterministic because enumeration order is deterministic.
+const maxCycles = 1000
+
+// findCycles enumerates ALL simple cycles in the graph (C-03), including
+// overlapping cycles that share an edge or a node, and disjoint cycles
+// (AC-15). It decomposes the graph into strongly connected components
+// (Tarjan) and enumerates simple cycles per SCC (Johnson's algorithm).
+//
+// Output is deterministic regardless of map iteration order: vertices are
+// processed in lexicographic order, so each cycle starts at its
+// lexicographically smallest node, and the resulting list is sorted
+// lexicographically. Each returned cycle lists its nodes once, without
+// repeating the start node; the caller closes the loop.
 func findCycles(nodes map[string]*SpecNode, adjacency map[string][]string) [][]string {
-	const (
-		white = 0 // unvisited
-		grey  = 1 // in current path
-		black = 2 // fully processed
-	)
+	// Index nodes in sorted order so vertex i < vertex j implies
+	// ids[i] < ids[j] lexicographically.
+	ids := make([]string, 0, len(nodes))
+	for id := range nodes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	index := make(map[string]int, len(ids))
+	for i, id := range ids {
+		index[id] = i
+	}
 
-	color := make(map[string]int)
-	parent := make(map[string]string)
+	n := len(ids)
+	adj := make([][]int, n)
 	var cycles [][]string
-	cycleNodes := make(map[string]bool) // track which nodes are already in a reported cycle
-
-	var dfs func(node string)
-	dfs = func(node string) {
-		color[node] = grey
-		for _, neighbor := range adjacency[node] {
-			if _, exists := nodes[neighbor]; !exists {
-				continue // skip dangling refs
+	for i, id := range ids {
+		seen := make(map[int]bool)
+		for _, neighbor := range adjacency[id] {
+			j, exists := index[neighbor]
+			if !exists || seen[j] {
+				continue // dangling ref or duplicate edge
 			}
-			if color[neighbor] == grey {
-				// Found a cycle — reconstruct path
-				cycle := []string{neighbor}
-				curr := node
-				for curr != neighbor {
-					cycle = append([]string{curr}, cycle...)
-					curr = parent[curr]
-				}
-				// Only add if we haven't reported this cycle already
-				key := cycleKey(cycle)
-				if !cycleNodes[key] {
-					cycleNodes[key] = true
+			seen[j] = true
+			if j == i {
+				// Self-loop: a one-node cycle. Johnson's algorithm
+				// below enumerates cycles of length >= 2 only.
+				cycles = append(cycles, []string{id})
+				continue
+			}
+			adj[i] = append(adj[i], j)
+		}
+		sort.Ints(adj[i])
+	}
+
+	// Johnson's algorithm state.
+	blocked := make([]bool, n)
+	blockedBy := make([]map[int]bool, n)
+	stack := make([]int, 0, n)
+
+	var unblock func(v int)
+	unblock = func(v int) {
+		blocked[v] = false
+		for w := range blockedBy[v] {
+			delete(blockedBy[v], w)
+			if blocked[w] {
+				unblock(w)
+			}
+		}
+	}
+
+	var circuit func(v, start int, scc map[int]bool) bool
+	circuit = func(v, start int, scc map[int]bool) bool {
+		found := false
+		stack = append(stack, v)
+		blocked[v] = true
+		for _, w := range adj[v] {
+			if !scc[w] {
+				continue
+			}
+			if w == start {
+				if len(cycles) < maxCycles {
+					cycle := make([]string, len(stack))
+					for i, u := range stack {
+						cycle[i] = ids[u]
+					}
 					cycles = append(cycles, cycle)
 				}
-			} else if color[neighbor] == white {
-				parent[neighbor] = node
-				dfs(neighbor)
+				found = true
+			} else if !blocked[w] {
+				if circuit(w, start, scc) {
+					found = true
+				}
 			}
 		}
-		color[node] = black
-	}
-
-	for id := range nodes {
-		if color[id] == white {
-			dfs(id)
+		if found {
+			unblock(v)
+		} else {
+			for _, w := range adj[v] {
+				if scc[w] {
+					blockedBy[w][v] = true
+				}
+			}
 		}
+		stack = stack[:len(stack)-1]
+		return found
 	}
 
+	for s := 0; s < n && len(cycles) < maxCycles; {
+		// Find the non-trivial SCC containing the smallest vertex in
+		// the subgraph induced by vertices >= s.
+		least := -1
+		var leastSCC map[int]bool
+		for _, scc := range tarjanSCC(adj, s, n) {
+			if len(scc) < 2 {
+				continue
+			}
+			m := scc[0]
+			for _, v := range scc[1:] {
+				if v < m {
+					m = v
+				}
+			}
+			if least == -1 || m < least {
+				least = m
+				leastSCC = make(map[int]bool, len(scc))
+				for _, v := range scc {
+					leastSCC[v] = true
+				}
+			}
+		}
+		if least == -1 {
+			break
+		}
+		s = least
+		for v := range leastSCC {
+			blocked[v] = false
+			blockedBy[v] = make(map[int]bool)
+		}
+		circuit(s, s, leastSCC)
+		s++
+	}
+
+	// Canonical order: cycles already start at their smallest node (the
+	// Johnson start vertex is the minimum of its SCC's remaining
+	// subgraph); sort the list for stable diagnostics.
+	slices.SortFunc(cycles, slices.Compare)
 	return cycles
 }
 
-func cycleKey(cycle []string) string {
-	// Normalize cycle to start with the smallest element
-	min := 0
-	for i, v := range cycle {
-		if v < cycle[min] {
-			min = i
+// tarjanSCC returns the strongly connected components of the subgraph
+// induced by vertices in [minV, n), ignoring edges to vertices below minV.
+func tarjanSCC(adj [][]int, minV, n int) [][]int {
+	const unvisited = -1
+	order := make([]int, n)
+	low := make([]int, n)
+	onStack := make([]bool, n)
+	for i := range order {
+		order[i] = unvisited
+	}
+	var stack []int
+	counter := 0
+	var sccs [][]int
+
+	var strongConnect func(v int)
+	strongConnect = func(v int) {
+		order[v] = counter
+		low[v] = counter
+		counter++
+		stack = append(stack, v)
+		onStack[v] = true
+		for _, w := range adj[v] {
+			if w < minV {
+				continue
+			}
+			if order[w] == unvisited {
+				strongConnect(w)
+				if low[w] < low[v] {
+					low[v] = low[w]
+				}
+			} else if onStack[w] && order[w] < low[v] {
+				low[v] = order[w]
+			}
+		}
+		if low[v] == order[v] {
+			var scc []int
+			for {
+				w := stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+				onStack[w] = false
+				scc = append(scc, w)
+				if w == v {
+					break
+				}
+			}
+			sccs = append(sccs, scc)
 		}
 	}
-	rotated := append(cycle[min:], cycle[:min]...)
-	result := ""
-	for _, v := range rotated {
-		result += v + ","
+
+	for v := minV; v < n; v++ {
+		if order[v] == unvisited {
+			strongConnect(v)
+		}
 	}
-	return result
+	return sccs
 }
 
 // topologicalSort returns nodes in dependency order (dependencies first).
