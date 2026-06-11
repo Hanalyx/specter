@@ -2,6 +2,8 @@
 package resolver
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Hanalyx/specter/internal/schema"
@@ -228,6 +230,99 @@ func TestDanglingReferenceIncludesSuggestion(t *testing.T) {
 		}
 		if dr.SuggestedFixPath == "" {
 			t.Error("expected SuggestedFixPath to be set")
+		}
+	})
+}
+
+// circularPaths collects every circular_dependency diagnostic's cycle path
+// rendered as "a -> b -> a", in diagnostic order.
+func circularPaths(g *SpecGraph) []string {
+	var paths []string
+	for _, d := range g.Diagnostics {
+		if d.Kind == "circular_dependency" {
+			paths = append(paths, strings.Join(d.CyclePath, " -> "))
+		}
+	}
+	return paths
+}
+
+// thetaGraphInputs builds the AC-15 theta graph: a -> x -> b -> a and
+// a -> y -> b -> a, sharing edge b -> a.
+func thetaGraphInputs() []SpecInput {
+	return []SpecInput{
+		{Spec: makeSpec("a", withDeps(dep("x"), dep("y"))), File: "a.spec.yaml"},
+		{Spec: makeSpec("x", withDeps(dep("b"))), File: "x.spec.yaml"},
+		{Spec: makeSpec("y", withDeps(dep("b"))), File: "y.spec.yaml"},
+		{Spec: makeSpec("b", withDeps(dep("a"))), File: "b.spec.yaml"},
+	}
+}
+
+// @ac AC-15
+func TestThetaGraphReportsBothSharedEdgeCycles(t *testing.T) {
+	t.Run("spec-resolve/AC-15 theta graph reports both shared-edge cycles", func(t *testing.T) {
+		g := ResolveSpecs(thetaGraphInputs())
+
+		want := []string{"a -> x -> b -> a", "a -> y -> b -> a"}
+		got := circularPaths(g)
+		if !slices.Equal(got, want) {
+			t.Errorf("expected exactly cycles %v, got %v", want, got)
+		}
+		if len(g.TopologicalOrder) != 0 {
+			t.Error("expected empty topo order when cycles exist")
+		}
+	})
+}
+
+// @ac AC-15
+func TestSharedNodeCyclesBothReported(t *testing.T) {
+	t.Run("spec-resolve/AC-15 two cycles sharing a node are both reported", func(t *testing.T) {
+		// a <-> b and b <-> c share node b.
+		g := ResolveSpecs([]SpecInput{
+			{Spec: makeSpec("a", withDeps(dep("b"))), File: "a.spec.yaml"},
+			{Spec: makeSpec("b", withDeps(dep("a"), dep("c"))), File: "b.spec.yaml"},
+			{Spec: makeSpec("c", withDeps(dep("b"))), File: "c.spec.yaml"},
+		})
+
+		want := []string{"a -> b -> a", "b -> c -> b"}
+		got := circularPaths(g)
+		if !slices.Equal(got, want) {
+			t.Errorf("expected exactly cycles %v, got %v", want, got)
+		}
+	})
+}
+
+// @ac AC-15
+func TestDisjointCyclesBothReported(t *testing.T) {
+	t.Run("spec-resolve/AC-15 two disjoint cycles are both reported", func(t *testing.T) {
+		// a <-> b and c <-> d share nothing.
+		g := ResolveSpecs([]SpecInput{
+			{Spec: makeSpec("a", withDeps(dep("b"))), File: "a.spec.yaml"},
+			{Spec: makeSpec("b", withDeps(dep("a"))), File: "b.spec.yaml"},
+			{Spec: makeSpec("c", withDeps(dep("d"))), File: "c.spec.yaml"},
+			{Spec: makeSpec("d", withDeps(dep("c"))), File: "d.spec.yaml"},
+		})
+
+		want := []string{"a -> b -> a", "c -> d -> c"}
+		got := circularPaths(g)
+		if !slices.Equal(got, want) {
+			t.Errorf("expected exactly cycles %v, got %v", want, got)
+		}
+	})
+}
+
+// @ac AC-15
+func TestCycleReportingIsDeterministic(t *testing.T) {
+	t.Run("spec-resolve/AC-15 cycle reporting is deterministic across runs", func(t *testing.T) {
+		// Map iteration order varies per run; the diagnostic set must not.
+		first := circularPaths(ResolveSpecs(thetaGraphInputs()))
+		if len(first) != 2 {
+			t.Fatalf("expected 2 cycles in theta graph, got %v", first)
+		}
+		for i := 0; i < 50; i++ {
+			got := circularPaths(ResolveSpecs(thetaGraphInputs()))
+			if !slices.Equal(got, first) {
+				t.Fatalf("iteration %d: cycle set %v differs from first run %v", i, got, first)
+			}
 		}
 	})
 }
