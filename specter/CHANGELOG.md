@@ -4,6 +4,31 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 ---
 
+## v0.14.0 — 2026-06-11
+
+**Theme: strictness enforcement parity — a correctness bundle from the 2026-06-11 six-finding review.**
+
+An adversarially-verified review of the toolchain surfaced six findings; all six were confirmed against the code and fixed across four PRs (#140, #141, #144, #145). Per the pre-1.0 critical-issue handling, this minor is themed around the correctness bundle; the originally planned v0.14 headline feature moves to the next minor. This ships as a MINOR (not a patch) because the default behavior of `specter coverage` changes.
+
+### Changed — action may be required
+
+- **`coverage --strictness threshold` / `zero-tolerance` now route through the same strict path as `--strict`** (spec-coverage 1.14.0 → 1.15.0, C-31/C-32 + AC-36/AC-37; #140). Previously the strict path keyed solely on the `--strict` boolean: `coverage --strictness threshold` — and plain `specter coverage` under the manifest default `threshold` — silently tolerated a missing `.specter-results.json` and counted failed Tier 2/3 annotated ACs as covered, while `sync` failed the same workspace. Now an effective strictness of `threshold` or `zero-tolerance` (flag or manifest) requires `.specter-results.json` and demotes non-passed annotated ACs across all tiers, matching `sync`'s routing since v0.13. When the strict mode comes from `--strictness` or the manifest (not the `--strict` flag), a missing results file fails with a mode-aware message: `strictness "threshold" requires .specter-results.json — run 'specter ingest' first, or use --strictness annotation for structural coverage`. **Migration:** pipelines running plain `specter coverage` without a results file should run `specter ingest` first (outcome-gated coverage), pass `--strictness annotation`, or set `settings.strictness: annotation` (structural coverage). The repo's own lightweight CI gates and `make dogfood` switched to `--strictness annotation`; `--strict` behavior is unchanged.
+- **The VS Code extension pins `--strictness annotation` on its `coverage --json` calls** (#140), preserving the sidebar's structural coverage view and its "JSON document on every run" contract byte-for-byte under the new default.
+
+### Fixed
+
+- **`sync --strictness zero-tolerance` false-green** (spec-sync 1.3.0 → 1.4.0, C-09 + AC-12/AC-13; #140). Sync routed zero-tolerance through the strict report path but gated only on tier thresholds: a Tier 3 spec with one passing and one failing annotated AC passed sync at 50% while `coverage --strictness zero-tolerance` exited 2 on the same workspace, and `approval_gate` violations were never checked in sync at all. Sync's coverage phase now enforces both zero-tolerance gates with the same exit codes as `coverage` (2 = non-passed annotated AC, 3 = `approval_gate: true` with unset `approval_date`), demotes approval-gate violations in its report, and applies both identically under `--json`. The counting/demotion logic is shared (`internal/coverage/zero_tolerance.go`) so the parity is mechanical, not a review-time promise.
+- **Resolver now reports ALL overlapping cycles** (spec-resolve 1.2.0 → 1.3.0, strengthened C-03 + AC-15; #141). The white/grey/black DFS silently skipped edges into fully-processed nodes, so two cycles sharing an edge (theta graph) dropped one cycle nondeterministically (~60% of runs, map-iteration-order dependent). `findCycles` is now Tarjan SCC decomposition + Johnson's simple-cycle enumeration with deterministic canonical output: each cycle starts at its lexicographically smallest spec ID and the set is sorted. Enumeration is capped at 1000 simple cycles (documented in C-03). Diagnostic kind and message format unchanged.
+- **`sync` applies the 4 MiB test-file cap** (spec-sync 1.4.0 → 1.5.0, C-10 + AC-14; #144). Sync read every discovered test file with an unguarded `os.ReadFile`, bypassing the `MaxTestFileBytes` cap that `check --test`, `coverage`, and `explain` apply — the v0.13 H5 hardening commit claimed the sync site but never touched it, so a single large test artifact could OOM the primary CI command. Sync now stat-guards before reading (oversized files skip with a stderr warning, never failing the run) and unreadable test files warn + skip instead of silently becoming empty content.
+- **VS Code: per-folder coverage reports + on-save whole-report refresh** (spec-vscode 1.6.0 → 1.7.0, amended AC-22/AC-33, new AC-54/AC-55; #145). Two extension-state bugs: (a) multi-root workspaces kept clients and diagnostic collections per folder but stored ONE module-global coverage report (last folder wins) and resolved CLI-relative paths against `workspaceFolders[0]`, so folder B's parse-error diagnostics pointed into folder A; (b) the on-save handler regex-scanned saved spec YAML for `// @spec` slash comments and spliced the fresh report's `entries[0]` into the matched spec's slot, corrupting coverage/status/notifications whenever the saved spec wasn't the report's first entry. Reports are now stored per folder with paths normalized to absolute against the owning folder's CLI cwd at ingestion time; the status bar/sidebar/Insights read a merged view (identity-returning for single-root); saving a spec re-runs coverage for its folder through the same path activation uses. Side effects: on-save now actually refreshes coverage (the old trigger almost never fired on real spec files), and sidebar tooltips show absolute paths.
+
+### Docs
+
+- `docs/CLI_REFERENCE.md`: coverage `--strictness` row documents the strict-path routing and the strict-by-default consequence; coverage exit codes 2/3 documented; sync synopsis gains `--strictness`; `--strict` correctly described as NOT overriding a manifest-set strictness level. Verified against the binary by an independent review pass per the Docs Review Policy.
+- `docs/explainer/v0.13-sync-strict-coverage.md`: corrected the overstated historical claim that v0.12 `coverage` fully honored `strictness` (it honored only the zero-tolerance exit codes; strict report routing landed in this release).
+
+---
+
 ## v0.13.3 — 2026-06-10
 
 **Theme: DX patch — a non-misleading `sync` missing-results message.**
