@@ -4,6 +4,20 @@ All notable changes to Specter (CLI + VS Code extension) documented here. The pr
 
 ---
 
+## v0.14.1 — 2026-06-13
+
+**Theme: stable-channel promotion — no functional change from v0.14.0.**
+
+The 0.13.0 → 0.14.0 line shipped to the VS Code Marketplace pre-release channel only; the last stable release users on the default channel received was v0.12.1. This patch carries no code change from v0.14.0 — it exists solely to obtain a fresh version number, because the Marketplace forbids republishing an already-published version (0.14.0) without its pre-release flag. v0.14.1 is the first **stable** release carrying the full 0.13 + 0.14 body of work (strict-coverage routing, resolver all-cycles, sync test-file cap, VS Code per-folder coverage). The packaged VSIX is byte-for-byte equivalent to the published 0.14.0 pre-release apart from the version string.
+
+This also re-anchors release traceability: the `v0.14.0` tag was cut before #147 (`fix(vscode): exclude jest-junit output from the VSIX`); the `v0.14.1` tag points at the current `main` HEAD, which includes that fix.
+
+### Changed
+
+- Version bump only (`VERSION`, `vscode-extension/package.json`). No CLI, schema, or extension behavior change. See v0.14.0 below for the substantive release notes.
+
+---
+
 ## v0.14.0 — 2026-06-11
 
 **Theme: strictness enforcement parity — a correctness bundle from the 2026-06-11 six-finding review.**
