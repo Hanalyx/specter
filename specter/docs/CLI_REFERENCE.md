@@ -1,12 +1,12 @@
 # Specter CLI Reference
 
-Specter is a spec compiler toolchain — "a type system for specs." It validates, links, and type-checks `.spec.yaml` files the way `tsc` validates `.ts` files.
+Specter is a spec compiler toolchain, "a type system for specs." It validates, links, and type-checks `.spec.yaml` files the way `tsc` validates `.ts` files.
 
 ---
 
 ## Installation
 
-Install the VS Code extension for the smoothest path — it auto-downloads the CLI and sets PATH. For CLI-only installs (tar.gz, `.deb`, `.rpm`, Windows zip, or build from source), see the [Install section in the Specter README](../README.md#install). Asset naming pattern: `specter_<version>_<os>_<arch>.<ext>` with lowercase `linux`/`darwin`/`windows` and `amd64`/`arm64`.
+Install the VS Code extension for the smoothest path. It auto-downloads the CLI and sets PATH. For CLI-only installs (tar.gz, `.deb`, `.rpm`, Windows zip, or build from source), see the [Install section in the Specter README](../README.md#install). Asset naming pattern: `specter_<version>_<os>_<arch>.<ext>` with lowercase `linux`/`darwin`/`windows` and `amd64`/`arm64`.
 
 ---
 
@@ -187,7 +187,7 @@ specter check [--json] [--tier <n>] [--strict] [--test]
 |------------|-----------------|-------------|
 | `orphan_constraint` | T1=error, T2=warning, T3=info | A constraint is not referenced by any acceptance criterion. Individual constraints may override severity via `constraint.enforcement`. |
 | `structural_conflict` | error (override via `constraint.enforcement`) | An upstream constraint requires something that a downstream AC handles as absent. |
-| `tier_conflict` | warning (text output only; not escalated by `--strict`) | A spec's declared `tier:` disagrees with the tier `settings.tier_overrides` assigns it in `specter.yaml`. The disagreement is reported, not resolved — see the note below the table. |
+| `tier_conflict` | warning (text output only; not escalated by `--strict`) | A spec's declared `tier:` disagrees with the tier `settings.tier_overrides` assigns it in `specter.yaml`. The disagreement is reported, not resolved. See the note below the table. |
 | `unknown_spec_ref` | error (under `--test`) | A test annotates `@spec <id>` but no spec with that ID was parsed. Emitted only under `--test`. |
 | `unknown_ac_ref` | error (under `--test`) | A test annotates `@ac AC-NN` but the spec has no AC with that ID. Emitted only under `--test`. |
 | `unreachable_annotation` | by `settings.strictness`: annotation→suppressed, threshold→warning, zero-tolerance→error | Source-comment `@ac` whose enclosing test produces no runner-visible `<spec-id>/AC-NN` token (Convention A) and no runtime print (Convention B). Such annotations would silently demote under `coverage --strict`. Per-file off-switch: `// @reachable manual` (`# @reachable manual` for Python). Added in v0.13.0. |
@@ -195,7 +195,7 @@ specter check [--json] [--tier <n>] [--strict] [--test]
 
 When a constraint has a `type` (e.g. `security`, `performance`), it appears in parentheses after the constraint ID so diagnostics can be grouped by category.
 
-**`tier_conflict` reports a disagreement; it does not change behavior.** The declared `tier:` in the `.spec.yaml` continues to govern orphan severity and coverage thresholds. `settings.tier_overrides` is parsed and compared against the declaration, but the override value is never applied — spec-manifest C-14 specifies parsing and warning only. Because the diagnostic originates in the manifest layer rather than the checker, `--strict` does not upgrade it and it does not appear in `--json` output, so the JSON warning count can be lower than the text one. Note also that the emitted message ends with `— using override (N)`, which overstates what happens: the override is not in effect.
+**`tier_conflict` reports a disagreement; it does not change behavior.** The declared `tier:` in the `.spec.yaml` continues to govern orphan severity and coverage thresholds. `settings.tier_overrides` is parsed and compared against the declaration, but the override value is never applied. spec-manifest C-14 specifies parsing and warning only. Because the diagnostic originates in the manifest layer rather than the checker, `--strict` does not upgrade it and it does not appear in `--json` output, so the JSON warning count can be lower than the text one. Note also that the emitted message ends with `— using override (N)`, which overstates what happens: the override is not in effect.
 
 **Example:**
 
@@ -229,13 +229,13 @@ specter coverage [--json] [--failing] [--strict] [--scope <domain>] [--tests <gl
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--json` | — | Output the coverage report as JSON. |
-| `--failing` | — | Show only specs below 100% coverage in the table. Summary header still reflects the full report. When all specs are at 100%, emits a single-line confirmation instead of an empty table. Added in v0.9.2. |
-| `--strict` | — | Require `.specter-results.json` and treat any annotated AC whose status is not `passed` as uncovered, across **all tiers**. Missing file is a hard failure; empty file emits a warning and proceeds. Pairs with `specter ingest`. Added in v0.10. |
-| `--scope <domain>` | — | Narrow `--strict`'s demand to ACs of specs in the named `specter.yaml` domain. Specs outside the domain fall back to v0.9 boolean-passed logic. Enables staged adoption. Requires `--strict`; unknown domain fails fast. Added in v0.10. |
-| `--strictness <level>` | manifest setting | Override `settings.strictness`. Values: `annotation`, `threshold`, `zero-tolerance`. `threshold` and `zero-tolerance` route through the same strict path as `--strict` — `.specter-results.json` is required (the error names the active mode and offers both remedies) and non-passed annotated ACs demote across all tiers. Because the manifest default is `threshold`, plain `specter coverage` behaves strictly unless `settings.strictness: annotation` is set. `annotation` keeps structural annotation counting. `--strict` enables the same strict path and is equivalent to `--strictness threshold` under the default manifest strictness; it does not override a manifest-set level (a `zero-tolerance` manifest keeps its zero-tolerance gates under `--strict`, and `--strict` with `strictness: annotation` is an error). |
+| `--json` | n/a | Output the coverage report as JSON. |
+| `--failing` | n/a | Show only specs below 100% coverage in the table. Summary header still reflects the full report. When all specs are at 100%, emits a single-line confirmation instead of an empty table. Added in v0.9.2. |
+| `--strict` | n/a | Require `.specter-results.json` and treat any annotated AC whose status is not `passed` as uncovered, across **all tiers**. Missing file is a hard failure; empty file emits a warning and proceeds. Pairs with `specter ingest`. Added in v0.10. |
+| `--scope <domain>` | n/a | Narrow `--strict`'s demand to ACs of specs in the named `specter.yaml` domain. Specs outside the domain fall back to v0.9 boolean-passed logic. Enables staged adoption. Requires `--strict`; unknown domain fails fast. Added in v0.10. |
+| `--strictness <level>` | manifest setting | Override `settings.strictness`. Values: `annotation`, `threshold`, `zero-tolerance`. `threshold` and `zero-tolerance` route through the same strict path as `--strict`. `.specter-results.json` is required (the error names the active mode and offers both remedies) and non-passed annotated ACs demote across all tiers. Because the manifest default is `threshold`, plain `specter coverage` behaves strictly unless `settings.strictness: annotation` is set. `annotation` keeps structural annotation counting. `--strict` enables the same strict path and is equivalent to `--strictness threshold` under the default manifest strictness; it does not override a manifest-set level (a `zero-tolerance` manifest keeps its zero-tolerance gates under `--strict`, and `--strict` with `strictness: annotation` is an error). |
 | `--tests <glob>` | auto-discover | Glob pattern for test files. Default discovers `*.test.ts`, `*.test.js`, `*.test.py`, `*_test.go`, `*_test.py`. |
-| `--quiet` | — | Suppress per-AC source-only hints under `--strict`. JSON output still includes `diagnostic_hints`. |
+| `--quiet` | n/a | Suppress per-AC source-only hints under `--strict`. JSON output still includes `diagnostic_hints`. |
 
 **Annotation format:**
 
@@ -244,7 +244,7 @@ Specter reads annotations from two places.
 1. **Source comments** above the test function: `// @spec <id>` and `// @ac AC-NN`. `specter coverage --strictness annotation` counts these structurally.
 2. **Test title or runtime log** carrying `<spec-id>/AC-NN`. `specter ingest` reads this. The strict path (`--strict`, or the default `threshold`/`zero-tolerance` strictness) requires it.
 
-Source comments alone: `--strictness annotation` counts it; the strict path — including plain `specter coverage` under the manifest default `threshold` — demotes it. Write both forms.
+Source comments alone: `--strictness annotation` counts it; the strict path, including plain `specter coverage` under the manifest default `threshold`, demotes it. Write both forms.
 
 For the full rules (regex contract, zero-padding, one-AC-per-test, per-runner examples, parameterized tests, Python limitation, migration recipe, troubleshooting), see [`TEST_ANNOTATION_REFERENCE.md`](TEST_ANNOTATION_REFERENCE.md).
 
@@ -278,7 +278,7 @@ func TestUserRegistration(t *testing.T) {
 - Separator between spec id and AC id is `/` or `:`.
 - One test (or subtest) covers one `(spec-id, AC-NN)` pair. Do not put two ACs in one test.
 
-**Alternate form — runtime log.** When you can't rename titles (shared naming, snapshot tests, external contracts), emit the pair from inside the test body:
+**Alternate form: runtime log.** When you can't rename titles (shared naming, snapshot tests, external contracts), emit the pair from inside the test body:
 
 ```typescript
 test('rejects zero amount', () => {
@@ -328,7 +328,7 @@ spec-payments                             T2     5        5         100%       P
 
 - A **summary header** precedes the table: total-specs count, arithmetic-mean coverage, and per-tier breakdown (`Tier K: X/Y passing (Z%)`). Tiers with zero specs in the workspace are omitted.
 - Entries are **sorted worst-first**: failing (below threshold) → partial (below 100% but passing threshold) → 100% covered. Within each bucket, tier descending (T1 before T2 before T3) so higher-risk specs surface first.
-- Spec IDs longer than 40 characters are **truncated** in the table with a trailing ellipsis (`…`). This keeps column alignment on workspaces with long path-derived IDs. The `--json` output is unaffected — it emits the full spec_id.
+- Spec IDs longer than 40 characters are **truncated** in the table with a trailing ellipsis (`…`). This keeps column alignment on workspaces with long path-derived IDs. The `--json` output is unaffected. It emits the full spec_id.
 
 **Example (`--failing`, v0.9.2+):**
 
@@ -435,10 +435,10 @@ When specs fail to parse, the report carries a `parse_errors` array and a groupe
 | `spec_file` | v0.9.0 | Path to the source `.spec.yaml` for this entry. Lets downstream consumers open the file. |
 
 **Exit codes:**
-- `0` — all specs parsed AND all meet their coverage thresholds
-- `1` — one or more specs failed to parse, OR one or more specs are below threshold, OR `.specter-results.json` is missing under a strict mode (`--strict`, or effective strictness `threshold`/`zero-tolerance`)
-- `2` — zero-tolerance strictness: an annotated AC has a results-file status other than `passed`
-- `3` — zero-tolerance strictness: an AC carries `approval_gate: true` with an unset `approval_date`
+- `0`: all specs parsed AND all meet their coverage thresholds
+- `1`: one or more specs failed to parse, OR one or more specs are below threshold, OR `.specter-results.json` is missing under a strict mode (`--strict`, or effective strictness `threshold`/`zero-tolerance`)
+- `2`: zero-tolerance strictness: an annotated AC has a results-file status other than `passed`
+- `3`: zero-tolerance strictness: an AC carries `approval_gate: true` with an unset `approval_date`
 
 **Consuming the JSON programmatically:**
 
@@ -476,7 +476,7 @@ specter sync [--json] [--tests <glob>] [--only <phase>] [--strict] [--strictness
 | `--tests <glob>` | Glob pattern for test files. |
 | `--only <phase>` | Run only one phase: `parse`, `resolve`, `check`, or `coverage`. Prerequisites run without halting on failure. |
 | `--strict` | Treat warnings as errors. Alias for `--strictness zero-tolerance` when `--strictness` is not set. |
-| `--strictness <level>` | Override `settings.strictness` for the coverage phase. Values: `annotation`, `threshold`, `zero-tolerance`. Matches `coverage --strictness` semantics exactly — sync's coverage phase delegates to the strict path so demotions match. When both `--strict` and `--strictness` are passed, `--strictness` wins. |
+| `--strictness <level>` | Override `settings.strictness` for the coverage phase. Values: `annotation`, `threshold`, `zero-tolerance`. Matches `coverage --strictness` semantics exactly. Sync's coverage phase delegates to the strict path so demotions match. When both `--strict` and `--strictness` are passed, `--strictness` wins. |
 
 **Example:**
 
@@ -530,7 +530,7 @@ specter reverse [path] [--adapter <lang>] [--output <dir>] [--group-by <strategy
 | `--group-by <strategy>` | `file` | Grouping strategy: `file` (one spec per source file) or `directory` (one spec per directory). |
 | `--dry-run` | false | Preview generated YAML to stdout without writing files. |
 | `--overwrite` | false | Overwrite existing spec files. Default skips files that already exist. |
-| `--exclude <pattern>` | — | Exclude paths matching pattern. Can be repeated. |
+| `--exclude <pattern>` | n/a | Exclude paths matching pattern. Can be repeated. |
 | `--json` | false | Output results as JSON. |
 
 **Example:**
@@ -574,20 +574,20 @@ specter init --ai <tool>
 | `--name <name>` | System name for the manifest. Defaults to the current directory name. |
 | `--force` | Overwrite an existing `specter.yaml`. Mutually exclusive with `--refresh`. |
 | `--template <type>` | Create a draft `.spec.yaml` from a template instead of a manifest. Types: `api-endpoint`, `service`, `auth`, `data-model`. |
-| `--refresh` | Update only `domains.default.specs` in an existing `specter.yaml`. Preserves every other field — `settings`, `registry`, tier overrides, custom domains. Added in v0.9.2. |
+| `--refresh` | Update only `domains.default.specs` in an existing `specter.yaml`. Preserves every other field: `settings`, `registry`, tier overrides, custom domains. Added in v0.9.2. |
 | `--dry-run` | Used with `--refresh`: print the proposed diff to stdout without writing the file. Added in v0.9.2. |
 | `--install-hook` | Install a git pre-push hook that blocks implementation-only pushes with no `@spec` / `@ac` annotation delta. |
 | `--ai <tool>` | Write an AI assistant instruction file. Values: `claude`, `codex`, `cursor`, `copilot`, `gemini`. |
 
-**Behaviour (v0.9.0+):**
+**Behavior (v0.9.0+):**
 
 `specter init` scans the workspace's `specs/` directory and populates the manifest's default domain based on what it finds.
 
 - **Greenfield workspace (no spec files):** emits a manifest with an empty `domains.default` entry whose description invites you to add spec IDs as you author them.
 - **Workspace with parseable specs:** reads each one, extracts its `spec.id`, and populates `domains.default.specs: [...]`.
-- **Workspace with specs that fail to parse:** still writes the manifest (with an explanatory placeholder default domain) and prints a warning that includes a **Pattern analysis** block naming the shape of the failure — if every discovered spec hit the same error, init calls out schema version drift and points at `specter doctor` for deeper diagnosis.
+- **Workspace with specs that fail to parse:** still writes the manifest (with an explanatory placeholder default domain) and prints a warning that includes a **Pattern analysis** block naming the shape of the failure. If every discovered spec hit the same error, init calls out schema version drift and points at `specter doctor` for deeper diagnosis.
 
-**Important (v0.9.0+):** init always emits a `domains:` section, even in the greenfield case. Previous versions omitted `domains:` entirely when no spec IDs were discovered, which caused later `specter sync` runs to silently skip every spec the user added afterward — a silent-exclusion footgun now eliminated.
+**Important (v0.9.0+):** init always emits a `domains:` section, even in the greenfield case. Previous versions omitted `domains:` entirely when no spec IDs were discovered, which caused later `specter sync` runs to silently skip every spec the user added afterward, a silent-exclusion footgun now eliminated.
 
 **Example (greenfield):**
 
@@ -623,7 +623,7 @@ the parse errors are resolved.
 
 **Refresh mode (v0.9.2+):**
 
-`specter init --refresh` is the non-destructive counterpart to `--force`. It reads the existing `specter.yaml`, rescans `settings.specs_dir` (or default `specs/`), and updates **only** `domains.default.specs` with the current on-disk spec set. Every other field is preserved — `settings`, `registry`, system metadata, and any custom domains declared under `domains.<name>` (anything that isn't `default`).
+`specter init --refresh` is the non-destructive counterpart to `--force`. It reads the existing `specter.yaml`, rescans `settings.specs_dir` (or default `specs/`), and updates **only** `domains.default.specs` with the current on-disk spec set. Every other field is preserved: `settings`, `registry`, system metadata, and any custom domains declared under `domains.<name>` (anything that isn't `default`).
 
 Specs claimed by a custom domain (listed under a non-default `domains.<name>.specs`) stay in that domain and are **not** migrated into `default`. A spec belongs to exactly one domain.
 
@@ -685,11 +685,11 @@ specter doctor [--fix] [--dry-run] [--yes]
 
 | Check | PASS | WARN | FAIL |
 |-------|------|------|------|
-| `manifest` | `specter.yaml` found | No `specter.yaml` (optional) | — |
-| `spec-files` | ≥1 `.spec.yaml` found | — | No spec files found |
-| `parse` | All specs parse cleanly | — | Parse errors in ≥1 spec |
-| `annotations` | `@spec`/`@ac` annotations found in tests | No annotations found | — |
-| `coverage` | All specs meet tier thresholds | — | ≥1 spec below threshold |
+| `manifest` | `specter.yaml` found | No `specter.yaml` (optional) | n/a |
+| `spec-files` | ≥1 `.spec.yaml` found | n/a | No spec files found |
+| `parse` | All specs parse cleanly | n/a | Parse errors in ≥1 spec |
+| `annotations` | `@spec`/`@ac` annotations found in tests | No annotations found | n/a |
+| `coverage` | All specs meet tier thresholds | n/a | ≥1 spec below threshold |
 
 **Example (happy path):**
 
@@ -709,7 +709,7 @@ Result: OK — project is ready for `specter sync`
 
 **Pattern analysis on parse failure (v0.9.0+):**
 
-When the parse check fails, `specter doctor` prints a **Pattern analysis** block that groups errors by `(type, path)`. If every discovered spec hit the same pattern, doctor names it explicitly as the signature of schema version drift — a common shape for projects whose specs predate the current schema.
+When the parse check fails, `specter doctor` prints a **Pattern analysis** block that groups errors by `(type, path)`. If every discovered spec hit the same pattern, doctor names it explicitly as the signature of schema version drift, a common shape for projects whose specs predate the current schema.
 
 ```
 $ specter doctor
@@ -830,7 +830,7 @@ specter watch
 
 ### `specter diff`
 
-Polymorphic diff verb — the single command for diffing any Specter artifact. Dispatches on an optional first `<kind>` argument; defaults to the `spec` kind for backward compat with v1.x.
+Polymorphic diff verb, the single command for diffing any Specter artifact. Dispatches on an optional first `<kind>` argument; defaults to the `spec` kind for backward compat with v1.x.
 
 **Synopsis:**
 
@@ -847,9 +847,9 @@ specter diff coverage <baseline.json> <current.json>    # coverage kind
 | `spec` | Semantic diff between two spec versions (v1.x behavior; default when no kind argument is present). Classifies as `breaking`, `additive`, `patch`, or `unchanged`. |
 | `coverage` | Per-spec AC delta between two `coverage --json` snapshots. Useful for tracking coverage drift across CI runs. |
 
-Future cycles add more kinds (e.g., `ingest`, `check`) under the same `specter diff <kind>` grammar. New diffable artifacts MUST NOT introduce a per-subcommand `--diff` flag — they land as kinds here.
+Future cycles add more kinds (e.g., `ingest`, `check`) under the same `specter diff <kind>` grammar. New diffable artifacts MUST NOT introduce a per-subcommand `--diff` flag. They land as kinds here.
 
-**spec kind — change classes:**
+**spec kind, change classes:**
 
 | Class | Meaning |
 |-------|---------|
@@ -858,7 +858,7 @@ Future cycles add more kinds (e.g., `ingest`, `check`) under the same `specter d
 | `patch` | Wording-only changes that don't alter meaning. PATCH version bump. |
 | `unchanged` | No changes detected. |
 
-**Example — spec kind:**
+**Example: spec kind**
 
 ```
 $ specter diff specs/auth.spec.yaml@HEAD~3 specs/auth.spec.yaml
@@ -872,7 +872,7 @@ $ specter diff specs/auth.spec.yaml specs/auth.spec.yaml
 spec spec-auth 1.1.0 → 1.1.0: no changes
 ```
 
-**Example — coverage kind:**
+**Example: coverage kind**
 
 ```
 $ specter coverage --json > baseline.json   # later, after changes:
@@ -885,7 +885,7 @@ $ specter diff coverage baseline.json current.json
 ~spec-auth coverage_pct: 80.0 → 90.0 (passes_threshold: true → true)
 ```
 
-Exit code is always 0 for both kinds — diff is a diagnostic surface, not a gate.
+Exit code is always 0 for both kinds. Diff is a diagnostic surface, not a gate.
 
 ---
 
@@ -905,10 +905,10 @@ At least one of `--junit` or `--go-test` is required. Both flags accept glob pat
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--junit <path>` | — | JUnit XML file (vitest, jest, pytest, playwright). Accepts glob patterns; may be repeated. |
-| `--go-test <path>` | — | Newline-delimited JSON from `go test -json`. Accepts glob patterns; may be repeated. |
+| `--junit <path>` | n/a | JUnit XML file (vitest, jest, pytest, playwright). Accepts glob patterns; may be repeated. |
+| `--go-test <path>` | n/a | Newline-delimited JSON from `go test -json`. Accepts glob patterns; may be repeated. |
 | `--output <path>` | `.specter-results.json` | Where to write the merged results. |
-| `--verbose` | — | Emit one stderr line per dropped testcase (testcases without a recognizable `(spec_id, ac_id)` annotation). Off by default; the summary line is always emitted. |
+| `--verbose` | n/a | Emit one stderr line per dropped testcase (testcases without a recognizable `(spec_id, ac_id)` annotation). Off by default; the summary line is always emitted. |
 
 **Diagnostics:** every run writes to stderr a summary line:
 
@@ -916,15 +916,15 @@ At least one of `--junit` or `--go-test` is required. Both flags accept glob pat
 Scanned N test cases; extracted M (spec_id, ac_id) pairs; dropped K with no runner-visible annotation.
 ```
 
-If `M` is 0 despite `N` being non-zero, your tests carry annotations only in source comments — those are invisible to `ingest` by design. See the explainer's Conventions A (test title) and B (runtime `t.Log`) for migrating.
+If `M` is 0 despite `N` being non-zero, your tests carry annotations only in source comments. Those are invisible to `ingest` by design. See the explainer's Conventions A (test title) and B (runtime `t.Log`) for migrating.
 
 **Annotation extraction:**
 
 Each test needs a discoverable `(spec_id, ac_id)` pair or it's dropped silently. Sources in order of preference:
 
-1. **Test name** — `spec-id/AC-NN` or `spec-id:AC-NN` embedded in the test case name.
-2. **Classname** — same pattern, parsed from the JUnit `classname` attribute.
-3. **Test body** — `// @spec <id>` and `// @ac <AC-id>` comments surfaced via `system-out` (JUnit) or `output`-action lines (go test -json).
+1. **Test name.** `spec-id/AC-NN` or `spec-id:AC-NN` embedded in the test case name.
+2. **Classname.** Same pattern, parsed from the JUnit `classname` attribute.
+3. **Test body.** `// @spec <id>` and `// @ac <AC-id>` comments surfaced via `system-out` (JUnit) or `output`-action lines (go test -json).
 
 **Status mapping:**
 
