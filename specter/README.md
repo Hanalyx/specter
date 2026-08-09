@@ -4,7 +4,7 @@
 
 Specs without validation are just documents. They can contradict each other, reference dependencies that don't exist, have constraints that no test ever covers, and silently rot as code evolves. Specter treats specs as typed artifacts in a dependency graph, subject to the same static analysis you apply to code.
 
-Specter is content-agnostic: a `.spec.yaml` can describe runtime behavior, data invariants, security policy, schema contracts, architecture rules, or any other component contract — the pipeline validates the shape (constraints, ACs, traceability), not the category of rule you are encoding.
+Specter is content-agnostic: a `.spec.yaml` can describe runtime behavior, data invariants, security policy, schema contracts, architecture rules, or any other component contract. The pipeline validates the shape (constraints, ACs, traceability), not the category of rule you are encoding.
 
 ```
 $ specter sync
@@ -21,15 +21,15 @@ All checks passed.
 
 ## Human Intent, AI Execution
 
-Specter's schema is deliberately detailed — constraints, acceptance criteria, tiers, provenance, coverage thresholds. Writing all of that by hand for every module would be impractical, and that was never the intention.
+Specter's schema is deliberately detailed: constraints, acceptance criteria, tiers, provenance, coverage thresholds. Writing all of that by hand for every module would be impractical, and that was never the intention.
 
 The intended workflow is a collaboration between you and your AI coding assistant:
 
-1. **You provide intent** — a brief description of what a module should do, its key constraints, and any non-obvious judgement calls or trade-offs
-2. **The AI writes the spec** — translating your intent into a fully structured `.spec.yaml` file with constraints, ACs, and tier assignments
-3. **The AI writes the tests** — derived directly from the ACs in the spec
-4. **You review** — the spec and tests are the approval gate; you validate that the AI correctly captured your intent before any implementation begins
-5. **The AI implements** — with the spec as the contract and the tests as the verification
+1. **You provide intent.** A brief description of what a module should do, its key constraints, and any non-obvious judgment calls or trade-offs
+2. **The AI writes the spec.** It translates your intent into a fully structured `.spec.yaml` file with constraints, ACs, and tier assignments
+3. **The AI writes the tests.** They derive directly from the ACs in the spec
+4. **You review.** The spec and tests are the approval gate. You validate that the AI correctly captured your intent before any implementation begins
+5. **The AI implements.** The spec is the contract and the tests are the verification
 
 Specter enforces the discipline at every step: the spec must exist before code, tests must trace to ACs, and coverage must meet the tier threshold before `specter sync` passes. It makes the process infrastructure, not a suggestion.
 
@@ -45,7 +45,7 @@ Search **Specter SDD** in the Extensions panel. The extension auto-downloads the
 
 ### CLI, Linux / macOS (tar.gz)
 
-Asset names follow Go's `GOOS`/`GOARCH` conventions (lowercase `linux`/`darwin`, `amd64`/`arm64`) — not `uname`'s `Linux`/`x86_64`. This snippet translates and picks the latest version automatically:
+Asset names follow Go's `GOOS`/`GOARCH` conventions (lowercase `linux`/`darwin`, `amd64`/`arm64`), not `uname`'s `Linux`/`x86_64`. This snippet translates and picks the latest version automatically:
 
 ```bash
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -97,7 +97,7 @@ make build
 
 ### Manual download
 
-If you prefer clicking, every asset is listed on the [Releases page](https://github.com/Hanalyx/specter/releases/latest). Naming pattern: `specter_<version>_<os>_<arch>.<ext>` — lowercase OS, `amd64`/`arm64` arch.
+If you prefer clicking, every asset is listed on the [Releases page](https://github.com/Hanalyx/specter/releases/latest). Naming pattern: `specter_<version>_<os>_<arch>.<ext>`, with lowercase OS and `amd64`/`arm64` arch.
 
 ---
 
@@ -121,7 +121,7 @@ Specter runs five stages in sequence. Each stage catches a different class of pr
 
 ### What each stage catches
 
-**`specter parse`** — Catches malformed specs before anything else runs. Missing required fields, IDs that don't match the allowed pattern, invalid enum values, wrong types. Like a compiler catching syntax errors.
+**`specter parse`** catches malformed specs before anything else runs. Missing required fields, IDs that don't match the allowed pattern, invalid enum values, wrong types. Like a compiler catching syntax errors.
 
 ```bash
 specter parse specs/auth.spec.yaml
@@ -130,7 +130,7 @@ specter parse specs/auth.spec.yaml
 # ERROR: spec-auth.spec.yaml [pattern]  constraint ID 'constraint-1' does not match C-NN format
 ```
 
-**`specter resolve`** — Builds the dependency graph across all specs and validates it. Catches circular dependencies and references to specs that don't exist.
+**`specter resolve`** builds the dependency graph across all specs and validates it. Catches circular dependencies and references to specs that don't exist.
 
 ```bash
 specter resolve
@@ -139,16 +139,16 @@ specter resolve
 # ERROR: spec-auth depends on spec-session@^1.0.0 but spec-session is not found
 ```
 
-**`specter check`** — Finds structural problems within and between specs. An orphan constraint — one that no acceptance criterion references — is a constraint that can never be tested. A tier conflict catches when a Tier 1 spec depends on a Tier 3 spec.
+**`specter check`** finds structural problems within and between specs. An orphan constraint, one that no acceptance criterion references, is a constraint that can never be tested. A tier conflict catches when a spec's declared `tier:` disagrees with the tier `settings.tier_overrides` assigns it in `specter.yaml`. The mismatch is reported, and the declared tier stays in effect.
 
 ```bash
 specter check
 
-# WARN: spec-auth [orphan_constraint] C-04 is not referenced by any AC
-# ERROR: spec-payments [tier_conflict] Tier 1 spec depends on Tier 3 spec-util
+# ERROR: spec-auth [orphan_constraint] C-04 is not referenced by any AC
+# WARN:  spec-payments [tier_conflict] declares tier: 2 but tier_overrides assigns tier: 1
 ```
 
-**`specter coverage`** — Reads `@spec` and `@ac` annotations from your test files and produces a traceability matrix. Enforces tier-based coverage thresholds.
+**`specter coverage`** reads `@spec` and `@ac` annotations from your test files and produces a traceability matrix. Enforces tier-based coverage thresholds.
 
 ```bash
 specter coverage
@@ -159,7 +159,7 @@ specter coverage
 # spec-payments    T2    5    5        100%      PASS
 ```
 
-**`specter sync`** — Runs all four stages and exits 0 only when everything passes. Put this in CI.
+**`specter sync`** runs all four stages and exits 0 only when everything passes. Put this in CI.
 
 ---
 
@@ -253,9 +253,9 @@ Coverage thresholds scale with risk:
 
 | Tier | Examples | Coverage required |
 |---|---|---|
-| **T1** — Security / Money | Auth, payments, encryption | 100% |
-| **T2** — Business logic | Booking flow, pricing rules | 80% |
-| **T3** — Utility | Formatters, helpers | 50% |
+| **T1**: Security / Money | Auth, payments, encryption | 100% |
+| **T2**: Business logic | Booking flow, pricing rules | 80% |
+| **T3**: Utility | Formatters, helpers | 50% |
 
 A Tier 1 spec below threshold is a CI failure. A Tier 3 spec below threshold is a warning.
 
@@ -267,12 +267,12 @@ Specs map to programming type concepts one-for-one:
 
 | Type system | Specter equivalent |
 |---|---|
-| Type definition | Constraint — defines what's allowed |
-| Function signature | Acceptance criterion — input → expected output |
-| Import statement | `depends_on` — formal contract between specs |
-| Type error | Spec conflict — caught before code runs |
-| Unused variable | Orphan constraint — no AC references it |
-| Missing null check | Coverage gap — an AC with no test |
+| Type definition | Constraint: defines what's allowed |
+| Function signature | Acceptance criterion: input to expected output |
+| Import statement | `depends_on`: formal contract between specs |
+| Type error | Spec conflict: caught before code runs |
+| Unused variable | Orphan constraint: no AC references it |
+| Missing null check | Coverage gap: an AC with no test |
 
 ---
 
@@ -305,7 +305,7 @@ make dogfood-strict  # mechanical eval gate: go test -json + jest → specter in
 make build-all       # cross-compile for linux/darwin/windows
 ```
 
-Every package in `internal/` is a pure function — no I/O, no CLI dependencies.
+Every package in `internal/` is a pure function: no I/O, no CLI dependencies.
 
 ---
 
