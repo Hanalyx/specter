@@ -73,7 +73,7 @@ export function resolveManifestPath(
 
 /**
  * AC-22 — Returns a stable key for a workspace folder used to map
- * workspace folders to their SpecterClient instances.  Normalises trailing
+ * workspace folders to their SpecterClient instances.  Normalizes trailing
  * slashes so `/project` and `/project/` map to the same key.
  */
 export function createClientKey(folderPath: string): string {

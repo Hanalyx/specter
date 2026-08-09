@@ -82,7 +82,7 @@ export interface CoverageResult {
 
 /**
  * AC-04, AC-22 — Wraps specter CLI invocations for one workspace folder.
- * All invocations are serialised through a Promise queue to prevent
+ * All invocations are serialized through a Promise queue to prevent
  * concurrent specter processes against the same manifest (C-04).
  */
 export class SpecterClient {

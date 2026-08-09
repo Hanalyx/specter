@@ -1,4 +1,4 @@
-.PHONY: build test test-race lint fmt fmt-check vulncheck check clean dogfood prerelease install-hooks version-sync publish-vscode release-check
+.PHONY: build test test-race lint fmt fmt-check vulncheck check clean dogfood prerelease install-hooks version-sync publish-vscode release-check doc-style doc-style-changed doc-style-grades
 
 BINARY := bin/specter
 VERSION := $(shell cat VERSION 2>/dev/null || echo "dev")
@@ -38,6 +38,32 @@ lint: fmt-check
 # Check known vulnerabilities in dependencies
 vulncheck:
 	govulncheck ./...
+
+# Documentation style gate (shared Hanalyx checker, v6).
+# Enforces the prohibited list from dev/DEVELOPER_DOCUMENTATION_STYLE_GUIDE: em dashes, emojis,
+# AI speak, British spellings, and reading level. Grade 10 is the writing target; the failing
+# gate is 11.0, derived from this repo's own corpus (see the comment in the script).
+#
+# doc-style          the whole tree. 537 em-dash findings of existing debt, so it fails today.
+# doc-style-changed  only files changed against main. This is the ratchet, and what CI should run:
+#                    nobody has to clean the whole tree, but nobody can edit a file and leave it
+#                    below standard.
+# doc-style-grades   the reading-level distribution, for re-deriving the gate.
+doc-style:
+	python3 scripts/check-doc-style.py --selftest
+	python3 scripts/check-doc-style.py --all
+
+# MUST run from the repository root. `git diff --name-only` returns paths relative to the repo
+# root (`specter/README.md`), and the checker opens them relative to its own working directory.
+# Run it from `specter/` and every path resolves to nothing, whereupon it reports the files clean
+# instead of failing. Measured 2026-08-09: identical input gave "2 file(s) clean" from `specter/`
+# and 66 findings from the root. Filed as bugs/SP-HP-026.
+doc-style-changed:
+	python3 scripts/check-doc-style.py --selftest
+	cd .. && python3 specter/scripts/check-doc-style.py --changed
+
+doc-style-grades:
+	python3 scripts/check-doc-style.py --grades
 
 check: lint test build
 

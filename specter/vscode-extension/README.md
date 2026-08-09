@@ -2,7 +2,7 @@
 
 **Bring the spec→test→implement loop into your editor.**
 
-In Spec-Driven Development, the specification is the source of truth — not the code. Every requirement has a test. Every test traces to a spec. Every spec is validated before the AI writes a line. This extension makes that discipline visible and low-friction: you see what's covered, what drifted, and what your AI assistant needs — without switching windows.
+In Spec-Driven Development, the specification is the source of truth, not the code. Every requirement has a test. Every test traces to a spec. Every spec is validated before the AI writes a line. This extension makes that discipline visible and low-friction: you see what's covered, what drifted, and what your AI assistant needs, without switching windows.
 
 ---
 
@@ -12,25 +12,25 @@ New to Specter? Open the built-in walkthrough directly in VS Code:
 
 > `Ctrl+Shift+P` → **Welcome: Open Walkthrough** → **Get Started with Specter**
 
-It covers install, generating specs from your code, closing gaps with AI, annotating tests, and locking coverage into CI — all without leaving the editor.
+It covers install, generating specs from your code, closing gaps with AI, annotating tests, and locking coverage into CI, all without leaving the editor.
 
 Prefer a written guide?
-- **[QuickStart](https://github.com/Hanalyx/specter/blob/main/specter/docs/QUICKSTART.md)** — 5-minute path: install → specs → tests → CI
-- **[Getting Started](https://github.com/Hanalyx/specter/blob/main/specter/docs/GETTING_STARTED.md)** — full walkthrough with AI prompts at every step
+- **[QuickStart](https://github.com/Hanalyx/specter/blob/main/specter/docs/QUICKSTART.md).** 5-minute path: install → specs → tests → CI
+- **[Getting Started](https://github.com/Hanalyx/specter/blob/main/specter/docs/GETTING_STARTED.md).** Full walkthrough with AI prompts at every step
 
 ---
 
 ## Human Intent, AI Execution
 
-Specter's schema is deliberately detailed — constraints, acceptance criteria, tiers, provenance, coverage thresholds. Writing all of that by hand for every module would be impractical, and that was never the intention.
+Specter's schema is deliberately detailed, constraints, acceptance criteria, tiers, provenance, coverage thresholds. Writing all of that by hand for every module would be impractical, and that was never the intention.
 
 The intended workflow is a collaboration between you and your AI coding assistant:
 
-1. **You provide intent** — a brief description of what a module should do, its key constraints, and any non-obvious judgement calls or trade-offs
-2. **The AI writes the spec** — translating your intent into a fully structured `.spec.yaml` file with constraints, ACs, and tier assignments
-3. **The AI writes the tests** — derived directly from the ACs in the spec
-4. **You review** — the spec and tests are the approval gate; you validate that the AI correctly captured your intent before any implementation begins
-5. **The AI implements** — with the spec as the contract and the tests as the verification
+1. **You provide intent**, a brief description of what a module should do, its key constraints, and any non-obvious judgment calls or trade-offs
+2. **The AI writes the spec**, translating your intent into a fully structured `.spec.yaml` file with constraints, ACs, and tier assignments
+3. **The AI writes the tests**, derived directly from the ACs in the spec
+4. **You review**, the spec and tests are the approval gate; you validate that the AI correctly captured your intent before any implementation begins
+5. **The AI implements**, with the spec as the contract and the tests as the verification
 
 Specter enforces the discipline at every step: the spec must exist before code, tests must trace to ACs, and coverage must meet the tier threshold before `specter sync` passes. It makes the process infrastructure, not a suggestion.
 
@@ -42,9 +42,9 @@ Specter enforces the discipline at every step: the spec must exist before code, 
 
 When you work with AI coding tools, two things go wrong silently:
 
-**Coverage gaps you can't see.** You write a spec with eight requirements. The AI implements six. Tests pass for those six. The other two are simply absent — no error, no warning, no indicator anywhere. You find out in production.
+**Coverage gaps you can't see.** You write a spec with eight requirements. The AI implements six. Tests pass for those six. The other two are simply absent, no error, no warning, no indicator anywhere. You find out in production.
 
-**Specs that change after tests are written.** A requirement gets clarified, tightened, or removed. The test that covered it still says `@ac AC-03`. That annotation is now a lie — it references a requirement that no longer means the same thing. Nobody notices.
+**Specs that change after tests are written.** A requirement gets clarified, tightened, or removed. The test that covered it still says `@ac AC-03`. That annotation is now a lie, it references a requirement that no longer means the same thing. Nobody notices.
 
 Specter SDD surfaces both problems in the editor, continuously, as you work.
 
@@ -54,11 +54,11 @@ Specter SDD surfaces both problems in the editor, continuously, as you work.
 
 ### Know what's covered without running a report
 
-Color-coded icons appear next to every requirement in your spec file the moment you open it — **green** means at least one test covers it, **red** means nothing does, **grey** means it's intentionally excluded. The status bar shows the aggregate across all specs at all times.
+Color-coded icons appear next to every requirement in your spec file the moment you open it, **green** means at least one test covers it, **red** means nothing does, **gray** means it's intentionally excluded. The status bar shows the aggregate across all specs at all times.
 
 ### Catch spec errors before you save
 
-Mistakes in `.spec.yaml` files appear in the Problems panel within half a second of typing — missing required fields, broken cross-spec references, orphaned constraints. The same feedback loop TypeScript gives you for code, now for specs.
+Mistakes in `.spec.yaml` files appear in the Problems panel within half a second of typing, missing required fields, broken cross-spec references, orphaned constraints. The same feedback loop TypeScript gives you for code, now for specs.
 
 ### Write `@spec` and `@ac` annotations in seconds
 
@@ -82,21 +82,21 @@ Open the Specter sidebar to browse specs → requirements → test files in a tr
 
 ### Hand your AI the full contract
 
-**Specter: Copy Spec Context for AI** formats the current spec — tier, constraints, and all requirements with their full descriptions — as a structured markdown block and copies it to your clipboard. Paste into Claude, Cursor, or Copilot so your AI starts from the contract, not a guess.
+**Specter: Copy Spec Context for AI** formats the current spec, tier, constraints, and all requirements with their full descriptions, as a structured markdown block and copies it to your clipboard. Paste into Claude, Cursor, or Copilot so your AI starts from the contract, not a guess.
 
 ### Get annotation suggestions automatically
 
-A hint appears above any test function not yet linked to a spec, suggesting the most relevant requirements based on the test's name and body. Everything runs locally — no API call, no network access. Click to insert the annotation.
+A hint appears above any test function not yet linked to a spec, suggesting the most relevant requirements based on the test's name and body. Everything runs locally, no API call, no network access. Click to insert the annotation.
 
 ---
 
 ## How the SDD Workflow Looks in VS Code
 
-**1. Write the spec.** Create a `.spec.yaml` file. Specter validates it immediately — schema errors appear in the Problems panel before you save.
+**1. Write the spec.** Create a `.spec.yaml` file. Specter validates it immediately, schema errors appear in the Problems panel before you save.
 
 **2. Annotate the test.** Use `// @spec` and `// @ac` completions to link your test function to a requirement. The gutter icon next to that requirement turns green.
 
-**3. Implement with the contract.** Run **Copy Spec Context for AI** before prompting your AI assistant. It receives the exact requirements and constraints — not a paraphrase.
+**3. Implement with the contract.** Run **Copy Spec Context for AI** before prompting your AI assistant. It receives the exact requirements and constraints, not a paraphrase.
 
 **4. See gaps instantly.** Any requirement still red in the gutter after implementation is a coverage gap. The status bar shows the count. The Insights panel explains what's missing.
 
@@ -108,7 +108,7 @@ A hint appears above any test function not yet linked to a spec, suggesting the 
 
 - VS Code 1.85 or later
 - A workspace containing `specter.yaml` or at least one `*.spec.yaml` file
-- The `specter` binary — downloaded automatically on first use if not found on PATH
+- The `specter` binary, downloaded automatically on first use if not found on PATH
 
 ---
 
@@ -123,7 +123,7 @@ function testValidCurrencyCreatesIntent() {
 }
 ```
 
-The annotations are plain comments — no build step, no framework, works in any language.
+The annotations are plain comments, no build step, no framework, works in any language.
 
 ---
 
@@ -155,20 +155,20 @@ The annotations are plain comments — no build step, no framework, works in any
 
 ## Using `specter` from external terminals
 
-When the extension auto-downloads the CLI, it lands at `~/.specter/bin/specter`. VS Code's integrated terminal gets this path prepended automatically. External terminals (iTerm, Windows Terminal, tmux, etc.) don't — you'd need to type the full path.
+When the extension auto-downloads the CLI, it lands at `~/.specter/bin/specter`. VS Code's integrated terminal gets this path prepended automatically. External terminals (iTerm, Windows Terminal, tmux, etc.) don't, you'd need to type the full path.
 
 Run `Specter: Add CLI to Shell PATH` from the command palette once, and the extension will append an idempotent export to your shell's rc file (`.bashrc` on Linux, `.bash_profile` on macOS, `.zshrc` for zsh, `config.fish` for fish). Restart your terminal and `specter` works from anywhere.
 
-The command is idempotent — running it again when the path is already set tells you so and makes no changes.
+The command is idempotent, running it again when the path is already set tells you so and makes no changes.
 
 ---
 
 ## Links
 
-- [QuickStart](https://github.com/Hanalyx/specter/blob/main/specter/docs/QUICKSTART.md) — zero to working pipeline in 5 minutes
-- [Getting Started](https://github.com/Hanalyx/specter/blob/main/specter/docs/GETTING_STARTED.md) — full walkthrough from zero specs to 100% coverage
-- [AI Prompts](https://github.com/Hanalyx/specter/blob/main/specter/docs/AI_PROMPTS.md) — ready-to-use prompts for every stage of the SDD loop
+- [QuickStart](https://github.com/Hanalyx/specter/blob/main/specter/docs/QUICKSTART.md), zero to working pipeline in 5 minutes
+- [Getting Started](https://github.com/Hanalyx/specter/blob/main/specter/docs/GETTING_STARTED.md), full walkthrough from zero specs to 100% coverage
+- [AI Prompts](https://github.com/Hanalyx/specter/blob/main/specter/docs/AI_PROMPTS.md), ready-to-use prompts for every stage of the SDD loop
 - [CLI Reference](https://github.com/Hanalyx/specter/blob/main/specter/docs/CLI_REFERENCE.md)
 - [Specter on GitHub](https://github.com/Hanalyx/specter)
-- [Mastering Spec-Driven Development](https://github.com/Hanalyx/specter/tree/main/sddbook) — the methodology behind the tool
+- [Mastering Spec-Driven Development](https://github.com/Hanalyx/specter/tree/main/sddbook), the methodology behind the tool
 - [Report an issue](https://github.com/Hanalyx/specter/issues)
