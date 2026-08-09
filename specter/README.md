@@ -139,13 +139,13 @@ specter resolve
 # ERROR: spec-auth depends on spec-session@^1.0.0 but spec-session is not found
 ```
 
-**`specter check`** — Finds structural problems within and between specs. An orphan constraint — one that no acceptance criterion references — is a constraint that can never be tested. A tier conflict catches when a Tier 1 spec depends on a Tier 3 spec.
+**`specter check`** — Finds structural problems within and between specs. An orphan constraint — one that no acceptance criterion references — is a constraint that can never be tested. A tier conflict catches when a spec's declared `tier:` disagrees with the tier `settings.tier_overrides` assigns it in `specter.yaml` — the mismatch is reported, and the declared tier stays in effect.
 
 ```bash
 specter check
 
-# WARN: spec-auth [orphan_constraint] C-04 is not referenced by any AC
-# ERROR: spec-payments [tier_conflict] Tier 1 spec depends on Tier 3 spec-util
+# ERROR: spec-auth [orphan_constraint] C-04 is not referenced by any AC
+# WARN:  spec-payments [tier_conflict] declares tier: 2 but tier_overrides assigns tier: 1
 ```
 
 **`specter coverage`** — Reads `@spec` and `@ac` annotations from your test files and produces a traceability matrix. Enforces tier-based coverage thresholds.

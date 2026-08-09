@@ -187,7 +187,7 @@ specter check [--json] [--tier <n>] [--strict] [--test]
 |------------|-----------------|-------------|
 | `orphan_constraint` | T1=error, T2=warning, T3=info | A constraint is not referenced by any acceptance criterion. Individual constraints may override severity via `constraint.enforcement`. |
 | `structural_conflict` | error (override via `constraint.enforcement`) | An upstream constraint requires something that a downstream AC handles as absent. |
-| `tier_conflict` | warning | A higher-tier spec depends on a lower-tier spec (e.g., Tier 1 depends on Tier 3). |
+| `tier_conflict` | warning (text output only; not escalated by `--strict`) | A spec's declared `tier:` disagrees with the tier `settings.tier_overrides` assigns it in `specter.yaml`. The disagreement is reported, not resolved — see the note below the table. |
 | `unknown_spec_ref` | error (under `--test`) | A test annotates `@spec <id>` but no spec with that ID was parsed. Emitted only under `--test`. |
 | `unknown_ac_ref` | error (under `--test`) | A test annotates `@ac AC-NN` but the spec has no AC with that ID. Emitted only under `--test`. |
 | `unreachable_annotation` | by `settings.strictness`: annotation→suppressed, threshold→warning, zero-tolerance→error | Source-comment `@ac` whose enclosing test produces no runner-visible `<spec-id>/AC-NN` token (Convention A) and no runtime print (Convention B). Such annotations would silently demote under `coverage --strict`. Per-file off-switch: `// @reachable manual` (`# @reachable manual` for Python). Added in v0.13.0. |
@@ -195,17 +195,20 @@ specter check [--json] [--tier <n>] [--strict] [--test]
 
 When a constraint has a `type` (e.g. `security`, `performance`), it appears in parentheses after the constraint ID so diagnostics can be grouped by category.
 
+**`tier_conflict` reports a disagreement; it does not change behavior.** The declared `tier:` in the `.spec.yaml` continues to govern orphan severity and coverage thresholds. `settings.tier_overrides` is parsed and compared against the declaration, but the override value is never applied — spec-manifest C-14 specifies parsing and warning only. Because the diagnostic originates in the manifest layer rather than the checker, `--strict` does not upgrade it and it does not appear in `--json` output, so the JSON warning count can be lower than the text one. Note also that the emitted message ends with `— using override (N)`, which overstates what happens: the override is not in effect.
+
 **Example:**
 
 ```
 $ specter check
-warn [orphan_constraint] spec-auth C-04 (security): C-04 is not referenced by any AC
-error [tier_conflict] spec-payments: Tier 1 spec depends on Tier 3 spec-util
+warn [tier_conflict] spec "spec-payments" declares tier: 2 but specter.yaml tier_overrides assigns tier: 1 — using override (1)
+warn [orphan_constraint] spec-auth C-04 (security): Constraint C-04 in "spec-auth" is not referenced by any acceptance criterion
 
-1 error(s), 1 warning(s), 0 info
+0 error(s), 2 warning(s), 0 info
 
 $ specter check --strict
-# Warnings are now treated as errors — exits 1
+# Checker warnings are now treated as errors — the orphan_constraint becomes an
+# error and the command exits 1. The tier_conflict warning is unaffected.
 ```
 
 **Exit codes:** `0` = no errors (warnings allowed unless `--strict`). `1` = one or more errors.
