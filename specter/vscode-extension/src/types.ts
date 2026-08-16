@@ -71,10 +71,12 @@ export interface CoverageReport {
   summary: SpecSummary;
   /**
    * v0.9.0+: per-file parse errors surfaced by `specter coverage --json`.
-   * Present (even as []) whenever the CLI ran; absent when coverage has not
-   * been run yet. Used to distinguish the three sidebar states: not-run
-   * (report === null), parse-failed (entries empty AND parseErrors non-empty),
-   * nothing-to-show (entries empty AND parseErrors empty).
+   * Every report that came through the client carries this field, as [] when
+   * nothing failed to parse (C-31). It is optional because the store helpers
+   * also accept reports assembled by hand. Used to distinguish the three
+   * sidebar states: not-run (report === null), parse-failed (entries empty AND
+   * parseErrors non-empty), nothing-to-show (entries empty AND parseErrors
+   * empty).
    */
   parseErrors?: CoverageParseError[];
   /**
@@ -113,22 +115,44 @@ export interface CoverageParseError {
 // Diagnostics — from specter parse --json and specter check --json
 // ---------------------------------------------------------------------------
 
+/**
+ * One entry of the `errors` array `specter parse --json` emits. The names are
+ * the CLI's own (C-32): it emits `path`, `type`, and `message` on every error,
+ * and `line` only on a YAML syntax error. It emits no column, because no code
+ * path in the parser assigns that field, and it puts the file name on the
+ * document rather than on each error inside it.
+ *
+ * Until v1.9.0 this declared `col` and `code`, which the CLI names `column`
+ * and `type`, and declared `file` and `line` as required. Both reads yielded
+ * `undefined`, and the arithmetic on them yielded `NaN` (SP-SP-025).
+ */
 export interface SpecterParseError {
-  file: string;
-  line: number;
-  col: number;
+  path: string;
+  type: string;
   message: string;
-  code: string;
+  /** Present on a YAML syntax error only. 1-indexed. */
+  line?: number;
 }
 
+/**
+ * One entry of the `diagnostics` array `specter check --json` emits, after the
+ * client converts the document's keys to the camelCase shape the extension
+ * reads (C-32). The CLI emits `kind`, `severity`, `message`, and `spec_id` on
+ * every diagnostic, and the four optional fields only when non-empty.
+ *
+ * A check diagnostic carries no position of any kind and names no file, so
+ * neither is declared. Until v1.9.0 both were declared as required, alongside
+ * a `specID` the unconverted document never carried (SP-SP-025).
+ */
 export interface SpecterCheckDiagnostic {
   kind: string;
   severity: 'error' | 'warning' | 'info';
   specID: string;
-  constraintID?: string;
   message: string;
-  file: string;
-  line: number;
+  constraintID?: string;
+  constraintType?: string;
+  changeType?: string;
+  details?: string;
 }
 
 // ---------------------------------------------------------------------------

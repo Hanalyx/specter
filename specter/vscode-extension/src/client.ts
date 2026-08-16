@@ -3,6 +3,8 @@
 import { execFile } from 'child_process';
 import * as path from 'path';
 
+import type { SpecterParseError, SpecterCheckDiagnostic } from './types';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -13,26 +15,22 @@ export interface ClientOptions {
   workspaceFolder: string;
 }
 
+/**
+ * The `parse --json` document. The CLI names the file once, on the document,
+ * and `value` is the parsed spec on a successful run and null on a failed one.
+ * The error shape is the one declared in types.ts, so the two declaration
+ * sites cannot drift apart (C-32).
+ */
 export interface ParseResult {
-  errors: Array<{
-    file: string;
-    line: number;
-    col: number;
-    message: string;
-    code: string;
-  }>;
+  errors: SpecterParseError[];
+  file?: string;
+  ok?: boolean;
+  value?: unknown;
 }
 
+/** The `check --json` document, after key conversion. */
 export interface CheckResult {
-  diagnostics: Array<{
-    kind: string;
-    severity: string;
-    specID: string;
-    constraintID?: string;
-    message: string;
-    file: string;
-    line: number;
-  }>;
+  diagnostics: SpecterCheckDiagnostic[];
   summary: {
     errors: number;
     warnings: number;
@@ -138,11 +136,16 @@ export class SpecterClient {
    * `check --json` exits non-zero whenever it reports an error-severity
    * diagnostic (spec-check C-14), so the workspace that most needs its
    * diagnostics is the workspace whose exit code is non-zero.
+   *
+   * C-32: the CLI emits `spec_id` and `constraint_id`, so the document's keys
+   * are converted here the way the coverage path converts its own. Before
+   * v0.15.0 the check path skipped the step, and every read of
+   * `diagnostic.specID` returned undefined.
    */
   check(): Promise<CheckResult> {
     return this.enqueue(signal =>
       this.runAllowingNonZero(['check', '--json'], signal).then(
-        ({ stdout }) => jsonDocumentFrom('check', stdout) as CheckResult,
+        ({ stdout }) => snakeToCamelCheck(jsonDocumentFrom('check', stdout)) as CheckResult,
       ),
     );
   }
@@ -153,7 +156,7 @@ export class SpecterClient {
    * when specs fail parse (exit non-zero). Callers branch on
    * `result.parseErrors` to distinguish success vs parse-failed vs
    * no-specs-yet. Since v0.15.0 parse() and check() route the same way, and
-   * the only difference left is the snake_case conversion below.
+   * check() converts its own document's keys with its own map.
    *
    * The CLI emits snake_case field names (spec_id, coverage_pct, etc.);
    * this method converts them to the camelCase shape the rest of the
@@ -270,6 +273,24 @@ export class SpecterClient {
 }
 
 /**
+ * The array-valued fields of each `--json` document, under the names the CLI
+ * emits them by. Go marshals a nil slice as `null` and drops an `omitempty`
+ * field entirely, so a workspace with nothing wrong in it is the shape most
+ * likely to arrive with a field missing (C-31).
+ */
+const ARRAY_FIELDS: Record<string, string[]> = {
+  parse: ['errors'],
+  check: ['diagnostics'],
+  coverage: [
+    'entries',
+    'parse_errors',
+    'parse_error_patterns',
+    'diagnostic_hints',
+    'invalid_status_warnings',
+  ],
+};
+
+/**
  * Read the JSON document a `--json` run wrote to stdout.
  *
  * C-30: the failure predicate is the absence of a parseable document, not the
@@ -279,13 +300,31 @@ export class SpecterClient {
  *
  * The document starts at the first '{'. The CLI may print warn-level lines
  * first, and execFile folds stderr into stdout on some platforms.
+ *
+ * C-31: this is the single point where stdout becomes a document, so it is
+ * where `null` and absent become `[]`, before any caller sees the document.
+ * A document whose array fields are `null` is still a parseable document, so
+ * it stays on the C-30 success path and a clean run still clears the
+ * Problems panel. Only the named fields are touched, and only at the top
+ * level: `value` on the parse document is null on a failed parse and is not
+ * an array field, so normalizing it would fabricate a spec.
  */
 function jsonDocumentFrom(command: string, stdout: string): unknown {
   const start = stdout.indexOf('{');
   if (start < 0) {
     throw new Error(`specter ${command} --json did not emit a JSON document.\n${stdout}`);
   }
-  return JSON.parse(stdout.slice(start));
+  const doc: unknown = JSON.parse(stdout.slice(start));
+  if (doc === null || typeof doc !== 'object' || Array.isArray(doc)) {
+    return doc;
+  }
+  const out = doc as Record<string, unknown>;
+  for (const field of ARRAY_FIELDS[command] ?? []) {
+    if (out[field] === null || out[field] === undefined) {
+      out[field] = [];
+    }
+  }
+  return out;
 }
 
 /**
@@ -319,17 +358,45 @@ const FIELD_MAP: Record<string, string> = {
   parse_errors: 'parseErrors',
 };
 
-export function snakeToCamelCoverage(value: unknown): unknown {
+/**
+ * The check document's own keys. Kept separate from the coverage map because
+ * the two documents are different shapes and a name correct on one is not
+ * automatically correct on the other. `diagnostics` is deliberately absent:
+ * the CLI already names it the way the extension reads it.
+ */
+const CHECK_FIELD_MAP: Record<string, string> = {
+  spec_id: 'specID',
+  constraint_id: 'constraintID',
+  constraint_type: 'constraintType',
+  change_type: 'changeType',
+};
+
+/** Rewrite every key in `value` through `fieldMap`, at every depth. */
+function convertKeys(value: unknown, fieldMap: Record<string, string>): unknown {
   if (Array.isArray(value)) {
-    return value.map(snakeToCamelCoverage);
+    return value.map(v => convertKeys(v, fieldMap));
   }
   if (value === null || typeof value !== 'object') {
     return value;
   }
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-    const mapped = FIELD_MAP[k] ?? k;
-    out[mapped] = snakeToCamelCoverage(v);
+    const mapped = fieldMap[k] ?? k;
+    out[mapped] = convertKeys(v, fieldMap);
   }
   return out;
+}
+
+export function snakeToCamelCoverage(value: unknown): unknown {
+  return convertKeys(value, FIELD_MAP);
+}
+
+/**
+ * The same rewrite for the `check --json` document. The parse document gets
+ * no converter: its keys are already the ones types.ts declares, and its
+ * `value` member holds the parsed spec, whose keys are the spec schema's and
+ * must not be rewritten.
+ */
+function snakeToCamelCheck(value: unknown): unknown {
+  return convertKeys(value, CHECK_FIELD_MAP);
 }

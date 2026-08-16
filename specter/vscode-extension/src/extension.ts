@@ -1046,7 +1046,7 @@ function registerDiagnosticHooks(ctx: vscode.ExtensionContext): void {
 
         const diags = buildDiagnostics({
           parseErrors: parseResult.errors,
-          checkDiagnostics: checkResult.diagnostics as any,
+          checkDiagnostics: checkResult.diagnostics,
         });
         replacer.replace(doc.uri.fsPath, diags.map(d => toVscodeDiagnostic(d)));
 

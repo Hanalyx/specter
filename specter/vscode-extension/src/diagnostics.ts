@@ -11,45 +11,59 @@ import type {
 // AC-03 / AC-04: Build VS-Code-agnostic diagnostics from specter JSON output
 // ---------------------------------------------------------------------------
 
+/**
+ * Both halves accept null and undefined (C-31). The client normalizes them to
+ * [] before any caller sees a document, and the builder tolerates them anyway,
+ * so a caller that reaches here by some other route cannot throw.
+ */
 export interface BuildDiagnosticsInput {
-  parseErrors: SpecterParseError[];
-  checkDiagnostics: SpecterCheckDiagnostic[];
+  parseErrors: SpecterParseError[] | null | undefined;
+  checkDiagnostics: SpecterCheckDiagnostic[] | null | undefined;
+}
+
+/**
+ * The range for a diagnostic the CLI reported at `line`, which is 1-indexed
+ * where VS Code is 0-indexed. C-32: an absent position is 0, giving a range at
+ * the start of the file, rather than arithmetic on `undefined`. The CLI emits
+ * no column on a parse error and no position at all on a check diagnostic, so
+ * the range is zero-width and VS Code widens it to the word it lands on.
+ */
+function rangeAtLine(line: number | undefined): ExtensionDiagnostic['range'] {
+  const zeroBased = Math.max(0, (line ?? 1) - 1);
+  return {
+    start: { line: zeroBased, character: 0 },
+    end: { line: zeroBased, character: 0 },
+  };
 }
 
 /**
  * Converts specter parse errors and check diagnostics into the
  * VS-Code-agnostic ExtensionDiagnostic format.
  *
- * Line / column numbers in specter output are 1-indexed.
- * VS Code ranges are 0-indexed.
+ * Until v1.9.0 this read `err.col` and `diag.line`, which the CLI emits under
+ * no name and in no form. Every range it produced from a real document was
+ * `NaN` (SP-SP-025).
  */
 export function buildDiagnostics(input: BuildDiagnosticsInput): ExtensionDiagnostic[] {
   const result: ExtensionDiagnostic[] = [];
 
-  for (const err of input.parseErrors) {
-    const line = err.line - 1;       // 1-indexed → 0-indexed
-    const char = err.col  - 1;       // 1-indexed → 0-indexed
+  for (const err of input.parseErrors ?? []) {
     result.push({
       severity: 'error',
       source: 'specter',
       message: err.message,
-      range: {
-        start: { line, character: char },
-        end:   { line, character: char + 1 },
-      },
+      range: rangeAtLine(err.line),
     });
   }
 
-  for (const diag of input.checkDiagnostics) {
-    const line = Math.max(0, diag.line - 1);
+  for (const diag of input.checkDiagnostics ?? []) {
     result.push({
       severity: diag.severity === 'error' ? 'error' : 'warning',
       source: 'specter',
       message: diag.message,
-      range: {
-        start: { line, character: 0 },
-        end:   { line, character: Number.MAX_SAFE_INTEGER },
-      },
+      // A check diagnostic carries no position, so every one lands at the
+      // start of the file the caller attached it to.
+      range: rangeAtLine(undefined),
     });
   }
 
@@ -89,9 +103,11 @@ export function buildCoverageParseDiagnostics(
       severity: 'error',
       source: 'specter',
       message: `${prefix}${err.message}${pathSuffix}`,
+      // C-32: zero-width, so an error the CLI located at neither a line nor a
+      // column still carries finite integers in all four positions.
       range: {
         start: { line, character: char },
-        end: { line, character: Number.MAX_SAFE_INTEGER },
+        end: { line, character: char },
       },
     };
     const bucket = byFile.get(err.file);
