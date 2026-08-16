@@ -280,13 +280,19 @@ spec:
         and `type`. The extension's declared TypeScript types for CLI
         documents MUST NOT declare a field the CLI never emits, and MUST NOT
         declare as required a field the CLI may omit. A declaration reads as a
-        guarantee, and `tsc` then certifies code that reads `undefined`.
-        Rationale (SP-SP-025): `SpecterParseError` declared `col` and `code`,
-        and `SpecterCheckDiagnostic` declared `line` as required though check
-        diagnostics carry no position in any form. The arithmetic on those
-        fields yields `NaN`, and no test could see it, because the mock always
-        supplied `line: 7` and `column: 3` and the suite's comparison helper
-        never read `col`.
+        guarantee, and `tsc` then certifies code that reads `undefined`. The
+        rule binds on the exact name. A declared member whose name differs
+        from the key the CLI emits is a member the CLI never emits, whatever
+        it was meant to mirror, unless the extension converts the document's
+        keys before returning it. The coverage path converts and the check
+        path does not, so the same declared name is correct on one document
+        and wrong on the other. Rationale (SP-SP-025): `SpecterParseError`
+        declared `col` and `code` where the CLI emits `column` and `type`, and
+        `SpecterCheckDiagnostic` declared `specID`, `file`, and `line` as
+        required against a document that carries `spec_id` and no position of
+        any kind. The arithmetic on those fields yields `NaN`, and no test
+        could see it, because the mock always supplied `line: 7` and
+        `column: 3` and the suite's comparison helper never read `col`.
       type: technical
       enforcement: error
 
@@ -869,7 +875,13 @@ spec:
         required on either interface, because the CLI omits it on every schema
         error and emits no position at all on a check diagnostic. And
         `message` is declared on both, because the CLI emits it on every
-        error and every diagnostic.
+        error and every diagnostic. The scan stops at names the CLI emits
+        under no name at all, which is why it does not assert on `specID` or
+        on `file`. Either of those could be made correct by an extension-side
+        choice, converting the document's keys the way the coverage path
+        already does, or stamping the saved file's path onto each diagnostic,
+        and a static assertion naming them would then fail a correct fix. Both
+        are covered behaviorally instead, by AC-72 and AC-73.
       inputs:
         scan_target: "vscode-extension/src/types.ts, interfaces SpecterParseError and SpecterCheckDiagnostic"
       expected_output:
@@ -988,6 +1000,65 @@ spec:
       references_constraints: ["C-32", "C-10"]
       priority: high
 
+    - id: AC-72
+      description: >-
+        Every member declared required on `SpecterCheckDiagnostic` is present
+        on the object the client returns. The test takes the required member
+        names from that one interface in `vscode-extension/src/types.ts`,
+        using the same TypeScript compiler API pass as AC-67, drives
+        `client.check()` against a stubbed process emitting the CLI's document
+        verbatim, and asserts each of those names is present and not
+        `undefined` on the first returned diagnostic. Three fail today.
+        `specID` fails because the CLI emits `spec_id` and the check path does
+        no key conversion, unlike the coverage path. `file` and `line` fail
+        because a check diagnostic carries neither in any form. Any correct
+        fix passes: converting the document's keys, renaming the declared
+        members to the names the CLI uses, stamping the saved file's path, or
+        marking a member optional. The contract is that the declaration and
+        the object agree, not which side moves, following the AC-52
+        precedent.
+      inputs:
+        interface: "SpecterCheckDiagnostic in vscode-extension/src/types.ts"
+        cli_stdout: |-
+          {"diagnostics": [
+            {"kind": "orphan_constraint", "severity": "error", "spec_id": "spec-o",
+             "constraint_id": "C-02", "constraint_type": "technical",
+             "message": "Constraint C-02 in \"spec-o\" is not referenced by any acceptance criterion"}
+          ], "summary": {"errors": 1, "warnings": 0, "info": 0}}
+        cli_exit_code: 1
+      expected_output:
+        declared_required_members_missing_at_runtime: 0
+        spec_id_readable_under_its_declared_name: "spec-o"
+      references_constraints: ["C-32"]
+      priority: high
+
+    - id: AC-73
+      description: >-
+        The same rule on the parse side. Every member declared required on
+        `SpecterParseError` is present on each element of the `errors` array
+        the client returns. The document is a schema validation failure, which
+        is the shape most parse errors take and the one that omits the most:
+        it carries `path`, `type`, and `message`, and no position at all. Four
+        members fail today. `col` and `code` fail because the CLI names those
+        fields `column` and `type`, `line` fails because a schema error omits
+        it, and `file` fails because the CLI puts the file name on the
+        document rather than on each error inside it. Kept separate from
+        AC-72 because the two interfaces are fed by different commands and a
+        fix applied to one has repeatedly been left off the other.
+      inputs:
+        interface: "SpecterParseError in vscode-extension/src/types.ts"
+        cli_stdout: |-
+          {"errors": [
+            {"path": "spec", "type": "required",
+             "message": "Missing required field 'objective'. Add an objective block with a summary"}
+          ], "file": "specs/b.spec.yaml", "ok": false, "value": null}
+        cli_exit_code: 0
+      expected_output:
+        declared_required_members_missing_at_runtime: 0
+        message_readable_under_its_declared_name: "Missing required field 'objective'. Add an objective block with a summary"
+      references_constraints: ["C-32"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.1.0"
@@ -1044,7 +1115,17 @@ spec:
         (`parse_errors` absent normalizes to an empty array), AC-70
         (`value: null` on a failed parse is returned without throwing), and
         AC-71 (the same finite-range rule on the coverage parse-error path,
-        which is the second consumer of CLI positions and feeds AC-34).
+        which is the second consumer of CLI positions and feeds AC-34). Add
+        AC-72 and AC-73: every member declared required on
+        `SpecterCheckDiagnostic` and on `SpecterParseError` is present on the
+        object the client returns for the CLI's own document. Three fail today
+        on the check side, `specID`, `file`, and `line`, and four on the parse
+        side, `col`, `code`, `line`, and `file`. Both are written so that any
+        correct fix passes, whether the extension converts the document's
+        keys, renames the declared members, stamps the file name, or marks a
+        member optional. AC-67 stays a static scan and stops at the names no
+        CLI field maps to, because a static assertion on `specID` or `file`
+        would fail a fix that converts or stamps.
     - version: "1.8.0"
       date: "2026-08-16"
       author: "specter-team"
