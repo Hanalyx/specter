@@ -1,6 +1,6 @@
 spec:
   id: spec-check
-  version: "1.5.0"
+  version: "1.6.0"
   status: approved
   tier: 1
 
@@ -30,6 +30,7 @@ spec:
     scope:
       includes:
         - "Orphan constraint detection (constraints not referenced by any AC)"
+        - "Duplicate acceptance criterion ID detection within a single spec"
         - "Structural conflict detection between dependent specs"
         - "Breaking change detection (compare current spec to previous version)"
         - "Tier-aware severity (Tier 1 = error, Tier 3 = warning)"
@@ -101,6 +102,11 @@ spec:
     - id: C-12
       description: "When reading test files for the annotation scanners (`CheckTestAnnotations` per C-09 and `CheckUnreachableAnnotations` per C-10), the CLI MUST refuse to read any test file whose on-disk size exceeds `MaxTestFileBytes` (4 MiB). The check MUST use `os.Stat` BEFORE `os.ReadFile`, so an oversized file is never buffered into memory. Files at or under the cap continue to scan as before. Oversized files MUST be skipped (not fatal — `check --test` proceeds with the remaining files) and the skip MUST emit a stderr warning naming the file path and byte count so the operator knows that file was not scanned. Rationale: the unreachable scanner reads every discovered test file via `os.ReadFile` and passes the full string to `go/parser.ParseFile` (Go), `strings.Split` over regex (TS / Python). A 4 GiB malicious or accidental test file OOMs Specter; `go/parser` allocates an AST proportional to file size. The 4 MiB cap is conservative — real test files are well under that. Mirrors the existing `parser.maxSpecBytes` (1 MiB) and `coverage.MaxResultsFileBytes` (16 MiB) pattern; v0.13 security audit surfaced this as the H5 gap because the unreachable scanner was the only v0.13 surface that didn't inherit a size cap."
       type: business
+      enforcement: error
+
+    - id: C-13
+      description: "MUST detect duplicate acceptance criterion IDs within a single spec and emit a `duplicate_ac_id` diagnostic. Uniqueness is scoped to one spec. Two specs may each declare `AC-01`, and that is not a duplicate. Comparison is exact string equality, so `AC-01` and `AC-001` are distinct IDs. Severity is `error` at every tier. An AC ID is the join key between a spec and its tests, and no tier makes two criteria answering to one key correct. The check runs in the default `check` pass and requires no flag, so `sync` inherits it. One diagnostic is emitted per duplicated ID, not per occurrence. The message MUST name the spec ID, the duplicated AC ID, the number of occurrences, and the 1-based position of each occurrence in declaration order, so the author can find every offending criterion. This dedup rule is the opposite of the C-09 rule for repeated `@ac` mentions in test files, and that is deliberate: there each mention is a separate broken reference, while here the occurrences are one broken declaration. Rationale: one `@ac AC-01` annotation credits every criterion declared as `AC-01`, so the spec reports coverage it has not earned. JSON Schema cannot express uniqueness over a property of array items, so parse cannot catch this."
+      type: technical
       enforcement: error
 
   depends_on:
@@ -345,7 +351,111 @@ spec:
       references_constraints: ["C-12"]
       priority: critical
 
+    - id: AC-21
+      description: "A spec that declares AC-01 at two positions produces exactly one `duplicate_ac_id` diagnostic at error severity, naming the spec id, the duplicated id, the occurrence count, and the 1-based position of each occurrence"
+      inputs:
+        spec: "id payment-charge, tier 1, acceptance_criteria in declaration order: AC-01, AC-02, AC-01"
+        invocation: "specter check"
+      expected_output:
+        diagnostic_count: 1
+        diagnostic_kind: "duplicate_ac_id"
+        severity: "error"
+        spec_id: "payment-charge"
+        ac_id: "AC-01"
+        message_names_occurrence_count: 2
+        message_names_positions: [1, 3]
+        exit_code_nonzero: true
+      references_constraints: ["C-13"]
+      priority: critical
+
+    - id: AC-22
+      description: "Duplicate AC id severity does not route through tier: a tier 3 spec with a duplicated id reports error, not info"
+      inputs:
+        tier_3_spec: "id ledger-export, tier 3, acceptance_criteria in declaration order: AC-01, AC-01"
+        invocation: "specter check"
+      expected_output:
+        diagnostic_kind: "duplicate_ac_id"
+        severity: "error"
+        severity_is_not: "info"
+        exit_code_nonzero: true
+      references_constraints: ["C-13"]
+      priority: critical
+
+    - id: AC-23
+      description: "An AC id declared three times in one spec produces one diagnostic reporting three occurrences, not one diagnostic per occurrence and not one per duplicate pair"
+      inputs:
+        spec: "id payment-charge, tier 1, acceptance_criteria in declaration order: AC-01, AC-02, AC-01, AC-01"
+        invocation: "specter check"
+      expected_output:
+        diagnostic_count: 1
+        diagnostic_kind: "duplicate_ac_id"
+        severity: "error"
+        ac_id: "AC-01"
+        message_names_occurrence_count: 3
+        message_names_positions: [1, 3, 4]
+        exit_code_nonzero: true
+      references_constraints: ["C-13"]
+      priority: high
+
+    - id: AC-24
+      description: "Two different ids each duplicated in one spec produce two diagnostics, one per duplicated id, and the id declared once produces none"
+      inputs:
+        spec: "id payment-charge, tier 1, acceptance_criteria in declaration order: AC-01, AC-02, AC-01, AC-02, AC-03"
+        invocation: "specter check"
+      expected_output:
+        diagnostic_count: 2
+        diagnostic_kind: "duplicate_ac_id"
+        severity: "error"
+        diagnostic_1: { ac_id: "AC-01", message_names_positions: [1, 3] }
+        diagnostic_2: { ac_id: "AC-02", message_names_positions: [2, 4] }
+        no_diagnostic_for_ac_id: "AC-03"
+        exit_code_nonzero: true
+      references_constraints: ["C-13"]
+      priority: high
+
+    - id: AC-25
+      description: "The same AC id declared in two different specs of one workspace is not a duplicate and produces no diagnostic"
+      inputs:
+        spec_a: "id payment-charge, tier 1, acceptance_criteria: AC-01, AC-02"
+        spec_b: "id payment-refund, depends on payment-charge, tier 1, acceptance_criteria: AC-01, AC-02"
+        invocation: "specter check"
+      expected_output:
+        duplicate_ac_id_count: 0
+        exit_code_zero: true
+      references_constraints: ["C-13"]
+      priority: critical
+
+    - id: AC-26
+      description: "Ids are compared as exact strings, so AC-01 and AC-001 declared in the same spec are distinct and produce no diagnostic"
+      inputs:
+        spec: "id payment-charge, tier 1, acceptance_criteria in declaration order: AC-01, AC-001"
+        invocation: "specter check"
+      expected_output:
+        duplicate_ac_id_count: 0
+        exit_code_zero: true
+      references_constraints: ["C-13"]
+      priority: medium
+
+    - id: AC-27
+      description: "The duplicate id check runs in the default check pass: a plain `specter check` with no `--test` flag reports the diagnostic and exits non-zero"
+      inputs:
+        spec: "id payment-charge, tier 1, acceptance_criteria in declaration order: AC-01, AC-02, AC-01"
+        invocation: "specter check (no --test flag, no --strict flag)"
+      expected_output:
+        diagnostic_count: 1
+        diagnostic_kind: "duplicate_ac_id"
+        severity: "error"
+        requires_test_flag: false
+        exit_code_nonzero: true
+      references_constraints: ["C-13"]
+      priority: critical
+
   changelog:
+    - version: "1.6.0"
+      date: "2026-08-16"
+      author: "specter-team"
+      type: minor
+      description: "v0.15 phase 2C1, duplicate acceptance criterion IDs. Add C-13 and AC-21 through AC-27. A spec that declares the same AC id twice passes parse and check today, and one `@ac` annotation then credits every criterion carrying that id, so the spec reports coverage it has not earned. JSON Schema cannot express uniqueness over a property of array items, so the rule belongs in the checker. Four decisions are recorded here because a reader may expect otherwise. Severity is error at every tier, since no tier makes two criteria sharing a join key correct. One diagnostic is emitted per duplicated id rather than per occurrence, which is the opposite of the C-09 no-dedup rule for repeated `@ac` mentions and is deliberate. The check runs with no flag, so `sync` inherits it. Ids are compared as exact strings, so `AC-01` and `AC-001` stay distinct. Error at every tier means an adopter shipping a duplicate today fails `check` on upgrade, which is the intent, because the defect is silent coverage inflation."
     - version: "1.5.0"
       date: "2026-05-16"
       author: "specter-team"
