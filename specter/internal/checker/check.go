@@ -7,6 +7,7 @@ package checker
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Hanalyx/specter/internal/resolver"
@@ -67,6 +68,7 @@ var CoverageThresholdByTier = map[int]int{
 // C-04: Breaking change classification.
 // C-05: Zero false positives for structural checks.
 // C-06: Pure function.
+// C-13: Duplicate acceptance criterion ids within one spec.
 func CheckSpecs(graph *resolver.SpecGraph, opts *CheckOptions) *CheckResult {
 	if opts == nil {
 		opts = &CheckOptions{}
@@ -127,6 +129,21 @@ func CheckSpecs(graph *resolver.SpecGraph, opts *CheckOptions) *CheckResult {
 				})
 			}
 		}
+	}
+
+	// Rule 4: Duplicate acceptance criterion ids (AC-21 through AC-27)
+	//
+	// Severity is error at every tier, so this reads node.Spec directly and
+	// ignores opts.TierOverride. Spec ids are visited in sorted order, because
+	// graph.Nodes is a map and a human diffing two runs should see the same
+	// list twice.
+	specIDs := make([]string, 0, len(graph.Nodes))
+	for id := range graph.Nodes {
+		specIDs = append(specIDs, id)
+	}
+	sort.Strings(specIDs)
+	for _, id := range specIDs {
+		diagnostics = append(diagnostics, checkDuplicateACIDs(&graph.Nodes[id].Spec)...)
 	}
 
 	// C-07: strict mode — upgrade warnings and info to errors
