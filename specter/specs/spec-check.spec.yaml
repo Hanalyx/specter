@@ -1,6 +1,6 @@
 spec:
   id: spec-check
-  version: "1.6.0"
+  version: "1.7.0"
   status: approved
   tier: 1
 
@@ -37,6 +37,7 @@ spec:
         - "Diagnostic output with spec ID, constraint ID, and explanation"
         - "Test-annotation cross-reference (opt-in via --test / -t): scan test files, flag @spec and @ac references that do not match any parsed spec"
         - "Unreachable annotation detection (opt-in via --test / -t): scan test files, flag source-comment @ac annotations whose runner-visible test title or runtime output does not carry the corresponding `spec-id/AC-NN` pair (would silently demote under `coverage --strict`)"
+        - "Exit-code parity between the default output and `--json`: the verdict follows the diagnostics, not the rendering"
       excludes:
         - "Semantic conflict detection (AI-assisted, Phase 8)"
         - "Gap detection (uncovered input paths, Phase 8)"
@@ -107,6 +108,11 @@ spec:
     - id: C-13
       description: "MUST detect duplicate acceptance criterion IDs within a single spec and emit a `duplicate_ac_id` diagnostic. Uniqueness is scoped to one spec. Two specs may each declare `AC-01`, and that is not a duplicate. Comparison is exact string equality, so `AC-01` and `AC-001` are distinct IDs. Severity is `error` at every tier. An AC ID is the join key between a spec and its tests, and no tier makes two criteria answering to one key correct. The check runs in the default `check` pass and requires no flag, so `sync` inherits it. One diagnostic is emitted per duplicated ID, not per occurrence. The message MUST name the spec ID, the duplicated AC ID, the number of occurrences, and the 1-based position of each occurrence in declaration order, so the author can find every offending criterion. This dedup rule is the opposite of the C-09 rule for repeated `@ac` mentions in test files, and that is deliberate: there each mention is a separate broken reference, while here the occurrences are one broken declaration. Rationale: one `@ac AC-01` annotation credits every criterion declared as `AC-01`, so the spec reports coverage it has not earned. JSON Schema cannot express uniqueness over a property of array items, so parse cannot catch this."
       type: technical
+      enforcement: error
+
+    - id: C-14
+      description: "`specter check --json` MUST exit with the same process exit code that `specter check` produces for the same workspace, the same flags, and the same manifest settings. The exit code is a function of the diagnostics the run produced, not of how they are rendered. Per the documented check contract, the code is 1 when the run reports one or more error-severity diagnostics, counted after tier routing (C-02) and after any `--strict` upgrade (C-07), and 0 otherwise. A run whose worst severity is warning or info therefore exits 0 in both formats, and a `--strict` run that upgrades those warnings to errors exits 1 in both. No diagnostic kind is exempt, including kinds added later. The JSON document MUST be written to stdout in full before the exit-code decision runs, and stdout MUST carry that document alone, so one invocation gives a caller both the diagnostics and a usable verdict. Human-readable notices stay on stderr. This is the `check` instance of the parity rule spec-coverage C-29 states for `coverage`, where the same defect was found in the v0.13 D3 audit. Rationale: a CI job that uses `--json` to capture structured diagnostics has a check gate that never fails, at any severity, for any kind. The document is correct and the exit code, which is the one thing an automated caller reads, reports a passing run."
+      type: business
       enforcement: error
 
   depends_on:
@@ -450,7 +456,92 @@ spec:
       references_constraints: ["C-13"]
       priority: critical
 
+    - id: AC-28
+      description: "A workspace whose only defect is a spec declaring AC-01 twice exits 1 under `specter check` and 1 under `specter check --json`. The two invocations differ only in output format, so they agree on the exit code"
+      inputs:
+        spec: "id dup, tier 1, acceptance_criteria in declaration order: AC-01, AC-02, AC-01"
+        invocation_text: "specter check"
+        invocation_json: "specter check --json"
+      expected_output:
+        text_exit_code: 1
+        json_exit_code: 1
+        json_document_reports_duplicate_ac_id: true
+      references_constraints: ["C-14"]
+      priority: critical
+
+    - id: AC-29
+      description: "Exit-code parity holds for every diagnostic kind, not only the kind that surfaced the defect. Each workspace below is run twice, once as `specter check` and once with `--json` added, and the two runs report the same exit code"
+      inputs:
+        row_orphan: "tier 1 spec with orphan constraint C-03, error severity"
+        row_unknown_spec_ref: "test file carrying `// @spec bogus-spec`, run with `--test`"
+        row_malformed_ac_id: "test file carrying `// @ac AC-1`, run with `--test`"
+        row_clean: "workspace with no diagnostics of any severity"
+      expected_output:
+        row_orphan: { text_exit_code: 1, json_exit_code: 1 }
+        row_unknown_spec_ref: { text_exit_code: 1, json_exit_code: 1 }
+        row_malformed_ac_id: { text_exit_code: 1, json_exit_code: 1 }
+        row_clean: { text_exit_code: 0, json_exit_code: 0 }
+      references_constraints: ["C-14"]
+      priority: critical
+
+    - id: AC-30
+      description: "A run whose worst severity is warning exits 0 under `--json`, matching text mode. Warnings do not fail the check in either format"
+      inputs:
+        spec: "tier 2 spec with orphan constraint C-03, which routes to warning severity"
+        invocation_text: "specter check"
+        invocation_json: "specter check --json"
+      expected_output:
+        text_exit_code: 0
+        json_exit_code: 0
+        json_document_reports_orphan_constraint_at_warning: true
+      references_constraints: ["C-14"]
+      priority: high
+
+    - id: AC-31
+      description: "`specter check --strict --json` on the tier 2 orphan of AC-30 exits 1, because `--strict` upgrades the warning to an error and the exit code follows severity after that upgrade. Text mode on the same workspace also exits 1"
+      inputs:
+        spec: "tier 2 spec with orphan constraint C-03"
+        invocation_text: "specter check --strict"
+        invocation_json: "specter check --strict --json"
+      expected_output:
+        text_exit_code: 1
+        json_exit_code: 1
+      references_constraints: ["C-14", "C-07"]
+      priority: high
+
+    - id: AC-32
+      description: "A run whose worst severity is info exits 0 under `--json`, matching text mode. Info diagnostics are reported in the document and change no verdict"
+      inputs:
+        spec: "tier 3 spec with orphan constraint C-03, which routes to info severity"
+        invocation_text: "specter check"
+        invocation_json: "specter check --json"
+      expected_output:
+        text_exit_code: 0
+        json_exit_code: 0
+        json_document_reports_orphan_constraint_at_info: true
+      references_constraints: ["C-14", "C-02"]
+      priority: medium
+
+    - id: AC-33
+      description: "When `specter check --json` exits non-zero, stdout still holds one complete JSON document and nothing else. The document parses, and it carries every diagnostic the same run reports in text mode, each with its kind and its severity. A caller that reads the exit code can then read the reason from the same output"
+      inputs:
+        spec: "id dup, tier 1, acceptance_criteria in declaration order: AC-01, AC-02, AC-01"
+        invocation: "specter check --json"
+      expected_output:
+        exit_code: 1
+        stdout_parses_as_json: true
+        stdout_contains_only_the_document: true
+        diagnostics_match_text_mode: true
+        each_diagnostic_carries_kind_and_severity: true
+      references_constraints: ["C-14"]
+      priority: critical
+
   changelog:
+    - version: "1.7.0"
+      date: "2026-08-16"
+      author: "specter-team"
+      type: minor
+      description: "v0.15, exit-code parity between `check` and `check --json` (bugs/SP-SP-021). Add C-14 and AC-28 through AC-33. On a workspace with one error, `specter check` exits 1 and `specter check --json` exits 0. The diagnostics are present and correct in the document, so only the verdict is lost, and the verdict is the part an automated caller reads. A CI job that uses `--json` for structured diagnostics has a check gate that never fails, for any kind, at any severity. Three decisions are recorded here. First, the existing `exit_code_nonzero` criteria did not already cover this. Each of them names its invocation in `inputs`, and none of those invocations carries `--json`. The current binary satisfies all of them as written, so the contract was silent. This is a gap rather than a conformance failure. That reading matches how the identical case was settled for `coverage` in the v0.13 D3 audit, which added spec-coverage C-29 instead of declaring the older criteria violated. Second, the rule is scoped to `check`. Per-command parity constraints are the existing house form (spec-coverage C-29, spec-sync C-07). A constraint in this spec also cannot bind a command this spec does not describe. A format-parity rule would not catch the separate `diff` defect either, because that exit code is wrong in both formats. Third, C-14 defines the JSON exit code as the code text mode produces, so it never restates severity routing. Warning-only and info-only runs exit 0 in both formats, and a `--strict` run that upgrades warnings to errors exits 1 in both. AC-33 states what the document must hold on a non-zero exit, in terms of the diagnostics and stdout, and mandates no new field."
     - version: "1.6.0"
       date: "2026-08-16"
       author: "specter-team"
