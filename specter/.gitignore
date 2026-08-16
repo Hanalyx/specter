@@ -39,5 +39,8 @@ research/
 docs/DOC_STYLE_GUIDE.md
 docs/roadmap/
 
+# Design records, local-only as of 2026-08-16
+docs/design/
+
 # Planning surface — local-only as of 2026-05-07
 BACKLOG.md
