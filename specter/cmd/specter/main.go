@@ -642,6 +642,22 @@ Example:
 	return cmd
 }
 
+// checkExitVerdict maps a finished check run to its process exit. Per the
+// documented check contract, a run that reports one or more error-severity
+// diagnostics fails; warning and info do not. The count it reads is already
+// routed by tier (spec-check C-02) and already upgraded by `--strict` (C-07),
+// so the rule lives in one place and this function never restates it.
+//
+// spec-check C-14: `check` and `check --json` both end on this function, which
+// is what makes their exit codes equal for the same run. A second copy of the
+// rule in either branch is the defect C-14 exists to close, so keep it at one.
+func checkExitVerdict(result *checker.CheckResult) error {
+	if result.Summary.Errors > 0 {
+		return errSilent
+	}
+	return nil
+}
+
 func checkCmd() *cobra.Command {
 	var jsonOutput bool
 	var tierOverride int
@@ -753,14 +769,21 @@ func checkCmd() *cobra.Command {
 				}
 			}
 
-			// Tier conflict warnings (C-14)
+			// Tier conflict warnings (spec-manifest C-14, qualified because
+			// spec-check C-14 below is a different constraint)
 			tierConflicts := manifest.CheckTierConflicts(specs, m)
 
+			// spec-check C-14: `--json` writes the document to stdout in
+			// full, then takes its exit code from checkExitVerdict, the
+			// same function the text path below ends on. The verdict is a
+			// function of the diagnostics the run produced, not of how
+			// they are rendered, so the two formats share one definition
+			// of it and cannot drift apart when that definition changes.
 			if jsonOutput {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
 				_ = enc.Encode(result)
-				return nil
+				return checkExitVerdict(result)
 			}
 
 			for _, tc := range tierConflicts {
@@ -792,10 +815,7 @@ func checkCmd() *cobra.Command {
 
 			fmt.Printf("\n%d error(s), %d warning(s), %d info\n", result.Summary.Errors, result.Summary.Warnings+len(tierConflicts), result.Summary.Info)
 
-			if result.Summary.Errors > 0 {
-				return errSilent
-			}
-			return nil
+			return checkExitVerdict(result)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
