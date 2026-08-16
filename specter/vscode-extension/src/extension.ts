@@ -525,12 +525,14 @@ async function runCoverageForFolder(key: string, client: SpecterClient): Promise
     }
     treeProvider?.refresh();
   } catch (e) {
-    // runAllowingNonZero only rejects for real spawn failures (ENOENT,
-    // aborted, malformed JSON). These are process-level problems, not
-    // per-spec parse failures — surface as an error state with no report.
+    // AC-59: the run yielded no parseable document, either because it failed
+    // to spawn or because stdout carried nothing the client could read. Those
+    // are process-level problems, not per-spec parse failures. The stored
+    // report and the folder's diagnostics stay as they were, because an empty
+    // sidebar would claim a clean workspace that was never measured.
+    if (isAborted(e)) return;
     const msg = e instanceof Error ? e.message : String(e);
-    outputChannel?.appendLine(`[${new Date().toISOString()}] coverage run failed for ${key}:`);
-    outputChannel?.appendLine('  ' + msg);
+    outputChannel?.appendLine(`[${new Date().toISOString()}] coverage failed for ${key}: ${msg}`);
     setStatusBarError('Specter coverage failed. Click to view details.');
     coverageErrorFolders.add(key);
   }
@@ -577,6 +579,31 @@ function pushCoverageParseDiagnostics(
     });
     dc.set(uri, vsDiags);
   }
+}
+
+/**
+ * C-18, C-30: deactivation cancels whatever is in flight. A run the extension
+ * canceled itself is not a failure and is not reported as one.
+ */
+function isAborted(err: unknown): boolean {
+  return err instanceof Error && err.message === 'aborted';
+}
+
+/**
+ * AC-59: name the command and the file in a failed invocation, so the
+ * Output-channel line reads `check failed for <file>: <message>` rather than a
+ * bare CLI error. The original message is kept whole, which is what lets a
+ * spawn failure name its own errno (AC-60). A cancellation is rethrown
+ * untouched so the caller can still tell it apart.
+ */
+function failedInvocation(command: string, target: string): (err: unknown) => never {
+  return (err: unknown): never => {
+    if (isAborted(err)) {
+      throw err;
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`${command} failed for ${target}: ${msg}`);
+  };
 }
 
 /**
@@ -988,10 +1015,14 @@ function registerDiagnosticHooks(ctx: vscode.ExtensionContext): void {
             );
           } catch (err) {
             // AC-48: route to Output channel instead of silent ignore.
+            // AC-59: the existing diagnostics stay put. replace() runs on the
+            // success path only, so a failed run never empties the panel.
+            if (isAborted(err)) return;
             const msg = err instanceof Error ? err.message : String(err);
             outputChannel?.appendLine(
-              `[${new Date().toISOString()}] on-type parse failed for ${e.document.uri.fsPath}: ${msg}`,
+              `[${new Date().toISOString()}] parse failed for ${e.document.uri.fsPath}: ${msg}`,
             );
+            setStatusBarError('Specter: parse failed. Click to view details.');
           }
         }, 400),
       );
@@ -1009,8 +1040,8 @@ function registerDiagnosticHooks(ctx: vscode.ExtensionContext): void {
 
       try {
         const [parseResult, checkResult] = await Promise.all([
-          client.parse(doc.uri.fsPath),
-          client.check(),
+          client.parse(doc.uri.fsPath).catch(failedInvocation('parse', doc.uri.fsPath)),
+          client.check().catch(failedInvocation('check', doc.uri.fsPath)),
         ]);
 
         const diags = buildDiagnostics({
@@ -1079,7 +1110,19 @@ function registerDiagnosticHooks(ctx: vscode.ExtensionContext): void {
             }
           } catch { /* diff not available — new file or not a git repo */ }
         }
-      } catch { /* ignore */ }
+      } catch (err) {
+        // AC-59, C-26: an invocation that produced no parseable document
+        // failed, whatever it exited with. Report it and leave the folder's
+        // diagnostics alone. Replacing them with an empty set would put an
+        // empty Problems panel in front of the user, which claims a clean
+        // workspace that was never checked. No notification: the Output
+        // channel and the status bar are the surfacing (C-30).
+        if (!isAborted(err)) {
+          const msg = err instanceof Error ? err.message : String(err);
+          outputChannel?.appendLine(`[${new Date().toISOString()}] ${msg}`);
+          setStatusBarError('Specter: on-save run failed. Click to view details.');
+        }
+      }
     }),
   );
 

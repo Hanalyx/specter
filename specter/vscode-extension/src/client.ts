@@ -125,28 +125,35 @@ export class SpecterClient {
    */
   parse(filePath: string): Promise<ParseResult> {
     return this.enqueue(signal =>
-      this.run(
+      this.runAllowingNonZero(
         ['parse', '--json', path.resolve(this.opts.workspaceFolder, filePath)],
         signal,
-      ).then(out => JSON.parse(out) as ParseResult),
+      ).then(({ stdout }) => jsonDocumentFrom('parse', stdout) as ParseResult),
     );
   }
 
-  /** Run `specter check --json`. */
+  /** Run `specter check --json`.
+   *
+   * C-30: the exit code is not an input to whether the document is kept.
+   * `check --json` exits non-zero whenever it reports an error-severity
+   * diagnostic (spec-check C-14), so the workspace that most needs its
+   * diagnostics is the workspace whose exit code is non-zero.
+   */
   check(): Promise<CheckResult> {
     return this.enqueue(signal =>
-      this.run(['check', '--json'], signal).then(out => JSON.parse(out) as CheckResult),
+      this.runAllowingNonZero(['check', '--json'], signal).then(
+        ({ stdout }) => jsonDocumentFrom('check', stdout) as CheckResult,
+      ),
     );
   }
 
   /** Run `specter coverage --json`.
    *
-   * v0.9.0+: the CLI emits a CoverageReport JSON on every run — including
+   * v0.9.0+: the CLI emits a CoverageReport JSON on every run, including
    * when specs fail parse (exit non-zero). Callers branch on
    * `result.parseErrors` to distinguish success vs parse-failed vs
-   * no-specs-yet. The queue/abort plumbing stays the same; the only
-   * difference from parse()/check() is that a non-zero exit no longer
-   * discards stdout.
+   * no-specs-yet. Since v0.15.0 parse() and check() route the same way, and
+   * the only difference left is the snake_case conversion below.
    *
    * The CLI emits snake_case field names (spec_id, coverage_pct, etc.);
    * this method converts them to the camelCase shape the rest of the
@@ -167,19 +174,9 @@ export class SpecterClient {
     // built on (and is byte-identical to the pre-1.15.0 default path,
     // including Tier-1 pass-awareness when a results file exists).
     return this.enqueue(signal =>
-      this.runAllowingNonZero(['coverage', '--json', '--strictness', 'annotation'], signal).then(({ stdout }) => {
-        // Locate the JSON document — the CLI may print warn-level lines to
-        // stderr that execFile sometimes folds into stdout depending on
-        // platform. JSON output always begins with '{'.
-        const start = stdout.indexOf('{');
-        if (start < 0) {
-          throw new Error(
-            `specter coverage --json did not emit a JSON document.\n${stdout}`,
-          );
-        }
-        const raw = JSON.parse(stdout.slice(start)) as unknown;
-        return snakeToCamelCoverage(raw) as CoverageResult;
-      }),
+      this.runAllowingNonZero(['coverage', '--json', '--strictness', 'annotation'], signal).then(
+        ({ stdout }) => snakeToCamelCoverage(jsonDocumentFrom('coverage', stdout)) as CoverageResult,
+      ),
     );
   }
 
@@ -201,6 +198,12 @@ export class SpecterClient {
     this.abortController?.abort();
   }
 
+  /**
+   * Invocations that read the exit code as their verdict rather than a
+   * document. C-30 puts these out of scope on purpose, so a later sweep
+   * cannot break them by applying the tolerant rule everywhere. Nothing that
+   * passes `--json` may use this path (AC-58 fails the build if one does).
+   */
   private run(args: string[], signal: AbortSignal): Promise<string> {
     return new Promise((resolve, reject) => {
       if (signal.aborted) {
@@ -226,11 +229,16 @@ export class SpecterClient {
   }
 
   /**
-   * Like run(), but treats non-zero exits as data rather than errors:
-   * resolves with stdout (and stderr, exit code) regardless. Used by
-   * coverage() so the v0.9.0 "JSON on every exit" contract survives the
-   * execFile layer, which otherwise rejects with Error and discards
-   * stdout when the process exits non-zero.
+   * The path every `--json` invocation takes (C-30). It treats a non-zero
+   * exit as data rather than an error and resolves with stdout, stderr, and
+   * the exit code, because execFile otherwise rejects and discards stdout.
+   * A process that never spawned produced no document, so a spawn failure
+   * still rejects and carries its own errno.
+   *
+   * v0.13 moved coverage() here and left parse() and check() on run(). The
+   * v0.14 `check --json` exit-code fix then reached users while check() was
+   * still on the rejecting path, so a workspace with one error-severity
+   * diagnostic lost its on-save diagnostics entirely (SP-SP-023).
    */
   private runAllowingNonZero(
     args: string[],
@@ -259,6 +267,25 @@ export class SpecterClient {
       }, { once: true });
     });
   }
+}
+
+/**
+ * Read the JSON document a `--json` run wrote to stdout.
+ *
+ * C-30: the failure predicate is the absence of a parseable document, not the
+ * exit code. A run that wrote a document succeeded whatever it exited with,
+ * and a run that wrote none failed even at exit 0. Throwing here is what puts
+ * the second case on the failure path.
+ *
+ * The document starts at the first '{'. The CLI may print warn-level lines
+ * first, and execFile folds stderr into stdout on some platforms.
+ */
+function jsonDocumentFrom(command: string, stdout: string): unknown {
+  const start = stdout.indexOf('{');
+  if (start < 0) {
+    throw new Error(`specter ${command} --json did not emit a JSON document.\n${stdout}`);
+  }
+  return JSON.parse(stdout.slice(start));
 }
 
 /**
