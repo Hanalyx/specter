@@ -1,6 +1,6 @@
 spec:
   id: spec-vscode
-  version: "1.7.0"
+  version: "1.8.0"
   status: draft
   tier: 2
 
@@ -215,6 +215,11 @@ spec:
       type: business
       enforcement: error
 
+    - id: C-30
+      description: "Every invocation of the specter CLI that requests a machine-readable document with `--json` MUST use an invocation path that resolves on a non-zero process exit and hands the caller stdout, stderr, and the exit code. A non-zero exit MUST NOT by itself discard the document. The CLI exits non-zero whenever a run reports error-severity diagnostics, in JSON mode as well as text mode (spec-check C-14, spec-coverage C-29), so the workspace that most needs its diagnostics is the workspace whose exit code is non-zero. The rule covers every `--json` invocation the extension makes, currently `parse --json`, `check --json`, and `coverage --json`, and any added later. Invocations that read the exit code as their verdict instead of reading a document, such as the C-01 `--version` probe, are out of scope and MUST NOT be swept into this rule. The failure predicate is the absence of a parseable document, not the exit code. When stdout carries a document the client can parse, the invocation succeeded, and the document MUST be acted on rather than merely parsed: the diagnostics it reports MUST reach the per-folder DiagnosticCollection exactly as they would on a zero exit. When stdout carries no parseable document, at any exit code, the invocation failed: the client MUST route the failure to the Specter Output channel with a timestamp and context (C-26), MUST leave the existing diagnostics in place instead of replacing them with an empty set, and MUST NOT show a notification. An empty collection after a failed invocation asserts that the workspace has no problems, which is a false claim. This bounds C-05: a run that yields a parseable document replaces the collection atomically whatever its exit code, and an invocation that yields no parseable document is not such a run and MUST NOT touch the collection. A process that fails to spawn never produced a document and MUST take the same failure path; the tolerant invocation path MUST NOT absorb a spawn failure into a normal result. Deliberate cancellation through the C-18 AbortController on deactivation is not a failure and MUST NOT be reported as one. Ordinary error-severity diagnostics MUST stay silent beyond the Problems panel: no notification fires because a workspace has errors, since that would fire on every save in exactly the workspaces this rule serves. Rationale (SP-SP-023): the v0.14 `check --json` exit-code fix reached users while the client still rejected on a non-zero exit, so a workspace with one error-severity diagnostic lost its on-save diagnostics entirely, and an empty catch at the call site made the loss silent. The same defect is pre-armed on `parse --json` for when SP-SP-022 is fixed."
+      type: technical
+      enforcement: error
+
   acceptance_criteria:
     - id: AC-01
       description: "Extension activates in a workspace containing specter.yaml; does NOT activate in a workspace with only generic YAML files"
@@ -397,7 +402,7 @@ spec:
       priority: critical
 
     - id: AC-37
-      description: "The Insights panel (`specter.openInsights`) never renders 'All specs passing ✓' when CoverageReport.parseErrors is non-empty. When parse errors exist, the panel shows a `Parse failures` section listing each failing file with its error message, plus the normal `Coverage gaps` section for specs that did parse. Header text reflects the true mixed state (e.g. '17 parse error(s), 4 spec(s) parsing cleanly'). Previously the panel either crashed with `entries is not iterable` or — once the crash was fixed — defaulted to the 'all passing' headline when entries was empty, silently erasing the parse failures from the user's mental model."
+      description: "The Insights panel (`specter.openInsights`) never renders 'All specs passing ✓' when CoverageReport.parseErrors is non-empty. When parse errors exist, the panel shows a `Parse failures` section listing each failing file with its error message, plus the normal `Coverage gaps` section for specs that did parse. Header text reflects the true mixed state (e.g. '17 parse error(s), 4 spec(s) parsing cleanly'). Previously the panel either crashed with `entries is not iterable` or — once the crash was fixed — defaulted to the 'all passing' headline when entries was empty, silently erasing the parse failures from the user's mental model."  # <!-- doc-style: allow --> maintainer-cleared: quotes the product string rendered at insights.ts:144
       references_constraints: ["C-10"]
       priority: high
 
@@ -562,6 +567,69 @@ spec:
       references_constraints: ["C-04", "C-19"]
       priority: high
 
+    - id: AC-56
+      description: "On save in a workspace whose `specter check --json` run reports at least one error-severity diagnostic, the CLI exits non-zero and writes a complete JSON document to stdout. The extension publishes the diagnostics from that document into the saved folder's DiagnosticCollection. The resulting collection is identical to the one produced by the same document with a zero exit, because the exit code is not an input to whether diagnostics are published. No Output-channel error line and no notification are produced: a workspace with errors is a normal outcome, and the Problems panel is the surfacing."
+      inputs:
+        workspace: "one .spec.yaml producing one error-severity diagnostic (tier 1 orphan constraint)"
+        cli_exit_code: 1
+        cli_stdout: "complete check --json document reporting that diagnostic"
+      expected_output:
+        diagnostics_published: true
+        collection_matches_exit_0_run: true
+        invocation_treated_as_failure: false
+        output_channel_error_line: false
+        notification_shown: false
+      references_constraints: ["C-30", "C-04", "C-05"]
+      priority: critical
+
+    - id: AC-57
+      description: "The rule holds for every `--json` invocation, not only `check`. With the CLI exiting non-zero while writing a complete document, `specter parse --json` on type still publishes its parse diagnostics and `specter coverage --json` on save still replaces the folder's stored report. Neither discards the document because of the exit code. `parse --json` does not yet exit non-zero on error-severity diagnostics (SP-SP-022); the client MUST already behave correctly for when it does, so that fix does not break on-type feedback."
+      inputs:
+        row_parse: "parse --json on type, exit 1, complete document with one error-severity diagnostic"
+        row_coverage: "coverage --json on save, exit 1, complete report document"
+      expected_output:
+        row_parse: { document_consumed: true, diagnostics_published: true }
+        row_coverage: { document_consumed: true, report_stored: true }
+      references_constraints: ["C-30", "C-04"]
+      priority: critical
+
+    - id: AC-58
+      description: "An automated test asserts that no `--json` invocation in the extension's CLI client module routes through an invocation path that rejects on a non-zero exit. The test locates every call site that passes `--json` and verifies each one uses a path that resolves with stdout, stderr, and the exit code. Any implementation form is accepted, following the AC-52 precedent: the contract is the routing, not the name of the helper. A `--json` invocation added later on the rejecting path fails the build. This closes the class instead of the instance. The same correct fix was applied to `coverage` alone in v0.13 and left `parse` and `check` behind, which is how SP-SP-023 shipped."
+      inputs:
+        invocation: "static analysis of the extension's CLI client module"
+      expected_output:
+        json_call_sites_on_rejecting_path: 0
+        new_rejecting_json_call_site_fails_build: true
+      references_constraints: ["C-30"]
+      priority: critical
+
+    - id: AC-59
+      description: "When an invocation returns no parseable document on stdout, it is a failure whatever its exit code. The extension writes a timestamped `<command> failed for <file or folder>: <message>` line to the Specter Output channel, leaves the folder's existing diagnostics untouched rather than replacing them with an empty set, and puts the status bar in its error indicator state (AC-24). Empty stdout with a non-zero exit and unparseable stdout with a zero exit are the same case and take the same path. Clearing the collection here is prohibited, because an empty Problems panel would report a clean workspace that was never checked."
+      inputs:
+        case_a: "check --json, exit 1, stdout empty"
+        case_b: "check --json, exit 1, stdout truncated JSON"
+        case_c: "check --json, exit 0, stdout not JSON"
+      expected_output:
+        output_channel_line_written: true
+        existing_diagnostics_cleared: false
+        status_bar_error_state: true
+        notification_shown: false
+      references_constraints: ["C-30", "C-26", "C-05"]
+      priority: high
+
+    - id: AC-60
+      description: "When the CLI process fails to spawn, no document was produced and the extension takes the AC-59 failure path rather than a success path. The tolerant invocation path MUST NOT absorb a spawn failure into a normal result. Distinguished from AC-59 by the Output-channel message naming the spawn error (ENOENT for a missing binary, EACCES for a non-executable one) rather than a document-parse failure."
+      inputs:
+        case_enoent: "resolved binary path does not exist"
+        case_eacces: "resolved binary path exists but is not executable"
+      expected_output:
+        invocation_treated_as_failure: true
+        output_channel_line_names_spawn_error: true
+        existing_diagnostics_cleared: false
+        status_bar_error_state: true
+      references_constraints: ["C-30", "C-01", "C-26"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.1.0"
@@ -580,6 +648,33 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.8.0"
+      date: "2026-08-16"
+      author: "specter-team"
+      type: minor
+      description: >
+        SP-SP-023, release blocker. Add C-30: a non-zero CLI exit does not
+        discard a `--json` document. Every `--json` invocation the extension
+        makes MUST route through an invocation path that resolves on a
+        non-zero exit, and the document MUST be acted on exactly as it would
+        be on a zero exit. Written as a general rule rather than a `check`
+        fix, because the same correct fix was applied to `coverage` alone in
+        v0.13 and is now the third instance of an unswept sweep. It therefore
+        pre-covers `parse --json` for when SP-SP-022 lands. C-30 also settles
+        three things the old text left open. The failure predicate is the
+        absence of a parseable document, not the exit code, so unparseable
+        stdout on a zero exit fails the same way. A failed invocation MUST
+        leave the existing diagnostics in place rather than replace them with
+        an empty set, which bounds C-05's "on each run" to runs that produced
+        a document. A spawn failure takes the failure path and MUST NOT be
+        absorbed as a normal result. Add AC-56 (check exits non-zero with a
+        valid document, diagnostics still published, collection identical to
+        the zero-exit run, no notification), AC-57 (same for `parse --json`
+        and `coverage --json`), AC-58 (static parity test: zero `--json` call
+        sites on a rejecting path, so a later one fails the build), AC-59 (no
+        parseable document at any exit code routes to the Output channel,
+        does not clear diagnostics, sets the status bar error state), and
+        AC-60 (spawn failure takes the AC-59 path, named as a spawn error).
     - version: "1.7.0"
       date: "2026-06-11"
       author: "specter-team"
