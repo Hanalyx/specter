@@ -1,6 +1,6 @@
 spec:
   id: spec-vscode
-  version: "1.8.0"
+  version: "1.9.0"
   status: draft
   tier: 2
 
@@ -217,6 +217,76 @@ spec:
 
     - id: C-30
       description: "Every invocation of the specter CLI that requests a machine-readable document with `--json` MUST use an invocation path that resolves on a non-zero process exit and hands the caller stdout, stderr, and the exit code. A non-zero exit MUST NOT by itself discard the document. The CLI exits non-zero whenever a run reports error-severity diagnostics, in JSON mode as well as text mode (spec-check C-14, spec-coverage C-29), so the workspace that most needs its diagnostics is the workspace whose exit code is non-zero. The rule covers every `--json` invocation the extension makes, currently `parse --json`, `check --json`, and `coverage --json`, and any added later. Invocations that read the exit code as their verdict instead of reading a document, such as the C-01 `--version` probe, are out of scope and MUST NOT be swept into this rule. The failure predicate is the absence of a parseable document, not the exit code. When stdout carries a document the client can parse, the invocation succeeded, and the document MUST be acted on rather than merely parsed: the diagnostics it reports MUST reach the per-folder DiagnosticCollection exactly as they would on a zero exit. When stdout carries no parseable document, at any exit code, the invocation failed: the client MUST route the failure to the Specter Output channel with a timestamp and context (C-26), MUST leave the existing diagnostics in place instead of replacing them with an empty set, and MUST NOT show a notification. An empty collection after a failed invocation asserts that the workspace has no problems, which is a false claim. This bounds C-05: a run that yields a parseable document replaces the collection atomically whatever its exit code, and an invocation that yields no parseable document is not such a run and MUST NOT touch the collection. A process that fails to spawn never produced a document and MUST take the same failure path; the tolerant invocation path MUST NOT absorb a spawn failure into a normal result. Deliberate cancellation through the C-18 AbortController on deactivation is not a failure and MUST NOT be reported as one. Ordinary error-severity diagnostics MUST stay silent beyond the Problems panel: no notification fires because a workspace has errors, since that would fire on every save in exactly the workspaces this rule serves. Rationale (SP-SP-023): the v0.14 `check --json` exit-code fix reached users while the client still rejected on a non-zero exit, so a workspace with one error-severity diagnostic lost its on-save diagnostics entirely, and an empty catch at the call site made the loss silent. The same defect is pre-armed on `parse --json` for when SP-SP-022 is fixed."
+      type: technical
+      enforcement: error
+
+    - id: C-31
+      description: >-
+        Every array-valued field of a specter `--json` document MUST be an
+        array by the time any consumer in the extension sees it. The CLI is
+        written in Go, and Go marshals a nil slice as `null` rather than `[]`
+        and drops a field carrying `omitempty` rather than emitting an empty
+        one. A workspace with nothing wrong in it therefore produces
+        `{"diagnostics": null, "summary": {...}}` from `check --json` at exit
+        0, and a spec that parses cleanly produces `{"errors": null, "file":
+        ..., "ok": true, "value": {...}}` from `parse --json` at exit 0. A
+        workspace where no spec parses produces `{"entries": null, ...}` from
+        `coverage --json`, and a workspace where every spec parses omits
+        `parse_errors` entirely. The extension MUST normalize these at the
+        single point where it parses stdout into a document, before the
+        document is returned to any caller, so that no consumer receives
+        `null` or `undefined` where the CLI means empty. The fields are
+        `diagnostics` on the check document, `errors` on the parse document,
+        and `entries`, `parse_errors`, `parse_error_patterns`,
+        `diagnostic_hints`, and `invalid_status_warnings` on the coverage
+        document. Consumers MUST also tolerate `null` and `undefined` in those
+        positions and treat them as empty, so a caller that reaches a builder
+        without passing through normalization cannot throw. A document whose
+        array fields are `null` is a parseable document, so it takes the C-30
+        success path: a run that reports no diagnostics replaces the folder's
+        collection with the empty set, exactly as a run reporting `[]` would.
+        Routing a null-array document to the C-30 no-document failure path is
+        prohibited, because the Problems panel would then never clear after
+        the user fixes the last error. This rule is independent of whether the
+        CLI later emits `[]` for an empty slice, which is a JSON-contract
+        decision scheduled separately. If that lands, normalization becomes a
+        no-op and nothing here changes. Rationale (SP-SP-025): the parse half
+        was iterated with no guard from the extension's first commit on
+        2026-04-16, so every save of a spec that parses cleanly threw
+        `TypeError: input.parseErrors is not iterable`, a catch swallowed it,
+        and the Problems panel was never populated from the on-save path. The
+        check half is independently sufficient to throw on the next line.
+        Every fixture in the extension's suite supplies `[]` or a populated
+        array, so 273 passing tests certify a clean workspace in the one shape
+        a clean workspace never has.
+      type: technical
+      enforcement: error
+
+    - id: C-32
+      description: >-
+        Every VS Code range the extension derives from a CLI diagnostic MUST
+        carry finite, non-negative integers in all four of its line and
+        character positions, whatever the diagnostic omits. A parse error
+        carries `path`, `type`, and `message` on every error, carries `line`
+        only for a YAML syntax error, and never carries `column`, because no
+        code path in the parser assigns that field. A check diagnostic carries
+        `kind`, `severity`, `message`, and the spec id on every diagnostic,
+        carries `constraint_id`, `constraint_type`, `change_type`, and
+        `details` only when non-empty, and carries no position of any kind.
+        Where a position field is absent the extension MUST use 0, giving a
+        range at the start of the file, rather than arithmetic on `undefined`.
+        The extension MUST NOT read `col` or `code` from a parse error under
+        those names, because the CLI names the corresponding fields `column`
+        and `type`. The extension's declared TypeScript types for CLI
+        documents MUST NOT declare a field the CLI never emits, and MUST NOT
+        declare as required a field the CLI may omit. A declaration reads as a
+        guarantee, and `tsc` then certifies code that reads `undefined`.
+        Rationale (SP-SP-025): `SpecterParseError` declared `col` and `code`,
+        and `SpecterCheckDiagnostic` declared `line` as required though check
+        diagnostics carry no position in any form. The arithmetic on those
+        fields yields `NaN`, and no test could see it, because the mock always
+        supplied `line: 7` and `column: 3` and the suite's comparison helper
+        never read `col`.
       type: technical
       enforcement: error
 
@@ -630,6 +700,294 @@ spec:
       references_constraints: ["C-30", "C-01", "C-26"]
       priority: high
 
+    - id: AC-61
+      description: >-
+        Saving a spec in a workspace with nothing wrong in it clears the
+        Problems panel instead of throwing. `check --json` writes
+        `{"diagnostics": null, ...}` and exits 0, which is the shape a clean
+        workspace produces on every save. The client returns the document with
+        `diagnostics` as an empty array rather than `null`, the builder
+        produces zero diagnostics without throwing, and the folder's
+        collection is replaced with the empty set, so the one diagnostic left
+        by the previous save is gone. The run MUST NOT be routed to the C-30
+        no-document failure path, which leaves a document parseable and
+        discarded and would keep the stale diagnostic on screen forever.
+      inputs:
+        cli_stdout: |-
+          {"diagnostics": null, "summary": {"errors": 0, "warnings": 0, "info": 0}}
+        cli_exit_code: 0
+        collection_before: "one diagnostic, left by the previous save"
+      expected_output:
+        document_consumed: true
+        returned_diagnostics_is_array: true
+        diagnostics_built: 0
+        collection_after_replacement: "empty"
+        threw: false
+        routed_to_no_document_failure_path: false
+      references_constraints: ["C-31", "C-30", "C-05"]
+      priority: critical
+
+    - id: AC-62
+      description: >-
+        A null check half does not suppress a populated parse half. Given a
+        check document whose `diagnostics` is `null` and a parse document
+        carrying two errors, the builder produces two diagnostics, one per
+        parse error, in the order the document lists them. Two errors rather
+        than one, because a rule that aggregates is only pinned by a case with
+        more than one item. The two halves reach the builder exactly as parsed
+        from stdout, not normalized first, so this criterion pins the
+        builder's own tolerance rather than the client's normalization.
+      inputs:
+        check_stdout: |-
+          {"diagnostics": null, "summary": {"errors": 0, "warnings": 0, "info": 0}}
+        parse_stdout: |-
+          {"errors": [
+            {"path": "spec", "type": "required",
+             "message": "Missing required field 'objective'. Add an objective block with a summary"},
+            {"path": "spec", "type": "additionalProperties",
+             "message": "Unknown field 'trust_level'. Remove it or check for a typo in the field name."}
+          ], "file": "specs/b.spec.yaml", "ok": false, "value": null}
+      expected_output:
+        diagnostics_built: 2
+        first_message_contains: "Missing required field 'objective'"
+        second_message_contains: "Unknown field 'trust_level'"
+        threw: false
+      references_constraints: ["C-31"]
+      priority: critical
+
+    - id: AC-63
+      description: >-
+        The mirror of AC-62. A null parse half does not suppress a populated
+        check half. Given a parse document whose `errors` is `null` and a
+        check document carrying two error-severity diagnostics, the builder
+        produces two diagnostics. This is the pair the on-save handler passes
+        together, and either half being null is independently sufficient to
+        throw, so both directions need their own criterion. The two halves
+        reach the builder exactly as parsed from stdout, not normalized first.
+      inputs:
+        parse_stdout: |-
+          {"errors": null, "file": "specs/o.spec.yaml", "ok": true, "value": {"id": "spec-o"}}
+        check_stdout: |-
+          {"diagnostics": [
+            {"kind": "orphan_constraint", "severity": "error", "spec_id": "spec-o",
+             "constraint_id": "C-02", "constraint_type": "technical",
+             "message": "Constraint C-02 in \"spec-o\" is not referenced by any acceptance criterion"},
+            {"kind": "orphan_constraint", "severity": "error", "spec_id": "spec-o",
+             "constraint_id": "C-03", "constraint_type": "technical",
+             "message": "Constraint C-03 in \"spec-o\" is not referenced by any acceptance criterion"}
+          ], "summary": {"errors": 2, "warnings": 0, "info": 0}}
+      expected_output:
+        diagnostics_built: 2
+        first_message_contains: "Constraint C-02"
+        second_message_contains: "Constraint C-03"
+        threw: false
+      references_constraints: ["C-31"]
+      priority: critical
+
+    - id: AC-64
+      description: >-
+        A parse error that carries no position produces a diagnostic at the
+        start of the file, not a `NaN` range. Every schema validation error
+        the CLI emits is this shape: it has `path`, `type`, and `message`, and
+        neither `line` nor `column`. The resulting range is line 0, character
+        0 to line 0, character 0, and all four numbers are finite integers.
+        The nameable assertion is `Number.isFinite` returning true on each of
+        the four.
+      inputs:
+        parse_error: |-
+          {"path": "spec", "type": "required",
+           "message": "Missing required field 'objective'. Add an objective block with a summary"}
+      expected_output:
+        diagnostics_built: 1
+        range_start_line: 0
+        range_start_character: 0
+        range_end_line: 0
+        range_end_character: 0
+        all_four_range_numbers_finite: true
+        message_contains: "Missing required field 'objective'"
+      references_constraints: ["C-32"]
+      priority: critical
+
+    - id: AC-65
+      description: >-
+        A parse error that carries a line and no column converts the line and
+        defaults the column. A YAML syntax error is the only parse error the
+        CLI emits with a `line`, and it never carries a `column`, because no
+        code path in the parser assigns that field. The CLI's line is 1-based
+        and VS Code is 0-based, so line 3 becomes 2, while the absent column
+        becomes character 0. Kept separate from AC-64 because an
+        implementation that defaults every position to 0 satisfies AC-64 and
+        fails this one.
+      inputs:
+        parse_error: |-
+          {"path": "", "type": "yaml_syntax",
+           "message": "yaml: line 3: mapping values are not allowed in this context",
+           "line": 3}
+      expected_output:
+        diagnostics_built: 1
+        range_start_line: 2
+        range_start_character: 0
+        all_range_numbers_finite: true
+      references_constraints: ["C-32"]
+      priority: high
+
+    - id: AC-66
+      description: >-
+        A check diagnostic produces a diagnostic at the start of the file, not
+        a `NaN` range. Check diagnostics carry no position of any kind and no
+        file: the CLI emits `kind`, `severity`, `message`, and the spec id on
+        every one, and the optional fields are all descriptive. The resulting
+        range is line 0, character 0 to line 0, character 0, all four numbers
+        finite, and the severity maps to error. This is the check-side mirror
+        of AC-64 and is the criterion that fails if the declared but
+        never-emitted `line` field is read.
+      inputs:
+        check_diagnostic: |-
+          {"kind": "orphan_constraint", "severity": "error", "spec_id": "spec-o",
+           "constraint_id": "C-02", "constraint_type": "technical",
+           "message": "Constraint C-02 in \"spec-o\" is not referenced by any acceptance criterion"}
+      expected_output:
+        diagnostics_built: 1
+        severity: "error"
+        range_start_line: 0
+        range_start_character: 0
+        all_four_range_numbers_finite: true
+      references_constraints: ["C-32"]
+      priority: high
+
+    - id: AC-67
+      description: >-
+        The declared types do not assert what the CLI does not emit. A static
+        test parses `vscode-extension/src/types.ts` with the TypeScript
+        compiler API, following the precedent already set in
+        `clientExitCode.test.ts`, and reads the members of exactly two
+        interface declarations in that one file, `SpecterParseError` and
+        `SpecterCheckDiagnostic`. The scan is bounded to those two
+        declarations in that file, and asserts three things. Neither `col` nor
+        `code` is declared on `SpecterParseError`, because the CLI names the
+        corresponding fields `column` and `type`. `line` is not declared as
+        required on either interface, because the CLI omits it on every schema
+        error and emits no position at all on a check diagnostic. And
+        `message` is declared on both, because the CLI emits it on every
+        error and every diagnostic.
+      inputs:
+        scan_target: "vscode-extension/src/types.ts, interfaces SpecterParseError and SpecterCheckDiagnostic"
+      expected_output:
+        parse_error_declares_col: false
+        parse_error_declares_code: false
+        line_declared_required_on_either: false
+        message_declared_on_both: true
+      references_constraints: ["C-32"]
+      priority: high
+
+    - id: AC-68
+      description: >-
+        A coverage document whose `entries` is `null` is normalized to an
+        empty array. This is what the CLI emits when every spec in the
+        workspace fails to parse: `entries` is `null`, `parse_errors` carries
+        one object per failing file, and the process exits 1. The client
+        returns `entries` as an empty array and `parse_errors` with both
+        objects, so the sidebar's parse-failure path (AC-29) and the
+        parse-error diagnostics (AC-34) run on a report that can be iterated.
+        Two failing files rather than one, so the count is pinned.
+      inputs:
+        cli_stdout: |-
+          {"entries": null,
+           "summary": {"total_specs": 0, "fully_covered": 0, "partially_covered": 0,
+                       "uncovered": 0, "passing": 0, "failing": 0},
+           "parse_errors": [
+             {"file": "specs/b.spec.yaml", "path": "spec", "type": "required",
+              "message": "Missing required field 'objective'. Add an objective block with a summary"},
+             {"file": "specs/c.spec.yaml", "path": "", "type": "yaml_syntax",
+              "message": "yaml: line 3: mapping values are not allowed in this context", "line": 3}
+           ],
+           "spec_candidates_count": 2}
+        cli_exit_code: 1
+      expected_output:
+        returned_entries_is_array: true
+        returned_entries_length: 0
+        returned_parse_errors_length: 2
+        threw: false
+      references_constraints: ["C-31", "C-30"]
+      priority: high
+
+    - id: AC-69
+      description: >-
+        A coverage document that omits `parse_errors` is normalized to an
+        empty array. The CLI drops the field rather than emitting `[]` when no
+        spec failed to parse, which is the shape a healthy workspace produces
+        on every save. Absent and `null` are different inputs and this one is
+        the common case, so it gets its own criterion rather than riding on
+        AC-68.
+      inputs:
+        cli_stdout: |-
+          {"entries": [
+             {"spec_id": "spec-a", "tier": 3, "total_acs": 1, "covered_acs": [],
+              "uncovered_acs": ["AC-01"], "coverage_pct": 0, "threshold": 50,
+              "passes_threshold": false, "test_files": [], "spec_file": "specs/a.spec.yaml"}
+           ],
+           "summary": {"total_specs": 1, "fully_covered": 0, "partially_covered": 0,
+                       "uncovered": 1, "passing": 0, "failing": 1},
+           "spec_candidates_count": 1}
+      expected_output:
+        returned_parse_errors_is_array: true
+        returned_parse_errors_length: 0
+        returned_entries_length: 1
+        threw: false
+      references_constraints: ["C-31"]
+      priority: high
+
+    - id: AC-70
+      description: >-
+        A parse document for a spec that failed to parse carries `value` as
+        `null`, and the client returns it without throwing. The CLI builds
+        this document field by field rather than marshaling its result struct,
+        so `value` is present and `null` whenever `ok` is false, and `errors`
+        holds one object per validation failure. The returned document keeps
+        `ok` false, keeps `value` null, and exposes both errors as an
+        iterable array.
+      inputs:
+        cli_stdout: |-
+          {"errors": [
+            {"path": "spec", "type": "required",
+             "message": "Missing required field 'objective'. Add an objective block with a summary"},
+            {"path": "spec", "type": "additionalProperties",
+             "message": "Unknown field 'trust_level'. Remove it or check for a typo in the field name."}
+          ], "file": "specs/b.spec.yaml", "ok": false, "value": null}
+        cli_exit_code: 0
+      expected_output:
+        returned_ok: false
+        returned_value: null
+        returned_errors_is_array: true
+        returned_errors_length: 2
+        threw: false
+      references_constraints: ["C-31"]
+      priority: high
+
+    - id: AC-71
+      description: >-
+        A coverage parse error that carries no position produces a diagnostic
+        at the start of the file, not a `NaN` range. This is the second
+        consumer of CLI positions, and it feeds the Problems-panel entries of
+        AC-34, which says the entries are positioned at the reported line and
+        column and says nothing about their absence. Absence is the common
+        case. The CLI emits `line` on a coverage parse error only when the
+        failure is a YAML syntax error, and never emits `column` at all. The
+        resulting range is line 0, character 0 to line 0, character 0, all
+        four numbers finite, and the diagnostic still names the file.
+      inputs:
+        coverage_parse_error: |-
+          {"file": "specs/b.spec.yaml", "path": "spec", "type": "required",
+           "message": "Missing required field 'objective'. Add an objective block with a summary"}
+      expected_output:
+        diagnostics_built: 1
+        diagnostic_file: "specs/b.spec.yaml"
+        range_start_line: 0
+        range_start_character: 0
+        all_four_range_numbers_finite: true
+      references_constraints: ["C-32", "C-10"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.1.0"
@@ -648,6 +1006,45 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.9.0"
+      date: "2026-08-16"
+      author: "specter-team"
+      type: minor
+      description: >
+        SP-SP-025, P0. Add C-31: every array-valued field of a `--json`
+        document MUST be an array by the time any consumer sees it,
+        normalized at the single point where stdout is parsed. Go marshals a
+        nil slice as `null` and drops an `omitempty` field, so a clean
+        workspace emits `{"diagnostics": null, ...}` from `check --json` at
+        exit 0 and `{"errors": null, ..., "ok": true}` from `parse --json` at
+        exit 0. The extension iterated both without a guard from its first
+        commit on 2026-04-16, so every save of a spec that parses cleanly
+        threw, a catch swallowed it, and the Problems panel was never
+        populated from the on-save path. C-31 also settles the interaction
+        with C-30: a null-array document is a parseable document and takes
+        the success path, so a clean run replaces the collection with the
+        empty set rather than leaving the previous run's entries on screen.
+        The rule is written independently of the CLI-side decision about
+        emitting `[]`, which is scheduled separately; if that lands,
+        normalization becomes a no-op. Add C-32: every range derived from a
+        CLI diagnostic carries finite integers, absent positions default to
+        0, and the declared TypeScript types may not assert fields the CLI
+        does not emit. `SpecterParseError` declared `col` and `code` where
+        the CLI emits `column` and `type`, and `SpecterCheckDiagnostic`
+        declared `line` as required though check diagnostics carry no
+        position at all, so the arithmetic yielded `NaN` and `tsc` certified
+        it. Add AC-61 (clean-workspace save clears the panel instead of
+        throwing), AC-62 and AC-63 (a null half does not suppress a populated
+        half of two, in both directions), AC-64 and AC-65 (no position
+        defaults to 0, a 1-based line converts and an absent column still
+        defaults), AC-66 (a check diagnostic yields a finite range at the
+        start of the file), AC-67 (static scan of two interfaces in
+        `types.ts`: no `col`, no `code`, `line` not required), AC-68
+        (`entries: null` normalizes to an empty array), AC-69
+        (`parse_errors` absent normalizes to an empty array), AC-70
+        (`value: null` on a failed parse is returned without throwing), and
+        AC-71 (the same finite-range rule on the coverage parse-error path,
+        which is the second consumer of CLI positions and feeds AC-34).
     - version: "1.8.0"
       date: "2026-08-16"
       author: "specter-team"
