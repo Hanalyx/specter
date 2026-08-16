@@ -9,14 +9,16 @@ To start a new brief: copy [`TEMPLATE.md`](TEMPLATE.md) to `SSRB-NNN.md` (the nu
 | # | Title | Status | Decided |
 |---|---|---|---|
 | [097](SSRB-097.md) | `generated_from.source_files` plural array | REJECT | 2026-04-26 |
-| [098](SSRB-098.md) | AC-level lifecycle `status` field | REJECT | 2026-04-26 |
+| [098](SSRB-098.md) | AC-level lifecycle `status` field | NEEDS-DESIGN | 2026-04-26, reopened 2026-08-15 |
 | [099](SSRB-099.md) | Coverage inference from `generated_from.test_files` | REJECT | 2026-04-26 |
 | [100](SSRB-100.md) | `spec.kind: audit-matrix` for cross-cutting specs | REJECT | 2026-04-26 |
-| [101](SSRB-101.md) | Source-file governance — annotation (F7) vs `governs:` list (F8) | NEEDS-DESIGN | TBD (target end of v0.16) |
+| [101](SSRB-101.md) | Source-file governance: annotation (F7) vs `governs:` list (F8) | REJECT | 2026-08-16 |
+| [102](SSRB-102.md) | `settings.diagnostics`, per-rule severity in the manifest | NEEDS-DESIGN | TBD (with the SP-004 resolution) |
+| [103](SSRB-103.md) | Multi-stream evidence in ingest and coverage | NEEDS-DESIGN | TBD |
 
 ## Status legend
 
-- **ACCEPT** — change adopted; tracked into a release cycle
-- **REJECT** — change declined; reasoning preserved here for future reference
-- **DEFER (vN.M)** — accepted in principle, deferred to a future release
-- **NEEDS-DESIGN** — requires a design call before scoping; held until the call happens
+- **ACCEPT**: change adopted; tracked into a release cycle
+- **REJECT**: change declined; reasoning preserved here for future reference
+- **DEFER (vN.M)**: accepted in principle, deferred to a future release
+- **NEEDS-DESIGN**: requires a design call before scoping; held until the call happens
