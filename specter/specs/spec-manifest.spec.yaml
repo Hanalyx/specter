@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "1.12.0"
+  version: "1.13.0"
   status: draft
   tier: 2
 
@@ -200,7 +200,7 @@ spec:
       enforcement: error
 
     - id: C-31
-      description: "A command that loads `specter.yaml` MUST surface a rejection rather than discard it. When the manifest file exists and ParseManifest returns an error, the command writes two lines to stderr, the first naming the manifest path and the parser's reason, the second stating that the manifest was ignored and default settings are in effect, and then continues with defaults. This binds `parse`, `resolve`, and `explain`, which discard the error today and run against defaults with no signal. It does not bind the commands that already fail on a rejected manifest, `check`, `coverage`, `sync`, and `init --refresh`, which keep their current non-zero exit; this constraint may not be used to downgrade them to a warning. The exit code of the warn-and-continue commands is unchanged by the warning itself. Rationale, from the decision of 2026-06-10: silent fallback is the worst available behavior for a configuration error, because every later result is computed against settings the operator did not choose and cannot see. A manifest setting `specs_dir: customSpecs` and carrying one bad key made `parse` report two specs from a recursive walk instead of the one spec the operator configured, and exit 0."
+      description: "A command that loads `specter.yaml` MUST surface a rejection rather than discard it. When the manifest file exists and ParseManifest returns an error, the command writes two lines to stderr, the first naming the manifest path and the parser's reason, the second stating that the manifest was ignored and default settings are in effect, and then continues with defaults. This binds `parse`, `resolve`, and `explain`, which discard the error today and run against defaults with no signal. It does not bind the commands that already fail on a rejected manifest, `check`, `coverage`, `sync`, and `init --refresh`, which keep their current non-zero exit; this constraint may not be used to downgrade them to a warning. For those four the rejection must be the cause of the failure and not merely coincident with it, so the criterion pinning them runs on a workspace that succeeds once the manifest is removed. The exit code of the warn-and-continue commands is unchanged by the warning itself. Rationale, from the decision of 2026-06-10: silent fallback is the worst available behavior for a configuration error, because every later result is computed against settings the operator did not choose and cannot see. A manifest setting `specs_dir: customSpecs` and carrying one bad key made `parse` report two specs from a recursive walk instead of the one spec the operator configured, and exit 0."
       type: business
       enforcement: error
 
@@ -754,14 +754,17 @@ spec:
       priority: critical
 
     - id: AC-51
-      description: "The commands that already reject a bad manifest keep rejecting it. On the AC-47 workspace, `specter check`, `specter coverage --strictness annotation`, `specter sync --strictness annotation`, and `specter init --refresh` each exit non-zero with the parser's reason on stderr, and `init --refresh` leaves `specter.yaml` byte-unchanged. Turning any of these into a warn-and-continue path fails this criterion."
+      description: "The commands that already reject a bad manifest keep rejecting it, and the rejection is the only thing that can make them fail. This criterion runs on its own workspace, not the AC-47 one: the same manifest, but every declared criterion is annotated, so a run that merely ignored the manifest and continued against defaults exits 0. On that workspace `specter check`, `specter coverage --strictness annotation`, `specter sync --strictness annotation`, and `specter init --refresh` each exit non-zero with the parser's reason on stderr, and `init --refresh` leaves `specter.yaml` byte-unchanged. Turning any of these into a warn-and-continue path fails this criterion. The exit code is the discriminator, because the warning line a warn-and-continue path prints names `settings.test_glob` itself and satisfies the stderr check by another route. The AC-47 workspace cannot serve here: it declares two specs and no annotated tests, so under warn-and-continue `coverage` and `sync` still exit non-zero at 0 percent coverage, and both commands pass the criterion while doing the thing it forbids (`bugs/SP-SP-041`). AC-47 through AC-50 keep that workspace, which their own claims rest on."
       inputs:
-        workspace: "the AC-47 workspace"
+        manifest: "schema_version: 1, system.name: demo, settings.specs_dir: customSpecs, settings.test_glob: 'tests/**/*.go' (the same rejected manifest AC-47 uses)"
+        workspace: "customSpecs/demo.spec.yaml (spec id demo-spec, tier 3, AC-01 and AC-02) and specs/decoy.spec.yaml (spec id decoy-spec, tier 3, AC-01 and AC-02), plus tests/all_test.go annotating all four criteria"
+        precondition: "with specter.yaml removed, `specter check`, `specter coverage --strictness annotation` and `specter sync --strictness annotation` each exit 0 on this workspace, because the default walk finds both specs and every criterion is annotated. `init --refresh` is the one command whose exit code is not the discriminator, since it reports a missing manifest as its own error; the byte-unchanged clause is what forbids it from refreshing against defaults."
         commands: ["specter check", "specter coverage --strictness annotation", "specter sync --strictness annotation", "specter init --refresh"]
       expected_output:
         each_exit_code: "non-zero"
         each_stderr_contains: "settings.test_glob"
         manifest_byte_unchanged_after_init_refresh: true
+        precondition_exit_code_without_manifest: "0 for check, coverage and sync; init --refresh reports the missing manifest as its own error"
       references_constraints: ["C-31"]
       priority: high
 
@@ -774,6 +777,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.13.0"
+      date: "2026-08-17"
+      author: "specter-team"
+      type: minor
+      description: "v0.15 phase 1B loop-back. AC-51 pinned nothing it claimed: its shared workspace declared two specs and no annotated tests, so applying warn-and-continue to `coverage` or `sync` still exited non-zero at 0 percent coverage, and the stderr string the criterion demanded came from the warning the change itself printed. Both mutants passed the whole suite (`bugs/SP-SP-041`). AC-51 now runs on its own workspace, the same rejected manifest with every criterion annotated, so a run that ignored the manifest exits 0 and a non-zero exit can have no other cause. AC-47 through AC-50 keep the two-spec workspace their own claims rest on. C-31 gains one sentence stating that for the four hard-fail commands the rejection must be the cause of the failure rather than coincident with it."
     - version: "1.12.0"
       date: "2026-08-16"
       author: "specter-team"

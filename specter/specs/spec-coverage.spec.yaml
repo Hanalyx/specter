@@ -1,6 +1,6 @@
 spec:
   id: spec-coverage
-  version: "1.16.0"
+  version: "1.17.0"
   status: approved
   tier: 2
 
@@ -209,7 +209,7 @@ spec:
       enforcement: error
 
     - id: C-35
-      description: "Coverage percentages MUST be computed once and shown consistently. (a) `CoveragePercent(covered, total)` returns covered divided by total times 100, rounded half up to one decimal place, and that value is emitted as `coverage_pct`. It returns 100.0 only when covered equals total; when rounding would otherwise reach 100.0 with at least one criterion uncovered it returns 99.9. A total of zero returns 0. (b) `FormatCoveragePct(pct)` returns the integer floor of that value with a trailing percent sign, and every human-readable surface uses it: the Coverage column of the coverage table, the average in the C-16 summary header, and `specter explain`. (c) `passes_threshold` compares `coverage_pct` against the effective threshold with a greater-than-or-equal test. (d) Together these give the invariant that matters to an operator: a `coverage_threshold` set to the integer the tool just printed always passes. Rationale: the previous expression truncated under a comment that said it rounds, so on one spec the table printed 67, `explain` printed 66, and the gate compared 66.6. Rounding the displayed integer rather than flooring it was rejected, because 199 of 200 criteria would then print 100 and pass a Tier 1 gate."
+      description: "Coverage percentages MUST be computed once and shown consistently. (a) `CoveragePercent(covered, total)` returns covered divided by total times 100, rounded half up to one decimal place, and that value is emitted as `coverage_pct`. It returns 100.0 only when covered equals total; when rounding would otherwise reach 100.0 with at least one criterion uncovered it returns 99.9. A total of zero returns 0. Every producer of `coverage_pct` calls this function, including the per-entry recompute inside `DemoteApprovalGateViolations` that runs after an approval-gate demotion; a caller doing its own division emits values such as 33.333333333333336 where this clause requires 33.3. (b) `FormatCoveragePct(pct)` returns the integer floor of one stored per-spec value with a trailing percent sign, and every per-spec human-readable surface uses it. Those surfaces are the Coverage column of the coverage table, the `Coverage:` line of `specter explain`, and the per-spec line `specter doctor` prints beneath a failing coverage check. (c) `passes_threshold` compares `coverage_pct` against the effective threshold with a greater-than-or-equal test. (d) Together these give the invariant that matters to an operator: a `coverage_threshold` set to the integer the tool just printed always passes. (e) The average in the C-16 summary header is not a per-spec value and has its own rule: it is the integer floor of the exact arithmetic mean of the entries' stored `coverage_pct` values. Exact means the mean carries no float accumulation error. Clause (a) makes every stored value an exact multiple of one tenth, so the sanctioned method is to sum the values as integer tenths and divide once. Three specs storing 4.1, 12.2 and 13.7 have a mean of 10.0 and the header prints 10, where summing them in float64 reaches 29.999999999999996, whose third is 9.999999999999998 and floors to 9. Rationale: the previous expression truncated under a comment that said it rounds, so on one spec the table printed 67, `explain` printed 66, and the gate compared 66.6. Rounding the displayed integer rather than flooring it was rejected, because 199 of 200 criteria would then print 100 and pass a Tier 1 gate. The header is stated apart from (b) because the two floors have different reasons. A per-spec floor guarantees the printed integer never exceeds what the gate compared, which is what makes (d) hold; the header compares nothing, so it floors for the other reason, agreement with the column beneath it. Rounding the mean would print 67 above a row of 66 on a one-spec report at 66.7, which is the disagreement this constraint exists to remove. Routing the header through `FormatCoveragePct` in 1.16.0 got the direction right and the arithmetic wrong: the argument that the floor is exact holds for one value of the form k/10 and not for a sum of them (`bugs/SP-SP-040`)."
       type: technical
       enforcement: error
 
@@ -744,7 +744,7 @@ spec:
       priority: high
 
     - id: AC-48
-      description: "The C-16 summary header averages the entries' coverage_pct values and formats the result with FormatCoveragePct, so it never disagrees with the column below it. A report of one spec at 66.7 reads `Spec Coverage Report — 1 specs · 66% avg coverage` above a table cell of `66%`, where today the header reads 67%. A report of two specs, one at 66.7 and one at 100, has a mean of 83.35 and reads `Spec Coverage Report — 2 specs · 83% avg coverage`."
+      description: "The C-16 summary header takes the floor of the mean of the entries' coverage_pct values, so it never disagrees with the column below it. A report of one spec at 66.7 reads `Spec Coverage Report — 1 specs · 66% avg coverage` above a table cell of `66%`, where before this change the header rounded and read 67%. A report of two specs, one at 66.7 and one at 100, has a mean of 83.35 and reads `Spec Coverage Report — 2 specs · 83% avg coverage`. Both values are unchanged by the exact-mean rule of C-35(e), which moves only the cases where a float sum lands below the true mean; AC-59 covers one of those."
       inputs:
         case_single: "1 spec, 2 of 3 criteria covered"
         case_multiple: "2 specs, coverage_pct 66.7 and 100"
@@ -838,7 +838,72 @@ spec:
       references_constraints: ["C-37"]
       priority: critical
 
+    - id: AC-56
+      description: "`specter explain` prints the integer the coverage table prints because it calls the shared formatter, not because its own arithmetic happens to agree. On a workspace of two Tier 1 specs, one with 17 of 21 criteria annotated and one with 7 of 9, `specter explain wide-spec` prints `Coverage: 81% (17/21 ACs)` and `specter explain nine-spec` prints `Coverage: 77% (7/9 ACs)`, matching table cells of `81%` and `77%`. Two ratios are used because each one kills a different wrong formatter. 17 of 21 is 80.952, which stores as 81.0 and floors to 81, while the integer division this surface used before 1.16.0 gives 80; a formatter that rounds the stored value also gives 81 here and is not caught. 7 of 9 is 77.777, which stores as 77.8 and floors to 77, while a formatter rounding the stored value gives 78; integer division also gives 77 here and is not caught. AC-44's 2 of 3 cannot catch the integer division, because it and the floor of the rounded value both print 66 there, which is how this surface shipped unpinned. The workspace has no `.specter-results.json` and no `specter.yaml`, so `explain` and `coverage --strictness annotation` read the same structural input: this criterion pins which formatter runs, not which input it reads."
+      inputs:
+        workspace: "specs/wide.spec.yaml (tier 1, 21 criteria, AC-01 through AC-17 annotated) and specs/nine.spec.yaml (tier 1, 9 criteria, AC-01 through AC-07 annotated), each annotated in its own test file; no specter.yaml and no .specter-results.json"
+        commands: ["specter explain wide-spec", "specter explain nine-spec", "specter coverage --strictness annotation"]
+      expected_output:
+        wide_explain_line_contains: "Coverage: 81% (17/21 ACs)"
+        nine_explain_line_contains: "Coverage: 77% (7/9 ACs)"
+        wide_table_cell: "81%"
+        nine_table_cell: "77%"
+        explain_exit_code: 0
+        coverage_exit_code: 1
+      references_constraints: ["C-35"]
+      priority: critical
+
+    - id: AC-57
+      description: "The per-spec line `specter doctor` prints beneath a failing coverage check uses the shared formatter. On the AC-56 workspace, `specter doctor` prints `    nine-spec: 77% coverage (T1 requires 100%)` and `    wide-spec: 81% coverage (T1 requires 100%)`, both indented four spaces, and exits 1. The two ratios do the same two jobs here as in AC-56: the `%.0f` formatter this line used before 1.16.0 prints 78% for nine-spec, and a formatter dividing covered by total itself prints 80% for wide-spec, so one fixture kills both. No ratio in AC-44 reaches this line at all, because AC-44 does not run `doctor`. The workspace carries no `specter.yaml` and no `.specter-results.json`, so this criterion pins the formatter only. It makes no claim about which strictness `doctor` applies (`bugs/SP-SP-038`) and none about doctor's manifest health line, which stays with spec-doctor C-18."
+      inputs:
+        workspace: "the AC-56 workspace"
+        command: "specter doctor"
+      expected_output:
+        stdout_contains: ["    nine-spec: 77% coverage (T1 requires 100%)", "    wide-spec: 81% coverage (T1 requires 100%)"]
+        exit_code: 1
+      references_constraints: ["C-35"]
+      priority: high
+
+    - id: AC-58
+      description: "The approval-gate demotion emits a stored value the rest of the report could have produced. A Tier 3 spec declares three criteria, all three annotated and all three carrying a passing results entry, and AC-02 and AC-03 carry `approval_gate: true` with no `approval_date`. `specter coverage --json --strictness zero-tolerance` demotes both gated criteria, emits `coverage_pct` of exactly 33.3 for that entry, and exits 3. The ratio is 1 of 3 because its exact quotient is not representable in float64: a recompute doing its own division emits 33.333333333333336, which C-35(a) forbids. Nothing else reads that number, because the existing approval-gate criteria AC-29 and AC-34 assert exit codes and message text only."
+      inputs:
+        spec: "tier 3, three criteria, AC-02 and AC-03 declaring approval_gate: true with approval_date unset, all three annotated in one test file"
+        results_file: '{"results":[{"spec_id":"gate-spec","ac_id":"AC-01","status":"passed"},{"spec_id":"gate-spec","ac_id":"AC-02","status":"passed"},{"spec_id":"gate-spec","ac_id":"AC-03","status":"passed"}]}'
+        command: "specter coverage --json --strictness zero-tolerance"
+      expected_output:
+        coverage_pct: 33.3
+        serialized_field: '"coverage_pct": 33.3'
+        covered_acs: ["AC-01"]
+        uncovered_acs: ["AC-02", "AC-03"]
+        threshold: 50
+        passes_threshold: false
+        exit_code: 3
+      references_constraints: ["C-35", "C-26"]
+      priority: critical
+
+    - id: AC-59
+      description: "The summary header prints the floor of the exact mean, not the floor of a float sum. Three Tier 3 specs, each declaring `coverage_threshold: 30`, are covered 1 of 3, 4 of 9 and 1 of 3, so they store 33.3, 44.4 and 33.3. The exact mean is 37.0, and `specter coverage --strictness annotation` prints `Spec Coverage Report — 3 specs · 37% avg coverage` above a table whose alpha-spec and gamma-spec cells read `33%` and whose beta-spec cell reads `44%`, exiting 0. The row order among the three is not part of this claim, because all three sit in one sort bucket at one tier and C-15 does not order within that. Those ratios are chosen because accumulating the three values left to right in float64 gives 110.99999999999999, whose third reads 36.99999999999999 and floors to 36, which is what the 1.16.0 header printed. It is the smallest fixture of its kind: no three specs declaring fewer than fifteen criteria in total reproduce the error. The reported case, three specs at 2 of 49, 5 of 41 and 7 of 51 storing 4.1, 12.2 and 13.7 with an exact mean of 10.0 and a printed header of 9, is the same defect at 141 criteria. A header that rounds its mean also prints 37 here, so this criterion does not decide between rounding and an exact floor; AC-48 does, where a rounded mean prints 67 above a cell of 66."
+      inputs:
+        spec_a: "alpha-spec: tier 3, coverage_threshold: 30, 3 criteria, AC-01 annotated"
+        spec_b: "beta-spec: tier 3, coverage_threshold: 30, 9 criteria, AC-01 through AC-04 annotated"
+        spec_c: "gamma-spec: tier 3, coverage_threshold: 30, 3 criteria, AC-01 annotated"
+        command: "specter coverage --strictness annotation"
+      expected_output:
+        header_line: "Spec Coverage Report — 3 specs · 37% avg coverage"
+        tier_line: "  Tier 3: 3/3 passing (100%)"
+        alpha_spec_cell: "33%"
+        beta_spec_cell: "44%"
+        gamma_spec_cell: "33%"
+        exit_code: 0
+      references_constraints: ["C-35", "C-16"]
+      priority: high
+
   changelog:
+    - version: "1.17.0"
+      date: "2026-08-17"
+      author: "specter-team"
+      type: minor
+      description: "v0.15 phase 1B loop-back, closing two findings against the 1.16.0 criteria. C-35 bound five percentage surfaces and 1.16.0 pinned two of them, so reverting `explain`, doctor's per-spec line or the approval-gate demotion shipped green (`bugs/SP-SP-041`). AC-56, AC-57 and AC-58 give the three a criterion each, at ratios where the wrong formatter and the right one differ: 17 of 21 separates the floor of the rounded value from integer division, 7 of 9 separates it from a rounding formatter, and 1 of 3 separates `CoveragePercent` from a recompute doing its own division. C-35 now names all five sites, and clause (a) states that every producer of `coverage_pct` calls `CoveragePercent`, the demotion recompute included. C-35(e) states the summary header's rule apart from the per-spec rule and fixes the regression 1.16.0 introduced (`bugs/SP-SP-040`): routing the header average through `FormatCoveragePct` floored a float sum, so three specs storing 4.1, 12.2 and 13.7 read 9 against an exact mean of 10.0. The header keeps the floor and gains an exact mean, computed as integer tenths, because rounding the mean would reinstate a header of 67 above a cell of 66. AC-59 pins the smallest fixture that reproduces the error and AC-48 is reworded to match, with its values unchanged."
     - version: "1.16.0"
       date: "2026-08-16"
       author: "specter-team"
