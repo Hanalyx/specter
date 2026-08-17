@@ -806,22 +806,23 @@ func SortCoverageEntriesForDisplay(entries []SpecCoverageEntry) []SpecCoverageEn
 //	  Tier K: X/Y passing (Z%)
 //	  ...
 //
-// Tiers with zero specs are omitted. Avg coverage is the arithmetic mean of
-// per-spec CoveragePct values (not weighted by AC count — matches what the
-// old footer was effectively reporting).
+// Tiers with zero specs are omitted. Avg coverage is the exact arithmetic mean
+// of per-spec CoveragePct values (not weighted by AC count, which matches what
+// the old footer was effectively reporting).
 //
-// C-35(b): the average goes through FormatCoveragePct, so the header never
-// disagrees with the Coverage column below it. It used to round while the
-// column floored, which read as 67% above a row of 66%.
+// C-35(e): the average goes through FormatMeanCoveragePct, so the header
+// never disagrees with the Coverage column below it. It used to round while
+// the column floored, which read as 67% above a row of 66%. The header is not
+// a per-spec value, so it has its own rule and its own formatter.
 func BuildSummaryHeader(report *CoverageReport) string {
 	entries := report.Entries
 	if len(entries) == 0 {
 		return "Spec Coverage Report — 0 specs"
 	}
-	var totalPct float64
+	pcts := make([]float64, 0, len(entries))
 	byTier := map[int]*struct{ total, passing int }{}
 	for _, e := range entries {
-		totalPct += e.CoveragePct
+		pcts = append(pcts, e.CoveragePct)
 		t := byTier[e.Tier]
 		if t == nil {
 			t = &struct{ total, passing int }{}
@@ -832,9 +833,8 @@ func BuildSummaryHeader(report *CoverageReport) string {
 			t.passing++
 		}
 	}
-	avg := totalPct / float64(len(entries))
 	var b strings.Builder
-	fmt.Fprintf(&b, "Spec Coverage Report — %d specs · %s avg coverage\n", len(entries), FormatCoveragePct(avg))
+	fmt.Fprintf(&b, "Spec Coverage Report — %d specs · %s avg coverage\n", len(entries), FormatMeanCoveragePct(pcts))
 	for tier := 1; tier <= 3; tier++ {
 		t := byTier[tier]
 		if t == nil {

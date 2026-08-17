@@ -53,11 +53,47 @@ func CoveragePercent(covered, total int) float64 {
 // rounding, 199 of 200 criteria would print 100 and an operator setting a
 // threshold of 100 from what they read would be surprised twice.
 //
-// The floor is exact. CoveragePercent returns a value of the form k/10, and
-// when k is a multiple of 10 that division is exact in float64, so a value
-// that should read 70 never floors to 69.
+// The floor is exact for one stored value. CoveragePercent returns a value of
+// the form k/10, and when k is a multiple of 10 that division is exact in
+// float64, so a value that should read 70 never floors to 69. That argument
+// covers one value only. A sum of such values carries accumulation error, so
+// the summary header does not reach its integer this way. See
+// FormatMeanCoveragePct.
 //
 // C-35(b).
 func FormatCoveragePct(pct float64) string {
 	return fmt.Sprintf("%d%%", int(math.Floor(pct)))
+}
+
+// FormatMeanCoveragePct renders the average shown in the C-16 summary header:
+// the integer floor of the exact arithmetic mean of the stored percentages,
+// plus a percent sign.
+//
+// Exact means the mean carries no float accumulation error. Every stored value
+// is a whole tenth by C-35(a), so each one converts to an integer count of
+// tenths, and the mean is one integer division of the summed tenths by ten
+// times the number of entries. Adding the values as float64 instead puts the
+// sum below the true total on common inputs: 33.3, 44.4 and 33.3 reach
+// 110.99999999999999, a third of which floors to 36 where the exact mean is
+// 37 (bugs/SP-SP-040).
+//
+// The header floors rather than rounds for the same reason the column does,
+// agreement between the two. A rounded mean would print 67 above a single row
+// reading 66.
+//
+// C-35(e).
+func FormatMeanCoveragePct(pcts []float64) string {
+	if len(pcts) == 0 {
+		return "0%"
+	}
+	var tenths int64
+	for _, pct := range pcts {
+		// Round rather than truncate. The value reached float64 through a
+		// division by ten, so multiplying it back can land a hair under its
+		// count of tenths. Rounding closes that gap instead of opening a
+		// second place for the error to enter.
+		tenths += int64(math.Round(pct * 10))
+	}
+	// One division, on non-negative values, so integer truncation is the floor.
+	return fmt.Sprintf("%d%%", tenths/int64(10*len(pcts)))
 }
