@@ -4,10 +4,17 @@ This document defines the terms that belong to Specter specifically. It exists
 because several of them mean two things today, and at least one of those splits
 has shipped as a defect.
 
+The one to read first is `strict` against `strictness`. Two settings, four
+letters apart, governing unrelated things: one is a severity switch on the
+checker, the other decides when a criterion counts as covered. Confusing them is
+not a parse error, because both are valid keys. That collision is the spine of
+Part 1 and the root of most of what follows.
+
 Verified against `release/v0.15.0` at `d85a77e`, using a binary built with
-`make build` from `specter/`. Every claim about current behavior was checked by
-running `bin/specter` or by reading source. [Appendix A](#appendix-a-how-each-claim-was-checked)
-says which, claim by claim.
+`make build` from `specter/`. No code or spec changed between `d85a77e` and this
+document's own first commit, so that reference still holds. Every claim about
+current behavior was checked by running `bin/specter` or by reading source.
+[Appendix A](#appendix-a-how-each-claim-was-checked) says which, claim by claim.
 
 ## Scope
 
@@ -38,48 +45,111 @@ that intent was supposed to prevent.
 
 ---
 
-# Part 1: strictness, and the word `strict`
+---
 
-These four entries are why the document was commissioned. `bugs/SP-SP-046`
-records that `--strict` and `--strictness zero-tolerance` are not the same thing,
-and that `coverage` and `sync` resolve `--strict` by different rules. The fix for
-that bug is blocked on the definition proposed at the end of this part.
+# Part 1: `strict` and `strictness`
 
-## strictness level
+Specter has two settings whose names differ by four letters. They govern
+unrelated things. One is a severity switch on the checker. The other is a ladder
+deciding when a criterion counts as covered.
 
-**Meaning.** A three-value enum naming how much evidence Specter demands before
-it calls an acceptance criterion covered. The three values are `annotation`,
+Almost every confusion recorded in this document starts there, including
+`bugs/SP-SP-046`, which is why the document was commissioned. Read this part in
+order. The collision comes first, because the flag entries do not make sense
+without it.
+
+## The collision, stated first
+
+Two manifest keys, both accepted, both listed in `validSettingsKeys` at
+`internal/manifest/manifest.go:25-26`:
+
+| Key | Type | Constraint | Governs |
+|---|---|---|---|
+| `settings.strict` | bool | spec-manifest C-11 | Whether checker warnings become errors |
+| `settings.strictness` | enum | spec-manifest C-24 | When a criterion counts as covered |
+
+They share no code path. `settings.strict` never affects a coverage number.
+`settings.strictness` never changes a diagnostic's severity, except for the one
+diagnostic named in the `strictness` entry below.
+
+The practical hazard: a manifest that means one and writes the other gets no
+error, because both are valid keys. Writing `strict: true` when you meant
+`strictness` leaves the ladder at its default. Writing `strictness: threshold`
+when you meant `strict` leaves warnings as warnings. Neither typo is detectable
+by the parser, because neither is a typo.
+
+Nothing in the repository proposes renaming either key. Both appear in shipped
+manifests. This entry exists to keep them apart, not to argue for a change.
+
+## `strict`
+
+**Meaning.** A severity switch on the checker. When on, every warning and info
+diagnostic is reported as an error, and the command exits non-zero.
+
+**Surfaces.** Set by `settings.strict` (`internal/manifest/types.go:49`) or by a
+`--strict` flag, always combined as `strict || m.Settings.Strict`. Consumed at
+`main.go:711` (`check`), `main.go:1313` and `:1347` (`sync`), and `main.go:3003`
+(`watch`).
+
+Measured on a Tier 2 spec with one orphan constraint: `check` reports
+`0 error(s), 1 warning(s)` and exits 0, while `check --strict` reports
+`1 error(s), 0 warning(s)` and exits 1.
+
+It has nothing to do with coverage. `coverage` reads neither `settings.strict`
+nor the checker. A workspace that sets `settings.strict: true` and expects
+coverage to tighten gets no change.
+
+**Standing.** Settled. The concept, the key, and its scope are consistent
+everywhere. Only the flag that shares its name is contested, and that is a
+separate entry.
+
+## `strictness`
+
+**Meaning.** A three-value ladder naming how much evidence Specter demands
+before it calls an acceptance criterion covered. The values are `annotation`,
 `threshold`, and `zero-tolerance`, in increasing order of demand.
 
-**Surfaces.**
+**Surfaces.** The enum is declared once, at `internal/manifest/manifest.go:30`.
+Both `settings.strictness` and the `--strictness` flag validate against it. A
+value outside the enum is rejected at parse for the manifest and at the flag
+layer for the CLI, exit 1 either way.
 
-The enum is declared in one place, `internal/manifest/manifest.go:30`, and both
-the manifest key `settings.strictness` and the `--strictness` flag validate
-against it. A value outside the enum is rejected at parse for the manifest and at
-the flag layer for the CLI. Rejection is exit 1.
+Only two commands accept a `--strictness` flag. The binary ships 14 commands, so
+the claim is rested on the source rather than on a sweep of help output: a grep
+of `cmd/` for the literal flag names returns five registrations and no others,
+all in `main.go`.
 
-`coverage`, `sync`, and `check` all read a strictness level, for different
-purposes:
+| Command | `--strict` | `--strictness` | Registration |
+|---|---|---|---|
+| `check` | yes | **no** | `:837` |
+| `coverage` | yes | yes | `:1239`, `:1241` |
+| `sync` | yes | yes | `:1411`, `:1412` |
+| the other 11 | no | no | none |
+
+The other 11 are `completion`, `diff`, `doctor`, `explain`, `feedback`,
+`ingest`, `init`, `parse`, `resolve`, `reverse`, and `watch`. `watch` is the
+one worth naming: it accepts neither flag and still reads `settings.strict` at
+`main.go:3003`.
+
+That asymmetry matters more than it looks. `check` accepts `--strict` and has no
+ladder at all. Any proposal that defines `--strict` in terms of a strictness
+level is therefore undefined on `check`, not merely contested there.
+
+Three surfaces read a strictness level:
 
 | Surface | What the level controls |
 |---|---|
 | `coverage` | Which report path runs, and which exit-code gates are armed |
 | `sync` | The same, inside the coverage phase |
-| `check` | The severity of the `unreachable_annotation` diagnostic only |
+| `check` | The severity of the `unreachable_annotation` diagnostic, and nothing else |
 
-`check` is worth naming because it is easy to miss. Under `annotation` the
-diagnostic is suppressed, under `threshold` it is a warning, under
-`zero-tolerance` it is an error. That routing is documented at
-`docs/CLI_REFERENCE.md:193`.
+`check` reads the level from `settings.strictness` only, since it has no flag for
+it. The word "only" in that last row was checked: a grep of `internal/checker/`
+for `strictness` returns hits in exactly three files, all in the
+`unreachable_annotation` family, and every one routes through `routeSeverity`.
 
-The word "only" in that table is load-bearing and was checked. A grep of
-`internal/checker/` for `strictness` returns hits in exactly three files, all in
-the `unreachable_annotation` family (`unreachable_annotation.go`,
-`unreachable_ts.go`, `unreachable_py.go`), and every one of them routes through
-`routeSeverity`. No other checker behavior reads the level.
-
-**Standing.** Settled. The enum, its three values, and their order are not in
-dispute anywhere in the repository.
+**Standing.** Settled. The enum, its values, and their order are not disputed
+anywhere in the repository.
 
 ## the three levels
 
@@ -101,30 +171,51 @@ thresholds entirely. Any annotated criterion whose resolved status is not
 A spec at 100 percent of its threshold still fails if one annotated criterion
 failed.
 
-**Standing.** Settled as concepts. Note one asymmetry that is easy to misread:
-`threshold` and `zero-tolerance` both run the same report path, so the difference
-between them is not what gets demoted. It is which additional exit-code gates are
-armed after demotion.
+**Standing.** Settled as concepts. One asymmetry is easy to misread:
+`threshold` and `zero-tolerance` run the same report path, so the difference
+between them is not what gets demoted. It is which exit-code gates are armed
+after demotion.
+
+## the strict path
+
+**Meaning.** The internal routing that `BuildCoverageReportStrict` represents, as
+distinct from the weaker `BuildCoverageReportWithResults`. On the strict path, a
+missing results file is fatal, annotated criteria without a passing entry demote
+across all tiers, and the strict diagnostics apply.
+
+This is a third concept, and it needs its own name. It is neither the severity
+switch nor the ladder. It is what `coverage --strict` actually selects, and it is
+reachable from two ladder positions as well.
+
+**Surfaces.** One rule, stated in spec-coverage C-31 and spec-sync C-07 and
+implemented at `main.go:958`: the strict path runs when effective strictness is
+`threshold` or `zero-tolerance`, or when the `--strict` boolean is set. Only
+`annotation` stays off it.
+
+Because the manifest default is `threshold`, the strict path is on by default.
+That has a consequence measured below: the `--strict` boolean almost never
+selects anything that was not already selected.
+
+**Standing.** Settled. Both specs state the rule and the code matches. The term
+itself appears in no user-facing output, so it is an internal name.
 
 ## effective strictness
 
-**Meaning.** The level in force for one run, after the flag, the manifest, and
-the built-in default have been resolved against each other.
+**Meaning.** The ladder position in force for one run, after the flag, the
+manifest, and the built-in default have been resolved against each other.
 
-**Surfaces.** This is where the two commands disagree, and the disagreement is
-`SP-046`.
+**Surfaces.** The two commands resolve it differently, and that is `SP-046`.
 
 `coverage` (`cmd/specter/main.go:932-938`) resolves the flag over the manifest
-over a built-in `threshold`. The `--strict` boolean does not participate. It is a
-separate variable.
+over a built-in `threshold`. The `--strict` boolean does not participate at all.
+It is a separate variable feeding the strict path.
 
 `sync` (`cmd/specter/main.go:1321-1328`) resolves the flag first, then a bare
 `--strict` to `zero-tolerance`, then the manifest.
 
-One workspace makes the divergence visible. A Tier 3 spec, two annotated
-criteria, a results file marking `AC-02` as `failed`, and
-`settings.strictness: threshold`. All ten invocations were run in that one
-directory:
+One workspace makes it visible. A Tier 3 spec, two annotated criteria, a results
+file marking `AC-02` as `failed`, and `settings.strictness: threshold`. All ten
+invocations run in one directory:
 
 | Invocation | Exit |
 |---|---|
@@ -140,201 +231,181 @@ directory:
 | `sync --strictness annotation` | 0 |
 
 Every row agrees except the two `--strict` rows, which disagree with each other.
+`sync --strict` reaches the ladder. `coverage --strict` does not.
 
-The two commands state the divergence in their own help text, in opposite
-directions. From `main.go:1241`, on `coverage --strictness`:
+`docs/EXIT_CODES.md` defines effective strictness as the result of resolving
+"`--strictness`, the `--strict` alias, and `settings.strictness`". That asserts a
+single resolution rule and calls `--strict` an alias. No command implements that
+rule as written, and the alias claim is false on `coverage` and undefined on
+`check`. It must change alongside the code.
 
-```
---strict is equivalent to --strictness threshold under the default manifest strictness and does not override a manifest-set level.
-```
+**Standing.** Open, on the `--strict` input only. The flag-over-manifest-over-
+default order is settled and both commands implement it.
 
-From `main.go:1411`, on `sync --strict`:
+## `--strict`: three flags sharing a name
 
-```
-Alias for --strictness zero-tolerance when --strictness is not set.
-```
+**Meaning.** None that holds across the CLI. `--strict` is registered three
+times, with three help strings and three behaviors. It is not one flag resolved
+by divergent rules. It is three flags that happen to be spelled the same.
 
-Each help string is accurate about its own command. Read together, they define
-the same flag two ways.
+**Surfaces.**
 
-A third document disagrees with both. `docs/EXIT_CODES.md` defines effective
-strictness as the result of resolving "`--strictness`, the `--strict` alias, and
-`settings.strictness`". That description asserts a single resolution rule and
-calls `--strict` an alias. It is true of `sync` and false of `coverage`, and it
-must change when `SP-046` is fixed.
+| Site | Command | Help text says | What it does |
+|---|---|---|---|
+| `main.go:837` | `check` | "Treat warnings as errors (also set via settings.strict in specter.yaml)" | The severity switch, and nothing else |
+| `main.go:1239` | `coverage` | "Require .specter-results.json and treat any non-passed annotated AC as uncovered (all tiers)" | Forces the strict path at `:958`. Not severity, not the ladder |
+| `main.go:1411` | `sync` | "Treat warnings as errors (also set via settings.strict in specter.yaml). Alias for --strictness zero-tolerance when --strictness is not set." | Severity, plus test-annotation checking, plus the ladder |
 
-**Standing.** Open. The definition below is proposed, not settled.
+Only `sync` touches the ladder. Only `check` and `sync` touch severity. `coverage`
+touches neither.
 
-## `--strict`
-
-**Meaning.** Currently none that holds across the CLI. The name is registered on
-three commands with three different effects.
-
-**Surfaces.** Three registrations, three help strings, verified in source and by
-running:
-
-| Command | Site | Effect |
-|---|---|---|
-| `check` | `main.go:837` | Upgrades every warning and info diagnostic to error |
-| `coverage` | `main.go:1239` | Turns on the strict report path, as an independent boolean |
-| `sync` | `main.go:1411` | All three of the effects below at once |
-
-`sync --strict` does the most, and no single document says so. It sets the
-checker's `Strict` field (`main.go:1313`), so the check phase upgrades warnings
-to errors. It sets `CheckTestAnnotations` (`main.go:1347`), so the check phase
-cross-references test annotations. And it sets effective strictness to
-`zero-tolerance` (`main.go:1321-1328`).
-
+**`sync --strict` does three separate things**, and no single document says so.
+It sets the checker's `Strict` field (`main.go:1313`), so the check phase
+upgrades warnings to errors. It sets `CheckTestAnnotations` (`main.go:1347`), so
+the check phase cross-references test annotations against specs. And it sets
+effective strictness to `zero-tolerance` (`main.go:1321-1328`).
 
 Measured on a workspace with one orphan constraint in a Tier 2 spec:
 `sync --strict` reports `FAIL check: 1 error(s)`, while
-`sync --strictness annotation` reports `PASS check: 1 warning(s)`. The two flags
-are not interchangeable even in the check phase, which reads no coverage
-strictness at all.
+`sync --strictness annotation` reports `PASS check: 1 warning(s)`. The two are
+not interchangeable even in the check phase, which reads no coverage strictness.
 
-Two further behaviors key on the `--strict` boolean rather than on the strict
-path, and both differ between the commands:
+**A fourth description exists.** `coverage --strictness`'s own help at
+`main.go:1241` describes `--strict` a fourth way:
 
-`coverage --strict --strictness annotation` is a hard error, per spec-coverage
-C-24: `--strict requires settings.strictness >= threshold`. The same combination
-on `sync` passes silently, because `sync` has no equivalent coherence rule.
-Verified by running both.
+```
+threshold and zero-tolerance route through the same strict path as --strict; --strict is equivalent to --strictness threshold under the default manifest strictness and does not override a manifest-set level.
+```
 
-`coverage --scope <domain>` requires the literal `--strict` flag, per
-spec-coverage C-23. Passing `--strictness zero-tolerance` instead is refused with
-`error: --scope requires --strict`, even though it is the stricter mode. Verified
-by running.
+Against `sync --strict`'s help at `:1411`, which calls it an alias for
+`zero-tolerance`. Each string is accurate about its own command. Read together
+they define one flag name four ways.
+
+### `coverage --strict` never changes a coverage verdict
+
+Measured, one fixture, the manifest edited between runs:
+
+| `settings.strictness` | `coverage` | `coverage --strict` |
+|---|---|---|
+| `annotation` | 0 | 1 |
+| `threshold` | 0 | 0 |
+| `zero-tolerance` | 2 | 2 |
+| no manifest at all | 0 | 0 |
+
+The single non-matching cell is not a coverage judgment. It is spec-coverage
+C-24 refusing to run: `--strict requires settings.strictness >= threshold`.
+
+The reason is the default. The strict path is already on at `threshold`, and
+`threshold` is what an absent or silent manifest resolves to, so the only ladder
+position where `--strict` would have something to force is `annotation`, where it
+errors instead. Two behaviors on `coverage` still key on the literal flag:
+
+- **spec-coverage C-24**, the refusal above.
+- **spec-coverage C-23**, which makes `--scope <domain>` require `--strict`.
+  `coverage --scope foo --strictness zero-tolerance` is refused with
+  `error: --scope requires --strict`, even though it is the stricter mode.
+  Verified by running.
+
+`sync` has no equivalent of C-24. `sync --strict --strictness annotation` passes
+silently where the same combination on `coverage` is a hard error. Verified by
+running both.
 
 **Standing.** Open. This is the term the project must decide.
 
-## `settings.strict` against `settings.strictness`
-
-**Meaning.** Two distinct manifest keys whose names differ by three letters and
-whose scopes do not overlap.
-
-**Surfaces.** `settings.strict` is a boolean at `internal/manifest/types.go:49`.
-It sets the checker's warnings-as-errors behavior and nothing else. It is read at
-`main.go:711` (`check`), `main.go:1313` (`sync`), and `main.go:3003` (`watch`).
-
-`settings.strictness` is the enum at `types.go:53`. It is read by the coverage
-paths and by the `unreachable_annotation` severity routing.
-
-`coverage` reads neither `settings.strict` nor the checker. A workspace that sets
-`settings.strict: true` and expects coverage to tighten gets no change.
-
-**Standing.** Settled behavior, poor naming. Nothing in the repository proposes
-renaming either key, and both appear in shipped manifests, so this entry exists
-to keep the two apart rather than to argue for a change.
-
-## the strict path
-
-**Meaning.** The internal routing that `BuildCoverageReportStrict` represents, as
-distinct from the weaker `BuildCoverageReportWithResults`. On the strict path, a
-missing results file is fatal, annotated criteria without a passing entry demote
-across all tiers, and the strict diagnostics apply.
-
-**Surfaces.** One rule, stated in spec-coverage C-31 and spec-sync C-07 and
-implemented at `main.go:958`: an effective strictness of `threshold` or
-`zero-tolerance` routes through the strict path, and so does a bare `--strict`.
-Only `annotation` does not.
-
-This is why the `SP-046` divergence is narrower than it first looks.
-`coverage --strict` and `coverage --strictness zero-tolerance` produce the same
-report. They differ only in whether the C-25 and C-26 exit gates are armed.
-
-**Standing.** Settled. Both specs state it, and the code matches.
-
-## PROPOSED: what `--strict` should mean
+## PROPOSED: retire the overload
 
 **This section is a proposal. A human signs off before `SP-046` is implemented.**
 
-Two readings are live.
+The earlier framing of this document offered two readings of `--strict` as a
+single concept. That framing was wrong and has been withdrawn. `check` accepts
+`--strict` and has no `--strictness` flag, so a definition of `--strict` in terms
+of a ladder position is not merely contested on `check`. There is no ladder there
+to alias.
 
-**Reading A, alias.** `--strict` is a spelling of `--strictness zero-tolerance`.
-This is what `sync` does and what the name suggests to most readers.
+### The proposal
 
-**Reading B, axis.** `--strict` is an independent boolean that turns on the
-strict report path, orthogonal to the level. This is what `coverage` does, and
-spec-coverage C-24 has a coherence rule that only makes sense on this reading. A
-flag that simply set the level would not need to reject a level.
+**`--strict` means the severity switch, on every command that has one. The ladder
+is reachable only through `--strictness` and `settings.strictness`.**
 
-### The recommendation
+This is what the flag's name says, what `settings.strict` already means, and what
+`check --strict` already does. It gives one word one job.
 
-**Adopt Reading A.** The deciding argument is the direction in which each reading
-fails.
+Concretely: `sync --strict` keeps its severity effects and stops implying
+`zero-tolerance`. `coverage --strict` has no severity work to do, because
+`coverage` emits no checker diagnostics, so it is removed or deprecated rather
+than redefined. The measurement above is what makes that affordable: the flag
+never changed a coverage verdict, so nothing that was failing starts passing.
 
-Under Reading A, `coverage --strict` tightens. A workspace that passed goes red.
-The operator sees a failure that was always real and had been hidden. This is
-noisy, and it is fail-safe.
+### Why this is not a loosening of a gate
 
-Under Reading B, `sync --strict` loosens. It drops from `zero-tolerance` to
-whatever the manifest says, usually `threshold`. Gates that were red go green
-with no message. That is the false-green class that spec-sync C-09 was written to
-close and that `SP-046` was filed about. Choosing Reading B would reopen it
-through the flag rather than through the report path.
+It is worth stating plainly, because the change removes `zero-tolerance` from a
+flag that currently implies it.
 
-The blast radius stated in `SP-046` points the same way. An adopter following the
-documentation uses `--strict`, because that is the flag the docs and the Makefile
-use. Under Reading A that adopter gets what the name promises.
+`--strictness zero-tolerance` and `settings.strictness: zero-tolerance` both stay
+exactly as they are. Every gate remains reachable. What goes away is one
+spelling that reached a gate by implication rather than by request. This
+loosens a conflation, not an enforcement level.
 
-### What Reading A costs
+That distinction has a limit worth naming. A CI job running `sync --strict`
+today and relying on the implied `zero-tolerance` loses that gate on upgrade,
+silently, unless the change ships with a deprecation cycle and a release note.
+The gate is still reachable; that job is not reaching it any more. This is the
+proposal's real cost and it should not be minimized into the paragraph above.
 
-Naming the constraints that would have to change is the point of this section.
-None of these are free.
+### What the proposal costs
 
-**spec-coverage C-24 becomes a rewrite, not an edit.** C-24 makes
-`--strict` with `settings.strictness: annotation` an error. Under Reading A the
-combination is not incoherent, it is an override: `--strict` sets
-`zero-tolerance`, and the manifest loses. Either C-24 is deleted, or it is
-rewritten to say the flag wins. Deleting it removes a real guard against a
-misconfiguration. Keeping the error contradicts the alias.
+**spec-sync C-06 must be rewritten.** It states plainly that `--strict` "remains
+as an alias for `--strictness zero-tolerance` for backward compatibility". That
+sentence is the thing being retired.
 
-**spec-coverage C-31 loses a clause.** C-31 states that `--strict` enables the
-strict path but does not override a manifest-set strictness level. Under Reading A
-it does override it. That clause dies.
+**spec-coverage C-23 must be reworded.** `--scope` currently requires the literal
+`--strict`. With that flag gone from `coverage`, the prerequisite has to be
+restated against the strict path, which means `--strictness threshold` or higher.
+That is closer to what staged adoption wants anyway, since `--scope` exists to
+let a workspace enforce one domain per wave.
 
-**spec-coverage C-23 needs a decision.** `--scope` currently requires the literal
-`--strict`. Under Reading A that reads as "`--scope` requires zero-tolerance",
-which is probably not what staged adoption wants, since `--scope` exists to let a
-workspace enforce one domain at a time. C-23 likely wants rewording to "requires
-the strict path", which is `--strictness threshold` or higher.
+**spec-coverage C-24 loses its subject.** Its guard against
+`--strict` with `strictness: annotation` has nothing to guard once `coverage`
+has no `--strict`. The underlying misconfiguration it caught, an operator asking
+for strict behavior in a workspace configured not to have it, does not go away.
+Whether it is worth re-expressing against `--strictness` is a real question and
+this proposal does not answer it.
 
-**`sync --strict` keeps a second job.** Reading A settles the coverage half.
-It does not say what happens to the checker `Strict` and `CheckTestAnnotations`
-effects at `main.go:1313` and `:1347`. Dropping them would loosen the check phase,
-which is the same failure direction Reading A was chosen to avoid. Keeping them
-means `--strict` is an alias for the level and also carries an unrelated effect,
-which weakens the word "alias". This needs its own decision and is not resolved
-here.
+**spec-coverage C-31 survives.** Its clause that `--strict` does not override a
+manifest-set level is consistent with the proposal, since under it `--strict`
+never touches the level at all.
 
-**`make dogfood-strict` starts failing, or starts being honest.** `SP-046`
-records that the target runs `coverage --strict` in a tree with no root
-`specter.yaml`, so today it resolves to `threshold`. Codes 2 and 3 have never
-fired in Specter's own dogfooding. Under Reading A the target begins exercising
-`zero-tolerance`. That is the point of the change, and it may turn the gate red on
-first run.
+**`sync --strict`'s third effect is still unresolved.** It also sets
+`CheckTestAnnotations` (`main.go:1347`), which is neither severity nor ladder.
+The proposal settles the ladder question and says nothing about this one.
+Whatever is decided, the fix must state what happens to all three effects, or the
+next reader inherits the same problem one layer down.
 
-### What Reading B costs
+**`make dogfood-strict` must change or be renamed.** `SP-046` records that it
+runs `coverage --strict` in a tree with no root `specter.yaml`, so it resolves to
+`threshold` and codes 2 and 3 have never fired in Specter's own dogfooding. Under
+this proposal the flag it invokes stops existing on that command. The target
+should call `--strictness zero-tolerance` and mean its name, or be renamed to
+match what it measures.
 
-**The false-green returns.** `sync --strict` would stop meaning
-`zero-tolerance`. Anyone relying on that today, including the workspace measured
-above, silently loses a gate.
+### The alternative, and why it is weaker
 
-**spec-sync C-06 becomes wrong.** C-06 states plainly that `--strict` "remains as
-an alias for `--strictness zero-tolerance`". It would have to be rewritten.
+The narrow fix is to leave the overload in place and make `coverage --strict` and
+`sync --strict` agree, which is what `SP-046` literally asks for. It is a smaller
+change and it closes the reported divergence.
 
-**The name keeps lying.** A flag called `--strict` that leaves the level at the
-default is the reading that produced `SP-046` in the first place. Reading B is
-defensible in code and hard to defend in documentation.
+It cannot be made coherent, though. Whichever behavior wins, `check --strict`
+still means something else, because `check` has no ladder. The result is a flag
+that means one thing on one command and another thing on two others, now with a
+specification asserting they agree. That is the condition this document was
+commissioned to end rather than to document more precisely.
 
-### What both readings must fix regardless
+### What must be fixed under any decision
 
 `docs/EXIT_CODES.md` describes a single resolution rule over three inputs and
-calls `--strict` an alias. That is currently false for `coverage` under either
-reading, because the document describes a resolution that no command implements
-in full. It must be rewritten alongside the code.
-
----
+calls `--strict` an alias. No command implements that rule in full, and the alias
+claim is undefined on `check`. It must be rewritten alongside the code, and it is
+listed here because this document does not edit it.
 
 # Part 2: coverage terms
 
@@ -651,9 +722,12 @@ above with its evidence.
 
 | Term | Surface A | Surface B | Filed |
 |---|---|---|---|
-| `--strict` on `coverage` | Independent boolean, level stays at manifest value | `sync` maps it to `zero-tolerance` | `SP-SP-046` |
-| `--strict` in help text | `coverage` help at `main.go:1241`: "does not override a manifest-set level" | `sync` help at `main.go:1411`: "Alias for `--strictness zero-tolerance`" | `SP-SP-046` |
-| effective strictness | `EXIT_CODES.md` states one resolution rule with `--strict` as an alias | Neither command implements that rule in full | `SP-SP-046` |
+| `--strict` on `check` | The severity switch. `check` has no `--strictness` flag at all | On `sync` the same flag sets a ladder position | Not filed |
+| `--strict` on `coverage` | Forces the strict path, never touches the level | `sync` maps it to `zero-tolerance` | `SP-SP-046` |
+| `--strict` in help text | `coverage --strictness` help at `main.go:1241`: "equivalent to `--strictness threshold` ... does not override a manifest-set level" | `sync --strict` help at `main.go:1411`: "Alias for `--strictness zero-tolerance`" | `SP-SP-046` |
+| `--strict` descriptions | Four exist: `main.go:837`, `:1239`, `:1411`, and `:1241` | No two of the four are equivalent. Each states or omits behavior another asserts | `SP-SP-046` |
+| effective strictness | `EXIT_CODES.md` states one resolution rule with `--strict` as an alias | Neither command implements that rule in full, and it is undefined on `check` | `SP-SP-046` |
+| `settings.strict` and `settings.strictness` | Both valid keys at `manifest.go:25-26`, four letters apart | One is checker severity, the other is coverage judgment. Confusing them is not a parse error | Not filed |
 | results file path | `ingest --output` writes anywhere | `coverage` and `sync` read only `./.specter-results.json` | Not filed |
 | `--strict` with `strictness: annotation` | `coverage` rejects it, per C-24 | `sync` accepts it silently | Not filed |
 | `--scope` prerequisite | Requires the literal `--strict` flag | `--strictness zero-tolerance` is refused despite being stricter | Not filed |
@@ -701,6 +775,14 @@ the repository.
   `uncovered:` line, against `--strictness threshold` reporting 50 percent with
   `uncovered: AC-02`.
 - `specter ingest --help`, which is where `--output` was found.
+- `specter --help`, for the command list. There are 14.
+- `--help` on 10 of those 14, to read their flag sets. The claim that only
+  `check`, `coverage`, and `sync` accept `--strict` does **not** rest on that
+  sweep, because it did not cover `completion`, `feedback`, `init`, or
+  `reverse`. It rests on the source grep recorded below, which covers all 14.
+- The four-row table showing `coverage --strict` never changes a coverage
+  verdict, run on one fixture with `settings.strictness` edited between runs and
+  once with the manifest deleted.
 
 Program output quoted in fenced blocks is reproduced exactly, em dashes
 included. The style checker does not scan fenced blocks, confirmed with a scratch
@@ -731,7 +813,17 @@ standard.
   the absence of any path flag on `coverage` or `sync`.
 - Every hit for `strictness` under `internal/checker/`, which lands only in
   `unreachable_annotation.go`, `unreachable_ts.go`, and `unreachable_py.go`.
-- The two conflicting help strings at `main.go:1241` and `:1411`.
+- All four descriptions of `--strict`, at `main.go:837`, `:1239`, `:1411`, and
+  `:1241`.
+- A grep of `cmd/` for the literal strings `"strict"` and `"strictness"`,
+  excluding tests. It returns five flag registrations, all in `main.go`: three
+  for `--strict` (`:837`, `:1239`, `:1411`) and two for `--strictness` (`:1241`,
+  `:1412`). This is the evidence for which commands accept which flag, and it is
+  stronger than a help sweep because it cannot miss a command.
+- `validSettingsKeys` at `internal/manifest/manifest.go:25-26`, which is what
+  establishes that `strict` and `strictness` are both accepted keys and that
+  writing one for the other is not a parse error.
+- spec-manifest C-11 (`settings.strict`) and C-24 (`settings.strictness`).
 - Constraint text: spec-coverage C-19 through C-36, spec-sync C-06 through C-09,
   spec-check C-01 through C-05, spec-parse C-10.
 - Documentation text: `docs/EXIT_CODES.md` Terms section and line 181,
