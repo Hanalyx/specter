@@ -1,6 +1,6 @@
 spec:
   id: spec-vscode
-  version: "1.9.0"
+  version: "1.10.0"
   status: draft
   tier: 2
 
@@ -250,7 +250,15 @@ spec:
         the user fixes the last error. This rule is independent of whether the
         CLI later emits `[]` for an empty slice, which is a JSON-contract
         decision scheduled separately. If that lands, normalization becomes a
-        no-op and nothing here changes. Rationale (SP-SP-025): the parse half
+        no-op and nothing here changes. The guarantee is observable at one
+        place, the document each client method returns. On the parse document
+        that is `errors`, on the check document `diagnostics`, and on the
+        coverage document the five fields named above, each under the name it
+        carries after whatever key conversion the method applies. Two of the
+        six, `diagnostic_hints` and `invalid_status_warnings`, have no consumer
+        in the extension today and are not declared in `types.ts`. They are
+        normalized anyway, so the first consumer inherits the guarantee instead
+        of re-learning it. Rationale (SP-SP-025): the parse half
         was iterated with no guard from the extension's first commit on
         2026-04-16, so every save of a spec that parses cleanly threw
         `TypeError: input.parseErrors is not iterable`, a catch swallowed it,
@@ -286,7 +294,34 @@ spec:
         it was meant to mirror, unless the extension converts the document's
         keys before returning it. The coverage path converts and the check
         path does not, so the same declared name is correct on one document
-        and wrong on the other. Rationale (SP-SP-025): `SpecterParseError`
+        and wrong on the other. A range the extension publishes as a
+        diagnostic, meaning a range that reaches a DiagnosticCollection and so
+        the Problems panel, MUST end on the same line as its start, at
+        character `Number.MAX_SAFE_INTEGER`, so the editor highlights from the
+        start position to the end of that line. The rule covers the three
+        places the extension builds a diagnostic range from a CLI document: a
+        parse error, a check diagnostic, and a coverage parse error. Inside
+        that scope a range whose end equals its start is prohibited. Ranges
+        the extension builds for any other purpose are out of scope and keep
+        their own shapes. A range passed as the `selection` argument of
+        `vscode.open`, which the AC-39 insights cards and the AC-36 sidebar
+        both build from a CLI-reported line, places a cursor rather than
+        marking an extent, and zero-width is correct there. A zero-width
+        range is claimed to widen to the word it lands on, but that claim is
+        the code author's and was never checked in an editor, so no part of
+        this rule may rest on it. A range that ends at the end of the line is
+        visible whatever the editor does with an empty one. The uniform rule
+        also settles a case no single site can settle alone: the same schema
+        parse error reaches the Problems panel by two paths, the on-save `parse
+        --json` run and the `coverage --json` refresh, so a per-site decision
+        renders one error two ways depending on which run produced it. The
+        check document's keys MUST be converted the way the coverage
+        document's are, covering `spec_id`, `constraint_id`, `constraint_type`,
+        and `change_type`. The last three have no consumer in the extension
+        today. They are converted because `types.ts` declares `constraintID`,
+        `constraintType`, and `changeType`, and a declared member no document
+        carries is the false guarantee this rule exists to prevent. Rationale
+        (SP-SP-025): `SpecterParseError`
         declared `col` and `code` where the CLI emits `column` and `type`, and
         `SpecterCheckDiagnostic` declared `specID`, `file`, and `line` as
         required against a document that carries `spec_id` and no position of
@@ -795,10 +830,16 @@ spec:
         A parse error that carries no position produces a diagnostic at the
         start of the file, not a `NaN` range. Every schema validation error
         the CLI emits is this shape: it has `path`, `type`, and `message`, and
-        neither `line` nor `column`. The resulting range is line 0, character
-        0 to line 0, character 0, and all four numbers are finite integers.
-        The nameable assertion is `Number.isFinite` returning true on each of
-        the four.
+        neither `line` nor `column`. The resulting range starts at line 0,
+        character 0 and ends at line 0, character `Number.MAX_SAFE_INTEGER`,
+        which highlights the first line of the file, and all four numbers are
+        finite integers. The nameable assertions are the four literal
+        comparisons and `Number.isFinite` returning true on each.
+        Amended at 1.10.0 (SP-SP-034). The end was `0` at 1.9.0, which was a
+        deliberate choice made while AC-71's end was unstated. The same schema
+        parse error reaches the Problems panel by two paths, this one and the
+        coverage refresh of AC-71, so the two ends have to be decided together
+        or the same error renders two ways depending on which run produced it.
       inputs:
         parse_error: |-
           {"path": "spec", "type": "required",
@@ -808,7 +849,7 @@ spec:
         range_start_line: 0
         range_start_character: 0
         range_end_line: 0
-        range_end_character: 0
+        range_end_character: 9007199254740991
         all_four_range_numbers_finite: true
         message_contains: "Missing required field 'objective'"
       references_constraints: ["C-32"]
@@ -823,7 +864,10 @@ spec:
         and VS Code is 0-based, so line 3 becomes 2, while the absent column
         becomes character 0. Kept separate from AC-64 because an
         implementation that defaults every position to 0 satisfies AC-64 and
-        fails this one.
+        fails this one. The range ends on the same line it starts on, at
+        character `Number.MAX_SAFE_INTEGER`, so the highlight covers the line
+        the CLI reported. Amended at 1.10.0 (SP-SP-034): the end was unstated
+        at 1.9.0, which is the gap that let a test choose it.
       inputs:
         parse_error: |-
           {"path": "", "type": "yaml_syntax",
@@ -833,7 +877,9 @@ spec:
         diagnostics_built: 1
         range_start_line: 2
         range_start_character: 0
-        all_range_numbers_finite: true
+        range_end_line: 2
+        range_end_character: 9007199254740991
+        all_four_range_numbers_finite: true
       references_constraints: ["C-32"]
       priority: high
 
@@ -843,10 +889,14 @@ spec:
         a `NaN` range. Check diagnostics carry no position of any kind and no
         file: the CLI emits `kind`, `severity`, `message`, and the spec id on
         every one, and the optional fields are all descriptive. The resulting
-        range is line 0, character 0 to line 0, character 0, all four numbers
-        finite, and the severity maps to error. This is the check-side mirror
-        of AC-64 and is the criterion that fails if the declared but
-        never-emitted `line` field is read.
+        range starts at line 0, character 0 and ends at line 0, character
+        `Number.MAX_SAFE_INTEGER`, all four numbers finite, and the severity
+        maps to error. This is the check-side mirror of AC-64 and is the
+        criterion that fails if the declared but never-emitted `line` field is
+        read. Amended at 1.10.0 (SP-SP-034): the end was unstated at 1.9.0 and
+        a test chose `0` for it. A check diagnostic carries no position, so its
+        range is a placeholder either way, and it takes the same end as the
+        other two sites rather than a third shape of its own.
       inputs:
         check_diagnostic: |-
           {"kind": "orphan_constraint", "severity": "error", "spec_id": "spec-o",
@@ -857,6 +907,8 @@ spec:
         severity: "error"
         range_start_line: 0
         range_start_character: 0
+        range_end_line: 0
+        range_end_character: 9007199254740991
         all_four_range_numbers_finite: true
       references_constraints: ["C-32"]
       priority: high
@@ -984,9 +1036,14 @@ spec:
         AC-34, which says the entries are positioned at the reported line and
         column and says nothing about their absence. Absence is the common
         case. The CLI emits `line` on a coverage parse error only when the
-        failure is a YAML syntax error, and never emits `column` at all. The
-        resulting range is line 0, character 0 to line 0, character 0, all
-        four numbers finite, and the diagnostic still names the file.
+        failure is a YAML syntax error, and never emits `column` at all: no
+        code path in either the parser or the coverage package assigns that
+        field. The resulting range starts at line 0, character 0 and ends at
+        line 0, character `Number.MAX_SAFE_INTEGER`, all four numbers finite,
+        and the diagnostic still names the file. Amended at 1.10.0
+        (SP-SP-034): the end was unstated at 1.9.0, a test pinned it to `0`,
+        and the implementation was changed to match, which removed a highlight
+        users had. AC-78 is the same path with a line reported.
       inputs:
         coverage_parse_error: |-
           {"file": "specs/b.spec.yaml", "path": "spec", "type": "required",
@@ -996,6 +1053,8 @@ spec:
         diagnostic_file: "specs/b.spec.yaml"
         range_start_line: 0
         range_start_character: 0
+        range_end_line: 0
+        range_end_character: 9007199254740991
         all_four_range_numbers_finite: true
       references_constraints: ["C-32", "C-10"]
       priority: high
@@ -1016,7 +1075,15 @@ spec:
         members to the names the CLI uses, stamping the saved file's path, or
         marking a member optional. The contract is that the declaration and
         the object agree, not which side moves, following the AC-52
-        precedent.
+        precedent. Amended at 1.10.0 (SP-SP-033): the presence assertion MUST
+        read the returned object through an untyped view, such as
+        `Record<string, unknown>`, and MUST NOT read it through the declared
+        interface. A criterion about a declaration cannot have its own file
+        stop compiling when the declaration changes, because a compile error
+        takes down every criterion in the file with it. This makes the
+        criterion's own red a runtime assertion. It does not stop a
+        declaration change from failing a different module that reads those
+        members, which no criterion wording can prevent under one tsconfig.
       inputs:
         interface: "SpecterCheckDiagnostic in vscode-extension/src/types.ts"
         cli_stdout: |-
@@ -1044,7 +1111,16 @@ spec:
         it, and `file` fails because the CLI puts the file name on the
         document rather than on each error inside it. Kept separate from
         AC-72 because the two interfaces are fed by different commands and a
-        fix applied to one has repeatedly been left off the other.
+        fix applied to one has repeatedly been left off the other. Amended at
+        1.10.0 (SP-SP-033) with the same untyped-view requirement AC-72
+        carries, and with an honest note about its reach. The parse path
+        applies no key conversion, so against today's implementation this
+        criterion can fail only through a change to `types.ts`. It is a guard
+        for the change that has not happened yet: the check path gained a
+        converter this cycle, the parse path is the obvious next candidate,
+        and a converter with a wrong map fails this criterion at runtime. A
+        guard reads as a tautology against the code it guards. That is what a
+        guard looks like before it fires.
       inputs:
         interface: "SpecterParseError in vscode-extension/src/types.ts"
         cli_stdout: |-
@@ -1057,6 +1133,164 @@ spec:
         declared_required_members_missing_at_runtime: 0
         message_readable_under_its_declared_name: "Missing required field 'objective'. Add an objective block with a summary"
       references_constraints: ["C-32"]
+      priority: high
+
+    - id: AC-74
+      description: >-
+        The parse document's `errors` is an array on the object
+        `client.parse()` returns, for the document a clean parse produces.
+        `parse --json` emits `{"errors": null, ...}` with `ok` true whenever a
+        spec passes validation, which is every save of a working spec. The
+        client returns `errors` as an array of length 0. This is the exact
+        field whose absence caused SP-SP-025, at the layer the fix lives, and
+        it is the criterion AC-62 and AC-63 do not provide: both feed a
+        document straight to the builder and never reach the client, so an
+        implementation that normalizes nothing on the parse path satisfies
+        them. The nameable assertions are `Array.isArray` on the returned
+        `errors` and its length. This criterion fails if `errors` is dropped
+        from the client's list of array fields, and it fails if normalization
+        is moved out of the single point where stdout becomes a document into
+        the per-command key converters, because the parse path has no
+        converter to move it into.
+      inputs:
+        cli_stdout: |-
+          {"errors": null, "file": "specs/a.spec.yaml", "ok": true,
+           "value": {"id": "spec-a", "version": "1.0.0"}}
+        cli_exit_code: 0
+        client_method: "parse"
+      expected_output:
+        returned_errors_is_array: true
+        returned_errors_length: 0
+        returned_ok: true
+        threw: false
+      references_constraints: ["C-31"]
+      priority: critical
+
+    - id: AC-75
+      description: >-
+        Every array field C-31 names on the coverage document is an array on
+        the object `client.coverage()` returns, in one document that exercises
+        both branches of the normalizer. `entries`, `parse_errors`, and
+        `parse_error_patterns` arrive as `null`, and `diagnostic_hints` and
+        `invalid_status_warnings` are absent, because Go marshals a nil slice
+        as `null` and drops a field carrying `omitempty`. All five come back
+        as arrays of length 0. The names to assert on are the names the
+        document carries after key conversion: `entries`, `parseErrors`, and
+        `parseErrorPatterns` are converted, and `diagnostic_hints` and
+        `invalid_status_warnings` keep their CLI spelling because the coverage
+        key map does not name them. AC-68 and AC-69 cover `entries` and
+        `parse_errors` only, so three of the six fields C-31 names had no
+        criterion. One criterion covers all five rather than five criteria,
+        because the observable behavior is one: the returned coverage document
+        is iterable at every position C-31 names.
+      inputs:
+        cli_stdout: |-
+          {"entries": null,
+           "summary": {"total_specs": 0, "fully_covered": 0, "partially_covered": 0,
+                       "uncovered": 0, "passing": 0, "failing": 0},
+           "parse_errors": null,
+           "parse_error_patterns": null,
+           "spec_candidates_count": 0}
+        absent_fields: "diagnostic_hints and invalid_status_warnings are not present in the document at all"
+        cli_exit_code: 1
+        client_method: "coverage"
+      expected_output:
+        entries_is_array_length_0: true
+        parseErrors_is_array_length_0: true
+        parseErrorPatterns_is_array_length_0: true
+        diagnostic_hints_is_array_length_0: true
+        invalid_status_warnings_is_array_length_0: true
+        threw: false
+      references_constraints: ["C-31"]
+      priority: high
+
+    - id: AC-76
+      description: >-
+        Normalization happens at one point, so a `--json` command added later
+        cannot skip it. A static test parses `vscode-extension/src/client.ts`
+        with the TypeScript compiler API, following the precedent of AC-58 and
+        AC-67. The scan is bounded to that one file. It finds every call
+        expression whose argument list contains the string literal `--json`,
+        walks to the handler that receives that invocation's result, and
+        collects the name of the callee that takes `stdout` as an argument.
+        The scan asserts two things. It finds at least three such `--json`
+        invocations, which is the positive control: a scan that matches
+        nothing must fail rather than pass. And the set of collected callee
+        names has exactly one member, so every `--json` document passes
+        through the same function on its way out. AC-74 kills a normalizer
+        moved into the existing converters. This kills a fourth command that
+        never reaches the normalizer at all, which is the shape that has bitten
+        this project three times as an unswept sweep.
+      inputs:
+        scan_target: "vscode-extension/src/client.ts, every call expression carrying the string literal --json"
+      expected_output:
+        json_invocations_found_at_least: 3
+        distinct_stdout_consuming_callees: 1
+      references_constraints: ["C-31"]
+      priority: high
+
+    - id: AC-77
+      description: >-
+        The check document's keys are converted, all four of them. Given a
+        check diagnostic carrying `spec_id`, `constraint_id`,
+        `constraint_type`, and `change_type`, the object `client.check()`
+        returns exposes `specID`, `constraintID`, `constraintType`, and
+        `changeType` with the CLI's values, and carries none of the four
+        snake-case keys. AC-72 pins `spec_id` alone, through the members
+        `types.ts` declares required, so deleting any of the other three
+        entries from the check key map changes nothing any criterion reads.
+        Asserting the absence of the snake-case keys is the half that fails
+        when the check document is converted with the coverage map instead,
+        which would map `spec_id` and leave the other three untouched. Nothing
+        in the extension reads `constraintID`, `constraintType`, or
+        `changeType` today. The criterion is about the document the client
+        returns, not about a rendered effect, and C-32 requires the conversion
+        because `types.ts` declares those three members.
+      inputs:
+        cli_stdout: |-
+          {"diagnostics": [
+            {"kind": "breaking_change", "severity": "error", "spec_id": "spec-o",
+             "constraint_id": "C-02", "constraint_type": "technical",
+             "change_type": "constraint_removed",
+             "message": "Constraint C-02 was removed from \"spec-o\" without a major version bump"}
+          ], "summary": {"errors": 1, "warnings": 0, "info": 0}}
+        cli_exit_code: 1
+        client_method: "check"
+      expected_output:
+        specID: "spec-o"
+        constraintID: "C-02"
+        constraintType: "technical"
+        changeType: "constraint_removed"
+        snake_case_keys_present_on_returned_diagnostic: 0
+      references_constraints: ["C-32"]
+      priority: high
+
+    - id: AC-78
+      description: >-
+        A coverage parse error that carries a line highlights that line. This
+        is the path SP-SP-034 reports: a YAML syntax error is the one coverage
+        parse error the CLI positions, it reports a 1-based line and no
+        column, and the diagnostic ran from the start of that line to the end
+        of it until an implementation change made the range empty. The range
+        starts at line 2 for a reported line 3 and ends at line 2, character
+        `Number.MAX_SAFE_INTEGER`. Kept separate from AC-71 because an
+        implementation that puts every coverage parse error at the start of the
+        file satisfies AC-71 and fails this one, which is the AC-64 and AC-65
+        split applied to the coverage path.
+      inputs:
+        coverage_parse_error: |-
+          {"file": "specs/c.spec.yaml", "path": "", "type": "yaml_syntax",
+           "message": "yaml: line 3: mapping values are not allowed in this context",
+           "line": 3}
+      expected_output:
+        diagnostics_built: 1
+        diagnostic_file: "specs/c.spec.yaml"
+        range_start_line: 2
+        range_start_character: 0
+        range_end_line: 2
+        range_end_character: 9007199254740991
+        all_four_range_numbers_finite: true
+      references_constraints: ["C-32", "C-10"]
       priority: high
 
   depends_on:
@@ -1077,6 +1311,57 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.10.0"
+      date: "2026-08-16"
+      author: "specter-team"
+      type: minor
+      description: >
+        SP-SP-033 and SP-SP-034, both from the phase 4 mutation review of
+        SP-SP-025. Amend C-31 to say where its guarantee is observable: the
+        document each client method returns, under the name that document
+        carries after key conversion. Two of the six fields it names,
+        `diagnostic_hints` and `invalid_status_warnings`, have no consumer and
+        no declaration in `types.ts`, and the amendment says so rather than
+        implying an effect nothing produces. Add AC-74: `client.parse()`
+        against `{"errors": null, ..., "ok": true}` returns `errors` as an
+        empty array. Deleting `errors` from the client's array-field list
+        passed all 286 tests, and so did moving normalization out of the
+        single parse point into the per-command key converters, which leaves
+        the parse document unnormalized. AC-62 and AC-63 feed documents
+        straight to the builder and never reach the client, so neither could
+        catch either. Add AC-75: all five coverage array fields are arrays on
+        the returned document, in one document where three arrive `null` and
+        two are absent. `parse_error_patterns`, `diagnostic_hints`, and
+        `invalid_status_warnings` had no criterion. Add AC-76, a static scan
+        of `client.ts` asserting that every `--json` invocation hands stdout
+        to the same one function, with a fail-if-fewer-than-three positive
+        control, so a fourth `--json` command cannot skip normalization. Add
+        AC-77: all four check key-map entries are pinned at the client
+        boundary. Only `spec_id` was pinned, so deleting `constraint_id`,
+        `constraint_type`, or `change_type` passed, as did converting the
+        check document with the coverage map.
+        SP-SP-034 is a range end no criterion stated, so a test chose it and
+        an implementation was changed to match, which removed a highlight
+        users had. Amend C-32 to decide it once: every range derived from a
+        CLI diagnostic ends on the start line at `Number.MAX_SAFE_INTEGER`,
+        highlighting to the end of that line, and an end equal to the start is
+        prohibited. The rule is uniform across all three sites rather than
+        per-site, because the same schema parse error reaches the Problems
+        panel by two paths, the on-save `parse --json` run and the `coverage
+        --json` refresh, so a per-site decision renders one error two ways
+        depending on which run produced it. The 1.9.0 authors could not weigh
+        that when they set AC-64's end, because AC-71's end was unstated at the
+        time. The rule also does not rest on the unverified claim that VS Code
+        widens a zero-width range to the word it lands on. Amend AC-64, AC-65,
+        AC-66, and AC-71 to state all four range numbers. Add AC-78: a
+        coverage parse error carrying a line highlights that line, which is
+        the path that regressed and the one AC-71 does not reach. Amend AC-72
+        and AC-73 to require the presence assertion read the returned object
+        through an untyped view, so a change to the interface it guards cannot
+        stop its own file compiling and take every criterion in that file down
+        with it. Under one tsconfig that is the whole fix available in the
+        spec: it does not stop an interface change from failing a different
+        module that reads those members.
     - version: "1.9.0"
       date: "2026-08-16"
       author: "specter-team"
