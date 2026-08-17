@@ -1,15 +1,26 @@
 // manifest_rejection_test.go -- CLI integration tests for spec-manifest
-// 1.12.0 C-31: a command that loads specter.yaml surfaces a rejection rather
+// 1.13.0 C-31: a command that loads specter.yaml surfaces a rejection rather
 // than discarding it (AC-47 through AC-51).
 //
 // Every criterion here is a statement about what a command writes to stderr
 // and what it exits with, so all of them run the binary.
 //
-// The workspace is built so that a discarded rejection is visible in the
-// output as well as absent from stderr: the manifest points specs_dir at
-// customSpecs, and a second valid spec sits under the default specs
-// directory. A run against defaults finds both; a run against the configured
-// setting finds one.
+// There are two workspaces, because the warn-and-continue criteria and the
+// hard-fail criterion need opposite things from one.
+//
+// AC-47 through AC-50 use manifestWorkspace, built so that a discarded
+// rejection is visible in the output as well as absent from stderr: the
+// manifest points specs_dir at customSpecs, and a second valid spec sits under
+// the default specs directory. A run against defaults finds both; a run
+// against the configured setting finds one. Those four criteria rest on that
+// difference.
+//
+// AC-51 uses manifestAllAnnotatedWorkspace, which carries the same manifest
+// and the same two specs with every criterion annotated. That workspace
+// succeeds once the manifest is removed, so a non-zero exit under the manifest
+// can have no cause but the rejection. AC-51 ran on the two-spec workspace
+// until 1.13.0, where coverage and sync exited non-zero at 0 percent coverage
+// whether or not they honored the rejection (`bugs/SP-SP-041`).
 //
 // @spec spec-manifest
 package main
@@ -47,6 +58,37 @@ func manifestWorkspace(t *testing.T, manifest string) string {
 		defectSpecYAML(defectSpec{id: "demo-spec", tier: 2, acIDs: []string{"AC-01"}}))
 	writeRawFile(t, dir, "specs/decoy.spec.yaml",
 		defectSpecYAML(defectSpec{id: "decoy-spec", tier: 3, acIDs: []string{"AC-01"}}))
+	return dir
+}
+
+// manifestAllAnnotatedWorkspace writes the AC-51 workspace: the same two spec
+// files, each declaring two criteria, and one test file annotating all four.
+// The manifest body is a parameter so the criterion's precondition can be run
+// on a byte-identical workspace with no manifest at all.
+//
+// The spec ids and paths match manifestWorkspace on purpose. The one thing
+// that differs is the annotation coverage, which is what turns a run against
+// defaults from a failure into a success.
+func manifestAllAnnotatedWorkspace(t *testing.T, manifest string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if manifest != "" {
+		writeManifest(t, dir, manifest)
+	}
+	writeRawFile(t, dir, "customSpecs/demo.spec.yaml",
+		defectSpecYAML(defectSpec{id: "demo-spec", tier: 3, acIDs: []string{"AC-01", "AC-02"}}))
+	writeRawFile(t, dir, "specs/decoy.spec.yaml",
+		defectSpecYAML(defectSpec{id: "decoy-spec", tier: 3, acIDs: []string{"AC-01", "AC-02"}}))
+	writeRawFile(t, dir, "tests/all_test.go", `// @spec demo-spec
+// @ac AC-01
+// @ac AC-02
+func TestDemoFixture(t *testing.T) {}
+
+// @spec decoy-spec
+// @ac AC-01
+// @ac AC-02
+func TestDecoyFixture(t *testing.T) {}
+`)
 	return dir
 }
 
@@ -182,6 +224,21 @@ func TestManifestRejection_ValidManifestProducesNoWarning(t *testing.T) {
 // proves the command ran and reached the manifest, so an unchanged file is a
 // refusal to rewrite rather than a command that never started.
 //
+// The exit code is the discriminator here, not the stderr string. A
+// warn-and-continue path prints a warning that names `settings.test_glob`
+// itself, so the stderr check alone is satisfied by the behavior the criterion
+// forbids. What forecloses it is the workspace: every declared criterion is
+// annotated, so a run that ignored the manifest and continued against defaults
+// finds both specs at 100 percent and exits 0. TestManifestRejection_
+// AllAnnotatedWorkspaceSucceedsWithoutTheManifest is the positive control for
+// that claim, and it must be read as part of this criterion rather than as a
+// separate one.
+//
+// `init --refresh` is the exception the criterion calls out. It exits non-zero
+// with no manifest at all, so its exit code cannot separate the two behaviors.
+// The byte-unchanged clause is what pins it: a refresh against defaults would
+// rewrite the file.
+//
 // @ac AC-51
 func TestManifestRejection_HardFailingCommandsKeepFailing(t *testing.T) {
 	commands := []struct {
@@ -199,7 +256,7 @@ func TestManifestRejection_HardFailingCommandsKeepFailing(t *testing.T) {
 
 	for _, c := range commands {
 		t.Run("spec-manifest/AC-51 "+strings.Join(c.args, " ")+" rejects a bad manifest", func(t *testing.T) {
-			dir := manifestWorkspace(t, rejectedManifest)
+			dir := manifestAllAnnotatedWorkspace(t, rejectedManifest)
 			before, err := os.ReadFile(filepath.Join(dir, "specter.yaml"))
 			if err != nil {
 				t.Fatalf("read specter.yaml: %v", err)
@@ -224,4 +281,44 @@ func TestManifestRejection_HardFailingCommandsKeepFailing(t *testing.T) {
 			}
 		})
 	}
+}
+
+// AC-51 states a precondition on its workspace, and this is it. Without the
+// manifest, check, coverage and sync all exit 0, so the non-zero exits above
+// have one available cause and it is the rejection. Drop this case and AC-51
+// goes back to being satisfiable by a command that fails for its own reasons.
+//
+// `init --refresh` is asserted differently because it reports a missing
+// manifest as its own error, so its exit code is non-zero either way. What the
+// precondition can show is that the reason differs: with no manifest, stderr
+// does not name the parser's reason. The positive control for that absence is
+// the case above, which runs the same command on the same workspace with the
+// manifest present and requires the reason to be there.
+//
+// @ac AC-51
+func TestManifestRejection_AllAnnotatedWorkspaceSucceedsWithoutTheManifest(t *testing.T) {
+	for _, args := range [][]string{
+		{"check"},
+		{"coverage", "--strictness", "annotation"},
+		{"sync", "--strictness", "annotation"},
+	} {
+		t.Run("spec-manifest/AC-51 "+strings.Join(args, " ")+" exits 0 on the AC-51 workspace with no manifest", func(t *testing.T) {
+			dir := manifestAllAnnotatedWorkspace(t, "")
+			stdout, stderr, code := runCLISplit(t, dir, args...)
+			if code != 0 {
+				t.Errorf("exit code = %d, want 0;\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+			}
+		})
+	}
+
+	t.Run("spec-manifest/AC-51 init --refresh reports the missing manifest as its own error", func(t *testing.T) {
+		dir := manifestAllAnnotatedWorkspace(t, "")
+		stdout, stderr, code := runCLISplit(t, dir, "init", "--refresh")
+		if code == 0 {
+			t.Errorf("expected a non-zero exit with no manifest, got 0;\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+		}
+		if strings.Contains(stderr, "settings.test_glob") {
+			t.Errorf("with no manifest, stderr must not name the parser's reason; got:\n%s", stderr)
+		}
+	})
 }
