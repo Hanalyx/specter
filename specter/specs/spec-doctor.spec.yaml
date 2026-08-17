@@ -1,6 +1,6 @@
 spec:
   id: spec-doctor
-  version: "1.9.0"
+  version: "1.10.0"
   status: draft
   tier: 2
 
@@ -121,6 +121,11 @@ spec:
     - id: C-17
       description: "When `--fix` applies a rewrite that deletes a key/value line in a `.spec.yaml`, the deletion mechanism MUST identify the source line by yaml.v3 `Node.Line` (the absolute line number reported by the parser for the key node) and remove EXACTLY that line, NOT by matching the line content against a regex over all source lines. Rationale: a content-pattern regex over every line falsely matches the deprecated field name when it appears inside a string-literal value (e.g., a `description:` block scalar that mentions `trust_level: high` in prose). The yaml.v3 parser already knows which lines are keys and which are scalar content; the deletion MUST use that knowledge. Multi-document YAML files MUST collect line numbers from every document's key node before any deletion. The structural-safety invariant in C-15 (value occupies exactly one source line) MUST still hold — refusal is unchanged. Closes the v0.12 BETA gate's named string-literal corruption gap."
       type: technical
+      enforcement: error
+
+    - id: C-18
+      description: "When `specter.yaml` exists but ParseManifest rejects it, the `manifest` health check MUST report FAIL and name the parser's reason, and `doctor` MUST run its remaining checks against default settings and then exit non-zero. The three manifest states are distinct and each has its own verdict: absent is WARN (C-01), present and valid is PASS, present and rejected is FAIL. Reporting PASS for a file the same command later rejects is the defect this closes, and stopping the run before the later checks print is the second half of it. Rationale: the check line is the one place an operator looks to learn whether their configuration was read, and a report that says PASS above and errors below tells them the opposite thing twice."
+      type: business
       enforcement: error
 
   acceptance_criteria:
@@ -472,6 +477,33 @@ spec:
       references_constraints: ["C-17"]
       priority: critical
 
+    - id: AC-32
+      description: "`specter doctor` in a workspace whose `specter.yaml` carries one unknown settings key reports the manifest check as FAIL on the check line, with the parser's reason naming the offending key, and still prints the four checks below it (spec-files, parse, annotations, coverage), and exits non-zero. Before this change the check line read PASS, the run stopped after the annotations check, and the reason appeared only as a trailing error."
+      inputs:
+        manifest: "schema_version: 1, system.name: demo, settings.test_glob: 'tests/**/*.go'"
+        workspace: "one valid spec under specs/, one annotated test file"
+        command: "specter doctor"
+      expected_output:
+        manifest_status: "FAIL"
+        manifest_line_contains: 'unknown settings key "settings.test_glob"'
+        check_lines_present: ["manifest", "spec-files", "parse", "annotations", "coverage"]
+        exit_code: "non-zero"
+      references_constraints: ["C-18"]
+      priority: critical
+
+    - id: AC-33
+      description: "A valid `specter.yaml` still reports the manifest check as PASS with the path of the file, and the healthy workspace exits 0. A fix that reports FAIL whenever a manifest is present fails this criterion."
+      inputs:
+        manifest: "schema_version: 1, system.name: demo, settings.strictness: annotation"
+        workspace: "one valid spec under specs/, one annotated test file covering every criterion"
+        command: "specter doctor"
+      expected_output:
+        manifest_status: "PASS"
+        manifest_line_contains: "specter.yaml found at"
+        exit_code: 0
+      references_constraints: ["C-18", "C-01"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -484,6 +516,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.10.0"
+      date: "2026-08-16"
+      author: "specter-team"
+      type: minor
+      description: "v0.15 phase 1B6, the doctor half. Add C-18 and AC-32/AC-33: a rejected `specter.yaml` makes the manifest check report FAIL with the parser's reason, the remaining checks still run against defaults, and the run exits non-zero. The bug report described doctor as silently no-opping like `parse`; on the shipped v0.14.1 binary it does exit 1, so what reproduces is narrower and worse-shaped than reported. The manifest check line reads PASS for a file the same command rejects four lines later, and the run stops before the coverage check prints. The sibling commands that discard the error outright are covered by spec-manifest C-31."
     - version: "1.9.0"
       date: "2026-05-16"
       author: "specter-team"

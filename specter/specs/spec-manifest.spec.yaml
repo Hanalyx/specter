@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "1.11.0"
+  version: "1.12.0"
   status: draft
   tier: 2
 
@@ -196,6 +196,11 @@ spec:
 
     - id: C-30
       description: "`settings.specs_dir` MUST be a workspace-relative path that cannot escape the manifest's directory. ParseManifest MUST reject any of the following with a clear error naming the offending field and the offending value: (a) absolute paths (`filepath.IsAbs(s) == true`), including Windows drive-prefixed and UNC paths; (b) paths containing any `..` segment when split on the OS path separator (forward slash on Unix, backslash or forward slash on Windows); (c) values resolving to outside the manifest's containing directory after lexical cleaning. The empty value is treated as the default (`specs`) and is allowed. The check happens at parse time so every downstream consumer — `discoverSpecs`, `doctor --fix`, `coverage`, `sync` — inherits the guarantee without per-call validation. Rationale: v0.13 security audit H1 surfaced that `discoverSpecs` set `root = m.SpecsDir()` and called `filepath.Walk(root, ...)` with no boundary check; `doctor --fix` then wrote back to absolute paths returned by Walk. A malicious workspace dropping `specter.yaml` with `settings.specs_dir: /home/victim/private` could trigger arbitrary-file overwrite when the operator ran `doctor --fix`. Closing this at parse time is the smallest, most general fix."
+      type: business
+      enforcement: error
+
+    - id: C-31
+      description: "A command that loads `specter.yaml` MUST surface a rejection rather than discard it. When the manifest file exists and ParseManifest returns an error, the command writes two lines to stderr, the first naming the manifest path and the parser's reason, the second stating that the manifest was ignored and default settings are in effect, and then continues with defaults. This binds `parse`, `resolve`, and `explain`, which discard the error today and run against defaults with no signal. It does not bind the commands that already fail on a rejected manifest, `check`, `coverage`, `sync`, and `init --refresh`, which keep their current non-zero exit; this constraint may not be used to downgrade them to a warning. The exit code of the warn-and-continue commands is unchanged by the warning itself. Rationale, from the decision of 2026-06-10: silent fallback is the worst available behavior for a configuration error, because every later result is computed against settings the operator did not choose and cannot see. A manifest setting `specs_dir: customSpecs` and carrying one bad key made `parse` report two specs from a recursive walk instead of the one spec the operator configured, and exit 0."
       type: business
       enforcement: error
 
@@ -697,6 +702,69 @@ spec:
       references_constraints: ["C-30"]
       priority: critical
 
+    - id: AC-47
+      description: "`specter parse` in a workspace whose `specter.yaml` declares `specs_dir: customSpecs` and one unknown settings key writes a stderr warning naming the manifest path and the unknown key, plus a second line saying default settings are in effect, and then parses with defaults. Stdout still lists both `customSpecs/demo.spec.yaml` and `specs/decoy.spec.yaml`, because the default walk finds both, and the exit code is 0. Before this change the same run printed both files with nothing on stderr."
+      inputs:
+        manifest: "schema_version: 1, system.name: demo, settings.specs_dir: customSpecs, settings.test_glob: 'tests/**/*.go'"
+        workspace: "customSpecs/demo.spec.yaml and specs/decoy.spec.yaml, both valid"
+        command: "specter parse"
+      expected_output:
+        stderr_contains: ["specter.yaml", "settings.test_glob", "default settings"]
+        stdout_lists_specs: ["customSpecs/demo.spec.yaml", "specs/decoy.spec.yaml"]
+        exit_code: 0
+      references_constraints: ["C-31"]
+      priority: critical
+
+    - id: AC-48
+      description: "`specter resolve` in that same workspace writes the same two stderr lines and then builds the graph from defaults, reporting 2 specs and exiting 0. Before this change it reported 2 specs with nothing on stderr."
+      inputs:
+        workspace: "the AC-47 workspace"
+        command: "specter resolve"
+      expected_output:
+        stderr_contains: ["specter.yaml", "settings.test_glob", "default settings"]
+        stdout_contains: "2 specs"
+        exit_code: 0
+      references_constraints: ["C-31"]
+      priority: high
+
+    - id: AC-49
+      description: "`specter explain demo-spec` in that same workspace writes the same two stderr lines and still prints its coverage table for demo-spec, exiting 0. Before this change it printed the table with nothing on stderr."
+      inputs:
+        workspace: "the AC-47 workspace"
+        command: "specter explain demo-spec"
+      expected_output:
+        stderr_contains: ["specter.yaml", "settings.test_glob", "default settings"]
+        stdout_contains: "specter explain demo-spec"
+        exit_code: 0
+      references_constraints: ["C-31"]
+      priority: high
+
+    - id: AC-50
+      description: "A valid manifest produces no warning. With the unknown key removed and `specs_dir: customSpecs` kept, `specter parse` lists only `customSpecs/demo.spec.yaml`, writes nothing to stderr, and exits 0. A fix that warns unconditionally, or that ignores the manifest whether or not it parsed, fails this criterion."
+      inputs:
+        manifest: "schema_version: 1, system.name: demo, settings.specs_dir: customSpecs"
+        workspace: "customSpecs/demo.spec.yaml and specs/decoy.spec.yaml, both valid"
+        command: "specter parse"
+      expected_output:
+        stdout_lists_specs: ["customSpecs/demo.spec.yaml"]
+        stdout_spec_count: 1
+        stderr_empty: true
+        exit_code: 0
+      references_constraints: ["C-31"]
+      priority: critical
+
+    - id: AC-51
+      description: "The commands that already reject a bad manifest keep rejecting it. On the AC-47 workspace, `specter check`, `specter coverage --strictness annotation`, `specter sync --strictness annotation`, and `specter init --refresh` each exit non-zero with the parser's reason on stderr, and `init --refresh` leaves `specter.yaml` byte-unchanged. Turning any of these into a warn-and-continue path fails this criterion."
+      inputs:
+        workspace: "the AC-47 workspace"
+        commands: ["specter check", "specter coverage --strictness annotation", "specter sync --strictness annotation", "specter init --refresh"]
+      expected_output:
+        each_exit_code: "non-zero"
+        each_stderr_contains: "settings.test_glob"
+        manifest_byte_unchanged_after_init_refresh: true
+      references_constraints: ["C-31"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -706,6 +774,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.12.0"
+      date: "2026-08-16"
+      author: "specter-team"
+      type: minor
+      description: "v0.15 phase 1B6. Add C-31 and AC-47 through AC-51: a command that loads specter.yaml must surface a rejection instead of discarding it. `parse`, `resolve`, and `explain` dropped the ParseManifest error at the call site and ran against defaults with nothing on stderr, so a manifest with one bad key looked like a working run against different settings. The roadmap item named `parse` and `doctor`; the sweep found `resolve` and `explain` with the identical shape and they are covered here, while `doctor` is covered by spec-doctor C-18 because its defect is a health-check line that reports PASS. AC-51 pins the four commands that already fail on a rejected manifest, so warn-and-continue cannot be applied to them by mistake. Decided 2026-06-10, tracked into v0.14, dropped when that cycle was re-themed, rehomed here."
     - version: "1.11.0"
       date: "2026-05-16"
       author: "specter-team"

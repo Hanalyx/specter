@@ -1,6 +1,6 @@
 spec:
   id: spec-coverage
-  version: "1.15.0"
+  version: "1.16.0"
   status: approved
   tier: 2
 
@@ -196,6 +196,31 @@ spec:
     - id: C-32
       description: "When the strict path is enabled without the operator passing `--strict` (i.e. via `--strictness` or the manifest setting), a missing `.specter-results.json` MUST fail with a message that (a) names the active strictness mode and (b) offers both remedies — run `specter ingest` first, or use `--strictness annotation` for structural coverage — mirroring spec-sync C-08. The message MUST NOT attribute the requirement to a `--strict` flag the operator never passed. When the operator DID pass `--strict`, the existing C-20 message (`--strict requires .specter-results.json — run 'specter ingest' first`) is preserved unchanged."
       type: business
+      enforcement: error
+
+    - id: C-33
+      description: "The results lookup MUST resolve a (spec_id, ac_id) pair across every matching entry in `.specter-results.json`, not the first one found. `ResultsFile.status(specID, acID)` returns the status of the worst matching entry, ranked passed (best), then skipped, then failed, then errored (worst). `ResultsFile.passed(specID, acID)` returns true only when every matching entry resolves to passed. A status value outside the C-21 enum ranks at the failed level and never at passed, so a rank table that yields a zero value for an unknown key is not a correct implementation. Resolution runs after the C-21 derivation, so a back-compat entry carrying `passed: false` and no `status` participates as failed. With no matching entry the lookup still returns `unknown` (AC-22). The consequence that binds both call paths: reordering the rows of a results file MUST NOT change any value in the coverage report, under `--strict` and under the Tier 1 pass-rate path of C-07 alike. Rationale: first-match resolution let two files describing identical facts report 0% and 100% on one workspace. Duplicate pairs are legal input, because ParseResultsFile validates size and JSON shape and nothing about uniqueness."
+      type: technical
+      enforcement: error
+
+    - id: C-34
+      description: "The zero-tolerance non-passed count MUST count distinct (spec_id, ac_id) pairs whose resolved status is not passed, not result entries. The message `N annotated AC(s) did not pass` names criteria, so N is a number of criteria, and several entries for one pair contribute one. The exit code does not change, because `at least one non-passed entry` and `at least one non-passed pair` are the same condition. `ResultsFile.InvalidStatuses()` is out of scope for this change and keeps counting entries, because its C-30 warning text says entries. Rationale: an operator reading `2 annotated AC(s) did not pass` goes looking for a second failing criterion that does not exist."
+      type: business
+      enforcement: error
+
+    - id: C-35
+      description: "Coverage percentages MUST be computed once and shown consistently. (a) `CoveragePercent(covered, total)` returns covered divided by total times 100, rounded half up to one decimal place, and that value is emitted as `coverage_pct`. It returns 100.0 only when covered equals total; when rounding would otherwise reach 100.0 with at least one criterion uncovered it returns 99.9. A total of zero returns 0. (b) `FormatCoveragePct(pct)` returns the integer floor of that value with a trailing percent sign, and every human-readable surface uses it: the Coverage column of the coverage table, the average in the C-16 summary header, and `specter explain`. (c) `passes_threshold` compares `coverage_pct` against the effective threshold with a greater-than-or-equal test. (d) Together these give the invariant that matters to an operator: a `coverage_threshold` set to the integer the tool just printed always passes. Rationale: the previous expression truncated under a comment that said it rounds, so on one spec the table printed 67, `explain` printed 66, and the gate compared 66.6. Rounding the displayed integer rather than flooring it was rejected, because 199 of 200 criteria would then print 100 and pass a Tier 1 gate."
+      type: technical
+      enforcement: error
+
+    - id: C-36
+      description: "A declared coverage threshold of 0 MUST mean zero rather than the tier default. Presence detection decides whether an override applies, not a greater-than-zero test, per the decision of 2026-06-10. This binds both override layers: a spec declaring `coverage_threshold: 0` gets an effective threshold of 0, and a manifest declaring `settings.coverage.tierN: 0` gets 0 for that tier. Precedence is unchanged, spec value over manifest tier value over built-in default (Tier 1 100, Tier 2 80, Tier 3 50), and a spec that omits the field still inherits the tier value. The effective number is the `threshold` field of `coverage --json`, so it can be read rather than inferred. No schema change is required: the JSON schema already declares `minimum: 0` and negative values are rejected at parse, so 0 is the only value that surprises the author."
+      type: technical
+      enforcement: error
+
+    - id: C-37
+      description: "`specter coverage --json` MUST produce a byte-identical document across runs of one binary on an unchanged workspace. Every array built from a map carries a defined total order: `test_files` ascending by path, `parse_error_patterns` by count descending then type ascending then path ascending, and the `files` list inside each pattern ascending by path. Ordering by count alone is not sufficient, because patterns with equal counts then keep map iteration order. Rationale: five runs on one workspace produced five documents, so coverage snapshots cannot be byte-compared and a CI job diffing them sees churn that is not a change."
+      type: technical
       enforcement: error
 
   depends_on:
@@ -585,7 +610,240 @@ spec:
       references_constraints: ["C-31", "C-32"]
       priority: critical
 
+    - id: AC-38
+      description: "ResultsFile.status resolves a pair to its worst matching entry whatever the row order. Given four entries covering two pairs, status(demo-spec, AC-01) returns `failed` and status(demo-spec, AC-02) returns `errored`, and passed() returns false for both. The same four entries with each pair's `passed` row first return the same four answers."
+      inputs:
+        results_worst_first: '{"results":[{"spec_id":"demo-spec","ac_id":"AC-01","status":"failed"},{"spec_id":"demo-spec","ac_id":"AC-01","status":"passed"},{"spec_id":"demo-spec","ac_id":"AC-02","status":"errored"},{"spec_id":"demo-spec","ac_id":"AC-02","status":"passed"}]}'
+        results_best_first: '{"results":[{"spec_id":"demo-spec","ac_id":"AC-01","status":"passed"},{"spec_id":"demo-spec","ac_id":"AC-01","status":"failed"},{"spec_id":"demo-spec","ac_id":"AC-02","status":"passed"},{"spec_id":"demo-spec","ac_id":"AC-02","status":"errored"}]}'
+      expected_output:
+        status_ac01: "failed"
+        status_ac02: "errored"
+        passed_ac01: false
+        passed_ac02: false
+        answers_identical_across_both_orderings: true
+      references_constraints: ["C-33"]
+      priority: critical
+
+    - id: AC-39
+      description: "Two results files holding the same entries in different row order produce a byte-identical `coverage --strict --json` document and the same exit code. On a Tier 1 spec whose AC-01 and AC-02 are both annotated and both carry one passed and one failed entry, both orderings report coverage_pct 0 and uncovered_acs [AC-01, AC-02] and exit 1. Before this change the two orderings reported 0% exit 1 and 100% exit 0."
+      inputs:
+        workspace: "Tier 1 spec with AC-01 and AC-02, both annotated in one test file"
+        results_a: '{"results":[{"spec_id":"demo-spec","ac_id":"AC-01","status":"failed"},{"spec_id":"demo-spec","ac_id":"AC-01","status":"passed"},{"spec_id":"demo-spec","ac_id":"AC-02","status":"failed"},{"spec_id":"demo-spec","ac_id":"AC-02","status":"passed"}]}'
+        results_b: "the same four entries with both passed rows first"
+        command: "specter coverage --strict --json"
+      expected_output:
+        coverage_pct: 0
+        uncovered_acs: ["AC-01", "AC-02"]
+        exit_code: 1
+        json_byte_identical_across_orderings: true
+      references_constraints: ["C-33"]
+      priority: critical
+
+    - id: AC-40
+      description: "A pair carrying one `passed` entry and one entry whose status is `ok` resolves as not passed, so under `--strict` the criterion is uncovered and the run exits non-zero. A rank table that yields a zero value for an unrecognized key resolves this pair as passed and leaves the criterion covered, which is the trap this criterion exists to catch."
+      inputs:
+        results: '{"results":[{"spec_id":"demo-spec","ac_id":"AC-01","status":"passed"},{"spec_id":"demo-spec","ac_id":"AC-01","status":"ok"}]}'
+        annotated_acs: "demo-spec: AC-01"
+        command: "specter coverage --strict --json"
+      expected_output:
+        passed_ac01: false
+        uncovered_acs: ["AC-01"]
+        invalid_status_warnings: '[{"status":"ok","count":1}]'
+        exit_code: "non-zero"
+      references_constraints: ["C-33"]
+      priority: critical
+
+    - id: AC-41
+      description: "The C-07 Tier 1 pass-rate path resolves the same way, so the fix is not confined to `--strict`. Under `settings.strictness: annotation`, a Tier 1 spec with two annotated criteria, each carrying one `passed: true` and one `passed: false` back-compat entry, reports 0% coverage in both row orders. Before this change the two orders reported 0% and 100%."
+      inputs:
+        manifest: "settings.strictness: annotation"
+        spec: "tier 1, AC-01 and AC-02, both annotated"
+        results_a: '{"results":[{"spec_id":"demo-spec","ac_id":"AC-01","passed":false},{"spec_id":"demo-spec","ac_id":"AC-01","passed":true},{"spec_id":"demo-spec","ac_id":"AC-02","passed":false},{"spec_id":"demo-spec","ac_id":"AC-02","passed":true}]}'
+        results_b: "the same four entries with both `passed: true` rows first"
+      expected_output:
+        coverage_pct: 0
+        covered_acs: []
+        identical_across_orderings: true
+      references_constraints: ["C-33", "C-07"]
+      priority: critical
+
+    - id: AC-42
+      description: "Zero tolerance counts criteria, not entries. A results file of five entries covering three annotated criteria, where AC-01 carries failed, failed, errored, AC-02 carries skipped, and AC-03 carries passed, makes `specter coverage --strictness zero-tolerance` print `2 annotated AC(s) did not pass` and exit 2. Writing the same facts as three entries, one per pair, prints the same sentence. Before this change the five-entry file printed 4."
+      inputs:
+        results: '{"results":[{"spec_id":"demo-spec","ac_id":"AC-01","status":"failed"},{"spec_id":"demo-spec","ac_id":"AC-01","status":"failed"},{"spec_id":"demo-spec","ac_id":"AC-01","status":"errored"},{"spec_id":"demo-spec","ac_id":"AC-02","status":"skipped"},{"spec_id":"demo-spec","ac_id":"AC-03","status":"passed"}]}'
+        annotated_acs: "demo-spec: AC-01, AC-02, AC-03"
+        command: "specter coverage --strictness zero-tolerance"
+      expected_output:
+        stderr_contains: "2 annotated AC(s) did not pass"
+        exit_code: 2
+        count_identical_for_deduplicated_file: true
+      references_constraints: ["C-34"]
+      priority: critical
+
+    - id: AC-43
+      description: "InvalidStatuses keeps counting entries. Three entries for the single pair demo-spec/AC-01, all carrying status `pass`, produce one stderr warning reading `3 entries with status=\"pass\"` and one JSON warning of count 3. Deduplicating this count by pair would report 1 and contradict the C-30 wording, so this criterion fails a fix that applies the C-34 dedupe too widely."
+      inputs:
+        results: '{"results":[{"spec_id":"demo-spec","ac_id":"AC-01","status":"pass"},{"spec_id":"demo-spec","ac_id":"AC-01","status":"pass"},{"spec_id":"demo-spec","ac_id":"AC-01","status":"pass"}]}'
+      expected_output:
+        stderr_contains: '3 entries with status="pass"'
+        invalid_status_warnings: '[{"status":"pass","count":3}]'
+      references_constraints: ["C-34", "C-30"]
+      priority: high
+
+    - id: AC-44
+      description: "A spec with 2 of 3 criteria covered reads the same on all three surfaces. `coverage --json` reports coverage_pct 66.7, the coverage table prints `66%` in the Coverage column, and `specter explain` prints `Coverage: 66% (2/3 ACs)`. Before this change the three surfaces read 66.6, 67, and 66."
+      inputs:
+        spec: "3 criteria declared, AC-01 and AC-02 annotated, AC-03 not"
+      expected_output:
+        coverage_pct: 66.7
+        table_coverage_cell: "66%"
+        explain_line_contains: "Coverage: 66% (2/3 ACs)"
+      references_constraints: ["C-35"]
+      priority: critical
+
+    - id: AC-45
+      description: "On that same 2-of-3 workspace, `coverage_threshold: 66` passes and `coverage_threshold: 67` fails, so the integer the table printed is an integer that passes. Before this change the table printed 67 and 67 failed."
+      inputs:
+        workspace: "one spec, 3 criteria, 2 annotated"
+        case_a: "coverage_threshold: 66"
+        case_b: "coverage_threshold: 67"
+      expected_output:
+        case_a_passes_threshold: true
+        case_a_exit_code: 0
+        case_b_passes_threshold: false
+        case_b_exit_code: 1
+      references_constraints: ["C-35"]
+      priority: critical
+
+    - id: AC-46
+      description: "FormatCoveragePct floors and does not round. A spec with 7 of 9 criteria covered reports coverage_pct 77.8 and prints `77%` in the coverage table, where a formatter built on Go's `%.0f` prints 78%. A spec with 5 of 8 criteria covered reports 62.5 and prints `62%`, which fixes the tie direction against a round-half-up formatter."
+      inputs:
+        case_a: "covered 7, total 9"
+        case_b: "covered 5, total 8"
+      expected_output:
+        case_a_pct: 77.8
+        case_a_formatted: "77%"
+        case_b_pct: 62.5
+        case_b_formatted: "62%"
+      references_constraints: ["C-35"]
+      priority: high
+
+    - id: AC-47
+      description: "CoveragePercent never reports 100 for an incomplete spec, and never divides by zero. CoveragePercent(2999, 3000) returns 99.9 rather than 100.0 and formats as `99%`, while CoveragePercent(3000, 3000) returns 100.0 and formats as `100%`. A Tier 1 spec with one uncovered criterion therefore fails its threshold of 100 however many criteria it declares. CoveragePercent(0, 0) returns 0, not NaN."
+      inputs:
+        case_incomplete: "covered 2999, total 3000"
+        case_complete: "covered 3000, total 3000"
+        case_empty: "covered 0, total 0"
+      expected_output:
+        incomplete_pct: 99.9
+        incomplete_formatted: "99%"
+        complete_pct: 100.0
+        complete_formatted: "100%"
+        empty_pct: 0
+      references_constraints: ["C-35"]
+      priority: high
+
+    - id: AC-48
+      description: "The C-16 summary header averages the entries' coverage_pct values and formats the result with FormatCoveragePct, so it never disagrees with the column below it. A report of one spec at 66.7 reads `Spec Coverage Report — 1 specs · 66% avg coverage` above a table cell of `66%`, where today the header reads 67%. A report of two specs, one at 66.7 and one at 100, has a mean of 83.35 and reads `Spec Coverage Report — 2 specs · 83% avg coverage`."
+      inputs:
+        case_single: "1 spec, 2 of 3 criteria covered"
+        case_multiple: "2 specs, coverage_pct 66.7 and 100"
+      expected_output:
+        single_header_line: "Spec Coverage Report — 1 specs · 66% avg coverage"
+        single_table_cell: "66%"
+        multiple_header_line: "Spec Coverage Report — 2 specs · 83% avg coverage"
+      references_constraints: ["C-35", "C-16"]
+      priority: medium
+
+    - id: AC-49
+      description: "A Tier 1 spec declaring `coverage_threshold: 0` with 0 of 2 criteria covered passes. `coverage --json` reports threshold 0 and passes_threshold true, and the run exits 0. Before this change the same spec reported threshold 100 and failed."
+      inputs:
+        spec: "tier 1, coverage_threshold: 0, 2 criteria, none annotated"
+      expected_output:
+        threshold: 0
+        coverage_pct: 0
+        passes_threshold: true
+        exit_code: 0
+      references_constraints: ["C-36"]
+      priority: critical
+
+    - id: AC-50
+      description: "A Tier 1 spec that omits coverage_threshold with 2 of 3 criteria covered still reports threshold 100 and passes_threshold false. A fix that treats every zero-valued field as a declared override would report 0 here and fail this criterion."
+      inputs:
+        spec: "tier 1, no coverage_threshold field, 3 criteria, 2 annotated"
+      expected_output:
+        threshold: 100
+        coverage_pct: 66.7
+        passes_threshold: false
+      references_constraints: ["C-36"]
+      priority: critical
+
+    - id: AC-51
+      description: "`settings.coverage.tier2: 0` in specter.yaml gives a Tier 2 spec an effective threshold of 0, so a spec with 2 of 3 criteria covered passes and `coverage --json` reports threshold 0. Before this change the manifest value of 0 fell through to the built-in default and the report read threshold 80."
+      inputs:
+        manifest: "settings.coverage.tier2: 0"
+        spec: "tier 2, no coverage_threshold field, 3 criteria, 2 annotated"
+      expected_output:
+        threshold: 0
+        passes_threshold: true
+        exit_code: 0
+      references_constraints: ["C-36"]
+      priority: high
+
+    - id: AC-52
+      description: "Precedence holds when both override layers are present in one run. With `settings.coverage.tier2: 40` in the manifest, a Tier 2 spec declaring `coverage_threshold: 0` reports threshold 0 and a second Tier 2 spec declaring no override reports threshold 40. Both entries appear in the same report. Before this change the first spec reported 40."
+      inputs:
+        manifest: "settings.coverage.tier2: 40"
+        spec_a: "tier 2, coverage_threshold: 0, 3 criteria, 2 annotated"
+        spec_b: "tier 2, no coverage_threshold field, 3 criteria, 2 annotated"
+      expected_output:
+        spec_a_threshold: 0
+        spec_a_passes_threshold: true
+        spec_b_threshold: 40
+        spec_b_passes_threshold: true
+        entries_count: 2
+      references_constraints: ["C-36"]
+      priority: high
+
+    - id: AC-53
+      description: "A spec covered by eight test files named a_test.go through h_test.go emits `test_files` in ascending path order on every run, `tests/a_test.go` first and `tests/h_test.go` last. Five consecutive runs emit that same array."
+      inputs:
+        workspace: "one spec, AC-01 annotated in tests/a_test.go through tests/h_test.go"
+        command: "specter coverage --json --strictness annotation"
+      expected_output:
+        test_files: ["tests/a_test.go", "tests/b_test.go", "tests/c_test.go", "tests/d_test.go", "tests/e_test.go", "tests/f_test.go", "tests/g_test.go", "tests/h_test.go"]
+        identical_across_five_runs: true
+      references_constraints: ["C-37"]
+      priority: high
+
+    - id: AC-54
+      description: "A workspace of six schema-invalid specs, three missing `objective` and three declaring `tier: 9`, all six declaring empty constraints and criteria lists, emits parse_error_patterns in one fixed order over twenty consecutive runs. Ordering by count alone leaves the two tied pairs in map order, which varied run to run before this change."
+      inputs:
+        workspace: "specs/bado1..3.spec.yaml missing objective, specs/badc1..3.spec.yaml with tier: 9, all 6 with empty constraints and acceptance_criteria"
+        command: "specter coverage --json --strictness annotation"
+      expected_output:
+        parse_error_patterns: '[{"type":"minItems","path":"spec.acceptance_criteria","count":6},{"type":"minItems","path":"spec.constraints","count":6},{"type":"required","path":"spec","count":3},{"type":"validation","path":"spec.tier","count":3}]'
+        first_pattern_files: ["specs/badc1.spec.yaml", "specs/badc2.spec.yaml", "specs/badc3.spec.yaml", "specs/bado1.spec.yaml", "specs/bado2.spec.yaml", "specs/bado3.spec.yaml"]
+        identical_across_twenty_runs: true
+      references_constraints: ["C-37"]
+      priority: high
+
+    - id: AC-55
+      description: "Five consecutive `specter coverage --json --strictness annotation` runs on one unchanged workspace holding both the eight annotated test files of AC-53 and the six invalid specs of AC-54 write five byte-identical documents. The assertion compares the SHA-256 of stdout across the five runs. Before this change five runs produced five different hashes."
+      inputs:
+        workspace: "one valid spec covered by 8 test files, plus 6 schema-invalid specs"
+        runs: 5
+      expected_output:
+        distinct_stdout_hashes: 1
+      references_constraints: ["C-37"]
+      priority: critical
+
   changelog:
+    - version: "1.16.0"
+      date: "2026-08-16"
+      author: "specter-team"
+      type: minor
+      description: "v0.15 phase 1B, five prerequisite defect fixes in coverage. C-33 replaces first-match results lookup with worst-status-across-matches, so row order in `.specter-results.json` stops deciding the answer; two files describing identical facts reported 0% and 100% before. C-34 counts distinct pairs in the zero-tolerance message rather than entries, and pins InvalidStatuses as entry-counting so the dedupe is not applied too widely. C-35 settles the percentage contract: `coverage_pct` rounds half up to one decimal, human-readable surfaces floor it, and the gate compares the stored value, so the integer the table prints is an integer that passes as a threshold. C-36 makes a declared threshold of 0 mean zero at both the spec and manifest layers, by presence detection, per the decision of 2026-06-10. C-37 gives every map-derived array in `coverage --json` a total order, including the count tie in parse_error_patterns that the original report missed, so the document is byte-comparable across runs."
     - version: "1.15.0"
       date: "2026-06-11"
       author: "specter-team"
