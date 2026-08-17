@@ -10,21 +10,27 @@ type SpecDocument struct {
 
 // SpecAST is the validated, typed representation of a .spec.yaml file.
 type SpecAST struct {
-	ID                 string                `yaml:"id" json:"id"`
-	Version            string                `yaml:"version" json:"version"`
-	Title              string                `yaml:"title,omitempty" json:"title,omitempty"`
-	Status             string                `yaml:"status" json:"status"`
-	Tier               int                   `yaml:"tier" json:"tier"`
-	CoverageThreshold  int                   `yaml:"coverage_threshold,omitempty" json:"coverage_threshold,omitempty"`
-	Context            SpecContext           `yaml:"context" json:"context"`
-	Objective          SpecObjective         `yaml:"objective" json:"objective"`
-	Constraints        []Constraint          `yaml:"constraints" json:"constraints"`
-	AcceptanceCriteria []AcceptanceCriterion `yaml:"acceptance_criteria" json:"acceptance_criteria"`
-	DependsOn          []DependencyRef       `yaml:"depends_on,omitempty" json:"depends_on,omitempty"`
-	Environment        *SpecEnvironment      `yaml:"environment,omitempty" json:"environment,omitempty"`
-	Tags               []string              `yaml:"tags,omitempty" json:"tags,omitempty"`
-	Changelog          []ChangelogEntry      `yaml:"changelog,omitempty" json:"changelog,omitempty"`
-	GeneratedFrom      *GeneratedFrom        `yaml:"generated_from,omitempty" json:"generated_from,omitempty"`
+	ID                string `yaml:"id" json:"id"`
+	Version           string `yaml:"version" json:"version"`
+	Title             string `yaml:"title,omitempty" json:"title,omitempty"`
+	Status            string `yaml:"status" json:"status"`
+	Tier              int    `yaml:"tier" json:"tier"`
+	CoverageThreshold int    `yaml:"coverage_threshold,omitempty" json:"coverage_threshold,omitempty"`
+	// CoverageThresholdSet records whether the document declared
+	// coverage_threshold at all. A declared 0 and an absent field are
+	// different inputs (spec-coverage C-36) and an int cannot tell them
+	// apart. Populated by the parser from the raw document; never read from
+	// YAML or JSON, so it does not widen the schema.
+	CoverageThresholdSet bool                  `yaml:"-" json:"-"`
+	Context              SpecContext           `yaml:"context" json:"context"`
+	Objective            SpecObjective         `yaml:"objective" json:"objective"`
+	Constraints          []Constraint          `yaml:"constraints" json:"constraints"`
+	AcceptanceCriteria   []AcceptanceCriterion `yaml:"acceptance_criteria" json:"acceptance_criteria"`
+	DependsOn            []DependencyRef       `yaml:"depends_on,omitempty" json:"depends_on,omitempty"`
+	Environment          *SpecEnvironment      `yaml:"environment,omitempty" json:"environment,omitempty"`
+	Tags                 []string              `yaml:"tags,omitempty" json:"tags,omitempty"`
+	Changelog            []ChangelogEntry      `yaml:"changelog,omitempty" json:"changelog,omitempty"`
+	GeneratedFrom        *GeneratedFrom        `yaml:"generated_from,omitempty" json:"generated_from,omitempty"`
 }
 
 type SpecContext struct {

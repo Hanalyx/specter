@@ -66,19 +66,88 @@ func ParseResultsFile(data []byte) (*ResultsFile, error) {
 	return &rf, nil
 }
 
-// passed returns true if the given spec+AC has a passing result entry, or if
-// no entry exists (absent means "not recorded yet", not "failed"). Used by
-// pre-1.9 pass-rate-aware Tier 1 coverage; preserved verbatim.
-func (rf *ResultsFile) passed(specID, acID string) bool {
-	if rf == nil {
-		return true
+// Status ranks, worst last. A pair that carries several entries resolves to
+// the highest rank among them.
+//
+// The ranks are explicit rather than a map lookup on purpose. A map returns
+// its zero value for a key it does not hold, so an unrecognized status would
+// rank at the passed level and a typo would silently mark a criterion as
+// passing. C-33 requires the opposite: a status outside the C-21 enum ranks at
+// the failed level and never at passed.
+const (
+	rankPassed = iota
+	rankSkipped
+	rankFailed
+	rankErrored
+)
+
+// statusRank returns the rank of one status value.
+func statusRank(status string) int {
+	switch status {
+	case "passed":
+		return rankPassed
+	case "skipped":
+		return rankSkipped
+	case "errored":
+		return rankErrored
+	default:
+		// "failed" and every value outside the enum.
+		return rankFailed
 	}
+}
+
+// entryStatus returns the canonical status of one entry, applying the C-21
+// derivation for entries that carry only the back-compat boolean. Entries that
+// came through ParseResultsFile already carry a status; entries built in
+// process may not.
+func entryStatus(r ResultEntry) string {
+	if r.Status != "" {
+		return r.Status
+	}
+	if r.Passed {
+		return "passed"
+	}
+	return "failed"
+}
+
+// resolve returns the status of the worst entry matching (specID, acID), and
+// whether any entry matched at all. Duplicate pairs are legal input, because
+// ParseResultsFile validates size and JSON shape and nothing about uniqueness.
+//
+// C-33. Resolving across every match rather than stopping at the first one is
+// what makes the answer independent of row order. First-match resolution let
+// two files describing identical facts report 0% and 100% on one workspace.
+func (rf *ResultsFile) resolve(specID, acID string) (string, bool) {
+	if rf == nil {
+		return "", false
+	}
+	worst := ""
+	worstRank := -1
 	for _, r := range rf.Results {
-		if r.SpecID == specID && r.ACID == acID {
-			return r.Passed
+		if r.SpecID != specID || r.ACID != acID {
+			continue
+		}
+		s := entryStatus(r)
+		if rank := statusRank(s); rank > worstRank {
+			worst, worstRank = s, rank
 		}
 	}
-	return true
+	return worst, worstRank >= 0
+}
+
+// passed returns true only when every entry matching the given spec+AC
+// resolves to passed, or when no entry exists (absent means "not recorded
+// yet", not "failed"). Used by pre-1.9 pass-rate-aware Tier 1 coverage.
+//
+// C-33 binds this call path as well as the --strict one. Both took the first
+// match before, so a fix confined to status() would leave the Tier 1 pass-rate
+// path order-dependent.
+func (rf *ResultsFile) passed(specID, acID string) bool {
+	worst, found := rf.resolve(specID, acID)
+	if !found {
+		return true
+	}
+	return worst == "passed"
 }
 
 // InvalidStatuses scans the parsed results and returns a map of unique
@@ -120,21 +189,14 @@ func (rf *ResultsFile) InvalidStatuses() map[string]int {
 // "unknown" is treated as uncovered — the point of --strict is that every
 // annotated AC must have a verified passing result.
 //
-// C-22 (AC-22).
+// When several entries name the same pair, the worst one wins, ranked passed
+// (best), then skipped, then failed, then errored (worst).
+//
+// C-22 (AC-22), C-33 (AC-38).
 func (rf *ResultsFile) status(specID, acID string) string {
-	if rf == nil {
+	worst, found := rf.resolve(specID, acID)
+	if !found {
 		return "unknown"
 	}
-	for _, r := range rf.Results {
-		if r.SpecID == specID && r.ACID == acID {
-			if r.Status == "" {
-				if r.Passed {
-					return "passed"
-				}
-				return "failed"
-			}
-			return r.Status
-		}
-	}
-	return "unknown"
+	return worst
 }

@@ -231,10 +231,46 @@ type ParseErrorPattern struct {
 	Files       []string `json:"files,omitempty"`
 }
 
+// SortParseErrors returns a copy of the entries in a total order: by file,
+// then path, then type, then message. Pure: the input slice is not mutated.
+//
+// The schema validator reports the failures of one file by walking a tree
+// whose branches it visits in map order, so a file with three failures
+// emits them in a different order on each run. That reaches `coverage
+// --json` as the `parse_errors` array and breaks the byte-comparability
+// C-37 requires of the document, even after the arrays C-37 names by hand
+// are ordered. The four keys together are a total order, because two
+// entries alike in all four are indistinguishable to a reader.
+func SortParseErrors(errs []ParseErrorEntry) []ParseErrorEntry {
+	if len(errs) == 0 {
+		return errs
+	}
+	out := make([]ParseErrorEntry, len(errs))
+	copy(out, errs)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].File != out[j].File {
+			return out[i].File < out[j].File
+		}
+		if out[i].Path != out[j].Path {
+			return out[i].Path < out[j].Path
+		}
+		if out[i].Type != out[j].Type {
+			return out[i].Type < out[j].Type
+		}
+		return out[i].Message < out[j].Message
+	})
+	return out
+}
+
 // SummarizeParseErrors groups a flat list of parse errors by (type, path).
 // Patterns are returned sorted by count desc so the most widespread issue
 // surfaces first. The top pattern plus total-file count is usually enough
 // to name schema drift without further analysis.
+//
+// C-37: the order is total, not just by count. Ties break by type ascending
+// and then by path ascending, and the file list inside each pattern is sorted
+// ascending. Ordering by count alone left patterns with equal counts in map
+// order, so five runs on one workspace produced five different documents.
 func SummarizeParseErrors(errs []ParseErrorEntry) []ParseErrorPattern {
 	if len(errs) == 0 {
 		return nil
@@ -265,14 +301,19 @@ func SummarizeParseErrors(errs []ParseErrorEntry) []ParseErrorPattern {
 	}
 	out := make([]ParseErrorPattern, 0, len(order))
 	for _, k := range order {
-		out = append(out, *seen[k])
+		p := *seen[k]
+		sort.Strings(p.Files)
+		out = append(out, p)
 	}
-	// Sort by count desc, stable for ties by first-encountered order.
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j].Count > out[j-1].Count; j-- {
-			out[j-1], out[j] = out[j], out[j-1]
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
 		}
-	}
+		if out[i].Type != out[j].Type {
+			return out[i].Type < out[j].Type
+		}
+		return out[i].Path < out[j].Path
+	})
 	return out
 }
 
@@ -488,27 +529,36 @@ func buildCoverageReportCore(specs []schema.SpecAST, annotations []AnnotationMat
 		}
 
 		totalACs := len(allACIDs)
-		var coveragePct float64
-		if totalACs > 0 {
-			coveragePct = float64(len(coveredACs)) / float64(totalACs) * 100
-			// Round to 1 decimal
-			coveragePct = float64(int(coveragePct*10)) / 10
-		}
+		coveragePct := CoveragePercent(len(coveredACs), totalACs)
 
-		// C-06: Per-spec threshold override
-		threshold := thresholds[spec.Tier]
-		if threshold == 0 {
+		// C-06: Per-spec threshold override.
+		//
+		// C-36: presence decides whether an override applies, not a
+		// greater-than-zero test. A declared 0 means zero at both layers.
+		// The tier map is read with comma-ok for the same reason: a manifest
+		// setting settings.coverage.tier2 to 0 used to fall through to the
+		// built-in default. The !ok branch keeps the historical flat fallback
+		// for a tier the map does not name at all.
+		threshold, ok := thresholds[spec.Tier]
+		if !ok {
 			threshold = 80
 		}
-		if spec.CoverageThreshold > 0 {
+		// CoverageThresholdSet is only populated by the parser. Specs built in
+		// process (tests, the reverse compiler) leave it false, so the
+		// greater-than-zero test still honors an override set by hand.
+		if spec.CoverageThresholdSet || spec.CoverageThreshold > 0 {
 			threshold = spec.CoverageThreshold
 		}
 
+		// C-37: test_files ascending by path. The set is built from a map, so
+		// without the sort the array carries map iteration order and two runs
+		// on an unchanged workspace emit different documents.
 		testFiles := []string{}
 		if ann.files != nil {
 			for f := range ann.files {
 				testFiles = append(testFiles, f)
 			}
+			sort.Strings(testFiles)
 		}
 
 		// Schema requires minItems: 1 for acceptance_criteria, so totalACs
@@ -759,6 +809,10 @@ func SortCoverageEntriesForDisplay(entries []SpecCoverageEntry) []SpecCoverageEn
 // Tiers with zero specs are omitted. Avg coverage is the arithmetic mean of
 // per-spec CoveragePct values (not weighted by AC count — matches what the
 // old footer was effectively reporting).
+//
+// C-35(b): the average goes through FormatCoveragePct, so the header never
+// disagrees with the Coverage column below it. It used to round while the
+// column floored, which read as 67% above a row of 66%.
 func BuildSummaryHeader(report *CoverageReport) string {
 	entries := report.Entries
 	if len(entries) == 0 {
@@ -780,7 +834,7 @@ func BuildSummaryHeader(report *CoverageReport) string {
 	}
 	avg := totalPct / float64(len(entries))
 	var b strings.Builder
-	fmt.Fprintf(&b, "Spec Coverage Report — %d specs · %.0f%% avg coverage\n", len(entries), avg)
+	fmt.Fprintf(&b, "Spec Coverage Report — %d specs · %s avg coverage\n", len(entries), FormatCoveragePct(avg))
 	for tier := 1; tier <= 3; tier++ {
 		t := byTier[tier]
 		if t == nil {

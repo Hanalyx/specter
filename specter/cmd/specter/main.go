@@ -417,6 +417,10 @@ func parseCmd() *cobra.Command {
 		Use:   "parse [files...]",
 		Short: "Parse and validate .spec.yaml files against the canonical schema",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// C-31: surface a rejected manifest before the run reports
+			// anything computed against defaults.
+			warnManifestRejected()
+
 			files := discoverSpecs(args...)
 			if len(files) == 0 {
 				fmt.Print(noSpecsMessage())
@@ -467,6 +471,10 @@ func resolveCmd() *cobra.Command {
 		Use:   "resolve",
 		Short: "Build and validate the spec dependency graph",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// C-31: surface a rejected manifest before the graph is built
+			// against defaults.
+			warnManifestRejected()
+
 			files := discoverSpecs()
 			if len(files) == 0 {
 				fmt.Print(noSpecsMessage())
@@ -602,6 +610,12 @@ Example:
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			specID := args[0]
+
+			// C-31: this sub-subcommand discovers specs the same way its
+			// parent does, so it discards a rejected manifest the same way
+			// and needs the same warning. The notice goes to stderr, so
+			// --json output stays clean.
+			warnManifestRejected()
 
 			files := discoverSpecs()
 			if len(files) == 0 {
@@ -1009,6 +1023,9 @@ func coverageCmd() *cobra.Command {
 				fmt.Fprintf(os.Stderr, "error: %s\n", msg)
 				return errSilent
 			}
+			// C-37: order the flat list before it is emitted or grouped, so
+			// two runs on an unchanged workspace write the same document.
+			parseErrors = coverage.SortParseErrors(parseErrors)
 			report.ParseErrors = parseErrors
 			report.ParseErrorPatterns = coverage.SummarizeParseErrors(parseErrors)
 			report.SpecCandidatesCount = len(files)
@@ -1166,9 +1183,11 @@ func coverageCmd() *cobra.Command {
 					}
 				}
 				// C-18: truncate long spec IDs so the column stays aligned.
+				// C-35: the Coverage cell floors the stored value, so the
+				// integer printed here always passes as a threshold.
 				fmt.Printf("%-41s T%-5d %-8d %-9d %-10s %s\n",
 					coverage.DisplaySpecID(e.SpecID), e.Tier, e.TotalACs, len(e.CoveredACs),
-					fmt.Sprintf("%.0f%%", e.CoveragePct), status)
+					coverage.FormatCoveragePct(e.CoveragePct), status)
 
 				if len(e.UncoveredACs) > 0 {
 					fmt.Printf("  uncovered: %s\n", strings.Join(e.UncoveredACs, ", "))
@@ -1665,6 +1684,25 @@ func loadManifest() (*manifest.Manifest, string, error) {
 	return m, root, nil
 }
 
+// warnManifestRejected writes the two-line notice spec-manifest C-31 requires
+// from a command that continues after a rejected specter.yaml. The first line
+// names the file and the parser's reason, the second says which settings are
+// actually in effect. Silent when the manifest is absent or valid.
+//
+// It binds `parse`, `resolve`, and `explain`, which dropped the error at the
+// call site and ran against defaults with nothing on stderr. A manifest that
+// set specs_dir and carried one bad key made `parse` report two specs from a
+// recursive walk instead of the one the operator configured, and exit 0.
+//
+// The commands that already fail on a rejected manifest (`check`, `coverage`,
+// `sync`, `init --refresh`) keep their non-zero exit and do not call this.
+func warnManifestRejected() {
+	if _, _, err := loadManifest(); err != nil {
+		fmt.Fprintln(os.Stderr, "warn:", err)
+		fmt.Fprintln(os.Stderr, "      the manifest was ignored; default settings are in effect")
+	}
+}
+
 func initCmd() *cobra.Command {
 	var (
 		name        string
@@ -2088,12 +2126,24 @@ func doctorCmd() *cobra.Command {
 
 			// C-08: run ALL checks regardless of failures
 
-			// --- Check 1: Manifest presence (C-01, AC-01, AC-02) ---
+			// --- Check 1: Manifest presence and validity (C-01, C-18) ---
+			//
+			// C-18: the three manifest states are distinct and each gets its
+			// own verdict. Absent is WARN, present and valid is PASS, present
+			// and rejected is FAIL naming the parser's reason. Reporting PASS
+			// for a file the same run rejects told the operator the opposite
+			// thing twice. The remaining checks run against defaults, which
+			// loadManifest already returns on a rejection.
 			manifestPath, _ := findManifest()
-			if manifestPath != "" {
-				printCheck("manifest", "PASS", "specter.yaml found at "+manifestPath)
-			} else {
+			m, _, mErr := loadManifest()
+			switch {
+			case manifestPath == "":
 				printCheck("manifest", "WARN", "No specter.yaml found — run `specter init` to scaffold one (optional)")
+			case mErr != nil:
+				printCheck("manifest", "FAIL", mErr.Error())
+				anyFail = true
+			default:
+				printCheck("manifest", "PASS", "specter.yaml found at "+manifestPath)
 			}
 
 			// --- Check 2: .spec.yaml files present (C-02, AC-03) ---
@@ -2187,12 +2237,13 @@ func doctorCmd() *cobra.Command {
 			}
 
 			// --- Check 5: Coverage meets tier thresholds (C-05, AC-06) ---
+			//
+			// C-18: this check used to abort the run when the manifest was
+			// rejected, which left the operator without a coverage verdict
+			// and with the reason printed below a PASS line. It now reuses
+			// the manifest loaded by check 1, which is Defaults() on a
+			// rejection, and the FAIL verdict there carries the exit code.
 			if len(specFiles) > 0 {
-				m, _, mErr := loadManifest()
-				if mErr != nil {
-					fmt.Fprintln(os.Stderr, "error:", mErr)
-					return errSilent
-				}
 				_, specs, hasParseErrors := parseAllSpecs(specFiles)
 				if hasParseErrors {
 					printCheck("coverage", "WARN", "Skipping coverage check — specs have parse errors")
@@ -2220,8 +2271,8 @@ func doctorCmd() *cobra.Command {
 						for _, e := range report.Entries {
 							if !e.PassesThreshold {
 								threshold := thresholds[e.Tier]
-								fmt.Printf("    %s: %.0f%% coverage (T%d requires %d%%)\n",
-									e.SpecID, e.CoveragePct, e.Tier, threshold)
+								fmt.Printf("    %s: %s coverage (T%d requires %d%%)\n",
+									e.SpecID, coverage.FormatCoveragePct(e.CoveragePct), e.Tier, threshold)
 							}
 						}
 						anyFail = true
@@ -2555,6 +2606,11 @@ func explainCmd() *cobra.Command {
 				acID = arg[idx+1:]
 			}
 
+			// C-31: surface a rejected manifest. The reference surfaces
+			// above (`explain annotation`, `explain schema`) never read the
+			// manifest, so the warning belongs on this branch alone.
+			warnManifestRejected()
+
 			// Load all specs
 			specFiles := discoverSpecs()
 			_, specs, _ := parseAllSpecs(specFiles)
@@ -2636,13 +2692,13 @@ func explainListMode(spec *schema.SpecAST, coveredBy map[string][]string, testFi
 			covered++
 		}
 	}
-	pct := 0
-	if total > 0 {
-		pct = (covered * 100) / total
-	}
+	// C-35: `explain` reads the same number the table and the JSON document
+	// read. It used to divide integers here, so one spec printed 66 while the
+	// table printed 67 and the gate compared 66.6.
+	pct := coverage.FormatCoveragePct(coverage.CoveragePercent(covered, total))
 
 	fmt.Printf("specter explain %s\n\n", spec.ID)
-	fmt.Printf("  Tier: %d    Coverage: %d%% (%d/%d ACs)\n\n", spec.Tier, pct, covered, total)
+	fmt.Printf("  Tier: %d    Coverage: %s (%d/%d ACs)\n\n", spec.Tier, pct, covered, total)
 	fmt.Printf("  %-8s %-8s  %-40s  %s\n", "Status", "AC", "Description", "Test files")
 	fmt.Println("  " + strings.Repeat("-", 90))
 

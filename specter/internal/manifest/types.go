@@ -8,6 +8,8 @@
 // @spec spec-manifest
 package manifest
 
+import "gopkg.in/yaml.v3"
+
 // Manifest is the top-level specter.yaml structure.
 //
 // SchemaVersion (spec-manifest C-27, v0.12+) records the spec-schema draft
@@ -52,10 +54,47 @@ type Settings struct {
 }
 
 // CoverageConfig defines per-tier coverage thresholds.
+//
+// The three `set` fields record which keys the manifest declared. A declared
+// `tier2: 0` and an absent `tier2` are different instructions (spec-coverage
+// C-36) and an int reads 0 for both, so presence is captured at unmarshal
+// time. They are unexported, so a CoverageConfig built in process keeps the
+// older greater-than-zero behavior and existing callers are unaffected.
 type CoverageConfig struct {
 	Tier1 int `yaml:"tier1,omitempty" json:"tier1,omitempty"`
 	Tier2 int `yaml:"tier2,omitempty" json:"tier2,omitempty"`
 	Tier3 int `yaml:"tier3,omitempty" json:"tier3,omitempty"`
+
+	tier1Set bool
+	tier2Set bool
+	tier3Set bool
+}
+
+// UnmarshalYAML decodes the tier fields and records which of them the document
+// actually carried. The alias type is what keeps this from recursing.
+func (c *CoverageConfig) UnmarshalYAML(node *yaml.Node) error {
+	type plain CoverageConfig
+	var p plain
+	if err := node.Decode(&p); err != nil {
+		return err
+	}
+	*c = CoverageConfig(p)
+
+	// A mapping node holds keys and values in one alternating list.
+	if node.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		switch node.Content[i].Value {
+		case "tier1":
+			c.tier1Set = true
+		case "tier2":
+			c.tier2Set = true
+		case "tier3":
+			c.tier3Set = true
+		}
+	}
+	return nil
 }
 
 // RegistryEntry is a persistent index entry for a known spec.
@@ -80,16 +119,21 @@ type DomainCoverageEntry struct {
 
 // CoverageThresholds returns the coverage thresholds as a map for use by
 // checker and coverage packages.
+//
+// C-36: a declared 0 overrides the built-in default rather than falling
+// through to it. Presence decides, so `tier2: 0` gives Tier 2 specs a
+// threshold of zero while an absent tier2 still inherits 80.
 func (m *Manifest) CoverageThresholds() map[int]int {
 	t := map[int]int{1: 100, 2: 80, 3: 50}
-	if m.Settings.Coverage.Tier1 > 0 {
-		t[1] = m.Settings.Coverage.Tier1
+	c := m.Settings.Coverage
+	if c.tier1Set || c.Tier1 > 0 {
+		t[1] = c.Tier1
 	}
-	if m.Settings.Coverage.Tier2 > 0 {
-		t[2] = m.Settings.Coverage.Tier2
+	if c.tier2Set || c.Tier2 > 0 {
+		t[2] = c.Tier2
 	}
-	if m.Settings.Coverage.Tier3 > 0 {
-		t[3] = m.Settings.Coverage.Tier3
+	if c.tier3Set || c.Tier3 > 0 {
+		t[3] = c.Tier3
 	}
 	return t
 }

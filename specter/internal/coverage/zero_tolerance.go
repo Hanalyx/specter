@@ -10,22 +10,33 @@ package coverage
 
 import "github.com/Hanalyx/specter/internal/schema"
 
-// CountNonPassed returns the number of results-file entries whose status is
-// set and not "passed". Under zero-tolerance, a non-zero count fails the run
-// with exit code 2 (spec-coverage C-25, spec-sync C-09). Nil results count
-// as zero — the missing-results case is handled earlier by the strict path
-// (ErrMissingResults).
+// CountNonPassed returns the number of distinct (spec_id, ac_id) pairs whose
+// resolved status is not "passed". Under zero-tolerance, a non-zero count
+// fails the run with exit code 2 (spec-coverage C-25, spec-sync C-09). Nil
+// results count as zero, because the missing-results case is handled earlier
+// by the strict path (ErrMissingResults).
+//
+// C-34: the count names criteria, not entries, because the message it feeds
+// says `N annotated AC(s) did not pass`. Three failing entries for one
+// criterion are one criterion. An operator reading a count of 2 for a single
+// failing criterion goes looking for a second one that does not exist.
+//
+// The exit code is unchanged by this, because "at least one non-passed entry"
+// and "at least one non-passed pair" are the same condition.
+// ResultsFile.InvalidStatuses is deliberately not deduplicated this way: its
+// C-30 warning text says entries.
 func CountNonPassed(results *ResultsFile) int {
 	if results == nil {
 		return 0
 	}
-	nonPassed := 0
+	nonPassed := make(map[string]bool)
 	for _, r := range results.Results {
-		if r.Status != "" && r.Status != "passed" {
-			nonPassed++
+		if entryStatus(r) == "passed" {
+			continue
 		}
+		nonPassed[r.SpecID+"/"+r.ACID] = true
 	}
-	return nonPassed
+	return len(nonPassed)
 }
 
 // CountApprovalGateViolations returns the number of ACs carrying
@@ -102,13 +113,13 @@ func DemoteApprovalGateViolations(report *CoverageReport, specs []schema.SpecAST
 			keptCovered = append(keptCovered, acID)
 		}
 		e.CoveredACs = keptCovered
-		if e.TotalACs > 0 {
-			e.CoveragePct = float64(len(e.CoveredACs)) * 100 / float64(e.TotalACs)
-		} else {
-			e.CoveragePct = 0
-		}
-		// PassesThreshold uses the per-tier threshold the entry was built with.
-		e.PassesThreshold = int(e.CoveragePct) >= e.Threshold
+		// C-35: the demoted entry is recomputed by the same function that
+		// built it, so a demotion cannot produce a percentage the rest of the
+		// report could not.
+		e.CoveragePct = CoveragePercent(len(e.CoveredACs), e.TotalACs)
+		// PassesThreshold uses the per-tier threshold the entry was built with,
+		// compared against the stored value per C-35(c).
+		e.PassesThreshold = e.CoveragePct >= float64(e.Threshold)
 		if e.PassesThreshold {
 			report.Summary.Passing++
 		} else {
