@@ -16,6 +16,12 @@
 // at commit 2307535. Every document fixture below is the byte string the spec
 // captured from the real binary; each is parsed here rather than retyped.
 //
+// Four range-end assertions come from spec-vscode 1.10.0 at commit 441d3f4
+// instead: AC-64, AC-65, AC-66, and AC-71 stated no end, or stated one the
+// amendment overturned. C-32 now decides all three sites at once, so a range
+// that reaches a DiagnosticCollection ends on its start line at
+// `Number.MAX_SAFE_INTEGER` (SP-SP-034). Nothing else in this file changed.
+//
 // Three layers, because the on-save handler where the defect physically lives
 // is unreachable from this suite (nothing imports `../extension`):
 //   - the client, driven through a stubbed child process (AC-61, 68, 69, 70),
@@ -640,7 +646,7 @@ describe('C-32 a parse error with no position', () => {
     expect(built).toHaveLength(1);
     expect(rangeHealth(built[0])).toEqual(ALL_FOUR_HEALTHY);
     expect(built[0].range.start).toEqual({ line: 0, character: 0 });
-    expect(built[0].range.end).toEqual({ line: 0, character: 0 });
+    expect(built[0].range.end).toEqual({ line: 0, character: Number.MAX_SAFE_INTEGER });
     // The diagnostic is still the one built from this error, not a placeholder
     // that happens to sit at 0,0.
     expect(built[0].message).toContain("Missing required field 'objective'");
@@ -668,6 +674,7 @@ describe('C-32 a parse error with a line and no column', () => {
     expect(rangeHealth(built[0])).toEqual(ALL_FOUR_HEALTHY);
     // CLI line 3 is 1-based; VS Code is 0-based. The absent column is 0.
     expect(built[0].range.start).toEqual({ line: 2, character: 0 });
+    expect(built[0].range.end).toEqual({ line: 2, character: Number.MAX_SAFE_INTEGER });
     expect(built[0].message).toContain('mapping values are not allowed');
   });
 });
@@ -691,7 +698,7 @@ describe('C-32 a check diagnostic, which carries no position at all', () => {
     expect(built).toHaveLength(1);
     expect(rangeHealth(built[0])).toEqual(ALL_FOUR_HEALTHY);
     expect(built[0].range.start).toEqual({ line: 0, character: 0 });
-    expect(built[0].range.end).toEqual({ line: 0, character: 0 });
+    expect(built[0].range.end).toEqual({ line: 0, character: Number.MAX_SAFE_INTEGER });
     expect(built[0].severity).toBe('error');
     expect(built[0].message).toContain('Constraint C-02');
   });
@@ -898,7 +905,7 @@ describe('C-32 a coverage parse error with no position', () => {
     expect(out[0].diagnostics).toHaveLength(1);
     expect(rangeHealth(out[0].diagnostics[0])).toEqual(ALL_FOUR_HEALTHY);
     expect(out[0].diagnostics[0].range.start).toEqual({ line: 0, character: 0 });
-    expect(out[0].diagnostics[0].range.end).toEqual({ line: 0, character: 0 });
+    expect(out[0].diagnostics[0].range.end).toEqual({ line: 0, character: Number.MAX_SAFE_INTEGER });
     expect(out[0].diagnostics[0].message).toContain("Missing required field 'objective'");
   });
 });
