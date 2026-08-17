@@ -563,11 +563,18 @@ function pushCoverageParseDiagnostics(
     const abs = resolveWorkspacePath(file);
     const uri = vscode.Uri.file(abs);
     const vsDiags = diagnostics.map(d => {
+      // C-32 binds the range that reaches the collection, so the builder's
+      // range arrives here unchanged, the way toVscodeDiagnostic passes the
+      // check and parse ranges. This site used to clamp the end character to
+      // 1,000,000. Under C-32 the end is a constant the builder sets, so the
+      // clamp guarded no input and only re-decided a value the spec fixes. It
+      // could also invert a range, because the start character comes from the
+      // CLI and was never clamped.
       const range = new vscode.Range(
         d.range.start.line,
         d.range.start.character,
         d.range.end.line,
-        Math.min(d.range.end.character, 1_000_000),
+        d.range.end.character,
       );
       const diag = new vscode.Diagnostic(
         range,

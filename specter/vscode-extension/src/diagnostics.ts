@@ -24,15 +24,17 @@ export interface BuildDiagnosticsInput {
 /**
  * The range for a diagnostic the CLI reported at `line`, which is 1-indexed
  * where VS Code is 0-indexed. C-32: an absent position is 0, giving a range at
- * the start of the file, rather than arithmetic on `undefined`. The CLI emits
- * no column on a parse error and no position at all on a check diagnostic, so
- * the range is zero-width and VS Code widens it to the word it lands on.
+ * the start of the file, rather than arithmetic on `undefined`. The end sits on
+ * the start line at `Number.MAX_SAFE_INTEGER`, so the highlight runs to the end
+ * of that line, and an end equal to the start is prohibited. The claim that VS
+ * Code widens a zero-width range to the word it lands on was never checked in
+ * an editor, so nothing here rests on it (SP-SP-034).
  */
 function rangeAtLine(line: number | undefined): ExtensionDiagnostic['range'] {
   const zeroBased = Math.max(0, (line ?? 1) - 1);
   return {
     start: { line: zeroBased, character: 0 },
-    end: { line: zeroBased, character: 0 },
+    end: { line: zeroBased, character: Number.MAX_SAFE_INTEGER },
   };
 }
 
@@ -103,11 +105,14 @@ export function buildCoverageParseDiagnostics(
       severity: 'error',
       source: 'specter',
       message: `${prefix}${err.message}${pathSuffix}`,
-      // C-32: zero-width, so an error the CLI located at neither a line nor a
-      // column still carries finite integers in all four positions.
+      // C-32: all four positions are finite integers, and the end sits on the
+      // start line at `Number.MAX_SAFE_INTEGER`, the same end the parse and
+      // check paths use. The same schema error reaches the Problems panel by
+      // both paths, so one end has to serve both. Ending at the start was a
+      // test's choice and it removed a highlight users had (SP-SP-034).
       range: {
         start: { line, character: char },
-        end: { line, character: char },
+        end: { line, character: Number.MAX_SAFE_INTEGER },
       },
     };
     const bucket = byFile.get(err.file);

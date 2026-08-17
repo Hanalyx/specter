@@ -179,9 +179,12 @@ export class CoverageReportStore {
    * Single-folder workspaces get their stored report back by identity —
    * byte-for-byte the pre-1.7.0 single-root behavior. Returns null when
    * nothing is stored (the sidebar's "coverage not run yet" state).
-   * Optional fields (parseErrors, specCandidatesCount,
+   * The optional fields (parseErrors, specCandidatesCount,
    * parseErrorPatterns) stay absent unless at least one folder's report
-   * defined them, preserving the tri-state sidebar logic (AC-28/29/30).
+   * defined them. That distinction no longer reaches the sidebar: since C-31
+   * shipped, the client normalizes every array field, so a client-produced
+   * report carries `[]` rather than nothing, and every consumer reads through
+   * `?? []` and then `.length`. Absent and empty read the same (AC-28/29/30).
    */
   merged(): CoverageReport | null {
     if (this.reports.size === 0) return null;
