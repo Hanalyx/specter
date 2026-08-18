@@ -83,25 +83,74 @@ manifests. This entry exists to keep them apart, not to argue for a change.
 
 ## `strict`
 
-**Meaning.** A severity switch on the checker. When on, every warning and info
-diagnostic is reported as an error, and the command exits non-zero.
+**Meaning.** Not one thing. `strict` names **two** behaviors in the code today,
+and was **intended** as a third that was never built. Any single-sentence
+definition of it is currently false.
 
-**Surfaces.** Set by `settings.strict` (`internal/manifest/types.go:49`) or by a
-`--strict` flag, always combined as `strict || m.Settings.Strict`. Consumed at
-`main.go:711` (`check`), `main.go:1313` and `:1347` (`sync`), and `main.go:3003`
-(`watch`).
+First, severity promotion. Every warning and info diagnostic is reported as an
+error, so the command exits non-zero. Measured on a Tier 2 spec with one orphan
+constraint: `check` reports `0 error(s), 1 warning(s)` and exits 0, while
+`check --strict` reports `1 error(s), 0 warning(s)` and exits 1.
 
-Measured on a Tier 2 spec with one orphan constraint: `check` reports
-`0 error(s), 1 warning(s)` and exits 0, while `check --strict` reports
-`1 error(s), 0 warning(s)` and exits 1.
+Second, scan gating. On `sync`, it decides whether the test-annotation
+cross-reference runs **at all** (`main.go:1347`). Measured, no flag in either
+run, only the manifest key changed, with one test file carrying a stale
+`@spec bogus-spec`:
 
-It has nothing to do with coverage. `coverage` reads neither `settings.strict`
-nor the checker. A workspace that sets `settings.strict: true` and expects
-coverage to tighten gets no change.
+```
+settings.strict: true     FAIL check: 1 error(s)       exit 1
+settings.strict absent    PASS check / PASS coverage   exit 0
+```
 
-**Standing.** Settled. The concept, the key, and its scope are consistent
-everywhere. Only the flag that shares its name is contested, and that is a
-separate entry.
+The diagnostic is `unknown_spec_ref`, hardcoded at error severity
+(`internal/checker/test_annotations.go:119`), so no promotion is involved. A
+severity switch cannot change which defects are discovered. This one does.
+
+Third, the intended behavior, recorded because it explains the name. `strict`
+was meant as a **coverage reporting override**: when a spec clears its tier
+threshold, `coverage` reports it as passed, and `settings.strict: true` was to
+override that and surface every failed spec and criterion anyway. Nothing in the
+tree implements this. `coverage` never reads the key, and severity has no
+meaning in a coverage report, which carries percentages rather than diagnostics.
+
+**Surfaces, and the scope is not uniform.** Set by `settings.strict`
+(`internal/manifest/types.go:49`) or by a `--strict` flag. The two spellings
+apply to **different sets of commands**:
+
+| Command | Accepts `--strict` | Reads `settings.strict` |
+|---|---|---|
+| `check` | yes | yes, `main.go:711` |
+| `sync` | yes | yes, `main.go:1313` and `:1347` |
+| `coverage` | yes | **no** |
+| `watch` | **no** | yes, `main.go:3003` |
+
+Union of four, intersection of two. Verified with the C-24 guard, which exists
+to reject strict combined with `strictness: annotation`: on a manifest holding
+both `strict: true` and `strictness: annotation`, plain `coverage` exits 0 and
+`coverage --strict` exits 1. The guard cannot see the key it is meant to police.
+
+**Three further defects, all verified.** The key and the flag are not
+interchangeable on `sync`: `main.go:1313` combines them, `:1323` reads the flag
+alone, so `settings.strict: true` reaches the severity switch and never reaches
+the ladder. Promotion is incomplete: it runs inside `CheckSpecs`
+(`internal/checker/check.go:150`), and `main.go:744` and `:773` append the
+test-annotation families afterward, so those never pass through it. And
+spec-manifest C-11 says strict upgrades "warning-severity" diagnostics while the
+code upgrades warning **and** info.
+
+**Standing. Open, and the entry above supersedes an earlier claim in this
+document that it was settled.** That claim was written from a citation rather
+than a measurement: the site at `main.go:1347` was correctly listed as a
+consumer and never exercised, so the scan-gating behavior went unrecorded while
+the line that proves it sat in the entry.
+
+Treat that as the standing lesson for this column. **A term is settled when
+someone has run the cases that would distinguish it, and the entry names those
+cases.** A citation shows a term is used somewhere. Only a measurement shows
+what it decides.
+
+Filed as `bugs/SP-SP-047` (the three defects) and as a feature request to make
+the setting coherent.
 
 ## `strictness`
 
