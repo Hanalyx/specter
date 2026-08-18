@@ -17,6 +17,18 @@ Unreleased changes accumulate under `## Unreleased`. Every user-visible change a
 - **`specter check` documentation described a diagnostic that does not exist.** The README and `docs/CLI_REFERENCE.md` said `tier_conflict` catches "a Tier 1 spec depends on a Tier 3 spec", and the README printed it as an ERROR. It fires only when a spec's declared `tier:` disagrees with an entry in `settings.tier_overrides`. It is a warning, `--strict` does not escalate it, and it does not appear in `--json` output. `settings.tier_overrides` does not change a spec's effective tier. **Action:** if you set `tier_overrides` expecting a stricter or looser gate, it is not in effect. Set `tier:` in the spec instead.
 - **The pre-commit hook ran no checks once installed.** It resolved the Go module path relative to its own location, which is `.git/hooks` after `make install-hooks`, so `gofmt` and `go vet` were skipped on every commit. **Action:** run `make install-hooks`, then `make check` on any branch you have in flight.
 
+### Deprecated
+
+- **`settings.strictness` and `--strictness` will be retired at v1.0.0.** Both keep their current behavior unchanged for every release before then, so nothing in your manifest or your CI stops working now. This is advance notice, not a migration you have to run today.
+
+  The setting was created to answer one question: does an acceptance criterion have a test reference? What shipped answers a different one. The three levels form an evidence ladder deciding how much proof a criterion needs before it counts as covered, which is a coverage judgment rather than a check on whether a marker exists. The difference is visible on a spec whose second criterion has no marker anywhere: `specter check --test` reports all specs passing and exits 0, while `specter coverage` reports that criterion uncovered. `check` scans from tests to specs and cannot see a marker that is absent; `coverage` scans from specs to tests and is the only command that knows.
+
+  The replacement is `settings.annotation` and `--annotation`, governing where `@spec` and `@ac` markers must appear, with coverage strictness moving to the `settings.coverage.tier1`, `tier2` and `tier3` thresholds you already have. Its value set is not settled. Four questions are open, including that `annotation` is currently a value of `settings.strictness`, so both keys would be legal in one manifest during the window with different meanings. The decision record is `docs/ssrb/SSRB-104.md` and the request is tracked as `features/SP-006`.
+
+  **Action:** none required for this release. If you set `settings.strictness` today, keep it. When the replacement lands it will ship with a migration note naming the exact replacement for your current value, and both spellings will be accepted until v1.0.0.
+
+  **Worth knowing now if you run `--strict`:** it is a separate setting from `--strictness` despite the names, it means something different on each of the three commands that accept it, and `make dogfood-strict` in this repository has never exercised the level its name claims. Those are tracked as `bugs/SP-SP-046` and `bugs/SP-SP-047` and are being fixed on their own track.
+
 ### Changed
 
 - British spellings corrected in `README.md`, `GOTCHAS.md`, `docs/CLI_REFERENCE.md`, `vscode-extension/README.md`, and three VS Code extension source comments. One decorative symbol removed from `docs/explainer/v0.10-ci-gated-coverage.md`. No behavior change.
