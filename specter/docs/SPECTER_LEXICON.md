@@ -154,9 +154,36 @@ the setting coherent.
 
 ## `strictness`
 
-**Meaning.** A three-value ladder naming how much evidence Specter demands
-before it calls an acceptance criterion covered. The values are `annotation`,
-`threshold`, and `zero-tolerance`, in increasing order of demand.
+**Meaning as implemented.** A three-value ladder naming how much evidence
+Specter demands before it calls an acceptance criterion covered. The values are
+`annotation`, `threshold`, and `zero-tolerance`, in increasing order of demand.
+
+**Meaning as intended, which the implementation does not match.** The setting
+was meant to answer one question: **does this acceptance criterion have a test
+reference?** The goal was confidence that a testable criterion carries a marker
+tying it to a test that either passed or failed. The staging was deliberate:
+markers in test files first, markers in source files in a later release.
+
+The gap between those two readings is the whole story of this entry. What
+shipped is an evidence ladder, which is a coverage-judgment concept. What was
+wanted is marker enforcement, which is a checker concept. The ladder can be used
+to approximate the goal, because an unannotated criterion counts as uncovered,
+but it approximates it as a percentage rather than naming the criterion that
+lacks a marker.
+
+**The measurement that shows the gap.** A spec with two criteria, only the first
+annotated, no marker anywhere for the second:
+
+```
+check --test    All 1 specs passed structural checks    exit 0
+coverage        ma-spec  T2  2  1  50%  FAIL   uncovered: AC-02
+```
+
+`check` cannot see the missing marker. It scans test to spec, validating the
+markers it finds, so a criterion with no marker is invisible to it. `coverage`
+scans spec to test, so it is the only command that knows. **The fact the setting
+was created to enforce is computed in the command that reports percentages, and
+is absent from the command that reports diagnostics.**
 
 **Surfaces.** The enum is declared once, at `internal/manifest/manifest.go:30`.
 Both `settings.strictness` and the `--strictness` flag validate against it. A
@@ -197,8 +224,96 @@ it. The word "only" in that last row was checked: a grep of `internal/checker/`
 for `strictness` returns hits in exactly three files, all in the
 `unreachable_annotation` family, and every one routes through `routeSeverity`.
 
-**Standing.** Settled. The enum, its values, and their order are not disputed
-anywhere in the repository.
+**Standing. Retiring.** The enum and its behavior are settled as a description,
+and the setting is being replaced. See the next section. Nothing in this entry
+is disputed; what is decided is that the concept it names is not the concept the
+project wants.
+
+## RETIRING: `strictness` becomes `annotation`
+
+Direction set by the founder, 2026-08-18. Recorded here so the deprecation has
+one description rather than several. The replacement's shape is a feature
+request, `features/SP-006`, and is not settled by this entry.
+
+### The plan
+
+`settings.strictness` and `--strictness` are **preserved until v1.0.0 and
+removed there**. Both keep their current behavior for the whole window, so no
+existing workspace changes meaning on upgrade.
+
+The replacement is `settings.annotation` and `--annotation`, a single axis
+governing **where `@spec` and `@ac` markers must appear**, with three positions:
+
+| Value | Scans | On a missing marker |
+|---|---|---|
+| `permissive` | test and source | warn |
+| `default` | test only | fail |
+| `full` | test and source | fail |
+
+Coverage strictness moves to the existing `settings.coverage.tier1`, `tier2` and
+`tier3` thresholds. All three at 100 is the strict posture.
+
+### Why this is a replacement rather than a rename
+
+Nothing in the tree governs where markers must appear today. `tests_glob`
+decides which files are **scanned**, not where markers must **exist**, and no
+diagnostic reports a criterion that has no marker. So `annotation` is a new
+capability, and the retirement of `strictness` is a separate act from adding it.
+They should be priced separately.
+
+### Which commands this can reach
+
+Verified by which commands discover test files at all:
+
+| Command | Discovers test files | Can enforce markers |
+|---|---|---|
+| `parse` | no | **No.** Nothing to scan; a flag there would be inert |
+| `resolve` | no | **No.** Same |
+| `check` | yes, `main.go:723` | Has the files, scans the wrong direction. Needs new spec-side code |
+| `coverage` | yes, `main.go:886` | Yes, and already computes the fact |
+| `sync` | yes, `main.go:1275` | Passthrough to its phases only |
+| `doctor` | yes, `main.go:2223` | Undecided, and not yet considered |
+
+### Open questions this entry does not answer
+
+Four, recorded so they are decided rather than inherited.
+
+**The value names collide with a value being retired.** `annotation` is today a
+value of `settings.strictness`. Both keys are accepted until v1.0.0, so a
+manifest may legally carry `strictness: annotation` and `annotation: default`
+together, meaning different things. That is the shape this document exists to
+end.
+
+**The ladder is not monotonic.** `permissive` scans test and source; `default`
+scans test only. Moving from the first to the second **narrows** scope while
+widening severity, so source findings visible under `permissive` disappear under
+`default` and return as errors under `full`. Information vanishes at the step
+every adopter takes.
+
+**One corner of the grid is missing.** Scope and severity form a two-by-two and
+three corners are used. Test-only-with-warnings, the natural first rung for a
+project not yet ready to decide about source markers, has no value.
+
+**`default` names a config position rather than a behavior**, so the name lies if
+the default ever moves.
+
+### The overlap to settle before implementing
+
+`annotation: default` says fail when a criterion has no test marker.
+`coverage.tierN: 100` says every criterion must be covered, which under
+annotation-evidence means annotated. **Those are the same assertion**, and
+coverage already enforces it.
+
+They differ usefully: coverage yields a percentage where annotation would yield
+a per-criterion diagnostic with file and line; coverage is per-tier where
+annotation is global; and coverage cannot reach source files at all.
+
+The interaction needs a stated rule. With `annotation: default` in force, any
+tier below 100 can never fail on marker grounds, because the marker check fires
+first.
+
+`full` is F7, rejected in `docs/ssrb/SSRB-101.md` on 2026-08-16. It requires a
+founder override reopening that brief, and it is the only value that needs one.
 
 ## the three levels
 
