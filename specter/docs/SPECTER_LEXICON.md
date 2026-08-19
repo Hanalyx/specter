@@ -246,7 +246,7 @@ The replacement is `settings.annotation`, carrying two sub-keys:
 ```yaml
 settings:
   annotation:
-    state: default       # default | full
+    scope: test          # test | all
     permissive: false    # true warns where false fails
   coverage:
     tier1: 100
@@ -258,14 +258,16 @@ settings:
 
 1. **The annotation rule.** Every acceptance criterion must have a test. A
    criterion with no test fails, and the tier threshold does not excuse it.
-2. **`state` sets the scope.** `default` requires markers in test files. `full`
-   requires them in test and source files.
+2. **`scope` names which files must carry markers.** `test` requires them in
+   test files. `all` requires them in test and source files.
 3. **The tier thresholds set the allowed failure rate among criteria that do
    have tests.** `tier2: 80` means 80 percent must have a passing test.
 4. **`permissive` sets severity, not scope.** It warns where the same
    configuration would otherwise fail.
 
-`permissive` and `state` are two axes rather than three points on one ladder.
+**Manifest only. There is no `--annotation` flag and none is planned.**
+
+`permissive` and `scope` are two axes rather than three points on one ladder.
 An earlier draft of this section proposed the single ladder, and the sub-key
 shape replaced it because a severity setting and a scope setting cannot be
 positions on the same list.
@@ -281,7 +283,7 @@ B: AC-04 has no test at all            4 ACs  3 covered  75%  PASS
 Byte-identical for two problems that need different responses. Under the rules
 above, A is a pass-rate question against the tier and B is a hard failure.
 
-**`full` does not ship in v0.15.0.** It requires reopening SSRB-101.
+**`scope: all` does not ship in v0.15.0.** It requires reopening SSRB-101.
 
 ### Why this is a replacement rather than a rename
 
@@ -304,33 +306,39 @@ Verified by which commands discover test files at all:
 | `sync` | yes, `main.go:1275` | Passthrough to its phases only |
 | `doctor` | yes, `main.go:2223` | Undecided, and not yet considered |
 
-### Open questions this entry does not answer
+### The four questions, settled 2026-08-19
 
-Three remain. Three others were resolved by the two-key shape and are recorded
-in `docs/ssrb/SSRB-104.md` section 7 so nobody re-derives them: the ladder was
-not monotonic, one corner of the scope-severity grid was missing, and the tier
-overlap was unstated. All three were artifacts of squeezing two axes into one
-list.
+Recorded in short form. The reasoning is in `docs/ssrb/SSRB-104.md` section 7.
 
-**The key name collides with a value being retired.** `annotation` is today a
-value of `settings.strictness`. Both keys are accepted until v1.0.0, so a
-manifest may legally carry `strictness: annotation` and an `annotation.state`
-block together, meaning different things. That is the shape this document exists
-to end.
+**The key keeps the name `annotation`,** with a conflict rule: when a manifest
+carries both `strictness` and an `annotation` block during the window, the new
+key wins and a warning names the ignored one. Renaming to dodge a temporary
+collision would cost more than it saves, since `annotation` is the project's own
+word for these markers.
 
-**`default` names a config position rather than a behavior**, so the name lies
-if the default ever moves. `test` would describe the scope and pair with `full`.
+**The value is `scope: test | all`.** `default` named a config position rather
+than a behavior and would have become false the moment the default moved.
 
-**The CLI surface does not follow from the manifest shape.** Two sub-keys imply
-no particular flag design. Whichever is chosen, the precedence rule between flag
-and manifest must be stated per sub-key, because this project has already
-shipped one setting where the flag and the key diverge (`bugs/SP-SP-047`).
+**Manifest only, no flag.** Flag and manifest cannot diverge if there is no
+flag, which makes the `bugs/SP-SP-046` and `bugs/SP-SP-047` bug class
+unreachable by construction. The cost is that no per-invocation override exists.
 
-A fourth question is mechanical rather than definitional, so it lives in
-`docs/ssrb/SSRB-104.md` section 7 rather than here: `permissive` supplies the
-warn-or-fail decision, and which existing mechanism carries it is unsettled.
-Three exist in the tree, and the choice determines whether `SSRB-102` becomes
-unnecessary or merely deferred.
+**`permissive` is the severity mechanism.** None of the three existing patterns
+fits. Tier routing would emit `info` for a Tier 3 criterion with no test, which
+contradicts the rule that the tier does not excuse a missing test. Global
+escalation belongs to `settings.strict`. Ladder routing is what retires.
+
+### One consequence owed before v1.0.0
+
+`vscode-extension/src/client.ts:180` passes `--strictness annotation` to
+guarantee a parseable document on every run, because under a `threshold`
+manifest plain `coverage` hard-fails without a results file and emits no JSON.
+Manifest-only annotation gives it no replacement once `--strictness` is removed.
+
+The override exists to work around a contract violation. `spec-coverage` C-10
+already claims `--json` emits a document in every state, and `bugs/SP-SP-032`
+records that it does not. Making that claim true removes the need for the
+override.
 
 ### Two consequences that are settled
 

@@ -1,7 +1,7 @@
 # SSRB-104: retire `settings.strictness` for `settings.annotation`
 
-Status: ACCEPT in direction, NEEDS-DESIGN in shape
-Directed: 2026-08-18, founder
+Status: ACCEPT
+Directed: 2026-08-18, founder. Shape settled 2026-08-19.
 Source: the strict/strictness consensus panel of 2026-08-17, and `features/SP-006`
 
 ## 1. Request
@@ -14,7 +14,7 @@ Replace with `settings.annotation`, carrying two sub-keys:
 ```yaml
 settings:
   annotation:
-    state: default       # default | full
+    scope: test          # test | all
     permissive: false    # true warns where false fails
   coverage:
     tier1: 100
@@ -22,20 +22,22 @@ settings:
     tier3: 50
 ```
 
+**Manifest only. There is no `--annotation` flag and none is planned.**
+
 **The model, in four rules.**
 
 1. **The annotation rule.** Every acceptance criterion must have a test. A
    criterion with no test fails, and the tier threshold does not excuse it.
-2. **`state` sets the scope.** `default` requires markers in test files. `full`
-   requires them in test and source files.
+2. **`scope` names which files must carry markers.** `test` requires them in
+   test files. `all` requires them in test and source files.
 3. **The tier thresholds set the allowed failure rate among criteria that do
    have tests.** `tier2: 80` means 80 percent of criteria must have a passing
    test. `tier1: 100` means all of them must.
 4. **`permissive` sets severity, not scope.** It warns where the same
-   configuration would otherwise fail, and it applies to whichever `state` is
+   configuration would otherwise fail, and it applies to whichever `scope` is
    set.
 
-So `permissive` and `state` are two axes rather than three points on one ladder.
+So `permissive` and `scope` are two axes rather than three points on one ladder.
 That resolves three open questions from an earlier draft of this brief and is
 the reason for the sub-key shape.
 
@@ -51,8 +53,8 @@ Byte-identical output for two problems that need different responses from a
 developer. Under the rules above, A is a pass-rate question against the tier and
 B is a hard failure of the annotation rule.
 
-**`full` does not ship in v0.15.0.** It requires reopening SSRB-101 and is
-deliberately out of the first release.
+**`scope: all` does not ship in v0.15.0.** It requires reopening SSRB-101 and
+is deliberately out of the first release.
 
 ## 2. Origin
 
@@ -110,7 +112,7 @@ anything else in the manifest.
 | Manifest schema | One key retired, one added. Both accepted through the window, so no manifest breaks before v1.0.0 |
 | Spec constraints | `strictness` appears on 92 lines across five specs: spec-check, spec-manifest, spec-doctor, spec-coverage, spec-sync |
 | Tree-wide references | 492 lines mention `strictness`, against 34 for `settings.strict` |
-| CLI surface | Two `--strictness` registrations retire, `main.go:1241` and `:1412`. New `--annotation` registrations on the commands that honor it |
+| CLI surface | Two `--strictness` registrations retire, `main.go:1241` and `:1412`. **Nothing replaces them.** The new setting is manifest only |
 | VS Code extension | `client.ts:180` hardcodes `--strictness annotation` against a user-pinnable binary. It breaks in one direction or the other unless the old flag is accepted through the window, which this request requires |
 | Exit codes | 2 and 3 fire only under `zero-tolerance` (`docs/EXIT_CODES.md`). Both go unreachable unless a new trigger is named |
 | Docs | `CLI_REFERENCE.md` flag tables, `TEST_ANNOTATION_REFERENCE.md`, `EXIT_CODES.md`, `SPECTER_LEXICON.md` |
@@ -126,7 +128,7 @@ and the capability should be estimated separately.
 
 | Command | Discovers test files | Assessment |
 |---|---|---|
-| `parse` | no | Out. A flag would be inert |
+| `parse` | no | Out. Nothing to scan |
 | `resolve` | no | Out. Same |
 | `check` | yes, `main.go:723` | Has the files, scans the wrong direction. Needs new spec-side traversal |
 | `coverage` | yes, `main.go:886` | Already computes the fact |
@@ -179,32 +181,98 @@ The annotation rule asks whether a test exists; the tier threshold asks what
 share of existing tests must pass. A criterion with no test fails regardless of
 tier.
 
-Three questions remain.
+**All four remaining questions were settled on 2026-08-19.** Each is recorded
+with the reasoning, because three of the four were decided against the option
+that looked more natural.
 
-**7.1 The key name collides with a value being retired.** `annotation` is today
-a value of `settings.strictness`. Both keys are accepted through the window, so
-a manifest may legally carry `strictness: annotation` and an
-`annotation.state` block together, meaning different things. That is the failure
-this work exists to end, reappearing in the replacement.
+### 7.1 The key keeps the name `annotation`, with a conflict rule
 
-**7.2 `default` names a config position rather than a behavior.** The name lies
-if the default ever moves. `test` would describe the scope directly and pair
-naturally with `full`.
+`annotation` is today a value of `settings.strictness`, so during the window a
+manifest can carry both. In YAML they are structurally distinct and no parser is
+confused; the hazard is that the two say opposite things. `strictness:
+annotation` means markers alone are sufficient evidence. An `annotation` block
+means every criterion must have a test. That is a lenient posture and a strict
+one in the same file.
 
-**7.3 The CLI surface is unspecified.** The manifest carries two sub-keys and no
-flag shape follows from that. `--annotation <state>` plus a separate
-`--annotation-permissive`, a single flag carrying both, or state-only with
-permissive left to the manifest are all open. Whichever is chosen, the
-precedence rule between flag and manifest has to be stated per sub-key, because
-this project has already shipped one setting where the flag and the key diverge
-(`bugs/SP-SP-047`).
+**The decision is therefore a conflict rule rather than a name.** When both are
+present, the new key wins and a warning names the ignored one. Silence would be
+the worst option, because the manifest would read as though `strictness` still
+applied.
 
-**A fourth question is mechanical rather than design.** A missing-test
-diagnostic needs a severity, and three patterns exist in the tree: tier routing
-as orphan constraints use, ladder routing as `unreachable_annotation` uses, and
-global escalation through `opts.Strict`. `permissive` supplies the warn-or-fail
-decision, so what remains is which mechanism carries it. The choice determines
-whether `SSRB-102` becomes unnecessary or merely deferred.
+Renaming to dodge the collision was rejected. `annotation` is the project's own
+word for these markers, in the spec text, in `TEST_ANNOTATION_REFERENCE.md`, and
+in the CLI. The collision expires at v1.0.0; a worse name would not.
+
+### 7.2 The value is `scope: test | all`, not `state: default | full`
+
+`default` names a config position rather than a behavior. It teaches a reader
+nothing and becomes false the moment the default moves: if `all` ever became the
+default, `state: default` would mean all.
+
+`scope` names the axis, which `state` left unnamed. `test` and `all` are
+parallel, where `test` and `full` are not: one names a scope and the other names
+completeness.
+
+### 7.3 Manifest only. No CLI flag, and none is planned
+
+This is the decision with the largest consequences, and it goes further than the
+question asked.
+
+**What it buys.** Flag and manifest cannot diverge if there is no flag. That is
+the entire bug class `bugs/SP-SP-046` and `bugs/SP-SP-047` document, made
+unreachable by construction rather than by discipline. The precedence question
+disappears with it, and so does the `Changed()` hazard: today `strict` combines
+flag and manifest as `strict || m.Settings.Strict` at four sites, so
+`--strict=false` cannot turn off a manifest `true`, and **no flag in the codebase
+uses `cmd.Flags().Changed()`**.
+
+**What it costs.** No per-invocation override. A team that wants permissive
+locally and enforcing in CI needs two manifests or a manifest edit, and
+trialling `scope: all` in one job before committing is not possible.
+
+**One consequence needs an answer before v1.0.0, and it is not blocking now.**
+`vscode-extension/src/client.ts:180` invokes
+`['coverage', '--json', '--strictness', 'annotation']`. Its own comment records
+why, and the reason is stronger than a display preference: under a `threshold`
+manifest, plain `coverage` hard-fails without a results file and **emits no JSON
+at all**, so the flag is what guarantees a parseable document on every run.
+Remove `--strictness` at v1.0.0 with no replacement and the extension has no way
+to force that.
+
+Worth naming precisely: **the extension's override exists to work around a
+contract violation.** `spec-coverage` C-10 already claims `--json` emits a
+document in every state, and `bugs/SP-SP-032` records that it does not. Make
+that claim true and the extension needs no override. That is the cheaper fix and
+it is owed anyway.
+
+### 7.4 `permissive` is the severity mechanism. None of the three existing patterns applies
+
+The question was which of three existing mechanisms should carry the
+missing-test diagnostic's severity. The answer is none, and the mechanism was
+already chosen when `permissive` became a sub-key.
+
+**Tier routing is wrong, provably.** The existing pattern maps Tier 1 to error,
+Tier 2 to warning, Tier 3 to info (`internal/checker/check.go:50-54`). Applied
+to a missing test, a Tier 3 criterion with no test would emit `info`, which does
+not fail. That contradicts rule 1, which says the tier does not excuse a missing
+test.
+
+**Global escalation is wrong.** `opts.Strict` belongs to `settings.strict`, a
+different setting whose own definition is unsettled (`features/SP-005`).
+Coupling the annotation rule to it rebuilds the bundling this work dismantles.
+
+**Ladder routing is unavailable**, since the ladder is what retires.
+
+So the diagnostic is `error` when `permissive: false` and `warning` when true,
+decided by that setting and nothing else. That is a fourth pattern: a per-feature
+severity switch.
+
+**Consequence for SSRB-102.** It becomes deferred rather than unnecessary. Two
+features will now each carry their own severity switch, `settings.strict` for
+checker diagnostics and `annotation.permissive` for the marker rule. **A third
+would be the point at which a general per-rule mechanism earns its keep**, and
+that should be recorded in SSRB-102 as a concrete reconsideration trigger rather
+than left as NEEDS-DESIGN with no threshold.
 
 ### 7.4 Exit codes get distinct triggers, which the retirement otherwise removed
 
