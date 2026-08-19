@@ -326,6 +326,12 @@ no particular flag design. Whichever is chosen, the precedence rule between flag
 and manifest must be stated per sub-key, because this project has already
 shipped one setting where the flag and the key diverge (`bugs/SP-SP-047`).
 
+A fourth question is mechanical rather than definitional, so it lives in
+`docs/ssrb/SSRB-104.md` section 7 rather than here: `permissive` supplies the
+warn-or-fail decision, and which existing mechanism carries it is unsettled.
+Three exist in the tree, and the choice determines whether `SSRB-102` becomes
+unnecessary or merely deferred.
+
 ### Two consequences that are settled
 
 **Exit codes get distinct triggers.** Codes 2 and 3 fire today only under
