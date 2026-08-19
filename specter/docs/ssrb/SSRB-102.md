@@ -151,13 +151,20 @@ the reason to leave SP-004 unfixed.
 - SP-004 is resolved in a way that leaves adopters needing suppression anyway.
 - The post-v1.0 stability window opens, changing the cost calculus for manifest
   additions.
+- **A third feature grows its own per-feature severity switch.** Added
+  2026-08-19 with SSRB-104. Two now exist: `settings.strict` for checker
+  diagnostics, and `settings.annotation.permissive` for the marker rule. Two
+  private switches are cheaper than a general layer. Three are not, and that is
+  the concrete threshold this brief previously lacked.
 
 ## 9. References
 
 - `bugs/SP-SP-004-structural-conflict-scan-produces-false-positives-against-c-05`
   in the Context Plane; carried as open item 4 in the project memory.
 - Related SSRBs: SSRB-101 (source-file governance, NEEDS-DESIGN on the same
-  universality standard).
+  universality standard); SSRB-104, which decided that the marker rule carries
+  its own severity switch rather than routing through an existing mechanism, and
+  so supplies this brief's counting threshold.
 - Related specs and code: the check package's severity resolution, the manifest
   settings validation, and the coverage strictness setting that already modulates
   one diagnostic's severity.
