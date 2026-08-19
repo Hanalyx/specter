@@ -15,7 +15,7 @@ To start a new brief: copy [`TEMPLATE.md`](TEMPLATE.md) to `SSRB-NNN.md` (the nu
 | [101](SSRB-101.md) | Source-file governance: annotation (F7) vs `governs:` list (F8) | REJECT | 2026-08-16 |
 | [102](SSRB-102.md) | `settings.diagnostics`, per-rule severity in the manifest | NEEDS-DESIGN | TBD (with the SP-004 resolution) |
 | [103](SSRB-103.md) | Multi-stream evidence in ingest and coverage | NEEDS-DESIGN | TBD |
-| [104](SSRB-104.md) | Retire `settings.strictness` for `settings.annotation` | ACCEPT in direction, NEEDS-DESIGN in shape | 2026-08-18 (direction) |
+| [104](SSRB-104.md) | Retire `settings.strictness` for `settings.annotation` | ACCEPT | 2026-08-19 |
 
 ## Status legend
 
