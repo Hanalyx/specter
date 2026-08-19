@@ -241,17 +241,47 @@ request, `features/SP-006`, and is not settled by this entry.
 removed there**. Both keep their current behavior for the whole window, so no
 existing workspace changes meaning on upgrade.
 
-The replacement is `settings.annotation` and `--annotation`, a single axis
-governing **where `@spec` and `@ac` markers must appear**, with three positions:
+The replacement is `settings.annotation`, carrying two sub-keys:
 
-| Value | Scans | On a missing marker |
-|---|---|---|
-| `permissive` | test and source | warn |
-| `default` | test only | fail |
-| `full` | test and source | fail |
+```yaml
+settings:
+  annotation:
+    state: default       # default | full
+    permissive: false    # true warns where false fails
+  coverage:
+    tier1: 100
+    tier2: 80
+    tier3: 50
+```
 
-Coverage strictness moves to the existing `settings.coverage.tier1`, `tier2` and
-`tier3` thresholds. All three at 100 is the strict posture.
+**Four rules.**
+
+1. **The annotation rule.** Every acceptance criterion must have a test. A
+   criterion with no test fails, and the tier threshold does not excuse it.
+2. **`state` sets the scope.** `default` requires markers in test files. `full`
+   requires them in test and source files.
+3. **The tier thresholds set the allowed failure rate among criteria that do
+   have tests.** `tier2: 80` means 80 percent must have a passing test.
+4. **`permissive` sets severity, not scope.** It warns where the same
+   configuration would otherwise fail.
+
+`permissive` and `state` are two axes rather than three points on one ladder.
+An earlier draft of this section proposed the single ladder, and the sub-key
+shape replaced it because a severity setting and a scope setting cannot be
+positions on the same list.
+
+**What the separation buys.** Today the coverage percentage cannot distinguish
+a criterion with no test from a criterion whose test failed:
+
+```
+A: AC-04 has a test, and it failed     4 ACs  3 covered  75%  PASS
+B: AC-04 has no test at all            4 ACs  3 covered  75%  PASS
+```
+
+Byte-identical for two problems that need different responses. Under the rules
+above, A is a pass-rate question against the tier and B is a hard failure.
+
+**`full` does not ship in v0.15.0.** It requires reopening SSRB-101.
 
 ### Why this is a replacement rather than a rename
 
@@ -276,44 +306,39 @@ Verified by which commands discover test files at all:
 
 ### Open questions this entry does not answer
 
-Four, recorded so they are decided rather than inherited.
+Three remain. Three others were resolved by the two-key shape and are recorded
+in `docs/ssrb/SSRB-104.md` section 7 so nobody re-derives them: the ladder was
+not monotonic, one corner of the scope-severity grid was missing, and the tier
+overlap was unstated. All three were artifacts of squeezing two axes into one
+list.
 
-**The value names collide with a value being retired.** `annotation` is today a
+**The key name collides with a value being retired.** `annotation` is today a
 value of `settings.strictness`. Both keys are accepted until v1.0.0, so a
-manifest may legally carry `strictness: annotation` and `annotation: default`
-together, meaning different things. That is the shape this document exists to
-end.
+manifest may legally carry `strictness: annotation` and an `annotation.state`
+block together, meaning different things. That is the shape this document exists
+to end.
 
-**The ladder is not monotonic.** `permissive` scans test and source; `default`
-scans test only. Moving from the first to the second **narrows** scope while
-widening severity, so source findings visible under `permissive` disappear under
-`default` and return as errors under `full`. Information vanishes at the step
-every adopter takes.
+**`default` names a config position rather than a behavior**, so the name lies
+if the default ever moves. `test` would describe the scope and pair with `full`.
 
-**One corner of the grid is missing.** Scope and severity form a two-by-two and
-three corners are used. Test-only-with-warnings, the natural first rung for a
-project not yet ready to decide about source markers, has no value.
+**The CLI surface does not follow from the manifest shape.** Two sub-keys imply
+no particular flag design. Whichever is chosen, the precedence rule between flag
+and manifest must be stated per sub-key, because this project has already
+shipped one setting where the flag and the key diverge (`bugs/SP-SP-047`).
 
-**`default` names a config position rather than a behavior**, so the name lies if
-the default ever moves.
+### Two consequences that are settled
 
-### The overlap to settle before implementing
+**Exit codes get distinct triggers.** Codes 2 and 3 fire today only under
+`zero-tolerance` and would go unreachable. Under the four rules each gets a
+condition that needs no ladder: exit 1 for a pass rate below the tier, exit 2 for
+a criterion with no test, exit 3 for an unmet approval gate.
 
-`annotation: default` says fail when a criterion has no test marker.
-`coverage.tierN: 100` says every criterion must be covered, which under
-annotation-evidence means annotated. **Those are the same assertion**, and
-coverage already enforces it.
-
-They differ usefully: coverage yields a percentage where annotation would yield
-a per-criterion diagnostic with file and line; coverage is per-tier where
-annotation is global; and coverage cannot reach source files at all.
-
-The interaction needs a stated rule. With `annotation: default` in force, any
-tier below 100 can never fail on marker grounds, because the marker check fires
-first.
-
-`full` is F7, rejected in `docs/ssrb/SSRB-101.md` on 2026-08-16. It requires a
-founder override reopening that brief, and it is the only value that needs one.
+**Deferred criteria become a prerequisite.** The annotation rule fails a
+criterion with no test, and Specter's own repository would fail three of fifteen
+specs under it. `spec-manifest` AC-29 shows why that is not merely unfinished
+work: it asserts that `git push --no-verify` bypasses the pre-push hook, a fact
+about git rather than about Specter, so no honest test exists. Roadmap phase 3C
+moves from optional to required, because the alternative recourse is a fake test.
 
 ## the three levels
 

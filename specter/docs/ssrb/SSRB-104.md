@@ -9,17 +9,50 @@ Source: the strict/strictness consensus panel of 2026-08-17, and `features/SP-00
 Retire `settings.strictness` and `--strictness`. Keep both accepted until
 v1.0.0 with unchanged behavior, then remove them.
 
-Replace with `settings.annotation` and `--annotation`, one axis governing where
-`@spec` and `@ac` markers must appear:
+Replace with `settings.annotation`, carrying two sub-keys:
 
-| Value | Scans | On a missing marker |
-|---|---|---|
-| `permissive` | test and source | warn |
-| `default` | test only | fail |
-| `full` | test and source | fail |
+```yaml
+settings:
+  annotation:
+    state: default       # default | full
+    permissive: false    # true warns where false fails
+  coverage:
+    tier1: 100
+    tier2: 80
+    tier3: 50
+```
 
-Coverage strictness moves to the existing `settings.coverage.tier1`, `tier2`
-and `tier3` thresholds. All three at 100 is the strict posture.
+**The model, in four rules.**
+
+1. **The annotation rule.** Every acceptance criterion must have a test. A
+   criterion with no test fails, and the tier threshold does not excuse it.
+2. **`state` sets the scope.** `default` requires markers in test files. `full`
+   requires them in test and source files.
+3. **The tier thresholds set the allowed failure rate among criteria that do
+   have tests.** `tier2: 80` means 80 percent of criteria must have a passing
+   test. `tier1: 100` means all of them must.
+4. **`permissive` sets severity, not scope.** It warns where the same
+   configuration would otherwise fail, and it applies to whichever `state` is
+   set.
+
+So `permissive` and `state` are two axes rather than three points on one ladder.
+That resolves three open questions from an earlier draft of this brief and is
+the reason for the sub-key shape.
+
+**What the separation buys, measured.** Today the coverage percentage cannot
+distinguish a criterion with no test from a criterion whose test failed:
+
+```
+A: AC-04 has a test, and it failed     4 ACs  3 covered  75%  PASS
+B: AC-04 has no test at all            4 ACs  3 covered  75%  PASS
+```
+
+Byte-identical output for two problems that need different responses from a
+developer. Under the rules above, A is a pass-rate question against the tier and
+B is a hard failure of the annotation rule.
+
+**`full` does not ship in v0.15.0.** It requires reopening SSRB-101 and is
+deliberately out of the first release.
 
 ## 2. Origin
 
@@ -129,40 +162,86 @@ That should be stated rather than reached by inaction.
 
 ## 7. Decision
 
-**The retirement is accepted by founder direction.** The replacement's shape is
-NEEDS-DESIGN, on five questions this brief does not settle.
+**The retirement is accepted by founder direction, and the shape is settled**
+as stated in section 1. Three questions from the first draft are resolved by the
+two-key structure and are recorded here so nobody re-derives them.
 
-**7.1 The value names collide with a value being retired.** `annotation` is
-today a value of `settings.strictness`. Both keys are accepted through the
-window, so a manifest may legally carry `strictness: annotation` and
-`annotation: default` together, meaning different things. That is the failure
-this work exists to end, reintroduced in the replacement.
+**Resolved: the ladder is not monotonic.** It was, when `permissive`, `default`
+and `full` were three points on one list, because `permissive` scanned more than
+`default`. With `permissive` as a severity flag over whichever `state` is set,
+the problem does not arise.
 
-**7.2 The ladder is not monotonic.** `permissive` scans test and source;
-`default` scans test only. Moving from the first to the second narrows scope
-while widening severity, so source findings visible under `permissive` disappear
-under `default` and return as errors under `full`. Information vanishes at the
-step every adopter takes.
+**Resolved: a missing corner of the grid.** Scope and severity are now two axes
+with all four combinations expressible.
 
-**7.3 One corner of the grid is missing.** Scope and severity form a two-by-two
-and three corners are used. Test-only-with-warnings, the natural first rung for a
-project not ready to decide about source markers, has no value.
+**Resolved: the overlap with tier thresholds.** They govern different things.
+The annotation rule asks whether a test exists; the tier threshold asks what
+share of existing tests must pass. A criterion with no test fails regardless of
+tier.
 
-**7.4 `default` names a config position rather than a behavior.** The name lies
-if the default ever moves.
+Three questions remain.
 
-**7.5 The overlap with tier thresholds.** `annotation: default` says fail when a
-criterion has no test marker. `coverage.tierN: 100` says every criterion must be
-covered, which under annotation-evidence means annotated. Those are the same
-assertion, and coverage already enforces it. With `annotation: default` in force,
-any tier below 100 can never fail on marker grounds, because the marker check
-fires first.
+**7.1 The key name collides with a value being retired.** `annotation` is today
+a value of `settings.strictness`. Both keys are accepted through the window, so
+a manifest may legally carry `strictness: annotation` and an
+`annotation.state` block together, meaning different things. That is the failure
+this work exists to end, reappearing in the replacement.
 
-**A sixth question is mechanical rather than design.** A missing-marker
+**7.2 `default` names a config position rather than a behavior.** The name lies
+if the default ever moves. `test` would describe the scope directly and pair
+naturally with `full`.
+
+**7.3 The CLI surface is unspecified.** The manifest carries two sub-keys and no
+flag shape follows from that. `--annotation <state>` plus a separate
+`--annotation-permissive`, a single flag carrying both, or state-only with
+permissive left to the manifest are all open. Whichever is chosen, the
+precedence rule between flag and manifest has to be stated per sub-key, because
+this project has already shipped one setting where the flag and the key diverge
+(`bugs/SP-SP-047`).
+
+**A fourth question is mechanical rather than design.** A missing-test
 diagnostic needs a severity, and three patterns exist in the tree: tier routing
 as orphan constraints use, ladder routing as `unreachable_annotation` uses, and
-global escalation through `opts.Strict`. The choice determines whether
-`SSRB-102` becomes unnecessary or merely deferred.
+global escalation through `opts.Strict`. `permissive` supplies the warn-or-fail
+decision, so what remains is which mechanism carries it. The choice determines
+whether `SSRB-102` becomes unnecessary or merely deferred.
+
+### 7.4 Exit codes get distinct triggers, which the retirement otherwise removed
+
+Codes 2 and 3 fire today only under `zero-tolerance` and would go unreachable.
+Under the model in section 1 each code gets a condition that does not depend on
+a ladder:
+
+| Code | Trigger |
+|---|---|
+| 1 | Pass rate below the tier threshold |
+| 2 | A criterion has no test at all |
+| 3 | Approval gate unmet |
+
+This is offered as an observation rather than a decision. It resolves the
+contradiction between this brief and `docs/EXIT_CODES.md`, which registers both
+codes as Stable.
+
+### 7.5 Deferred criteria become a prerequisite, not an optional phase
+
+The annotation rule fails a criterion that has no test. Specter's own repository
+would fail three of fifteen specs under it:
+
+```
+spec-diff        92.9%   uncovered: AC-11
+spec-manifest    98%     uncovered: AC-29
+spec-reverse     94.7%   uncovered: AC-18
+```
+
+`spec-manifest` AC-29 shows why this is not simply unfinished work. It asserts
+that `git push --no-verify` bypasses the pre-push hook, which is a fact about
+git rather than about Specter, so no honest test exists.
+
+A workspace adopting the annotation rule needs a way to say *this criterion is
+deliberately untested, and here is why*. That is roadmap phase 3C, deferred
+criteria (`SSRB-098`). **It moves from an optional phase-3 item to a
+prerequisite**, because the alternative recourse is a fake test, which is worse
+than no test and defeats the evidence the rule exists to capture.
 
 **`full` requires reopening SSRB-101.** That brief rejected source-file
 annotation as F7 on 2026-08-16, arguing that an annotation on an implementation
