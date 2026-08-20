@@ -869,12 +869,26 @@ and `system.tier` never influence a spec's effective tier.
 
 That is not cosmetic. `specter init` writes both fields into every new workspace
 and `docs/GETTING_STARTED.md` shows them, so a team setting tiers per domain gets
-silence and no effect. It is the same shape as `tier_overrides` in the next
-entry, which is filed as `bugs/SP-SP-001`, except that this one emits no warning
-at all.
+silence and no effect. The only full manifest example,
+`testdata/manifests/valid/full.specter.yaml`, declares tier at four levels:
+`system.tier`, three domain tiers, per-entry tiers in `registry`, and the specs
+themselves. Three of the four decide nothing. It is the same shape as
+`tier_overrides` in the next entry, which is filed as `bugs/SP-SP-001`, except
+that this one emits no warning at all.
 
 Scoped precisely: this is about tier **resolution**. Domains still drive
-`--scope`.
+`--scope`, and that path reads `domain.Specs` without ever reading
+`domain.Tier`.
+
+**Under consideration, and not current behavior.** `bugs/SP-SP-049` records the
+defect and carries a recommendation: relax `spec.tier` to optional so a spec
+inherits its domain's tier, remove `system.tier`, and report a spec whose
+declared tier disagrees with its domain's. The argument is that per-domain tier
+assignment is a capability the manifest already has a field for.
+`settings.annotation` makes it worth having, because the tier thresholds become
+the allowed failure rate among criteria that have tests. None of that is decided.
+It is a schema change, so it needs an SSRB, and that brief should settle
+`tier_overrides` in the same pass.
 
 **Standing. Open.** An earlier draft marked this Settled on the strength of a
 source read. The read was accurate about the function body and wrong about what
@@ -1074,6 +1088,7 @@ above with its evidence.
 | `--scope` prerequisite | Requires the literal `--strict` flag | `--strictness zero-tolerance` is refused despite being stricter | Not filed |
 | `tier_conflict` | Code: a `tier_overrides` mismatch | `CLI_REFERENCE.md:190`: a high-tier spec depending on a low-tier one | Not filed |
 | `tier_overrides` | Warning says "using override" | No caller applies it | `SP-SP-001` |
+| tier cascade | `ResolveTier` inherits from a domain tier, then `system.tier`, then a default of 2 | `spec-schema.json` makes `tier` required with enum `[1,2,3]`, so only step 1 can run | `SP-SP-049` |
 | `dangling_reference` | Parse: an undeclared constraint reference | Resolve: an unknown `depends_on` target | Not filed |
 | Tier 3 orphan severity | `spec-check` C-02 and the code: `info` | `spec-check` objective scope, line 36: `warning` | `SP-SP-003` |
 | sync's default strictness | Code comment at `main.go:1318`: "ultimate default is `annotation`" | Behavior: `threshold`, because the manifest loader fills it in | Not filed |
