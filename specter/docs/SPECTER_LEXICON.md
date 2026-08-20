@@ -928,24 +928,54 @@ where displayed and compared numbers disagreed.
 **Meaning.** An integer from 1 to 3 declaring how much rigor a spec is held to.
 Tier 1 is the strictest.
 
-It changes **enforcement** in exactly three ways: the default coverage
-threshold, the severity of one diagnostic (`orphan_constraint`), and the Tier 1
-evidence rule that a criterion needs a passing result and not only an
-annotation. The third is a coverage rule, not a severity. Citations are in
-Surfaces below, kept in one place so the line numbers have one place to drift.
+A tier is read in three different registers, and the counts below are closed
+lists **for the Go binary**. The VS Code extension reads a tier three more
+times and is excluded on purpose, per this document's Scope: it changes no gate
+result. Those three are named at the end of this entry so the exclusion is
+visible rather than silent.
 
-It also drives **presentation**, named here so that "exactly three" is not read
-as a claim that nothing else touches the field. A tier sorts entries within a
-coverage bucket (`internal/coverage/coverage.go:792`), groups the summary
-rollup (`:826`), and is printed by `doctor` (`cmd/specter/main.go:2273-2275`),
-which re-derives the threshold from the same map only in order to display it.
-None of these decide a verdict.
+**Enforcement, exactly three.** The default coverage threshold, the severity of
+one diagnostic (`orphan_constraint`), and the Tier 1 evidence rule that a
+criterion needs a passing result and not only an annotation. The third is a
+coverage rule, not a severity. Citations are in Surfaces below, kept in one
+place so the line numbers have one place to drift.
+
+**Emission, exactly one.** A tier decides whether `tier_conflict` exists at all.
+`internal/manifest/tier_conflict.go:37` skips a spec when `spec.Tier == 0` or
+when it equals the override, so the same manifest produces the warning against a
+Tier 3 spec and nothing against a Tier 1 spec. This is not enforcement, because
+it gates nothing: `check` exits 0 with the warning present, and `check --strict`
+leaves it a warning while promoting the orphan, which is the promotion gap
+recorded in Part 5. It is not presentation either. It is its own register, and
+the two-bucket split an earlier draft used had no slot for it.
+
+**Presentation, the rest.** A tier sorts entries within a coverage bucket
+(`internal/coverage/coverage.go:792`), groups the summary rollup (`:826`),
+prints the `T%-5d` column in the coverage table (`cmd/specter/main.go:1189`), is
+printed twice by `explain` (`:2701`, `:2747`), and is printed by `doctor`
+(`:2273-2275`), which re-derives the threshold from the same map only in order
+to display it. None of these decide a verdict.
 
 **Surfaces.** Declared per spec as `tier:`. **Nothing resolves it.** Every live
-consumer reads `spec.Tier` raw: `internal/coverage/coverage.go:517` (the Tier 1
-evidence rule), `:542` (the threshold lookup), `:571` (the `tier` field in
-`--json`), and `internal/checker/check.go:189` (orphan severity). The only
-tier-keyed severity map in the tree is `orphanSeverityByTier` at
+consumer reads `spec.Tier` raw. The complete list for the Go binary, which
+matters because it is what anyone scoping `bugs/SP-SP-049` has to change:
+
+| Site | Register |
+|---|---|
+| `internal/coverage/coverage.go:517` | the Tier 1 evidence rule |
+| `internal/coverage/coverage.go:542` | the threshold lookup |
+| `internal/checker/check.go:189` | orphan severity |
+| `internal/manifest/tier_conflict.go:37,42,46` | whether `tier_conflict` is emitted |
+| `internal/coverage/coverage.go:571` | the `tier` field in `--json` |
+| `cmd/specter/main.go:2701`, `:2747` | `explain`, printed |
+| `internal/schema/validate.go:93` | range validation, decides nothing |
+
+An earlier draft gave the first three plus `:571` and called that "every live
+consumer." It was an absolute quantifier over an incomplete list, which is the
+worst shape a claim can take in a document meant for scoping. `explain` and the
+conflict check were missing.
+
+The only tier-keyed severity map in the tree is `orphanSeverityByTier` at
 `check.go:50`. `duplicate_ac_id` refuses tier routing outright
 (`internal/checker/duplicate_ac_id.go:12-13`).
 
@@ -955,8 +985,12 @@ tier-keyed severity map in the tree is `orphanSeverityByTier` at
 the spec, then `system.tier`, then a hardcoded default of 2. It has two call
 sites and **neither is reachable**. `types.go:164` sits inside
 `ResolveTierWithOverrides`, which has no caller. `registry.go:15` sits inside
-`BuildRegistryFromSpecs`, whose only caller is `UpdateRegistry`, which has no
-caller either. Confirmed by running: `sync` on a workspace whose `specter.yaml`
+`BuildRegistryFromSpecs`, whose only **non-test** caller is `UpdateRegistry`,
+which has no caller at all, tests included. The qualifier matters in a document
+whose thesis is that you must walk the call graph:
+`internal/manifest/manifest_test.go:310` and `:334` both call
+`BuildRegistryFromSpecs`, so "only caller" without it is false.
+Confirmed by running: `sync` on a workspace whose `specter.yaml`
 has no `registry:` block leaves the manifest byte-identical, because no registry
 is ever regenerated.
 
@@ -1010,7 +1044,22 @@ not yet implemented: `internal/manifest/types.go` has no `Annotation` field, and
 The SP-SP-049 recommendation is a separate schema change that needs its own
 SSRB, and that brief should settle `tier_overrides` in the same pass.
 
-**Standing. Open.** This entry has been wrong twice, in the same direction.
+**Excluded on purpose: the VS Code extension.** Three more reads of a tier live
+there, and this document's Scope covers terms where getting it wrong changes a
+gate result. None of these do, so they are named here rather than counted above.
+Confirmed by running the extension's own jest suite with `-t` filters, not by
+driving a live VS Code window:
+
+- `vscode-extension/src/coverage.ts:529`, `classifyNotification`. A Tier 3 spec
+  dropping below threshold gets the status bar only. Tiers 1 and 2 get a toast.
+- `vscode-extension/src/coverage.ts:586`, `buildFileDecoration`. A failing Tier 1
+  spec renders red, a failing Tier 2 yellow.
+- `vscode-extension/src/extension.ts:658-659`, `updateStatusBar`. The warning
+  color trips only for a failing Tier 1 or Tier 2 spec, so a failing Tier 3 does
+  not trip it.
+
+**Standing. Open.** This entry has been wrong three times, in the same
+direction, and the third is the one that best shows the shape.
 
 The first draft marked it Settled after reading `ResolveTier`'s body. That read
 was accurate about the function and wrong about **what the function can
@@ -1023,6 +1072,13 @@ outside the function too. Both drafts cited a body and neither followed the call
 graph. A citation shows a term is used somewhere; only a measurement shows what
 it decides, and for a function the first measurement is whether anything calls
 it.
+
+The third draft fixed the mechanism and then wrote "every live consumer reads
+`spec.Tier` raw" over a list of four, when there are seven. That is a different
+error from the first two and a worse one for this document's purpose: an
+absolute quantifier is what a reader scoping `bugs/SP-SP-049` would trust to be
+closed. A list that is merely incomplete misleads only about itself. A list
+labeled **every** misleads about the tree.
 
 ## tier override
 
@@ -1407,8 +1463,10 @@ version 0.14.1, fixtures in a scratch directory):
 - A manifest declaring `system.tier: 1` **and** a domain at `tier: 1` listing the
   spec, against a spec declaring `tier: 3`. `coverage --strictness annotation
   --json` returns `"tier": 3, "threshold": 50`, and `check` reports the orphan at
-  `info`, which is Tier 3 severity and confirms the domain tier independently of
-  the JSON.
+  `info`, which is Tier 3 severity and so confirms independently of the JSON that
+  the domain tier was **not** applied. An earlier wording of this bullet said it
+  "confirms the domain tier", which reads as the opposite of what the fixture
+  showed.
 - No warning on any of `check`, `coverage`, or `sync`. Both streams carried
   nothing about the disagreement.
 - `coverage --strict --scope payments --json` on that fixture, still reporting
@@ -1424,12 +1482,15 @@ skipped:
 
 - `ResolveTier` has two call sites, `registry.go:15` and `types.go:164`.
 - `types.go:164` is inside `ResolveTierWithOverrides`, which has no caller.
-- `registry.go:15` is inside `BuildRegistryFromSpecs`, whose only caller is
-  `UpdateRegistry`, which has no caller.
+- `registry.go:15` is inside `BuildRegistryFromSpecs`, whose only non-test
+  caller is `UpdateRegistry`, which has no caller at all.
+  `manifest_test.go:310` and `:334` call `BuildRegistryFromSpecs` directly.
 - `DomainCoverage` at `domain.go:48`, the only other reader of `domain.Tier`,
   also has no caller.
-- The live consumers read `spec.Tier` raw: `coverage.go:517`, `:542`, `:571`,
-  and `check.go:189`.
+- The live consumers read `spec.Tier` raw. The complete Go-binary list is in the
+  entry itself and has seven rows, not the four an earlier draft gave.
+  `explain` at `main.go:2701` and `:2747` and the conflict check at
+  `tier_conflict.go:37` were the ones missing.
 - `orphanSeverityByTier` at `check.go:50` is the only tier-keyed severity map in
   the tree. `duplicate_ac_id.go:12-13` refuses tier routing.
 
@@ -1438,7 +1499,9 @@ do if the schema allowed one. `CoverageThresholds()` at `types.go:126-139`
 populates keys 1, 2 and 3 only, so `thresholds[0]` misses and
 `coverage.go:542-545` falls back to 80. `orphanSeverityByTier[0]` returns the
 empty string and the guard at `check.go:189-192` turns it into `warning`. Both
-are near-Tier-2 behavior. This could not be run, because the schema blocks
+are near-Tier-2 behavior. A tier-0 spec would also vanish from the summary
+rollup, because `BuildSummaryHeader` loops `for tier := 1; tier <= 3` at
+`coverage.go:838`. This could not be run, because the schema blocks
 `tier: 0` at the CLI and running it would have meant editing the repository.
 `bugs/SP-SP-049` carries the same flag, and it is the reason the recommendation
 there costs more than it first appeared to.
