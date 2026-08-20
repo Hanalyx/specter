@@ -222,9 +222,11 @@ question asked.
 the entire bug class `bugs/SP-SP-046` and `bugs/SP-SP-047` document, made
 unreachable by construction rather than by discipline. The precedence question
 disappears with it, and so does the `Changed()` hazard: today `strict` combines
-flag and manifest as `strict || m.Settings.Strict` at four sites, so
-`--strict=false` cannot turn off a manifest `true`, and **no flag in the codebase
-uses `cmd.Flags().Changed()`**.
+flag and manifest as `strict || m.Settings.Strict` at **three** sites,
+`main.go:711`, `:1313` and `:1347`, so `--strict=false` cannot turn off a
+manifest `true`, and **no flag in the codebase uses `cmd.Flags().Changed()`**. A
+fourth site, `:3003`, reads `m.Settings.Strict` alone, because `watch` accepts
+no flag at all.
 
 **What it costs.** No per-invocation override. A team that wants permissive
 locally and enforcing in CI needs two manifests or a manifest edit, and
@@ -274,7 +276,7 @@ would be the point at which a general per-rule mechanism earns its keep**, and
 that should be recorded in SSRB-102 as a concrete reconsideration trigger rather
 than left as NEEDS-DESIGN with no threshold.
 
-### 7.4 Exit codes get distinct triggers, which the retirement otherwise removed
+### 7.5 Exit codes get distinct triggers, which the retirement otherwise removed
 
 Codes 2 and 3 fire today only under `zero-tolerance` and would go unreachable.
 Under the model in section 1 each code gets a condition that does not depend on
@@ -290,7 +292,7 @@ This is offered as an observation rather than a decision. It resolves the
 contradiction between this brief and `docs/EXIT_CODES.md`, which registers both
 codes as Stable.
 
-### 7.5 Deferred criteria become a prerequisite, not an optional phase
+### 7.6 Deferred criteria become a prerequisite, not an optional phase
 
 The annotation rule fails a criterion that has no test. Specter's own repository
 would fail three of fifteen specs under it:
@@ -311,21 +313,22 @@ criteria (`SSRB-098`). **It moves from an optional phase-3 item to a
 prerequisite**, because the alternative recourse is a fake test, which is worse
 than no test and defeats the evidence the rule exists to capture.
 
-**`full` requires reopening SSRB-101.** That brief rejected source-file
+**`scope: all` requires reopening SSRB-101.** That brief rejected source-file
 annotation as F7 on 2026-08-16, arguing that an annotation on an implementation
 function has no runner-visible counterpart and can only ever be an unverifiable
 claim. That argument survives the intent clarification and should be answered
-rather than bypassed. If `full` does not land, `permissive | default` is a
-two-value enum, which is a boolean wearing an enum's clothes.
+rather than bypassed. If `scope: all` does not land, `scope` carries a single
+value and is inert until it does. Section 7.2's naming decision stands either
+way.
 
 ## 8. Reconsideration triggers
 
-- Any answer to 7.1 through 7.5 that changes the value set materially, which
+- Any answer to 7.1 through 7.4 that changes the value set materially, which
   makes this brief describe a different request.
 - A decision to abandon marker enforcement, which turns this into a plain
   deprecation with no replacement.
-- SSRB-101 reopened and F7 accepted, which promotes `full` from conditional to
-  ordinary.
+- SSRB-101 reopened and F7 accepted, which promotes `scope: all` from
+  conditional to ordinary.
 - Evidence that the deprecation window is too short, meaning adopters cannot
   migrate a manifest key inside one minor series.
 

@@ -11,10 +11,16 @@ not a parse error, because both are valid keys. That collision is the spine of
 Part 1 and the root of most of what follows.
 
 Verified against `release/v0.15.0` at `d85a77e`, using a binary built with
-`make build` from `specter/`. No code or spec changed between `d85a77e` and this
-document's own first commit, so that reference still holds. Every claim about
-current behavior was checked by running `bin/specter` or by reading source.
-[Appendix A](#appendix-a-how-each-claim-was-checked) says which, claim by claim.
+`make build` from `specter/`. Every commit since has touched documentation only,
+confirmed by `git diff --stat d85a77e..HEAD`, so no code or spec has moved under
+the measurements below.
+
+Every claim about current behavior was checked by running `bin/specter` or by
+reading source. [Appendix A](#appendix-a-how-each-claim-was-checked) says which,
+claim by claim, **for the claims present at the second commit**. This document
+has been amended six times since, and the appendix does not cover what those
+amendments added. Those claims were independently verified on 2026-08-20 and the
+appendix carries a list of them rather than a per-claim split.
 
 ## Scope
 
@@ -87,10 +93,16 @@ manifests. This entry exists to keep them apart, not to argue for a change.
 and was **intended** as a third that was never built. Any single-sentence
 definition of it is currently false.
 
-First, severity promotion. Every warning and info diagnostic is reported as an
-error, so the command exits non-zero. Measured on a Tier 2 spec with one orphan
-constraint: `check` reports `0 error(s), 1 warning(s)` and exits 0, while
-`check --strict` reports `1 error(s), 0 warning(s)` and exits 1.
+First, severity promotion, **for the diagnostic families that reach the
+promoter**. Those are reported as errors, so the command exits non-zero.
+Measured on a Tier 2 spec with one orphan constraint: `check` reports
+`0 error(s), 1 warning(s)` and exits 0, while `check --strict` reports
+`1 error(s), 0 warning(s)` and exits 1.
+
+The qualifier is load-bearing and is not a hedge. Measured on a workspace with
+two `unreachable_annotation` warnings, `check --test --strict` reports
+`0 error(s), 2 warning(s), 0 info` and exits 0. See "Promotion is incomplete"
+below for why.
 
 Second, scan gating. On `sync`, it decides whether the test-annotation
 cross-reference runs **at all** (`main.go:1347`). Measured, no flag in either
@@ -320,8 +332,11 @@ word for these markers.
 than a behavior and would have become false the moment the default moved.
 
 **Manifest only, no flag.** Flag and manifest cannot diverge if there is no
-flag, which makes the `bugs/SP-SP-046` and `bugs/SP-SP-047` bug class
-unreachable by construction. The cost is that no per-invocation override exists.
+flag, which makes that class of divergence unreachable **for this setting**. It
+does not resolve `bugs/SP-SP-046` or `bugs/SP-SP-047`, which are filed against
+`--strict` and `settings.strict` and which SSRB-104 does not touch. Those stay
+open and belong to `features/SP-005`. The cost is that no per-invocation
+override exists.
 
 **`permissive` is the severity mechanism.** None of the three existing patterns
 fits. Tier routing would emit `info` for a Tier 3 criterion with no test, which
@@ -519,6 +534,19 @@ running both.
 
 **This section is a proposal. A human signs off before `SP-046` is implemented.**
 
+**Read it against the RETIRING section above, which is newer and which it
+predates.** Every concrete remedy below is written in terms of `--strictness`
+and `settings.strictness`, which `docs/ssrb/SSRB-104.md` retires at v1.0.0. The
+proposal's core, that `--strict` means the severity switch and one word should
+do one job, survives and is tracked as `features/SP-005`. Its mechanics do not:
+where it says the ladder is reachable through `--strictness`, read that as the
+ladder reachable through whatever survives the retirement. Where it tells
+`make dogfood-strict` to call `--strictness zero-tolerance`, read the tier
+thresholds instead.
+
+Kept rather than deleted because the reasoning is still the reasoning, and
+because a reader tracing how `SP-005` was arrived at needs it.
+
 The earlier framing of this document offered two readings of `--strict` as a
 single concept. That framing was wrong and has been withdrawn. `check` accepts
 `--strict` and has no `--strictness` flag, so a definition of `--strict` in terms
@@ -631,9 +659,18 @@ with `uncovered: AC-02`. Nothing in the table says that AC-02 is annotated and
 failing rather than simply untested. The only difference an operator sees between
 the two runs is the number.
 
-The distinction survives in the diagnostics rather than in the table.
-Spec-coverage C-28 requires a per-criterion hint when a criterion has a source
-annotation but no matching pass, which is the demotion case specifically.
+**The distinction survives nowhere.** An earlier draft of this entry claimed
+that spec-coverage C-28's per-criterion hint separates the two cases. It does
+not. C-28 fires when a criterion has a source annotation and **no matching
+entry** in the results file (`specs/spec-coverage.spec.yaml:177`), and the code
+agrees: the guard is `hasEntry[key]` at `internal/coverage/coverage.go:174`. A
+criterion whose test ran and failed **has** an entry, so no hint fires. "No
+matching pass" is the hint's message text, not its trigger.
+
+Measured: two fixtures, one with a criterion whose test genuinely fails and one
+with a criterion carrying no test at all, produce byte-identical stdout and
+stderr, and neither emits a hint. The table conflates them and so do the
+diagnostics. That is the gap `docs/ssrb/SSRB-104.md` exists to close.
 
 **Standing.** Settled in behavior. The word "demote" appears throughout the specs
 and in no user-facing output, so it is an internal term. That is worth knowing
@@ -937,8 +974,11 @@ above with its evidence.
 | `tier_conflict` | Code: a `tier_overrides` mismatch | `CLI_REFERENCE.md:190`: a high-tier spec depending on a low-tier one | Not filed |
 | `tier_overrides` | Warning says "using override" | No caller applies it | `SP-SP-001` |
 | `dangling_reference` | Parse: an undeclared constraint reference | Resolve: an unknown `depends_on` target | Not filed |
-| Tier 3 orphan severity | `spec-check` C-02 and the code: `info` | `spec-check` objective scope, line 35: `warning` | `SP-SP-003` |
+| Tier 3 orphan severity | `spec-check` C-02 and the code: `info` | `spec-check` objective scope, line 36: `warning` | `SP-SP-003` |
 | sync's default strictness | Code comment at `main.go:1318`: "ultimate default is `annotation`" | Behavior: `threshold`, because the manifest loader fills it in | Not filed |
+| `settings.strict` against `--strict` on `sync` | The key reaches the severity switch at `main.go:1313` | It never reaches the ladder: `:1323` reads the flag alone, so key and flag are not interchangeable | `SP-SP-047` |
+| `--strict` promotion coverage | Promotes the families `CheckSpecs` built, at `internal/checker/check.go:150` | Skips `taDiags` and `uaDiags`, appended after that returns at `main.go:744` and `:773` | `SP-SP-047` |
+| spec-manifest C-11 against the code | C-11: strict upgrades "warning-severity" diagnostics | The code upgrades warning **and** info | `SP-SP-047` |
 
 ---
 
@@ -1043,3 +1083,36 @@ standard.
   is cited from the bug. The mechanism was confirmed here (a `--strict` run with
   no root manifest resolves to `threshold`), but the dogfood target itself was
   not run.
+
+## Appendix B: claims added after the second commit
+
+Appendix A covers the claims present at commit `e9d59e3`. This document has been
+amended six times since, and those amendments added measured claims the appendix
+does not list. An independent verification pass on 2026-08-20 checked each of the
+following and found every one accurate. They are recorded here as a list rather
+than a per-claim split, and the pass that confirmed them is named so the
+provenance is traceable.
+
+**Confirmed by running the binary:**
+
+- The `settings.strict` scan-gating table in the `strict` entry.
+- The `check --test` against `coverage` missing-marker pair in the `strictness`
+  entry.
+- The A/B conflation table. Byte-identity confirmed with `cmp` on both streams.
+- The `SP-SP-032` consequence behind `client.ts:180`: under a threshold manifest
+  with no results file, `coverage --json` writes zero bytes to stdout and exits 1,
+  while `coverage --json --strictness annotation` writes a document.
+- "Three of fifteen specs would fail" is exact: `spec-diff` AC-11,
+  `spec-manifest` AC-29, `spec-reverse` AC-18, and no others.
+- The `check --test --strict` promotion gap, previously listed in Appendix A as
+  read-only.
+
+**Confirmed by reading source:**
+
+- The four discovery citations in the command-reach table: `main.go:723`,
+  `:886`, `:1275`, `:2223`.
+- `vscode-extension/src/client.ts:180`.
+
+**Corrected by the same pass, and now fixed above:** the claim that
+spec-coverage C-28's hint distinguishes a demoted criterion from an unannotated
+one. C-28 fires on a missing **entry**, not a missing pass, so it does not.
