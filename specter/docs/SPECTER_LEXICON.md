@@ -1750,6 +1750,29 @@ directory after confirming its contents. A plausible number from a contaminated
 fixture is this project's most repeated failure, and a short directory name is
 enough to cause it.
 
+**A second process hazard, which did produce a wrong measurement.** A reviewer
+reported that `resolve` exits 0 on a parse error. It exits 1. The command was
+`specter resolve 2>&1 | head -20; echo "EXIT=$?"`, and in bash `$?` after a
+pipeline is the status of the **last** command in it. The reported number was
+`head`'s.
+
+```
+no pipe:        $?=7
+through head:   $?=0
+PIPESTATUS[0]:  $?=7
+with pipefail:  $?=7
+```
+
+This one is nastier than the contaminated fixture, because the output printed
+above the number is genuine. Only the number is wrong, and nothing in the
+transcript looks off. `set -o pipefail`, `${PIPESTATUS[0]}`, or not piping at all
+when the exit code is the claim each avoid it.
+
+**The general rule these hazards share.** This project has now been burned by a
+stale binary, a contaminated fixture, and a pipeline-swallowed exit code. In all
+three the output looked right and the conclusion was wrong. A measured number
+needs the command that produced it inspected, not only the output it printed.
+
 ## Appendix E: the absolute-quantifier sweep, 2026-08-20
 
 Two absolute quantifiers in this document had been examined and both were false,
@@ -1784,11 +1807,8 @@ decoration. The point about `check`'s blindness stands, the point about the
 stands. The absolute was added for force, and it is the only part that broke.
 Two of the four were true when written and went stale.
 
-**One claim reported and not reproduced.** The sweep noted in passing that
-`resolve` prints `Fix parse errors before resolving dependencies.` and exits 0
-on a parse error. Three fixtures were built here to reproduce it, including a
-schema-valid spec whose only defect is a dangling reference and a two-file
-workspace mixing a parse defect with a dependency defect. `resolve` exited **1**
-every time. The observation is recorded as unreproduced rather than filed.
-`bugs/SP-SP-044` covers `resolve --json` exiting zero on a dependency error and
-is a different path.
+**One claim reported, not reproduced, and withdrawn.** The sweep noted in
+passing that `resolve` exits 0 on a parse error. It exits 1. The cause was a
+measurement defect rather than a tool defect, and it is recorded in Appendix D
+because it is reusable. `bugs/SP-SP-044` covers `resolve --json` exiting zero on
+a dependency error and is a different path, still open.
