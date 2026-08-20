@@ -45,6 +45,19 @@ promoted to the correct one.
 
 **Standing.** Settled, or open. A term the project has not decided says so.
 
+**A Settled standing must rest on a measurement, and the entry must name the
+cases that were run.** A citation shows a term is used somewhere; only a
+measurement shows what it decides. This rule was learned twice on the `strict`
+entry, which carried "Settled" while the line disproving it sat in the same
+paragraph.
+
+**The file does not yet meet its own rule.** An audit on 2026-08-20 found that of
+the entries carrying a Settled standing, four name distinguishing cases and about
+seven rest on citations. One of those, `tier`, was falsified by measurement in the
+same audit and is now Open. The rest are not known to be wrong; they are known to
+be uninspected. Treat a Settled standing that names no case as provisional, and
+promote it by running something rather than by reading more.
+
 That separation is the point. A lexicon that records only behavior goes stale the
 moment behavior changes. A lexicon that records only intent hides the divergences
 that intent was supposed to prevent.
@@ -350,17 +363,44 @@ guarantee a parseable document on every run, because under a `threshold`
 manifest plain `coverage` hard-fails without a results file and emits no JSON.
 Manifest-only annotation gives it no replacement once `--strictness` is removed.
 
+**The larger casualty is this repository's own build.** `Makefile:116-117` runs
+`coverage --strictness annotation` and `sync --strictness annotation` for
+`make dogfood`, and `Makefile:135` runs `coverage --strict` for
+`make dogfood-strict`. There is no `specter.yaml` at the repository root. **Two
+targets, one tree, no manifest, needing two different modes**, and
+per-invocation control is the only mechanism that expresses that. SSRB-104
+section 7.3 accepts "no per-invocation override" as the cost of manifest-only
+without naming this as the thing it costs.
+
+Other surfaces that instruct a user or an agent to pass the retiring flag, and
+that outlive any deprecation window because they ship into other repositories:
+`internal/manifest/ai_templates.go`, written by `init --ai` into an adopter's
+tree; `internal/explain/annotation_reference.md`, embedded in the binary and
+printed by `specter explain`; and `CHANGELOG.md`'s v0.13 migration instructions,
+which are published and permanent and offer the flag as one of three remedies.
+
 The override exists to work around a contract violation. `spec-coverage` C-10
 already claims `--json` emits a document in every state, and `bugs/SP-SP-032`
 records that it does not. Making that claim true removes the need for the
 override.
 
-### Two consequences that are settled
+### One consequence settled, one proposed
 
-**Exit codes get distinct triggers.** Codes 2 and 3 fire today only under
-`zero-tolerance` and would go unreachable. Under the four rules each gets a
-condition that needs no ladder: exit 1 for a pass rate below the tier, exit 2 for
-a criterion with no test, exit 3 for an unmet approval gate.
+**Exit codes need new triggers, and the replacement is proposed rather than
+decided.** Codes 2 and 3 fire today only under `zero-tolerance` and go
+unreachable when the ladder retires. `docs/ssrb/SSRB-104.md` section 7.5 sketches
+exit 1 for a pass rate below the tier, exit 2 for a criterion with no test, and
+exit 3 for an unmet approval gate, and ends that table with the sentence "This is
+offered as an observation rather than a decision."
+
+**An earlier draft of this entry listed that mapping as settled. It is not**, and
+the error mattered: roadmap 1A4's parity test pins golden files per gate
+combination, so a reader trusting a Settled label would have unblocked 1A4 and
+pinned triggers nobody chose. `docs/EXIT_CODES.md` registers both codes as Stable
+today, and under the sketch exit 2 stops meaning "an annotated criterion did not
+pass" and starts meaning "a criterion has no test". An adopter branching on the
+integer sees that change silently. That cost is unpriced in every document that
+mentions it.
 
 **Deferred criteria become a prerequisite.** The annotation rule fails a
 criterion with no test, and Specter's own repository would fail three of fifteen
@@ -792,7 +832,27 @@ body rather than from its comment: an explicit spec `tier:` greater than 0, then
 the tier of a domain in `specter.yaml` that lists the spec, then `system.tier`,
 then a hardcoded default of 2.
 
-**Standing.** Settled.
+**Only step 1 is reachable.** `tier` is a required property with enum `[1, 2, 3]`
+in `internal/parser/spec-schema.json`, so `specTier > 0` holds for every spec
+that parses at all. Measured: a spec omitting `tier` fails with
+`Missing required field 'tier'`, and `tier: 0` fails with
+`value must be one of 1, 2, 3`. **Steps 2, 3 and 4 are dead code.** A domain tier
+and `system.tier` never influence a spec's effective tier.
+
+That is not cosmetic. `specter init` writes both fields into every new workspace
+and `docs/GETTING_STARTED.md` shows them, so a team setting tiers per domain gets
+silence and no effect. It is the same shape as `tier_overrides` in the next
+entry, which is filed as `bugs/SP-SP-001`, except that this one emits no warning
+at all.
+
+Scoped precisely: this is about tier **resolution**. Domains still drive
+`--scope`.
+
+**Standing. Open.** An earlier draft marked this Settled on the strength of a
+source read. The read was accurate about the function body and wrong about what
+the function can receive, which is exactly the failure this document's own rule
+names: a citation shows a term is used, only a measurement shows what it
+decides.
 
 ## tier override
 
@@ -928,7 +988,10 @@ The third is unshipped. `specs/spec-check.spec.yaml:43` lists "Gap detection
 (uncovered input paths, Phase 8)" in its objective scope. Phase 8 has not
 shipped.
 
-**Standing.** The field is settled. The prose use should be avoided in technical
+**Standing. Settled, and scheduled for deletion.** Roadmap 3C7 removes the field
+this cycle with a migration drop rule, on the grounds that nothing reads it. Do
+not write `gap: true` into a spec on the strength of the label above. The prose
+use should be avoided in technical
 documents, because it collides with a schema field that means something narrower.
 
 ---
@@ -938,10 +1001,20 @@ documents, because it collides with a schema field that means something narrower
 These names appear in Specter documents without a definition anywhere. They are
 listed so nobody mistakes a reservation for a settled term.
 
+**Two of the three are scheduled to become real this cycle**, and this section
+said nothing about that until 2026-08-20. Roadmap phase 3A builds evidence
+streams and phase 3C builds deferred criteria, which `docs/ssrb/SSRB-104.md`
+section 7.6 promotes from optional to a prerequisite. A reader who took
+"undefined" to mean "not coming" would be wrong on both. The entries below
+describe what exists today, which is nothing, and each names the item that
+changes it.
+
 **evidence stream.** `docs/EXIT_CODES.md:181` reserves exit codes 20 to 29 for
 "Evidence stream validation". No code in that band is allocated, no command
 emits one, and no spec defines what an evidence stream is. The band is an
-allocation, not a feature.
+allocation, not a feature. **Roadmap 3A builds it**, and `docs/EXIT_CODES.md`
+already maps roadmap 3B4 into the band, so the reservation has a scheduled
+occupant.
 
 **deferred criterion.** `docs/EXIT_CODES.md:18` describes a prototype in which a
 failing test was misreported as a "stale deferral marker". No shipped schema
