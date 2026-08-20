@@ -220,14 +220,52 @@ coverage        ma-spec  T2  2  1  50%  FAIL   uncovered: AC-02
 
 `check` cannot see the missing marker. It scans test to spec, validating the
 markers it finds, so a criterion with no marker is invisible to it. `coverage`
-scans spec to test, so it is the only command that knows. **The fact the setting
-was created to enforce is computed in the command that reports percentages, and
-is absent from the command that reports diagnostics.**
+scans spec to test, so it knows.
 
-**Surfaces.** The enum is declared once, at `internal/manifest/manifest.go:30`.
-Both `settings.strictness` and the `--strictness` flag validate against it. A
-value outside the enum is rejected at parse for the manifest and at the flag
-layer for the CLI, exit 1 either way.
+**It is not the only command that knows.** An earlier draft said so, inferring
+"only" from `check`'s blindness rather than checking the other commands.
+`explain` computes the same fact per criterion at `cmd/specter/main.go:2706-2709`
+and names it:
+
+```
+$ bin/specter explain mk
+  COVERED   AC-01     This one is annotated in the test file    mk_test.go
+  UNCOVERED AC-02     This one has no marker anywhere
+```
+
+`doctor` knows it in aggregate, reporting `mk: 50% coverage (T2 requires 80%)`
+without naming the criterion.
+
+**The fact the setting was created to enforce is computed in the commands that
+report percentages, and is absent from the command that reports diagnostics.**
+That conclusion is unchanged, because `explain` reports percentages too. What
+changes is the scoping: `bugs/SP-SP-038` records that `explain` and `doctor`
+ignore strictness, so an annotation rule landed in `coverage` alone would drift
+from two commands computing the same fact independently.
+
+**Surfaces.** A value outside the enum is rejected at parse for the manifest and
+at the flag layer for the CLI, exit 1 either way. Measured, both layers:
+
+```
+$ bin/specter coverage --strictness bogus
+error: --strictness "bogus" is not a valid value (allowed: annotation, threshold, zero-tolerance)
+$ bin/specter coverage            # settings.strictness: bogus
+error: invalid .../specter.yaml: settings.strictness: "bogus" is not a valid value ...
+```
+
+**The enum is declared three times, not once.** An earlier draft said the flag
+and the key validate against a single declaration at
+`internal/manifest/manifest.go:30`. They do not. That line declares
+`validStrictnessValues` for the manifest. The flag validates against two
+separately written map literals, `cmd/specter/main.go:924` for `coverage` and
+`:1263` for `sync`.
+
+The three agree today, which is why the behavior above is correct and the
+mechanism claim was still wrong. It is latent rather than visible: add a fourth
+level to `validStrictnessValues` and the manifest accepts it while both flags
+reject it. That is the declaration-pair class `CLAUDE.md` says to close with a
+parity test rather than reviewer attention, and it matters now because SSRB-104
+retires both surfaces.
 
 **Every `--strictness` row below is on a removal path.** The flag and the key are
 accepted until v1.0.0 and removed there, per the RETIRING section above. The
@@ -265,8 +303,14 @@ Three surfaces read a strictness level:
 
 `check` reads the level from `settings.strictness` only, since it has no flag for
 it. The word "only" in that last row was checked: a grep of `internal/checker/`
-for `strictness` returns hits in exactly three files, all in the
-`unreachable_annotation` family, and every one routes through `routeSeverity`.
+for `strictness` returns hits in five files, four excluding the test file:
+`unreachable_annotation.go`, `unreachable_go.go`, `unreachable_ts.go`, and
+`unreachable_py.go`. All four are in the `unreachable_annotation` family, and
+every one routes through `routeSeverity`, which `unreachable_annotation.go:305`
+defines. An earlier draft said three, which was true before `85dfd54` added the
+Go reachability scanner. The conclusion the count supports is unaffected; the
+number was stale, and a stale number inside a sentence whose purpose is to show
+the work reads as evidence when it is not.
 
 **Standing. Retiring.** The enum and its behavior are settled as a description,
 and the setting is being replaced. See the next section. Nothing in this entry
@@ -835,11 +879,29 @@ before writing it into a user document.
 that have satisfying evidence. **Test coverage**, in the ordinary sense of lines
 or branches executed, is not something Specter measures at all.
 
-**Surfaces.** Every percentage Specter prints is spec coverage. The tool never
-reads a coverage profile. `.specter-results.json` carries pass and fail status
-per criterion, not execution data.
+**Surfaces.** The tool never reads a coverage profile. `.specter-results.json`
+carries pass and fail status per criterion, not execution data. No reader exists
+for `coverprofile`, `lcov`, `cobertura`, or `coverage.out` anywhere in the Go or
+TypeScript sources.
 
-**Standing.** Settled. Recorded here only because the two are named similarly and
+**Not every percentage Specter prints is spec coverage**, which an earlier draft
+claimed. `BuildSummaryHeader` emits a per-tier rollup at
+`internal/coverage/coverage.go:845` computing `t.passing / t.total`, the fraction
+of specs in a tier that pass their threshold. That is a spec pass rate, over a
+different denominator. One header carries both meanings at once:
+
+```
+Spec Coverage Report — 1 specs · 50% avg coverage
+  Tier 2: 0/1 passing (0%)
+```
+
+50 percent is spec coverage. 0 percent is a pass rate over specs. Same block,
+same run. The entry exists to stop an operator misreading a Specter percentage,
+and the absolute claim licensed misreading the one printed directly above the
+table.
+
+**Standing. Settled on the distinction, corrected on the quantifier.** Recorded
+here because the two are named similarly and
 the confusion is expensive: an operator who reads a Specter percentage as line
 coverage draws the wrong conclusion in both directions.
 
@@ -1687,3 +1749,46 @@ spec the reviewer never wrote. The measurement was redone in a uniquely named
 directory after confirming its contents. A plausible number from a contaminated
 fixture is this project's most repeated failure, and a short directory name is
 enough to cause it.
+
+## Appendix E: the absolute-quantifier sweep, 2026-08-20
+
+Two absolute quantifiers in this document had been examined and both were false,
+so the class was swept deliberately rather than left to surface one at a time.
+Twelve closed-set claims were tested. **Four failed.**
+
+The test for each was the same: not a grep that confirms what the text says, but
+the grep that would find a counterexample.
+
+**Failed, and corrected above:** "`coverage` is the only command that knows"
+(`explain` knows per criterion, `doctor` in aggregate); "the enum is declared
+once" (three declarations, two of them map literals the flag validates against);
+"exactly three files" (five, four excluding tests, stale since `85dfd54`); and
+"every percentage Specter prints is spec coverage" (the per-tier rollup is a
+spec pass rate).
+
+**Held, each with the search that would have found a counterexample:** that a
+parse-stage and a resolve-stage `dangling_reference` never appear in one run
+(built a workspace with both defects in different files; blocking is global, not
+per file); that `unreachable_annotation_unknown` never fails a gate (all seven
+emit sites hardcode `warning` and none reach `routeSeverity`; `--strict` output
+was byte-identical); that `main.go:804` is the only producer of `tier_conflict`;
+that only two commands accept `--strictness` and there are five flag
+registrations; that nothing reads a persisted `gap: true`, widened to the
+extension; and that `coverage` never reads `settings.strict`, where the third
+consumer at `main.go:3003` is `watch`.
+
+**The pattern in the failures is worth more than the count.** Three of the four
+are sentences whose **conclusion** is sound and whose **quantifier** was
+decoration. The point about `check`'s blindness stands, the point about the
+`unreachable_annotation` family stands, the point about rejection behavior
+stands. The absolute was added for force, and it is the only part that broke.
+Two of the four were true when written and went stale.
+
+**One claim reported and not reproduced.** The sweep noted in passing that
+`resolve` prints `Fix parse errors before resolving dependencies.` and exits 0
+on a parse error. Three fixtures were built here to reproduce it, including a
+schema-valid spec whose only defect is a dangling reference and a two-file
+workspace mixing a parse defect with a dependency defect. `resolve` exited **1**
+every time. The observation is recorded as unreproduced rather than filed.
+`bugs/SP-SP-044` covers `resolve --json` exiting zero on a dependency error and
+is a different path.
