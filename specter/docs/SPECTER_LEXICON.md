@@ -60,12 +60,17 @@ measurement shows what it decides. This rule was learned twice on the `strict`
 entry, which carried "Settled" while the line disproving it sat in the same
 paragraph.
 
-**The file does not yet meet its own rule.** An audit on 2026-08-20 found that of
-the entries carrying a Settled standing, four name distinguishing cases and about
-seven rest on citations. One of those, `tier`, was falsified by measurement in the
-same audit and is now Open. The rest are not known to be wrong; they are known to
-be uninspected. Treat a Settled standing that names no case as provisional, and
-promote it by running something rather than by reading more.
+**The file did not meet its own rule, and now mostly does.** An audit on
+2026-08-20 found that of the entries carrying a Settled standing, four named
+distinguishing cases and about seven rested on citations. `tier` was falsified
+in that audit. Two later passes measured ten more entries and falsified four:
+the two annotation-channel entries, `the three levels`, and `the strict path`.
+
+So the citation-resting set was not merely uninspected. **Five of the eleven
+entries examined did not survive contact with a measurement.** What remains
+uninspected is short and is listed at the end of Appendix D. Treat any Settled
+standing that names no case as provisional, and promote it by running something
+rather than by reading more.
 
 That separation is the point. A lexicon that records only behavior goes stale the
 moment behavior changes. A lexicon that records only intent hides the divergences
@@ -454,8 +459,17 @@ the default.
 thresholds entirely. Any annotated criterion whose resolved status is not
 `passed` exits 2 (spec-coverage C-25). Any criterion carrying
 `approval_gate: true` with an unset `approval_date` exits 3 (spec-coverage C-26).
-A spec at 100 percent of its threshold still fails if one annotated criterion
-failed.
+A spec meeting its threshold still fails **the run** if one annotated criterion
+failed, and the distinction matters to a machine consumer. Measured at exactly
+50 against a threshold of 50 with one failed criterion: the process exits 2
+while the row prints `PASS`, the summary prints `1 specs: 1 passing, 0 failing`,
+and `--json` carries `"passes_threshold": true` and `"failing": 0`.
+
+That is not a reporting defect. The failed criterion **was** demoted, which is
+why the spec reads 50 percent rather than 100. It then cleared a threshold of
+50 honestly. The exit code answers a different question from the report cell,
+and both answers are correct. Read `passes_threshold` as "did this spec meet its
+tier threshold", not as "did this run pass".
 
 **Standing.** Settled as concepts, with one correction. An earlier draft said
 that `threshold` and `zero-tolerance` "run the same report path, so the
@@ -499,17 +513,62 @@ This is a third concept, and it needs its own name. It is neither the severity
 switch nor the ladder. It is what `coverage --strict` actually selects, and it is
 reachable from two ladder positions as well.
 
-**Surfaces.** One rule, stated in spec-coverage C-31 and spec-sync C-07 and
-implemented at `main.go:958`: the strict path runs when effective strictness is
-`threshold` or `zero-tolerance`, or when the `--strict` boolean is set. Only
-`annotation` stays off it.
+**Surfaces.** The strict path runs when effective strictness is `threshold` or
+`zero-tolerance`. **Nothing else selects it.**
 
-Because the manifest default is `threshold`, the strict path is on by default.
-That has a consequence measured below: the `--strict` boolean almost never
-selects anything that was not already selected.
+An earlier draft added "or when the `--strict` boolean is set" and called that
+one rule stated by both specs. **The disjunct is dead on both surfaces**, for
+two different reasons.
 
-**Standing.** Settled. Both specs state the rule and the code matches. The term
-itself appears in no user-facing output, so it is an internal name.
+On `coverage`, `main.go:958` really does read
+`strict || threshold || zero-tolerance`. But the C-24 guard at `main.go:943`
+tests the same `effectiveStrictness` and exits first, so the only configuration
+where the disjunct could decide is refused before the line is reached.
+
+On `sync`, `internal/sync/sync.go:217-218` consults the boolean only when
+`input.Strictness == ""`, and `cmd/specter/main.go:1345` always passes a
+non-empty value, because the manifest loader fills it. `sync --strict` alone
+still reaches the strict path, through `main.go:1321-1328`, which resolves the
+bare flag to `zero-tolerance` before `RunSync` is called.
+
+Measured on a fixture with no results file, which makes the strict path fatal
+and so discriminates:
+
+```
+coverage --strictness annotation             exit 0
+coverage --strict --strictness annotation    exit 1   error: --strict requires settings.strictness >= threshold
+coverage --strictness threshold              exit 1   strictness "threshold" requires .specter-results.json
+sync --strictness annotation                 exit 0   PASS coverage
+sync --strict --strictness annotation        exit 0   PASS coverage
+sync --strict                                exit 1   FAIL coverage: strictness "zero-tolerance" requires .specter-results.json
+sync --strictness threshold                  exit 1   FAIL coverage: strictness "threshold" requires .specter-results.json
+```
+
+Row 5 is the falsifier: the boolean is set and the strict path does not run.
+Row 6 shows why `sync --strict` alone still works, and the error names
+`strictness "zero-tolerance"` rather than the boolean.
+
+This also supplies the mechanism behind the four-row table measured later in
+this document. `coverage --strict` never changes a coverage verdict because the
+branch that would make it matter is unreachable, not because the effects happen
+to coincide.
+
+Same dead-branch shape as `tier`: a disjunct that reads as a rule and decides
+nothing.
+
+**The specs were checked, because the earlier standing line claimed both stated
+the rule.** Neither states it as written. `specs/spec-coverage.spec.yaml:192`
+(C-31) states the two-disjunct rule for `coverage` and separately records that
+`--strict` with `annotation` "remains a C-24 error", which is consistent with
+the code. `specs/spec-sync.spec.yaml:72` (C-07) says only "Under any strict mode
+(`threshold` or `zero-tolerance`)" and never mentions the boolean. So the
+cross-command generalization was this document's own, and there is no
+spec-versus-code disagreement to file.
+
+**Standing. Open.** The routing rule holds in its corrected form. What was
+falsified is the claim that the `--strict` boolean is a third way to select the
+path. The term itself appears in no user-facing output, so it is an internal
+name.
 
 ## effective strictness
 
@@ -806,7 +865,23 @@ passed (C-33), and produces a warning naming the unrecognized value (C-30).
 When several entries name one pair, the worst status wins (C-33). Row order in
 the file must not change any reported value.
 
-**Standing.** Settled. The fixed path is a real constraint that nothing documents
+**Standing. Settled, and measured on four cases** rather than cited. A duplicate
+pair with `passed` first then `failed`, and the same two rows reversed, both
+reported `uncovered: AC-01`, so worst status wins and row order does not matter.
+A `status: "flaky"` entry ranked as not-passed and produced:
+
+```
+warning: .specter-results.json contains 1 entries with status="flaky" — not a recognized status (passed|failed|skipped|errored); treated as not-passed
+```
+
+The fixed-path trap reproduced. `ingest --output results/run.json` wrote three
+entries, and `coverage --strict` in the same directory answered:
+
+```
+error: --strict requires .specter-results.json — run 'specter ingest' first
+```
+
+The fixed path is a real constraint that nothing documents
 as a decision, but nothing contests it either.
 
 ## annotation, and its two channels
@@ -916,8 +991,19 @@ carries one decimal place. The human-readable column shows the integer floor of
 that value (spec-coverage C-35). A threshold set to the integer the tool just
 printed always passes.
 
-**Standing.** Settled, and recently. C-35 and C-36 both landed to close defects
-where displayed and compared numbers disagreed.
+**Standing. Settled, and measured across six configurations**, not the one case
+quoted above. On a fixture at 66.7 percent with three criteria and two covered:
+no manifest and no spec value resolves to 50 and passes; `tier3: 90` resolves to
+90 and fails with exit 1, and `sync` fails its coverage phase identically;
+`tier3: 0` resolves to 0 and passes, with `--json` reporting `"threshold": 0`; a
+spec `coverage_threshold: 67` over `tier3: 0` resolves to 67 and fails; a spec
+value of 66 passes, which is the floor rule; and a spec value of 0 over
+`tier3: 90` resolves to 0 and passes. Both zero cases behave as C-36 requires at
+both layers.
+
+C-35 and C-36 both landed to close defects where displayed and compared numbers
+disagreed. The display column showed 66 in every row while the stored value was
+66.7.
 
 ---
 
@@ -1147,7 +1233,15 @@ warning(s)` under `check --strict`.
 Constraint C-02 says `info`, which matches the code. The objective scope on line
 35 says `warning`. This is `bugs/SP-SP-003`.
 
-**Standing.** Settled in code and in C-02. Open as a specification defect,
+**Standing. Settled in code and in C-02, measured across all three tiers**, not
+the Tier 2 pair alone. On three specs with one orphan constraint each, `check`
+reported `error` for Tier 1, `warn` for Tier 2, and `info` for Tier 3.
+`check --strict` reported all three as errors, which is the warning-and-info
+promotion filed as `SP-SP-047`. The `enforcement:` override works in both
+directions: a Tier 1 orphan with `enforcement: info` printed as info, and a Tier
+3 orphan with `enforcement: error` printed as error.
+
+Open as a specification defect,
 because the spec contradicts itself and Specter's own methodology says the spec
 decides.
 
@@ -1158,13 +1252,33 @@ spec's constraint. The canonical shape: an upstream constraint requires a field,
 and a downstream criterion handles that field being absent.
 
 **Surfaces.** Detected by `check` across the dependency graph. Default severity
-error, overridable per constraint via `enforcement:`.
+error, overridable by the **upstream** constraint's `enforcement:`.
 
-**Standing.** Settled as a definition. `bugs/SP-SP-004` records false positives
-against spec-check C-05, which requires a zero false-positive rate, and
-`bugs/SP-SP-014` records that the diagnostic names two specs as one. Both are
-implementation defects rather than disputes about what the term means. Neither
-was re-verified for this document.
+Which constraint owns the override is easy to get wrong, because the diagnostic
+is attributed to the downstream spec. `internal/checker/check.go:252-254` reads
+`constraint.Enforcement` from the upstream loop. Measured: setting
+`enforcement: warning` on the upstream constraint dropped the diagnostic to a
+warning and the run to exit 0, while setting `enforcement: info` on a downstream
+constraint changed nothing.
+
+**Standing.** Settled as a definition, and one of its two cited defects is now
+reproduced rather than cited.
+
+`bugs/SP-SP-014`, the diagnostic naming two specs as one, **reproduces**. On a
+fixture with deliberately distinct constraint IDs:
+
+```
+error [structural_conflict] down-spec C-07 (technical): Structural conflict: "up-spec" constraint C-07 requires "email" but "down-spec" AC-01 handles it as absent
+```
+
+The header reads `down-spec C-07`. `C-07` belongs to `up-spec`, and `down-spec`
+has no `C-07` at all. `check.go:257-259` sets `SpecID` from the downstream spec
+and `ConstraintID` from the upstream constraint.
+
+`bugs/SP-SP-004`, the false positives against spec-check C-05, is **still cited
+rather than measured**. A false-positive rate needs a corpus of valid specs
+rather than a fixture, so it is out of scope for a pass of this kind and stays
+on the list at the end of Appendix D.
 
 ## dangling reference
 
@@ -1509,10 +1623,14 @@ there costs more than it first appeared to.
 ## Appendix D: the Settled-entry pass, 2026-08-20
 
 The document admitted, in the Scope section, that about seven entries carrying a
-Settled standing rested on citations rather than on cases that were run. A second
-independent pass inspected nine of them. Three were falsified or partially
-falsified. That ratio is the argument for the admission staying in Scope rather
-than being quietly dropped.
+Settled standing rested on citations rather than on cases that were run. Two
+independent passes inspected **ten** Settled entries, which is more than the
+citation-resting set because some already named a case and were re-run anyway.
+**Four were falsified or partially falsified.** With `tier` from the earlier
+audit, five of eleven examined did not survive.
+
+That ratio is the argument for the admission staying in Scope rather than being
+quietly dropped.
 
 **Falsified, and corrected above:**
 
@@ -1529,6 +1647,11 @@ than being quietly dropped.
   here was the defect. Recorded because the first correction written here
   over-reached and asserted the plan was under-scoped, which the roadmap
   disproves.
+- **`the strict path` claimed the `--strict` boolean is a third way to select
+  it.** The disjunct is dead on both surfaces: C-24 refuses the only
+  `coverage` configuration where it would decide, and `sync` ignores the boolean
+  whenever a strictness value is present, which is always. Measured with a
+  seven-row table. Neither spec states the rule the entry attributed to both.
 
 **Confirmed by running, and unchanged:** the `coverage_threshold` precedence
 table across six configurations including both zero cases,
@@ -1541,11 +1664,21 @@ worst-status-wins, unrecognized statuses, and the fixed path.
 `coverprofile`, `lcov`, `cobertura`, or `coverage.out`, which is adequate for a
 negative existence claim; and that "demoted" appears in no user-facing string.
 
-**Not inspected:** `the strict path`, most of `covered, uncovered, demoted`,
-`structural conflict`, and the prose describing the `annotation` and `threshold`
-levels. Entries marked Retiring or Open were out of scope, and `tier` went to a
-separate reviewer. Those entries are still uninspected, and the Scope admission
-still applies to them.
+**Measured in the second round, after this appendix was first written:** `the
+strict path` (falsified, above), the `annotation` and `threshold` level prose
+(holds, with the zero-tolerance clause reworded), `covered, uncovered, demoted`
+on the `--json` surface as well as the text table (holds; no third list, no
+demoted flag), and `structural conflict` (holds, with the upstream-versus-
+downstream `enforcement:` refinement and `SP-SP-014` reproduced).
+
+**What is still uninspected, which is now a short list:**
+
+- `bugs/SP-SP-004`'s false-positive claim under `structural conflict`. Measuring
+  a false-positive rate needs a corpus of valid specs rather than a fixture.
+- `spec coverage against test coverage`, which is grep-only and labeled that way
+  in its entry.
+
+Entries marked Retiring or Open were out of scope throughout.
 
 **One process hazard, recorded because it nearly produced a wrong measurement.**
 A fixture built in a shared scratch directory under a short name collided with
