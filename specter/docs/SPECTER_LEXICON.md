@@ -1158,16 +1158,14 @@ The third is unshipped. `specs/spec-check.spec.yaml:43` lists "Gap detection
 (uncovered input paths, Phase 8)" in its objective scope. Phase 8 has not
 shipped.
 
-**Standing. Settled as a definition. Open on the grounds for deleting it.**
-Roadmap 3C7 removes the field this cycle with a migration drop rule, on the
-grounds that nothing reads it. **That is half true, and the false half is the
-part the plan rests on.**
+**Standing. Settled, and scheduled for deletion.** Roadmap 3C7 removes the field
+this cycle with a migration drop rule.
 
-Nothing reads a persisted `gap: true` back from a parsed spec. No reader exists
-in `internal/coverage`, `internal/checker`, or `internal/explain`. But `reverse`
-reads the field in process, at `internal/reverse/reverse.go:235` to build a
-per-spec warning and `:241` to feed `Summary.GapsDetected`, which is printed at
-`cmd/specter/main.go:1617`. Measured on a zod fixture:
+An earlier draft of this entry summarized 3C7's grounds as "nothing reads it."
+**That summary was wrong, and it was wrong about this document, not about the
+plan.** The field has live in-process readers: `internal/reverse/reverse.go:235`
+builds a per-spec warning from it and `:241` feeds `Summary.GapsDetected`,
+printed at `cmd/specter/main.go:1617`. Measured on a zod fixture:
 
 ```
 $ bin/specter reverse ts --dry-run --adapter typescript
@@ -1176,9 +1174,12 @@ $ bin/specter reverse ts --dry-run --adapter typescript
 Found 7 constraints, 1 assertion, 7 gaps across 2 files.
 ```
 
-So 3C7 is not a schema-only drop. It has to land with edits to
-`reverse.go:235`, `:241`, and `main.go:1617`, or `reverse` keeps writing a field
-the schema rejects and its gap count breaks.
+What is true is narrower: nothing reads a persisted `gap: true` back from a
+parsed spec. No reader exists in `internal/coverage`, `internal/checker`, or
+`internal/explain`. The roadmap entry already reflects this correctly. It prices
+the reverse-compiler edits and records that the count survives because it can be
+computed rather than persisted. Anyone scoping 3C7 should read the roadmap entry
+rather than the one-line summary that used to sit here.
 
 Noted in passing, and not part of any claim above: `reverse` tells the user to
 run `specter explain` to triage gaps, and `explain` reads no gap data.
@@ -1239,7 +1240,7 @@ above with its evidence.
 | `--scope` prerequisite | Requires the literal `--strict` flag | `--strictness zero-tolerance` is refused despite being stricter | Not filed |
 | `tier_conflict` | Code: a `tier_overrides` mismatch | `CLI_REFERENCE.md:190`: a high-tier spec depending on a low-tier one | Not filed |
 | Convention B grammar | `check --test`: either `@spec` or `@ac` alone marks a test reachable, and a bare pair in any string-literal argument counts | `ingest`: both markers required, and a bare pair read only from the name or classname | `SP-SP-050` |
-| `gap` readers | Roadmap 3C7: "nothing reads it", so the field can be dropped from the schema alone | `reverse.go:235` and `:241` read it in process, and `main.go:1617` prints the count | Not filed; carried on roadmap 3C7 |
+| `gap` readers | This document, earlier draft: "nothing reads it" | `reverse.go:235` and `:241` read it in process, and `main.go:1617` prints the count. Roadmap 3C7 had it right; the summary here did not | Not filed; a defect in this document |
 | `tier_overrides` | Warning says "using override" | No caller applies it | `SP-SP-001` |
 | tier cascade | `ResolveTier` inherits from a domain tier, then `system.tier`, then a default of 2 | Nothing calls it. Both call sites sit in functions with no callers, and every live consumer reads `spec.Tier` raw | `SP-SP-049` |
 | `registry` block | Parsed into `Manifest.Registry`, and `full.specter.yaml` carries per-entry tiers | No command reads it or regenerates it | `SP-SP-049` |
@@ -1459,9 +1460,12 @@ than being quietly dropped.
 - **`threshold` and `zero-tolerance` were said to differ only in which gates
   arm.** Zero-tolerance also applies a demotion threshold does not. Same fixture,
   same results file, 100 percent against 66 percent.
-- **Roadmap 3C7's grounds for deleting `gap` were "nothing reads it."** Nothing
-  reads it back from a parsed spec. `reverse` reads it in process, and deleting
-  the field alone breaks its gap count.
+- **This document said `gap` was scheduled for deletion "on the grounds that
+  nothing reads it."** `reverse` reads it in process. The roadmap entry was
+  already correct and prices the reverse-compiler edits; the one-line summary
+  here was the defect. Recorded because the first correction written here
+  over-reached and asserted the plan was under-scoped, which the roadmap
+  disproves.
 
 **Confirmed by running, and unchanged:** the `coverage_threshold` precedence
 table across six configurations including both zero cases,
