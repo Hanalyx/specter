@@ -851,50 +851,93 @@ where displayed and compared numbers disagreed.
 ## tier
 
 **Meaning.** An integer from 1 to 3 declaring how much rigor a spec is held to.
-Tier 1 is the strictest. It sets the default coverage threshold and the default
-severity of several diagnostics.
+Tier 1 is the strictest. It decides exactly three things: the default coverage
+threshold, the severity of one diagnostic (`orphan_constraint`), and the Tier 1
+evidence rule that a criterion needs a passing result and not only an
+annotation.
 
-**Surfaces.** Declared per spec as `tier:`. Resolved by `ResolveTier` in
-`internal/manifest/tier.go` through a four-step cascade, read from the function
-body rather than from its comment: an explicit spec `tier:` greater than 0, then
-the tier of a domain in `specter.yaml` that lists the spec, then `system.tier`,
-then a hardcoded default of 2.
+**Surfaces.** Declared per spec as `tier:`. **Nothing resolves it.** Every live
+consumer reads `spec.Tier` raw: `internal/coverage/coverage.go:517` (the Tier 1
+evidence rule), `:542` (the threshold lookup), `:571` (the `tier` field in
+`--json`), and `internal/checker/check.go:189` (orphan severity). The only
+tier-keyed severity map in the tree is `orphanSeverityByTier` at
+`check.go:50`. `duplicate_ac_id` refuses tier routing outright
+(`internal/checker/duplicate_ac_id.go:12-13`).
 
-**Only step 1 is reachable.** `tier` is a required property with enum `[1, 2, 3]`
-in `internal/parser/spec-schema.json`, so `specTier > 0` holds for every spec
-that parses at all. Measured: a spec omitting `tier` fails with
-`Missing required field 'tier'`, and `tier: 0` fails with
-`value must be one of 1, 2, 3`. **Steps 2, 3 and 4 are dead code.** A domain tier
-and `system.tier` never influence a spec's effective tier.
+**There is a resolver, and it is dead.** `ResolveTier` in
+`internal/manifest/tier.go` implements a four-step cascade: an explicit spec
+`tier:` greater than 0, then the tier of a domain in `specter.yaml` that lists
+the spec, then `system.tier`, then a hardcoded default of 2. It has two call
+sites and **neither is reachable**. `types.go:164` sits inside
+`ResolveTierWithOverrides`, which has no caller. `registry.go:15` sits inside
+`BuildRegistryFromSpecs`, whose only caller is `UpdateRegistry`, which has no
+caller either. Confirmed by running: `sync` on a workspace whose `specter.yaml`
+has no `registry:` block leaves the manifest byte-identical, because no registry
+is ever regenerated.
+
+So the cascade is dead in full, step 1 included. Two independent facts each make
+a domain tier and `system.tier` inert, and it is worth keeping them apart:
+
+1. **Nothing calls the cascade.** Even step 1 never runs.
+2. **The schema would kill steps 2 to 4 anyway.** `tier` is a required property
+   with enum `[1, 2, 3]` in `internal/parser/spec-schema.json`, so `specTier > 0`
+   would hold for every spec that parses. Measured: a spec omitting `tier` fails
+   with `Missing required field 'tier'`, which is a Go-side translation at
+   `internal/parser/humanize.go:59`, and `tier: 0` fails the schema validator
+   with `value must be one of 1, 2, 3`.
+
+An earlier draft of this entry named only the second fact, and so described
+`ResolveTier` as the resolver with three dead branches. It is not the resolver at
+all.
 
 That is not cosmetic. `specter init` writes both fields into every new workspace
 and `docs/GETTING_STARTED.md` shows them, so a team setting tiers per domain gets
 silence and no effect. The only full manifest example,
 `testdata/manifests/valid/full.specter.yaml`, declares tier at four levels:
 `system.tier`, three domain tiers, per-entry tiers in `registry`, and the specs
-themselves. Three of the four decide nothing. It is the same shape as
+themselves. Three of the four decide nothing, and the `registry` block is
+weaker still: it parses into `Manifest.Registry` and no command reads it or
+regenerates it. It is the same shape as
 `tier_overrides` in the next entry, which is filed as `bugs/SP-SP-001`, except
 that this one emits no warning at all.
 
 Scoped precisely: this is about tier **resolution**. Domains still drive
-`--scope`, and that path reads `domain.Specs` without ever reading
-`domain.Tier`.
+`--scope`, and that path reads `domain.Specs` (`cmd/specter/main.go:986-989`)
+without ever reading `domain.Tier`. Measured: `coverage --strict --scope
+payments --json` on a fixture whose `payments` domain is Tier 1 still reports
+`"tier": 3, "threshold": 50` for a spec declaring `tier: 3`. The only other
+reader of `domain.Tier` is `DomainCoverage` in `internal/manifest/domain.go:48`,
+which also has no caller. `domain.Tier` is read nowhere live.
 
 **Under consideration, and not current behavior.** `bugs/SP-SP-049` records the
 defect and carries a recommendation: relax `spec.tier` to optional so a spec
 inherits its domain's tier, remove `system.tier`, and report a spec whose
 declared tier disagrees with its domain's. The argument is that per-domain tier
-assignment is a capability the manifest already has a field for.
-`settings.annotation` makes it worth having, because the tier thresholds become
-the allowed failure rate among criteria that have tests. None of that is decided.
-It is a schema change, so it needs an SSRB, and that brief should settle
-`tier_overrides` in the same pass.
+assignment is a capability the manifest already has a field for, and that
+`settings.coverage.tierN` becomes the allowed failure rate among criteria that
+have tests once `settings.annotation` lands.
 
-**Standing. Open.** An earlier draft marked this Settled on the strength of a
-source read. The read was accurate about the function body and wrong about what
-the function can receive, which is exactly the failure this document's own rule
-names: a citation shows a term is used, only a measurement shows what it
-decides.
+**The recommendation is what is undecided here, not `settings.annotation`.** The
+annotation model is settled and accepted (`docs/ssrb/SSRB-104.md`, status
+ACCEPT, shape settled 2026-08-19) and Part 2 of this document states it. It is
+not yet implemented: `internal/manifest/types.go` has no `Annotation` field, and
+`annotation` exists today only as a `strictness` enum value at `manifest.go:30`.
+The SP-SP-049 recommendation is a separate schema change that needs its own
+SSRB, and that brief should settle `tier_overrides` in the same pass.
+
+**Standing. Open.** This entry has been wrong twice, in the same direction.
+
+The first draft marked it Settled after reading `ResolveTier`'s body. That read
+was accurate about the function and wrong about **what the function can
+receive**, because the schema constraint that kills three branches lives outside
+the function.
+
+The second draft corrected that and still called `ResolveTier` the resolver. That
+was wrong about **whether the function runs at all**, because reachability lives
+outside the function too. Both drafts cited a body and neither followed the call
+graph. A citation shows a term is used somewhere; only a measurement shows what
+it decides, and for a function the first measurement is whether anything calls
+it.
 
 ## tier override
 
@@ -1088,7 +1131,8 @@ above with its evidence.
 | `--scope` prerequisite | Requires the literal `--strict` flag | `--strictness zero-tolerance` is refused despite being stricter | Not filed |
 | `tier_conflict` | Code: a `tier_overrides` mismatch | `CLI_REFERENCE.md:190`: a high-tier spec depending on a low-tier one | Not filed |
 | `tier_overrides` | Warning says "using override" | No caller applies it | `SP-SP-001` |
-| tier cascade | `ResolveTier` inherits from a domain tier, then `system.tier`, then a default of 2 | `spec-schema.json` makes `tier` required with enum `[1,2,3]`, so only step 1 can run | `SP-SP-049` |
+| tier cascade | `ResolveTier` inherits from a domain tier, then `system.tier`, then a default of 2 | Nothing calls it. Both call sites sit in functions with no callers, and every live consumer reads `spec.Tier` raw | `SP-SP-049` |
+| `registry` block | Parsed into `Manifest.Registry`, and `full.specter.yaml` carries per-entry tiers | No command reads it or regenerates it | `SP-SP-049` |
 | `dangling_reference` | Parse: an undeclared constraint reference | Resolve: an unknown `depends_on` target | Not filed |
 | Tier 3 orphan severity | `spec-check` C-02 and the code: `info` | `spec-check` objective scope, line 36: `warning` | `SP-SP-003` |
 | sync's default strictness | Code comment at `main.go:1318`: "ultimate default is `annotation`" | Behavior: `threshold`, because the manifest loader fills it in | Not filed |
@@ -1167,7 +1211,10 @@ standard.
 - The `settings.strict` consumers at `main.go:711`, `:1313`, and `:3003`.
 - `Gap` at `internal/schema/types.go:82` and `internal/reverse/gap.go:24`.
 - `ResolveTier` in `internal/manifest/tier.go`, read as a function body and not
-  as its comment, for the four-step tier cascade.
+  as its comment, for the four-step tier cascade. **This is the entry that failed
+  twice.** Reading the body established the cascade correctly and established
+  nothing about whether the cascade runs. See Appendix B for the call-graph walk
+  that settled it, and the `tier` entry for what the two failures have in common.
 - The hardcoded `.specter-results.json` reads at `main.go:993` and `:1331`, and
   the absence of any path flag on `coverage` or `sync`.
 - Every hit for `strictness` under `internal/checker/`, which lands only in
@@ -1232,3 +1279,55 @@ provenance is traceable.
 **Corrected by the same pass, and now fixed above:** the claim that
 spec-coverage C-28's hint distinguishes a demoted criterion from an unannotated
 one. C-28 fires on a missing **entry**, not a missing pass, so it does not.
+
+## Appendix C: the tier pass, 2026-08-20
+
+The `tier` entry was rewritten twice in one day and got a dedicated verification
+pass. Recorded separately because the entry is the document's worked example of
+its own rule, and because the first pass missed what the second one found.
+
+**Confirmed by running the binary** (built with `make build`, `bin/specter`,
+version 0.14.1, fixtures in a scratch directory):
+
+- Both parse failures, as exact substrings. Omitting `tier`:
+  `error [required] spec: Missing required field 'tier'`. Setting `tier: 0`:
+  `error [validation] spec.tier: at '/spec/tier': value must be one of 1, 2, 3`.
+  Same on `parse` and on `check`.
+- A manifest declaring `system.tier: 1` **and** a domain at `tier: 1` listing the
+  spec, against a spec declaring `tier: 3`. `coverage --strictness annotation
+  --json` returns `"tier": 3, "threshold": 50`, and `check` reports the orphan at
+  `info`, which is Tier 3 severity and confirms the domain tier independently of
+  the JSON.
+- No warning on any of `check`, `coverage`, or `sync`. Both streams carried
+  nothing about the disagreement.
+- `coverage --strict --scope payments --json` on that fixture, still reporting
+  `"tier": 3, "threshold": 50` where a domain-tier read would have given 100.
+- `specter init` in an empty directory, which writes `system.tier: 2` and
+  `domains.default.tier: 2`.
+- `sync` on a workspace whose `specter.yaml` has no `registry:` block, leaving
+  the manifest byte-identical. This is what establishes that no command
+  regenerates the registry.
+
+**Confirmed by walking the call graph**, which is the step both earlier drafts
+skipped:
+
+- `ResolveTier` has two call sites, `registry.go:15` and `types.go:164`.
+- `types.go:164` is inside `ResolveTierWithOverrides`, which has no caller.
+- `registry.go:15` is inside `BuildRegistryFromSpecs`, whose only caller is
+  `UpdateRegistry`, which has no caller.
+- `DomainCoverage` at `domain.go:48`, the only other reader of `domain.Tier`,
+  also has no caller.
+- The live consumers read `spec.Tier` raw: `coverage.go:517`, `:542`, `:571`,
+  and `check.go:189`.
+- `orphanSeverityByTier` at `check.go:50` is the only tier-keyed severity map in
+  the tree. `duplicate_ac_id.go:12-13` refuses tier routing.
+
+**Read as source, not measured, and flagged as such:** what a tier-0 spec would
+do if the schema allowed one. `CoverageThresholds()` at `types.go:126-139`
+populates keys 1, 2 and 3 only, so `thresholds[0]` misses and
+`coverage.go:542-545` falls back to 80. `orphanSeverityByTier[0]` returns the
+empty string and the guard at `check.go:189-192` turns it into `warning`. Both
+are near-Tier-2 behavior. This could not be run, because the schema blocks
+`tier: 0` at the CLI and running it would have meant editing the repository.
+`bugs/SP-SP-049` carries the same flag, and it is the reason the recommendation
+there costs more than it first appeared to.
