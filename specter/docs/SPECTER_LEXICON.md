@@ -17,7 +17,16 @@ the measurements below.
 
 Every claim about current behavior was checked by running `bin/specter` or by
 reading source. [Appendix A](#appendix-a-how-each-claim-was-checked) says which,
-claim by claim, **for the claims present at the second commit**. This document
+claim by claim, **for the claims present at the second commit**.
+
+**On the citations, and how to re-verify them.** This document carries 38
+references into `cmd/specter/main.go` across 20 distinct line numbers, plus 17
+others. That file is over 3,000 lines and roadmap phases 1B, 2C, 3A and 3C all
+edit it. **A line number here is a claim with a shelf life.** Before trusting any
+citation, check whether Go source has moved since the commit named above:
+`git diff --stat <that commit>..HEAD -- '*.go'`. If it is non-empty, the
+citations are unverified until someone re-runs them, and this document says
+nothing about which ones moved. This document
 has been amended six times since, and the appendix does not cover what those
 amendments added. Those claims were independently verified on 2026-08-20 and the
 appendix carries a list of them rather than a per-claim split.
@@ -215,6 +224,11 @@ Both `settings.strictness` and the `--strictness` flag validate against it. A
 value outside the enum is rejected at parse for the manifest and at the flag
 layer for the CLI, exit 1 either way.
 
+**Every `--strictness` row below is on a removal path.** The flag and the key are
+accepted until v1.0.0 and removed there, per the RETIRING section above. The
+tables describe what exists today, which is what a reader debugging today needs,
+but nothing in them should be built on.
+
 Only two commands accept a `--strictness` flag. The binary ships 14 commands, so
 the claim is rested on the source rather than on a sweep of help output: a grep
 of `cmd/` for the literal flag names returns five registrations and no others,
@@ -257,8 +271,10 @@ project wants.
 ## RETIRING: `strictness` becomes `annotation`
 
 Direction set by the founder, 2026-08-18. Recorded here so the deprecation has
-one description rather than several. The replacement's shape is a feature
-request, `features/SP-006`, and is not settled by this entry.
+one description rather than several. **The shape was settled on 2026-08-19 and
+is stated below**; this sentence previously said it was not settled by this
+entry, which contradicted the four decisions 70 lines further down. The decision
+record is `docs/ssrb/SSRB-104.md` and the request is `features/SP-006`.
 
 ### The plan
 
@@ -378,6 +394,18 @@ that outlive any deprecation window because they ship into other repositories:
 tree; `internal/explain/annotation_reference.md`, embedded in the binary and
 printed by `specter explain`; and `CHANGELOG.md`'s v0.13 migration instructions,
 which are published and permanent and offer the flag as one of three remedies.
+
+Three more that make removal a coordinated edit rather than a delete.
+`docs/explainer/v0.13-sync-strict-coverage.md` carries 25 references and was
+written for an external adopter, so its whole remedy set rests on the flag.
+`scripts/smoketest_v013.sh` asserts that `--strictness` is registered.
+`cmd/specter/cli_docs_parity_test.go` binds the `CLI_REFERENCE.md` flag tables to
+the registered Cobra flags, so the docs and the code must move together or the
+test fails.
+
+**Checked and clean:** `.github/actions/specter-sync/action.yml` is a passthrough
+that hardcodes no strictness, and `internal/manifest/hook.go` delegates to
+`pre-push-check` and passes none.
 
 The override exists to work around a contract violation. `spec-coverage` C-10
 already claims `--json` emits a document in every state, and `bugs/SP-SP-032`
