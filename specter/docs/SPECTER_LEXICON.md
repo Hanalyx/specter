@@ -457,10 +457,36 @@ thresholds entirely. Any annotated criterion whose resolved status is not
 A spec at 100 percent of its threshold still fails if one annotated criterion
 failed.
 
-**Standing.** Settled as concepts. One asymmetry is easy to misread:
-`threshold` and `zero-tolerance` run the same report path, so the difference
-between them is not what gets demoted. It is which exit-code gates are armed
-after demotion.
+**Standing.** Settled as concepts, with one correction. An earlier draft said
+that `threshold` and `zero-tolerance` "run the same report path, so the
+difference between them is not what gets demoted. It is which exit-code gates
+are armed after demotion." **The second sentence is false.** They share the
+report path, and zero-tolerance additionally applies a demotion that threshold
+does not: an approval-gate violation moves from covered to uncovered.
+
+`DemoteApprovalGateViolations` runs only under zero-tolerance, gated at
+`cmd/specter/main.go:1074-1076` and implemented at
+`internal/coverage/zero_tolerance.go:71`. Measured on one fixture, one results
+file marking all three criteria `passed`, with `AC-01` carrying
+`approval_gate: true` and no `approval_date`:
+
+```
+$ bin/specter coverage
+th-spec   T3   3   3   100%   PASS
+exit 0
+
+$ bin/specter coverage --strictness zero-tolerance
+th-spec   T3   3   2   66%    PASS
+  uncovered: AC-01
+error: zero-tolerance strictness — 1 AC(s) carry approval_gate=true with unset approval_date
+exit 3
+```
+
+Same inputs, different coverage percentage. So **both** what demotes and which
+gates arm differ between the two levels. The comment at
+`zero_tolerance.go:65-70` records why: v0.11.0 emitted the exit code while
+leaving the report identical to threshold mode, so an operator saw PASS on a run
+that exited 3. GH #94 was filed against that, and this function is the fix.
 
 ## the strict path
 
@@ -794,19 +820,47 @@ The **source channel** is a comment in the test file: `// @spec <id>` and
 `// @ac AC-NN`. It is found by reading the file. It is what
 `--strictness annotation` counts, and it is what `check --test` cross-references.
 
-The **runner-visible channel** is a `<spec-id>/AC-NN` token that appears in the
-test runner's own output. `docs/TEST_ANNOTATION_REFERENCE.md` names two ways to
-produce it: Convention A puts the token in the test title, Convention B prints it
-from the test body. Python cannot use Convention A, because function names cannot
-contain a slash.
+The **runner-visible channel** is what `ingest` can extract from a test runner's
+report. **It is defined by which field the marker sits in, not by whether the
+marker is visible in the output.** An earlier draft of this entry said the
+channel is "a `<spec-id>/AC-NN` token that appears in the test runner's own
+output," and that description is falsified by measurement below.
+
+Two forms, and they are not variants of one rule:
+
+- **Convention A** puts a `<spec-id>/AC-NN` token in the **test name or the
+  JUnit classname** (`internal/ingest/annotations.go:31-35`). Python cannot use
+  it, because function names cannot contain a slash.
+- **Convention B** prints `// @spec <id>` **and** `// @ac AC-NN` from the test
+  body. **Both markers are required.** `internal/ingest/junit.go:111-113` drops
+  the case when either is empty, and `internal/ingest/gotest.go:89-93` takes the
+  body pair only when both were seen.
+
+A bare `<spec-id>/AC-NN` token printed into the body matches neither, and is
+dropped. Measured, on a Go fixture with one test per form:
+
+```
+Scanned 5 test cases; extracted 2 (spec_id, ac_id) pairs; dropped 3 with no runner-visible annotation.
+  dropped: TestConvA — no (spec_id, ac_id) pair found in name, classname, or output
+  dropped: TestConvBBareToken — no (spec_id, ac_id) pair found in name, classname, or output
+  dropped: TestSourceOnly — no (spec_id, ac_id) pair found in name, classname, or output
+```
+
+The token in `TestConvBBareToken` **is** in the runner's output, and `go test
+-json` carries it in an Output event. It is dropped anyway, because `ingest`
+applies the token regex only to the name and the classname. That is why the
+visibility framing was wrong.
 
 The distinction is the single most expensive one in this document. A source
 annotation alone satisfies `annotation` and satisfies nothing above it, because
 `ingest` never sees it and so no results entry exists for the pair. That is the
-demotion case, and it is what `unreachable_annotation` warns about before it
-happens.
+demotion case, and it is what `unreachable_annotation` is supposed to warn about
+before it happens.
 
-**Standing.** Settled. Both channels are specified and both are implemented.
+**Standing. Open.** Both channels are implemented, and the description above is
+now measured rather than cited. What is open is that `check --test` accepts a
+wider grammar than `ingest` does, so the warning does not cover every form that
+demotes. See the next entry and `bugs/SP-SP-050`.
 
 ## `unreachable_annotation`
 
@@ -820,7 +874,28 @@ per file by `// @reachable manual`, or `# @reachable manual` in Python.
 A softer sibling, `unreachable_annotation_unknown`, fires when the scanner cannot
 recognize the test shape at all. It is always a warning and never fails a gate.
 
-**Standing.** Settled.
+The severity routing was measured, on one workspace with only
+`settings.strictness` edited between runs:
+
+```
+annotation       All 1 specs passed structural checks.        exit 0
+threshold        0 error(s), 1 warning(s), 0 info             exit 0
+zero-tolerance   1 error(s), 0 warning(s), 0 info             exit 1
+```
+
+**Standing. Open, on coverage rather than on severity.** The routing above holds
+and the `@reachable manual` suppression works in both Go and Python. What is open
+is that **the diagnostic misses forms that demote.** Its reachability scanner
+accepts either marker alone (`unreachable_go.go:452-460`,
+`unreachable_py.go:122-127`, `unreachable_ts.go:165-168`) where `ingest` requires
+both, and accepts a bare pair in any string-literal argument
+(`unreachable_go.go:441-446`) where `ingest` reads only the name and classname.
+
+Measured: on a four-criterion fixture, `check --test` warned about `AC-04` and
+stayed silent on `AC-03`, while `coverage --strictness threshold` reported
+`uncovered: AC-03, AC-04`. Under `zero-tolerance` the diagnostic is an error, so
+this is a gate staying silent on the input it exists to catch. Filed as
+`bugs/SP-SP-050`.
 
 ## `coverage_threshold` and the effective threshold
 
@@ -1083,11 +1158,34 @@ The third is unshipped. `specs/spec-check.spec.yaml:43` lists "Gap detection
 (uncovered input paths, Phase 8)" in its objective scope. Phase 8 has not
 shipped.
 
-**Standing. Settled, and scheduled for deletion.** Roadmap 3C7 removes the field
-this cycle with a migration drop rule, on the grounds that nothing reads it. Do
-not write `gap: true` into a spec on the strength of the label above. The prose
-use should be avoided in technical
-documents, because it collides with a schema field that means something narrower.
+**Standing. Settled as a definition. Open on the grounds for deleting it.**
+Roadmap 3C7 removes the field this cycle with a migration drop rule, on the
+grounds that nothing reads it. **That is half true, and the false half is the
+part the plan rests on.**
+
+Nothing reads a persisted `gap: true` back from a parsed spec. No reader exists
+in `internal/coverage`, `internal/checker`, or `internal/explain`. But `reverse`
+reads the field in process, at `internal/reverse/reverse.go:235` to build a
+per-spec warning and `:241` to feed `Summary.GapsDetected`, which is printed at
+`cmd/specter/main.go:1617`. Measured on a zod fixture:
+
+```
+$ bin/specter reverse ts --dry-run --adapter typescript
+          gap: true
+  warning: 7 gap(s) detected — constraints without test coverage
+Found 7 constraints, 1 assertion, 7 gaps across 2 files.
+```
+
+So 3C7 is not a schema-only drop. It has to land with edits to
+`reverse.go:235`, `:241`, and `main.go:1617`, or `reverse` keeps writing a field
+the schema rejects and its gap count breaks.
+
+Noted in passing, and not part of any claim above: `reverse` tells the user to
+run `specter explain` to triage gaps, and `explain` reads no gap data.
+
+Do not write `gap: true` into a spec on the strength of the label above. The
+prose use should be avoided in technical documents, because it collides with a
+schema field that means something narrower.
 
 ---
 
@@ -1140,6 +1238,8 @@ above with its evidence.
 | `--strict` with `strictness: annotation` | `coverage` rejects it, per C-24 | `sync` accepts it silently | Not filed |
 | `--scope` prerequisite | Requires the literal `--strict` flag | `--strictness zero-tolerance` is refused despite being stricter | Not filed |
 | `tier_conflict` | Code: a `tier_overrides` mismatch | `CLI_REFERENCE.md:190`: a high-tier spec depending on a low-tier one | Not filed |
+| Convention B grammar | `check --test`: either `@spec` or `@ac` alone marks a test reachable, and a bare pair in any string-literal argument counts | `ingest`: both markers required, and a bare pair read only from the name or classname | `SP-SP-050` |
+| `gap` readers | Roadmap 3C7: "nothing reads it", so the field can be dropped from the schema alone | `reverse.go:235` and `:241` read it in process, and `main.go:1617` prints the count | Not filed; carried on roadmap 3C7 |
 | `tier_overrides` | Warning says "using override" | No caller applies it | `SP-SP-001` |
 | tier cascade | `ResolveTier` inherits from a domain tier, then `system.tier`, then a default of 2 | Nothing calls it. Both call sites sit in functions with no callers, and every live consumer reads `spec.Tier` raw | `SP-SP-049` |
 | `registry` block | Parsed into `Manifest.Registry`, and `full.specter.yaml` carries per-entry tiers | No command reads it or regenerates it | `SP-SP-049` |
@@ -1341,3 +1441,49 @@ are near-Tier-2 behavior. This could not be run, because the schema blocks
 `tier: 0` at the CLI and running it would have meant editing the repository.
 `bugs/SP-SP-049` carries the same flag, and it is the reason the recommendation
 there costs more than it first appeared to.
+
+## Appendix D: the Settled-entry pass, 2026-08-20
+
+The document admitted, in the Scope section, that about seven entries carrying a
+Settled standing rested on citations rather than on cases that were run. A second
+independent pass inspected nine of them. Three were falsified or partially
+falsified. That ratio is the argument for the admission staying in Scope rather
+than being quietly dropped.
+
+**Falsified, and corrected above:**
+
+- **The runner-visible channel was defined by output visibility.** It is defined
+  by which field the marker sits in. A bare `<spec-id>/AC-NN` token printed into
+  a test body appears in `go test -json` output and is dropped anyway. Convention
+  B needs both markers, not either.
+- **`threshold` and `zero-tolerance` were said to differ only in which gates
+  arm.** Zero-tolerance also applies a demotion threshold does not. Same fixture,
+  same results file, 100 percent against 66 percent.
+- **Roadmap 3C7's grounds for deleting `gap` were "nothing reads it."** Nothing
+  reads it back from a parsed spec. `reverse` reads it in process, and deleting
+  the field alone breaks its gap count.
+
+**Confirmed by running, and unchanged:** the `coverage_threshold` precedence
+table across six configurations including both zero cases,
+`unreachable_annotation` severity routing across all three levels and the
+`@reachable manual` suppression in Go and Python, orphan severity by tier with
+`enforcement:` overriding in both directions, and the results-file rules for
+worst-status-wins, unrecognized statuses, and the fixed path.
+
+**Checked by grep only, and labeled as such:** that no reader exists for
+`coverprofile`, `lcov`, `cobertura`, or `coverage.out`, which is adequate for a
+negative existence claim; and that "demoted" appears in no user-facing string.
+
+**Not inspected:** `the strict path`, most of `covered, uncovered, demoted`,
+`structural conflict`, and the prose describing the `annotation` and `threshold`
+levels. Entries marked Retiring or Open were out of scope, and `tier` went to a
+separate reviewer. Those entries are still uninspected, and the Scope admission
+still applies to them.
+
+**One process hazard, recorded because it nearly produced a wrong measurement.**
+A fixture built in a shared scratch directory under a short name collided with
+another agent's files, and the first run reported a `duplicate_ac_id` error for a
+spec the reviewer never wrote. The measurement was redone in a uniquely named
+directory after confirming its contents. A plausible number from a contaminated
+fixture is this project's most repeated failure, and a short directory name is
+enough to cause it.
