@@ -851,10 +851,20 @@ where displayed and compared numbers disagreed.
 ## tier
 
 **Meaning.** An integer from 1 to 3 declaring how much rigor a spec is held to.
-Tier 1 is the strictest. It decides exactly three things: the default coverage
+Tier 1 is the strictest.
+
+It changes **enforcement** in exactly three ways: the default coverage
 threshold, the severity of one diagnostic (`orphan_constraint`), and the Tier 1
 evidence rule that a criterion needs a passing result and not only an
-annotation.
+annotation. The third is a coverage rule, not a severity. Citations are in
+Surfaces below, kept in one place so the line numbers have one place to drift.
+
+It also drives **presentation**, named here so that "exactly three" is not read
+as a claim that nothing else touches the field. A tier sorts entries within a
+coverage bucket (`internal/coverage/coverage.go:792`), groups the summary
+rollup (`:826`), and is printed by `doctor` (`cmd/specter/main.go:2273-2275`),
+which re-derives the threshold from the same map only in order to display it.
+None of these decide a verdict.
 
 **Surfaces.** Declared per spec as `tier:`. **Nothing resolves it.** Every live
 consumer reads `spec.Tier` raw: `internal/coverage/coverage.go:517` (the Tier 1
