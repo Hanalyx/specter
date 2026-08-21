@@ -1337,10 +1337,22 @@ The header reads `down-spec C-07`. `C-07` belongs to `up-spec`, and `down-spec`
 has no `C-07` at all. `check.go:257-259` sets `SpecID` from the downstream spec
 and `ConstraintID` from the upstream constraint.
 
-`bugs/SP-SP-004`, the false positives against spec-check C-05, is **still cited
-rather than measured**. A false-positive rate needs a corpus of valid specs
-rather than a fixture, so it is out of scope for a pass of this kind and stays
-on the list at the end of Appendix D.
+`bugs/SP-SP-004`, the false positives against spec-check C-05, is **now measured
+too**, on 2026-08-21. Crossing all 111 subject-bearing constraints against all
+379 acceptance criteria in Specter's own corpus gives 31 fires over 42069 pairs,
+an upper bound over any conceivable graph. **On the real graph the count is 0**,
+and `check --json` carries no `structural_conflict` entry, because 22 of the 31
+are same-spec pairs the resolver rejects as circular and the other 9 sit on
+edges that do not exist.
+
+All 31 were classified and none is a genuine conflict. The clearest case:
+`spec-commits` C-06 reads "CI MUST validate the PR title", so the subject is the
+two letters `CI`, and two of its fires match `ci` inside "produ**ci**ng" and
+"exer**ci**ses". The rule is not doing word matching.
+
+The reachable count being 0 does not make the defect theoretical. An
+eleven-line two-spec fixture still fails a build at HEAD, and C-05 is scoped to
+anyone's specs.
 
 ## dangling reference
 
@@ -1735,10 +1747,12 @@ downstream `enforcement:` refinement and `SP-SP-014` reproduced).
 
 **What is still uninspected, which is now a short list:**
 
-- `bugs/SP-SP-004`'s false-positive claim under `structural conflict`. Measuring
-  a false-positive rate needs a corpus of valid specs rather than a fixture.
-- `spec coverage against test coverage`, which is grep-only and labeled that way
-  in its entry.
+- `spec coverage against test coverage` was the last one, and it was measured
+  during the quantifier sweep in Appendix E, which falsified its absolute claim.
+
+`bugs/SP-SP-004`'s false-positive rate was measured on 2026-08-21 and is
+recorded in the `structural conflict` entry. Nothing on the original
+uninspected list remains.
 
 Entries marked Retiring or Open were out of scope throughout.
 
