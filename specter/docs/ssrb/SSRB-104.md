@@ -2,6 +2,8 @@
 
 Status: ACCEPT
 Directed: 2026-08-18, founder. Shape settled 2026-08-19.
+**Delivery staged 2026-08-21, founder: v0.15.0 ships `scope: test` behavior only.
+See section 7.7.**
 Source: the strict/strictness consensus panel of 2026-08-17, and `features/SP-006`
 
 ## 1. Request
@@ -23,6 +25,10 @@ settings:
 ```
 
 **Manifest only. There is no `--annotation` flag and none is planned.**
+
+**As shipped in v0.15.0 the `scope` key does not exist**, because only one of
+its two values is implemented. Section 7.7 records that decision and the
+reasoning. The shape above is the v1.0.0 target, not the v0.15.0 surface.
 
 **The model, in four rules.**
 
@@ -321,6 +327,63 @@ rather than bypassed. If `scope: all` does not land, `scope` carries a single
 value and is inert until it does. Section 7.2's naming decision stands either
 way.
 
+### 7.7 v0.15.0 ships `scope: test` behavior, and no `scope` key
+
+Directed 2026-08-21. The annotation model ships in v0.15.0 with **test-scope
+behavior only**. `scope: all` does not ship.
+
+**This is not an arbitrary narrowing.** Section 6 of this brief already records
+that `scope: all` requires reopening `docs/ssrb/SSRB-101.md`, which rejected
+source-file annotation as F7 on 2026-08-16, on the grounds that an annotation
+on an implementation function has no runner-visible counterpart and can only
+ever be an unverifiable claim. That argument has not been answered. Declining to
+ship `all` is therefore consistent with SSRB-101 standing, not a departure from
+it.
+
+**The `scope` key does not ship in v0.15.0.** Section 6 anticipated this exact
+case and named the consequence: "if `scope: all` does not land, `scope` carries
+a single value and is inert until it does." A key with one legal value decides
+nothing, and shipping one deliberately runs against two of this project's own
+rules. The v0.18 pre-lock criterion requires that every schema field be consumed
+deterministically by at least one command. And `projects/specter/MEMORY` carries
+a triage filter written after three inert manifest surfaces were found in one
+week (`bugs/SP-SP-001`, `bugs/SP-SP-049`, and the dead `--strict` disjunct): when
+a document describes a fallback, check whether the case can occur.
+
+So v0.15.0 ships `settings.annotation.permissive` and nothing else under that
+key. Behavior is test-scope, unconditionally.
+
+**One handling rule, because this brief is public and names `all`.** An adopter
+who reads section 1 and writes `scope: all`, or `scope: test`, must not get a
+bare unknown-field error. The manifest validator special-cases
+`settings.annotation.scope` with a message naming the staging:
+
+```
+error: settings.annotation.scope is accepted in SSRB-104 and not implemented in
+       v0.15.0. Annotation scope is test-only; remove the key.
+```
+
+That is a validation rule, not a schema field, so it adds nothing inert.
+
+**Adding `scope` later is non-breaking.** It arrives with default `test`, so
+every v0.15 manifest keeps its meaning. Section 7.2's naming decision stands
+unchanged and is unaffected by the staging.
+
+**Dogfooding consequence, which the roadmap did not surface.** Specter has **no
+root `specter.yaml`**, so the annotation rule is inert on Specter's own corpus
+until one is added. Shipping the feature without a manifest means shipping a
+feature the project does not dogfood, which this project's own culture rejects.
+Adding one at `permissive: false` fails three criteria: `spec-diff` AC-11,
+`spec-manifest` AC-29, and `spec-reverse` AC-18, measured 2026-08-21. AC-29
+asserts that `git push --no-verify` bypasses the pre-push hook, a fact about git
+rather than about Specter, so no honest test exists for it.
+
+**Recommendation: dogfood at `permissive: true` in v0.15.0.** That is the mode
+built for a project not yet at the bar. It warns on all three, keeps
+`make dogfood-strict` green, and demonstrates the feature honestly. Moving to
+`permissive: false` needs SSRB-098's deferred criteria, which is roadmap item
+3C, and that is a v0.16 decision rather than a v0.15 one.
+
 ## 8. Reconsideration triggers
 
 - Any answer to 7.1 through 7.4 that changes the value set materially, which
@@ -328,7 +391,8 @@ way.
 - A decision to abandon marker enforcement, which turns this into a plain
   deprecation with no replacement.
 - SSRB-101 reopened and F7 accepted, which promotes `scope: all` from
-  conditional to ordinary.
+  conditional to ordinary and makes the `scope` key worth adding. This is the
+  specific trigger for revisiting 7.7.
 - Evidence that the deprecation window is too short, meaning adopters cannot
   migrate a manifest key inside one minor series.
 

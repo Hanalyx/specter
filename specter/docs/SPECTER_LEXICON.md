@@ -331,7 +331,8 @@ record is `docs/ssrb/SSRB-104.md` and the request is `features/SP-006`.
 removed there**. Both keep their current behavior for the whole window, so no
 existing workspace changes meaning on upgrade.
 
-The replacement is `settings.annotation`, carrying two sub-keys:
+The replacement is `settings.annotation`. The v1.0.0 target carries two
+sub-keys:
 
 ```yaml
 settings:
@@ -343,6 +344,29 @@ settings:
     tier2: 80
     tier3: 50
 ```
+
+**What v0.15.0 actually ships is narrower**, by founder direction 2026-08-21 and
+recorded as SSRB-104 section 7.7. Behavior is **test scope only**, and the
+`scope` key **does not ship**:
+
+```yaml
+settings:
+  annotation:
+    permissive: false
+  coverage:
+    tier1: 100
+    tier2: 80
+    tier3: 50
+```
+
+`scope: all` requires reopening `docs/ssrb/SSRB-101.md`, which rejected
+source-file annotation and has not been answered. With one of its two values
+unimplemented, a `scope` key would decide nothing, and an inert manifest key is
+the exact shape this document records three times in Part 5. Writing
+`settings.annotation.scope` is rejected with a message naming the staging, not
+with a bare unknown-field error, because SSRB-104 is public and names `all`.
+
+Adding `scope` later is non-breaking: it arrives with default `test`.
 
 **Four rules.**
 
