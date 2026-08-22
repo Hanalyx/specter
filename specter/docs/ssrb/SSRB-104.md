@@ -384,6 +384,45 @@ built for a project not yet at the bar. It warns on all three, keeps
 `permissive: false` needs SSRB-098's deferred criteria, which is roadmap item
 3C, and that is a v0.16 decision rather than a v0.15 one.
 
+### 7.8 Open: `--strictness` against a declared `annotation` block
+
+Surfaced 2026-08-22 by the 1D-a spec phase, which could not resolve it from this
+brief and correctly declined to invent an answer.
+
+Section 7.3 makes flag-and-manifest divergence unreachable **for the new key**,
+by giving it no flag. It does not address the **legacy** flag. Section 1 keeps
+`--strictness` working unchanged until v1.0.0, so during the whole deprecation
+window this is reachable:
+
+```
+specter coverage --strictness zero-tolerance     # with an annotation block declared
+```
+
+`spec-manifest` C-34(d) pins that no observable result varies with the
+**manifest** `strictness` value while the block is declared, and AC-59 pins that
+the flag cannot trigger the conflict warning. Neither says what the flag does to
+the block's behavior.
+
+**Three candidates.**
+
+1. **The flag still wins**, as it does today. Preserves the deprecation promise
+   that `--strictness` behaves unchanged, and reintroduces exactly the
+   divergence 7.3 was written to prevent, through the one door left open.
+2. **The block wins and the flag is ignored, with a warning.** Consistent with
+   7.1's treatment of the manifest key, and it breaks the deprecation promise
+   for a workspace that has opted in.
+3. **The combination is an error**, the way C-24 already refuses
+   `--strict` with `strictness: annotation`. Cheapest to reason about, and it
+   makes an adopter mid-migration fix their CI invocation before they are ready.
+
+**No recommendation yet.** This does not block 1D-a, whose criteria are written
+not to depend on it, and it must be decided before 1D-b ships the rule that
+gives the block observable behavior. Deciding it late means deciding it under
+pressure.
+
+**It expires on its own** when `--strictness` is removed at v1.0.0, which is an
+argument for option 3: the least code, on a path that is going away.
+
 ## 8. Reconsideration triggers
 
 - Any answer to 7.1 through 7.4 that changes the value set materially, which
