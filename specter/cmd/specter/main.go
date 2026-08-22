@@ -1205,6 +1205,13 @@ func coverageCmd() *cobra.Command {
 				if len(e.UncoveredACs) > 0 {
 					fmt.Printf("  uncovered: %s\n", strings.Join(e.UncoveredACs, ", "))
 				}
+				// C-38(a): a rule-1 violation is a different failure from an
+				// uncovered criterion, so it gets its own line. Printed only
+				// under the annotation model, because without a declared block
+				// the ladder governs and rule 1 does not apply.
+				if m.Settings.Annotation != nil && len(e.NoTestACs) > 0 {
+					fmt.Printf("  no test: %s\n", strings.Join(e.NoTestACs, ", "))
+				}
 			}
 
 			fmt.Printf("\n%d specs: %d passing, %d failing\n",
@@ -1229,6 +1236,25 @@ func coverageCmd() *cobra.Command {
 			//
 			// C-26 / AC-29: zero-tolerance also fails on approval_gate=true with
 			// unset approval_date. Exit code 3 distinguishes approval-gate violation.
+			// C-38(a),(b),(c),(d): under a declared annotation block, rule 1
+			// is evaluated before the tier arithmetic, because the threshold
+			// does not excuse a criterion with no test. permissive decides
+			// severity and nothing else, per SSRB-104 section 7.4.
+			if m.Settings.Annotation != nil {
+				total := 0
+				for _, e := range report.Entries {
+					total += len(e.NoTestACs)
+				}
+				if total > 0 {
+					if m.Settings.Annotation.Permissive {
+						fmt.Fprintf(os.Stderr, "warn: %d acceptance criterion(s) have no test. settings.annotation.permissive is true, so this does not fail the run\n", total)
+					} else {
+						fmt.Fprintf(os.Stderr, "error: %d acceptance criterion(s) have no test. The tier threshold does not excuse a missing test; set settings.annotation.permissive: true to warn instead\n", total)
+						os.Exit(2)
+					}
+				}
+			}
+
 			if effectiveStrictness == "zero-tolerance" {
 				if nonPassed := coverage.CountNonPassed(results); nonPassed > 0 {
 					fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d annotated AC(s) did not pass\n", nonPassed)

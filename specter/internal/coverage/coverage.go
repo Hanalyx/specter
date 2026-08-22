@@ -47,11 +47,16 @@ type AnnotationMatch struct {
 
 // SpecCoverageEntry is coverage data for a single spec.
 type SpecCoverageEntry struct {
-	SpecID          string   `json:"spec_id"`
-	Tier            int      `json:"tier"`
-	TotalACs        int      `json:"total_acs"`
-	CoveredACs      []string `json:"covered_acs"`
-	UncoveredACs    []string `json:"uncovered_acs"`
+	SpecID       string   `json:"spec_id"`
+	Tier         int      `json:"tier"`
+	TotalACs     int      `json:"total_acs"`
+	CoveredACs   []string `json:"covered_acs"`
+	UncoveredACs []string `json:"uncovered_acs"`
+	// NoTestACs lists criteria carrying no source annotation at all. C-38(a):
+	// a rule-1 violation is a different failure from an uncovered criterion
+	// and is reported separately. Always emitted as [] rather than null, per
+	// C-14's convention for arrays a consumer reads.
+	NoTestACs       []string `json:"no_test_acs"`
 	CoveragePct     float64  `json:"coverage_pct"`
 	Threshold       int      `json:"threshold"`
 	PassesThreshold bool     `json:"passes_threshold"`
@@ -507,8 +512,15 @@ func buildCoverageReportCore(specs []schema.SpecAST, annotations []AnnotationMat
 		// v0.10 default.
 		specInScope := strict && (len(scopedSpecs) == 0 || scopedSpecs[spec.ID])
 
+		noTestACs := []string{}
 		for _, id := range allACIDs {
 			annotationExists := ann.acIDs != nil && ann.acIDs[id]
+			// C-38(a): rule 1 asks only whether a test exists. It is
+			// evaluated for every spec; the CLI decides what to do with it
+			// based on whether an annotation block is declared.
+			if !annotationExists {
+				noTestACs = append(noTestACs, id)
+			}
 			var isCovered bool
 			switch {
 			case specInScope:
@@ -572,6 +584,7 @@ func buildCoverageReportCore(specs []schema.SpecAST, annotations []AnnotationMat
 			TotalACs:        totalACs,
 			CoveredACs:      coveredACs,
 			UncoveredACs:    uncoveredACs,
+			NoTestACs:       noTestACs,
 			CoveragePct:     coveragePct,
 			Threshold:       threshold,
 			PassesThreshold: passesThreshold,
