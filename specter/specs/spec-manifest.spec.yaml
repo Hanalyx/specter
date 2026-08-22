@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "1.14.0"
+  version: "1.14.1"
   status: draft
   tier: 2
 
@@ -854,7 +854,7 @@ spec:
       priority: critical
 
     - id: AC-57
-      description: "The warning reaches the operator, and it changes no exit code. On a workspace whose manifest declares both `settings.strictness: annotation` and `settings.annotation.permissive: true`, `specter check`, `specter coverage`, and `specter sync` each write a stderr line containing `settings.strictness`, the declared value `annotation`, and `settings.annotation`. Each command is then run on the same workspace with only the `settings.strictness` line removed: no such stderr line appears, and the exit code matches the run that produced the warning, command by command. The second half is what pins the exit code to the ignored key rather than to the warning, and it also fails an implementation that prints the warning and then still applies the ladder. Each `sync` run needs a freshly written manifest, because C-06 has `sync` write the registry back into `specter.yaml`, and a second run against the rewritten file is no longer the input this criterion names."
+      description: "The warning reaches the operator, and it changes no exit code. On a workspace whose manifest declares both `settings.strictness: annotation` and `settings.annotation.permissive: true`, `specter check`, `specter coverage`, and `specter sync` each write a stderr line containing `settings.strictness`, the declared value `annotation`, and `settings.annotation`. Each command is then run on the same workspace with only the `settings.strictness` line removed: no such stderr line appears, and the exit code matches the run that produced the warning, command by command. The second half is what pins the exit code to the ignored key rather than to the warning, and it also fails an implementation that prints the warning and then still applies the ladder. Each `sync` run is given a freshly written manifest. That is defensive rather than required: C-06 says `sync` auto-updates the registry section, but no command performs that update (`bugs/SP-SP-054`), and a passing `sync` leaves `specter.yaml` byte-identical. Rewriting keeps the criterion true of its named input if C-06 is ever implemented."
       inputs:
         workspace: "one spec, one criterion, one annotated test file"
         manifest_with_conflict: "settings.strictness: annotation + settings.annotation.permissive: true"
@@ -900,6 +900,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.14.1"
+      date: "2026-08-22"
+      author: "specter-team"
+      type: patch
+      description: "Correct a false rationale clause in AC-57. It stated that each `sync` run needs a fresh manifest because C-06 has `sync` write the registry back into `specter.yaml`. Measured: a passing `sync` leaves the file byte-identical, `UpdateRegistry` has zero callers in the tree, and `cmd/specter/main.go` contains no occurrence of `registry` in any casing. So C-06 mandates behavior no command performs, filed as `bugs/SP-SP-054` at P1 because AC-09 tests the builder at unit level and coverage therefore reports C-06 covered. The rewrite-per-run precaution is kept as defensive; only its stated reason changes. No assertion in AC-57 depends on the clause, so no test changes."
     - version: "1.14.0"
       date: "2026-08-22"
       author: "specter-team"

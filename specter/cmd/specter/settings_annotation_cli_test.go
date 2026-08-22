@@ -61,8 +61,11 @@ func annotationWorkspace(t *testing.T) string {
 }
 
 // putManifest writes specter.yaml into dir, overwriting whatever is there.
-// `sync` rewrites the manifest (C-06), so any run that follows a sync needs a
-// fresh one or it is no longer testing the named input.
+//
+// Rewriting per run is defensive, not required. C-06 says `sync` auto-updates
+// the registry section, but no command performs that update (bugs/SP-SP-054),
+// and a passing `sync` leaves specter.yaml byte-identical. An earlier version
+// of this comment stated the rewrite as fact.
 func putManifest(t *testing.T, dir, body string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, "specter.yaml"), []byte(body), 0644); err != nil {
