@@ -384,6 +384,47 @@ built for a project not yet at the bar. It warns on all three, keeps
 `permissive: false` needs SSRB-098's deferred criteria, which is roadmap item
 3C, and that is a v0.16 decision rather than a v0.15 one.
 
+### 7.7a The v0.15.0 interim behavior, and what it costs
+
+Recorded 2026-08-22, after roadmap item 1D-a shipped the manifest surface.
+
+Until 1D-b lands the rule that consumes `permissive`, a declared `annotation`
+block resolves to **the strict path at `threshold`**, the C-24 default.
+
+**A declared block is not inert, and an earlier claim that it was is withdrawn.**
+The orchestrator's decision passed to the build phases said the interim was
+"chosen so the block changes nothing observable beyond the warning". Measured on
+2026-08-22, that is false:
+
+```
+strictness: annotation, annotated tests, no results file   coverage rc=0
+same workspace + 'annotation: {}'                          coverage rc=1
+  error: strictness "threshold" requires .specter-results.json
+```
+
+So an adopter on `settings.strictness: annotation` who declares the emptiest
+possible block moves from the lenient path to the strict one and their build
+goes red. The C-34 warning fires, so it is visible rather than silent.
+
+**`threshold` was kept anyway, because the alternative is worse.** The interim
+value is genuinely free: the full suite passes with `annotation` and with
+`zero-tolerance` as well. Measured on the same workspace shape at
+`settings.strictness: threshold`, which is the C-24 default and therefore the
+common case:
+
+| Adopter | interim `threshold` | interim `annotation` |
+|---|---|---|
+| `strictness: annotation` | rc 0 to 1, warned | unchanged |
+| `strictness: threshold` | unchanged | rc 1 to **0**, strict path silently dropped |
+
+A visible red build on an opt-in key beats a gate that quietly stops gating. The
+second column is the P1 false-confidence class in this repository's priority
+framework.
+
+**1D-b should decide this explicitly rather than inherit it.** The value it
+picks replaces the interim, and the tradeoff above is the one it is choosing
+between, not a default it can accept without looking.
+
 ### 7.8 Open: `--strictness` against a declared `annotation` block
 
 Surfaced 2026-08-22 by the 1D-a spec phase, which could not resolve it from this
