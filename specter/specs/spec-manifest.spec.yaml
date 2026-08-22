@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "1.14.1"
+  version: "1.15.0"
   status: draft
   tier: 2
 
@@ -115,7 +115,7 @@ spec:
       enforcement: error
 
     - id: C-14
-      description: "MUST parse settings.tier_overrides (map[spec-id]int) and emit a tier_conflict warning when a spec's declared tier disagrees with its override value"
+      description: "MUST parse settings.tier_overrides (map[spec-id]int) and emit a tier_conflict warning when a spec's declared tier disagrees with its override value. The override is NOT applied: the tier declared in the spec governs every downstream decision, and no command consults the override value. The warning MUST therefore state that the declared tier governs, and MUST NOT assert that the override is in use. Rationale, per docs/ssrb/SSRB-106.md section 7.3: the setting is deprecated and removed at v1.0.0, but the message is corrected now and independently, because a program that misdescribes itself defeats the reviewer who checks the program. The prior wording ended `using override (N)`, which is false on every run, and it was the only evidence behind a near-miss documentation fix that would have asserted the override wins."
       type: technical
       enforcement: error
 
@@ -389,12 +389,13 @@ spec:
       priority: high
 
     - id: AC-19
-      description: "settings.tier_overrides: {payment-intent: 1} parsed correctly — ResolveTier returns 1 for payment-intent"
+      description: "settings.tier_overrides parses into Settings.TierOverrides as a map of spec id to tier. A manifest declaring payment-intent: 1 and auth-login: 3 yields both entries with those values. This criterion pins parsing only. It does NOT assert that the override resolves a tier, because no command applies it; the prior wording claimed ResolveTier returns the override value, which it never has."
       inputs:
-        yaml: "settings:\n  tier_overrides:\n    payment-intent: 1"
-        spec_id: "payment-intent"
+        yaml: "settings:\n  tier_overrides:\n    payment-intent: 1\n    auth-login: 3"
       expected_output:
-        resolved_tier: 1
+        parsed_payment_intent: 1
+        parsed_auth_login: 3
+        resolution_asserted: false
       references_constraints: ["C-14"]
       priority: high
 
@@ -891,6 +892,21 @@ spec:
       references_constraints: ["C-34"]
       priority: high
 
+    - id: AC-60
+      description: "The tier_conflict warning states that the declared tier governs and does not claim the override is applied. On a workspace whose spec declares `tier: 3` and whose manifest sets `tier_overrides: {lo: 1}`, `specter check` writes a tier_conflict warning naming both values, and that message does NOT contain the substring `using override`. It states that the declared tier governs. The negative half is the point: the prior message ended `using override (1)` while `coverage --json` reported `\"tier\": 3` for the same spec on the same run, so the two surfaces contradicted each other and only one of them was true."
+      inputs:
+        spec: "declares tier: 3"
+        manifest: "settings.tier_overrides: {lo: 1}"
+        command: "specter check"
+      expected_output:
+        warning_names_declared_tier: 3
+        warning_names_override_tier: 1
+        message_contains_using_override: false
+        message_states_declared_tier_governs: true
+        coverage_json_tier_unchanged: 3
+      references_constraints: ["C-14"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -900,6 +916,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.15.0"
+      date: "2026-08-22"
+      author: "specter-team"
+      type: minor
+      description: "Correct two false claims about settings.tier_overrides, per docs/ssrb/SSRB-106.md section 7.3. C-14 now states that the override is not applied, that the declared tier governs, and that the warning must not assert otherwise. The prior message ended `using override (N)` on every run while coverage reported the declared tier for the same spec, so the two surfaces contradicted each other. AC-19 claimed `ResolveTier returns 1 for payment-intent` with `resolved_tier: 1` as its expected output; ResolveTier has never consulted overrides, and the test behind that criterion asserts only that the map parsed. AC-19 now describes parsing, which is what it checks. New AC-60 pins the corrected message, including the negative half that it must not contain `using override`. Minor rather than patch because C-14 gains a testable clause."
     - version: "1.14.1"
       date: "2026-08-22"
       author: "specter-team"
