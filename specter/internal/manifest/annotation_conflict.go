@@ -34,7 +34,7 @@ func CheckAnnotationStrictnessConflict(m *Manifest) *AnnotationStrictnessConflic
 	if m == nil {
 		return nil
 	}
-	if !m.Settings.annotationDeclared || !(m.Settings.Strictness != "") {
+	if !m.Settings.annotationDeclared || !m.Settings.strictnessDeclared {
 		return nil
 	}
 	declared := m.Settings.Strictness
