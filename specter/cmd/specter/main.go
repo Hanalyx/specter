@@ -788,9 +788,43 @@ func checkCmd() *cobra.Command {
 				}
 			}
 
+			// spec-manifest C-36: the deprecated tier keys warn once per key.
+			// They change no exit code, so they are written to stderr and are
+			// not diagnostics.
+			for _, msg := range manifest.DeprecatedTierKeys(m) {
+				fmt.Fprintf(os.Stderr, "warn: %s\n", msg)
+			}
+
 			// Tier conflict warnings (spec-manifest C-14, qualified because
-			// spec-check C-14 below is a different constraint)
-			tierConflicts := manifest.CheckTierConflicts(specs, m)
+			// spec-check C-14 below is a different constraint) and the
+			// domain-tier assertion (C-35).
+			//
+			// bugs/SP-SP-002: these were computed here, printed by the text
+			// path, and counted separately at the summary line, but never
+			// appended to result.Diagnostics. The --json branch encodes
+			// result, so no JSON consumer has ever seen them, including the
+			// VS Code extension, and the two modes disagreed on the warning
+			// count for the same workspace. Appending them before either
+			// branch runs makes both modes read one list, so the counts agree
+			// by construction rather than by two places being kept in step.
+			for _, tc := range manifest.CheckTierConflicts(specs, m) {
+				result.Diagnostics = append(result.Diagnostics, checker.CheckDiagnostic{
+					Kind:     "tier_conflict",
+					Severity: "warning",
+					Message:  tc.Message,
+					SpecID:   tc.SpecID,
+				})
+				result.Summary.Warnings++
+			}
+			for _, dc := range manifest.CheckDomainTierConflicts(specs, m) {
+				result.Diagnostics = append(result.Diagnostics, checker.CheckDiagnostic{
+					Kind:     "domain_tier_conflict",
+					Severity: "warning",
+					Message:  dc.Message,
+					SpecID:   dc.SpecID,
+				})
+				result.Summary.Warnings++
+			}
 
 			// spec-check C-14: `--json` writes the document to stdout in
 			// full, then takes its exit code from checkExitVerdict, the
@@ -805,11 +839,7 @@ func checkCmd() *cobra.Command {
 				return checkExitVerdict(result)
 			}
 
-			for _, tc := range tierConflicts {
-				fmt.Printf("warn [tier_conflict] %s\n", tc.Message)
-			}
-
-			if len(result.Diagnostics) == 0 && len(tierConflicts) == 0 {
+			if len(result.Diagnostics) == 0 {
 				fmt.Printf("All %d specs passed structural checks.\n", len(graph.Nodes))
 				return nil
 			}
@@ -832,7 +862,7 @@ func checkCmd() *cobra.Command {
 				fmt.Printf("%s [%s] %s%s%s: %s\n", prefix, d.Kind, d.SpecID, cid, ctype, d.Message)
 			}
 
-			fmt.Printf("\n%d error(s), %d warning(s), %d info\n", result.Summary.Errors, result.Summary.Warnings+len(tierConflicts), result.Summary.Info)
+			fmt.Printf("\n%d error(s), %d warning(s), %d info\n", result.Summary.Errors, result.Summary.Warnings, result.Summary.Info)
 
 			return checkExitVerdict(result)
 		},
