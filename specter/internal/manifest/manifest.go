@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -23,8 +24,22 @@ var validTopLevelKeys = []string{"schema_version", "system", "domains", "setting
 // adding a new settings field.
 var validSettingsKeys = []string{
 	"specs_dir", "coverage", "exclude", "strict", "warn_on_draft",
-	"tier_overrides", "tests_glob", "strictness",
+	"tier_overrides", "tests_glob", "strictness", "annotation",
 }
+
+// validAnnotationKeys lists every key allowed under `settings.annotation`.
+// C-32 gives the block exactly one sub-key. `scope` is not on this list and
+// is not a schema field; C-33 rejects it earlier with its own message.
+var validAnnotationKeys = []string{"permissive"}
+
+// ErrAnnotationScopeStaged is the C-33 rejection of `settings.annotation.scope`.
+// The wording follows SSRB-104 section 7.7, joined to one line and without the
+// trailing period. Every value gets this same message, `test` and `all` alike,
+// because the key does not ship in v0.15.0 at all and a value-specific message
+// would imply one of them works.
+var ErrAnnotationScopeStaged = errors.New(
+	"settings.annotation.scope is accepted in SSRB-104 and not implemented in v0.15.0. " +
+		"Annotation scope is test-only; remove the key")
 
 // validStrictnessValues enumerates the three allowed strictness levels.
 var validStrictnessValues = []string{"annotation", "threshold", "zero-tolerance"}
@@ -116,6 +131,32 @@ func validateManifestKeys(yamlContent string) error {
 	for key := range settingsRaw {
 		if !contains(validSettingsKeys, key) {
 			return unknownKeyError(key, "settings", validSettingsKeys)
+		}
+	}
+	return validateAnnotationKeys(settingsRaw)
+}
+
+// validateAnnotationKeys validates the sub-keys under `settings.annotation`.
+//
+// C-33 first: `scope` gets the SSRB-104 section 7.7 staging message rather
+// than the generic unknown-key error, for every value. The presence test runs
+// before the loop because Go map iteration order is random, and a manifest
+// carrying both `scope` and another unknown sub-key would otherwise report
+// either one.
+//
+// C-32 second: any other unrecognized sub-key gets the C-26 error shape.
+func validateAnnotationKeys(settingsRaw map[string]interface{}) error {
+	annotationRaw, ok := settingsRaw["annotation"].(map[string]interface{})
+	if !ok {
+		// Absent, or one of the two empty forms. Neither carries a sub-key.
+		return nil
+	}
+	if _, declared := annotationRaw["scope"]; declared {
+		return ErrAnnotationScopeStaged
+	}
+	for key := range annotationRaw {
+		if !contains(validAnnotationKeys, key) {
+			return unknownKeyError(key, "settings.annotation", validAnnotationKeys)
 		}
 	}
 	return nil

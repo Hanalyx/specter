@@ -707,6 +707,8 @@ func checkCmd() *cobra.Command {
 				fmt.Fprintln(os.Stderr, "error:", mErr)
 				return errSilent
 			}
+			warnAnnotationStrictnessConflict(m)
+
 			opts := &checker.CheckOptions{
 				Strict:      strict || m.Settings.Strict,
 				WarnOnDraft: m.Settings.WarnOnDraft,
@@ -769,7 +771,10 @@ func checkCmd() *cobra.Command {
 				// always a warning regardless of strictness, so the
 				// scan is safe to run even in annotation mode — the
 				// helper handles suppression internally.
-				uaDiags := checker.CheckUnreachableAnnotations(contents, m.Settings.Strictness)
+				// spec-manifest C-34(d): a declared settings.annotation block
+				// governs the strictness routing, so the manifest's own
+				// strictness value stops changing this severity.
+				uaDiags := checker.CheckUnreachableAnnotations(contents, m.GoverningStrictness())
 				result.Diagnostics = append(result.Diagnostics, uaDiags...)
 				for _, d := range uaDiags {
 					switch d.Severity {
@@ -875,6 +880,8 @@ func coverageCmd() *cobra.Command {
 				return errSilent
 			}
 
+			warnAnnotationStrictnessConflict(m)
+
 			// C-25: when --tests is unset, fall back to settings.tests_glob.
 			// Manifest may carry multiple globs as a list; iterate and union
 			// the matches (deduped). Empty manifest list + no --tests falls
@@ -929,7 +936,13 @@ func coverageCmd() *cobra.Command {
 			}
 
 			// Resolve effective strictness: CLI flag overrides manifest setting.
-			effectiveStrictness := m.Settings.Strictness
+			//
+			// spec-manifest C-34(d): with a settings.annotation block declared,
+			// GoverningStrictness returns the interim level rather than the
+			// declared settings.strictness, so the run does not vary with a
+			// value the block has superseded. The flag still wins over both,
+			// which is its behavior until v1.0.0 per SSRB-104 section 1.
+			effectiveStrictness := m.GoverningStrictness()
 			if strictnessFlag != "" {
 				effectiveStrictness = strictnessFlag
 			}
@@ -1309,6 +1322,8 @@ func syncCmd() *cobra.Command {
 				fmt.Fprintln(os.Stderr, "error:", mErr)
 				return errSilent
 			}
+			warnAnnotationStrictnessConflict(m)
+
 			checkOpts := &checker.CheckOptions{
 				Strict:      strict || m.Settings.Strict,
 				WarnOnDraft: m.Settings.WarnOnDraft,
@@ -1318,12 +1333,16 @@ func syncCmd() *cobra.Command {
 			// to manifest setting; ultimate default is "annotation". The
 			// legacy --strict bool maps to "zero-tolerance" when
 			// --strictness is not set.
+			//
+			// spec-manifest C-34(d): the manifest fallback reads
+			// GoverningStrictness, so a declared settings.annotation block
+			// supersedes the declared settings.strictness value here too.
 			effectiveStrictness := strictnessFlag
 			if effectiveStrictness == "" {
 				if strict {
 					effectiveStrictness = "zero-tolerance"
 				} else {
-					effectiveStrictness = m.Settings.Strictness
+					effectiveStrictness = m.GoverningStrictness()
 				}
 			}
 
@@ -1700,6 +1719,23 @@ func warnManifestRejected() {
 	if _, _, err := loadManifest(); err != nil {
 		fmt.Fprintln(os.Stderr, "warn:", err)
 		fmt.Fprintln(os.Stderr, "      the manifest was ignored; default settings are in effect")
+	}
+}
+
+// warnAnnotationStrictnessConflict writes the spec-manifest C-34 warning to
+// stderr when the manifest declares both `settings.strictness` and a
+// `settings.annotation` block. Silent otherwise.
+//
+// C-34(c) binds `check`, `coverage`, and `sync`, the three commands that read
+// a strictness level. It goes to stderr rather than following the tier-conflict
+// precedent's stdout, because `coverage --json` and `check --json` write a
+// machine-read document to stdout and a warning line would corrupt it.
+//
+// The warning changes no exit code. The declared `settings.strictness` is
+// ignored either way; the line only says so out loud.
+func warnAnnotationStrictnessConflict(m *manifest.Manifest) {
+	if w := manifest.CheckAnnotationStrictnessConflict(m); w != nil {
+		fmt.Fprintf(os.Stderr, "warn [annotation_conflict] %s\n", w.Message)
 	}
 }
 

@@ -42,15 +42,75 @@ type DomainConfig struct {
 }
 
 // Settings holds project-level configuration.
+//
+// The two `declared` fields record which keys the settings block actually
+// carried. Value alone cannot answer that question for either of them.
+// C-24 rewrites an absent `strictness` to `threshold` at parse time, so the
+// parsed string reads the same for an absent key and an explicit
+// `threshold`. And gopkg.in/yaml.v3 leaves Annotation nil for a bare
+// `annotation:` while allocating it for `annotation: {}`, so the decoded
+// pointer alone reads one declared form as absent. Both are recorded from the
+// raw key set in UnmarshalYAML (C-32, C-34(a)).
 type Settings struct {
-	SpecsDir      string         `yaml:"specs_dir,omitempty" json:"specs_dir,omitempty"`
-	Coverage      CoverageConfig `yaml:"coverage,omitempty" json:"coverage,omitempty"`
-	Exclude       []string       `yaml:"exclude,omitempty" json:"exclude,omitempty"`
-	Strict        bool           `yaml:"strict,omitempty" json:"strict,omitempty"`                 // C-11: treat warnings as errors
-	WarnOnDraft   bool           `yaml:"warn_on_draft,omitempty" json:"warn_on_draft,omitempty"`   // C-12: warn on draft specs
-	TierOverrides map[string]int `yaml:"tier_overrides,omitempty" json:"tier_overrides,omitempty"` // C-14: per-spec tier overrides
-	TestsGlob     StringOrList   `yaml:"tests_glob,omitempty" json:"tests_glob,omitempty"`         // C-25: default test-discovery glob (string or list)
-	Strictness    string         `yaml:"strictness,omitempty" json:"strictness,omitempty"`         // C-24: annotation | threshold (default) | zero-tolerance
+	SpecsDir      string            `yaml:"specs_dir,omitempty" json:"specs_dir,omitempty"`
+	Coverage      CoverageConfig    `yaml:"coverage,omitempty" json:"coverage,omitempty"`
+	Exclude       []string          `yaml:"exclude,omitempty" json:"exclude,omitempty"`
+	Strict        bool              `yaml:"strict,omitempty" json:"strict,omitempty"`                 // C-11: treat warnings as errors
+	WarnOnDraft   bool              `yaml:"warn_on_draft,omitempty" json:"warn_on_draft,omitempty"`   // C-12: warn on draft specs
+	TierOverrides map[string]int    `yaml:"tier_overrides,omitempty" json:"tier_overrides,omitempty"` // C-14: per-spec tier overrides
+	TestsGlob     StringOrList      `yaml:"tests_glob,omitempty" json:"tests_glob,omitempty"`         // C-25: default test-discovery glob (string or list)
+	Strictness    string            `yaml:"strictness,omitempty" json:"strictness,omitempty"`         // C-24: annotation | threshold (default) | zero-tolerance
+	Annotation    *AnnotationConfig `yaml:"annotation,omitempty" json:"annotation,omitempty"`         // C-32: nil when the manifest carries no `annotation` key
+
+	annotationDeclared bool
+	strictnessDeclared bool
+}
+
+// AnnotationConfig is the body of `settings.annotation`. It carries one
+// sub-key, `permissive`, which defaults to false (C-32).
+//
+// Declaredness of the block and the value of Permissive are separate facts.
+// Both empty forms, `annotation: {}` and a bare `annotation:`, produce a
+// non-nil AnnotationConfig with Permissive false.
+//
+// `scope` is deliberately not a field here. SSRB-104 section 7.7 stages it
+// out of v0.15.0 and ParseManifest rejects it as a validation rule (C-33),
+// so the manifest surface gains nothing inert.
+type AnnotationConfig struct {
+	Permissive bool `yaml:"permissive,omitempty" json:"permissive,omitempty"`
+}
+
+// UnmarshalYAML decodes the settings fields and records which of `annotation`
+// and `strictness` the document actually carried. The alias type is what
+// keeps this from recursing, the same shape CoverageConfig uses.
+//
+// C-32 requires Annotation to be non-nil whenever the manifest carries the
+// key, so a bare `annotation:` (which decodes to a nil pointer) is allocated
+// here from the raw key set rather than inferred from the pointer.
+func (s *Settings) UnmarshalYAML(node *yaml.Node) error {
+	type plain Settings
+	var p plain
+	if err := node.Decode(&p); err != nil {
+		return err
+	}
+	*s = Settings(p)
+
+	// A mapping node holds keys and values in one alternating list.
+	if node.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		switch node.Content[i].Value {
+		case "annotation":
+			s.annotationDeclared = true
+		case "strictness":
+			s.strictnessDeclared = true
+		}
+	}
+	if s.annotationDeclared && s.Annotation == nil {
+		s.Annotation = &AnnotationConfig{}
+	}
+	return nil
 }
 
 // CoverageConfig defines per-tier coverage thresholds.
@@ -136,6 +196,24 @@ func (m *Manifest) CoverageThresholds() map[int]int {
 		t[3] = c.Tier3
 	}
 	return t
+}
+
+// GoverningStrictness returns the strictness level that governs a run, before
+// any `--strictness` flag is applied.
+//
+// C-34(d): while a `settings.annotation` block is declared, `settings.strictness`
+// stops mattering. What governs instead is set by the coverage rule in roadmap
+// item 1D-b. The v0.15.0 interim answer is the strict path at `threshold`,
+// which is the C-24 default, so a declared block changes nothing observable
+// beyond the C-34 warning until 1D-b lands.
+//
+// With no block declared the manifest value is returned verbatim, empty string
+// included, so every caller's existing fallback keeps its meaning.
+func (m *Manifest) GoverningStrictness() string {
+	if m.Settings.Annotation != nil {
+		return "threshold"
+	}
+	return m.Settings.Strictness
 }
 
 // SpecsDir returns the configured specs directory or the default "specs".
