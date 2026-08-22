@@ -204,13 +204,29 @@ func (m *Manifest) CoverageThresholds() map[int]int {
 // C-34(d): while a `settings.annotation` block is declared, `settings.strictness`
 // stops mattering. What governs instead is set by the coverage rule in roadmap
 // item 1D-b. The v0.15.0 interim answer is the strict path at `threshold`,
-// which is the C-24 default, so a declared block changes nothing observable
-// beyond the C-34 warning until 1D-b lands.
+// which is the C-24 default.
+//
+// A declared block CAN change the outcome, and an earlier version of this
+// comment claimed otherwise. Measured 2026-08-22: a workspace on
+// `strictness: annotation` with annotated tests and no results file exits 0,
+// and adding `annotation: {}` moves it to exit 1 on the strict path. The C-34
+// warning fires, so the change is visible rather than silent.
+//
+// `threshold` was kept anyway, because the alternative is worse. Measured on
+// the same workspace shape at `strictness: threshold`, which is the C-24
+// default and therefore the common case: an interim of `annotation` takes a
+// run from exit 1 to exit 0 and silently drops the strict path. A visible red
+// build on an opt-in key beats a gate that quietly stops gating.
 //
 // With no block declared the manifest value is returned verbatim, empty string
 // included, so every caller's existing fallback keeps its meaning.
 func (m *Manifest) GoverningStrictness() string {
-	if m.Settings.Annotation != nil {
+	// Reads annotationDeclared, not the Annotation pointer, so this and
+	// CheckAnnotationStrictnessConflict answer declaredness the same way.
+	// They agree for anything from ParseManifest and diverge for a
+	// hand-built Manifest, where setting Annotation alone would take the
+	// override without triggering the warning.
+	if m.Settings.annotationDeclared {
 		return "threshold"
 	}
 	return m.Settings.Strictness
