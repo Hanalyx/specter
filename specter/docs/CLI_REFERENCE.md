@@ -434,8 +434,19 @@ When specs fail to parse, the report carries a `parse_errors` array and a groupe
 **Exit codes:**
 - `0`: all specs parsed AND all meet their coverage thresholds
 - `1`: one or more specs failed to parse, OR one or more specs are below threshold, OR `.specter-results.json` is missing under a strict mode (`--strict`, or effective strictness `threshold`/`zero-tolerance`)
-- `2`: zero-tolerance strictness: an annotated AC has a results-file status other than `passed`
-- `3`: zero-tolerance strictness: an AC carries `approval_gate: true` with an unset `approval_date`
+- `2`: under `zero-tolerance` strictness, an annotated AC has a results-file status other than `passed`. **Under a declared `settings.annotation` block, code 2 means something narrower**: an acceptance criterion has no test at all. The two triggers do not overlap, because a criterion with no test has no results-file status to be wrong
+- `3`: an AC carries `approval_gate: true` with an unset `approval_date`
+
+**Codes 1 and 2 answer different questions under `settings.annotation`.** Code 2
+is the annotation rule: a criterion has no test, and the tier threshold does not
+excuse it. Code 1 is the pass rate: among criteria that do have tests, the share
+passing is below the tier threshold. The strictness ladder had one code for
+both. `docs/ssrb/SSRB-104.md` section 7.5 records the split.
+
+Criteria with no test are listed on a `no test:` line, distinct from the
+`uncovered:` line, and appear in `coverage --json` as `no_test_acs`. A criterion
+can be uncovered without being on the `no test:` line: it has an annotation that
+produced no passing result, which is a rate failure rather than a missing test.
 
 **Consuming the JSON programmatically:**
 
@@ -976,11 +987,9 @@ An optional `specter.yaml` file at the project root configures discovery, thresh
 schema_version: 1
 system:
   name: my-project
-  tier: 2
 
 domains:
   default:
-    tier: 2
     description: Default domain for my-project specs
     specs:
       - user-create
@@ -1028,21 +1037,31 @@ manifest declares both, the `annotation` block takes precedence and `check`,
 the key is rejected with a message that says so rather than reading as a typo.
 Annotation scope is test-only.
 
-### Fields that are validated and do nothing
+### Tier: what governs, and what is deprecated
 
-These parse, are range-checked, and have no effect on any run. They are
-documented here because `specter init` writes two of them into every new
-workspace, and an operator setting one gets no signal that it did nothing.
+**The tier declared in the `.spec.yaml` file governs.** It sets the coverage
+threshold the spec is held to, the severity of its orphan constraints, and the
+tier reported by `coverage --json`. Nothing resolves or overrides it.
 
 | Field | State |
 |---|---|
-| `system.tier` | Inert. No command reads it. `bugs/SP-SP-049` |
-| `domains.<name>.tier` | Inert. Domains still drive `--scope`, which reads `domains.<name>.specs`. Only the `tier` field does nothing |
-| `settings.tier_overrides` | Inert, and worse: the `tier_conflict` warning it produces ends `using override (N)`, which is false. The declared `tier:` in the spec governs throughout. `bugs/SP-SP-001` |
-| `registry` | Inert. No command reads or regenerates it. `bugs/SP-SP-054` |
+| `spec.tier` | **Authoritative.** Required, one of 1, 2, 3 |
+| `domains.<name>.tier` | A **checked assertion**. It declares the risk level the domain asserts, and a spec listed in that domain whose tier disagrees produces a `domain_tier_conflict` warning. It does not change the spec's tier |
+| `system.tier` | **Deprecated.** Warns on every run, has no effect, removed at v1.0.0 |
+| `settings.tier_overrides` | **Deprecated.** Warns on every run, has no effect, removed at v1.0.0. The `tier_conflict` warning it produces now states that the declared tier governs |
+| `registry` | **Retired.** The key is still accepted so an existing manifest parses, and its value is discarded. Removed at v1.0.0 |
 
-Set `tier:` in the `.spec.yaml` file. That is the only place that has ever
-governed a spec's tier.
+A manifest declaring a deprecated key gets one stderr line per key. The warning
+changes no exit code.
+
+Both `tier_conflict` and `domain_tier_conflict` appear in `specter check --json`
+as well as in the text output, with the same warning count in both.
+
+**What changed in v0.15.0.** `system.tier`, `domains.<name>.tier` and
+`settings.tier_overrides` were previously validated, range-checked, and read by
+nothing, so an operator who set one got silence. `settings.tier_overrides` was
+worse than silent: its warning ended `using override (N)` while nothing applied
+the override. Decisions in `docs/ssrb/SSRB-105.md` and `docs/ssrb/SSRB-106.md`.
 
 ---
 
