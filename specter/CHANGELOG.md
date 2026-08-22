@@ -10,14 +10,26 @@ Unreleased changes accumulate under `## Unreleased`. Every user-visible change a
 
 ### Added
 
+- **`settings.annotation` in `specter.yaml`.** A new manifest block carrying one sub-key, `permissive` (boolean, default `false`), which warns where the same configuration would otherwise fail. Declaring the block is what counts: `annotation: {}` and a bare `annotation:` both register as declared. A manifest carrying no `annotation` key behaves exactly as it did in v0.14, so nothing changes on upgrade unless you opt in. **Action:** none required. This is the replacement for `settings.strictness`, deprecated below, which keeps working until v1.0.0.
+
+  Two behaviors worth knowing before you declare the block. When a manifest carries **both** `settings.strictness` and an `annotation` block, the block wins and `check`, `coverage` and `sync` each warn on stderr naming the ignored key; the exit code is unchanged by the warning. And a declared block currently resolves to the strict path, so a workspace on `settings.strictness: annotation` that declares one moves from the lenient path to the strict one and may go red. That is visible rather than silent, and it is the safer of the two available defaults: the alternative would silently drop the strict path for the far more common `settings.strictness: threshold` case.
+
+  `settings.annotation.scope` is **not** accepted. `docs/ssrb/SSRB-104.md` names `scope: test | all` in its target shape and only test scope is implemented, so the key is rejected with a message saying so rather than one that reads as a typo.
+
 - **Documentation style gate.** The shared Hanalyx checker (version 6) is vendored at `scripts/check-doc-style.py` and runs on every commit through the pre-commit hook. It enforces a grade 10 reading level, US English, no em dashes, no emojis, and no AI speak, across Markdown and whole-line code comments. Run it directly with `make doc-style-changed` (files changed against `main`), `make doc-style` (whole tree), or `make doc-style-grades` (the reading-level distribution). The failing gate is 11.0 against a writing target of 10.0. **Action:** run `make install-hooks` to pick up the new check. Existing debt does not block you; the gate applies to files you touch.
 
 ### Fixed
+
+- **32 Dependabot alerts closed in the VS Code extension's dependency tree.** A lockfile-only refresh with no version-range changes. **No release was affected:** the extension declares zero runtime dependencies, and the published VSIX contains zero `node_modules` entries, so none of the flagged packages has ever shipped to a user. The exposure was to CI and developer machines, where these run during `npm ci`, `tsc`, `jest` and `vsce package`. Nine of the eleven packages arrived through `@vscode/vsce` alone. **Action:** none. Run `npm ci` in `vscode-extension/` if you build the extension locally.
 
 - **`specter check` documentation described a diagnostic that does not exist.** The README and `docs/CLI_REFERENCE.md` said `tier_conflict` catches "a Tier 1 spec depends on a Tier 3 spec", and the README printed it as an ERROR. It fires only when a spec's declared `tier:` disagrees with an entry in `settings.tier_overrides`. It is a warning, `--strict` does not escalate it, and it does not appear in `--json` output. `settings.tier_overrides` does not change a spec's effective tier. **Action:** if you set `tier_overrides` expecting a stricter or looser gate, it is not in effect. Set `tier:` in the spec instead.
 - **The pre-commit hook ran no checks once installed.** It resolved the Go module path relative to its own location, which is `.git/hooks` after `make install-hooks`, so `gofmt` and `go vet` were skipped on every commit. **Action:** run `make install-hooks`, then `make check` on any branch you have in flight.
 
 ### Deprecated
+
+Four manifest surfaces are on a removal path for v1.0.0. **Three of them do nothing today**, so removing them changes no workspace's behavior; an operator who configured one was already getting nothing. Only `settings.strictness` carries real behavior and needs a migration.
+
+- **`system.tier`, `domains.<name>.tier` as a tier source, `settings.tier_overrides`, and the `registry` section.** All are validated, range-checked, and inert. No command reads any of them, and `specter init` has been writing two of them into every new workspace. `settings.tier_overrides` is the worst of the four: it emits a `tier_conflict` warning ending `using override (N)` while nothing applies the override, so the binary states something false on every run. **Action:** set `tier:` in the `.spec.yaml` file, the only place that has ever governed a spec's tier. Delete the `registry` block; nothing ever read or wrote it. Decisions recorded in `docs/ssrb/SSRB-105.md` and `docs/ssrb/SSRB-106.md`.
 
 - **`settings.strictness` and `--strictness` will be retired at v1.0.0.** Both keep their current behavior unchanged for every release before then, so nothing in your manifest or your CI stops working now. This is advance notice, not a migration you have to run today.
 

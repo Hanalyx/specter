@@ -1,9 +1,22 @@
 # SSRB-104: retire `settings.strictness` for `settings.annotation`
 
-Status: ACCEPT
+Status: ACCEPT. **Partially implemented: 1D-a shipped 2026-08-22, 1D-b not started.**
 Directed: 2026-08-18, founder. Shape settled 2026-08-19.
 **Delivery staged 2026-08-21, founder: v0.15.0 ships `scope: test` behavior only.
 See section 7.7.**
+
+**What has shipped.** The manifest surface, as roadmap item 1D-a:
+`settings.annotation` with `permissive`, the staged `scope` rejection, and the
+section 7.1 conflict rule across `check`, `coverage` and `sync`. Recorded in
+`spec-manifest` 1.14.1 as C-32, C-33, C-34 and AC-52 through AC-59.
+
+**What has not.** Item 1D-b, the coverage rule that consumes `permissive`. Until
+it lands, a declared block resolves to the interim in section 7.7a and
+`permissive` itself changes nothing.
+
+**Two criteria are owed**, tracked in `bugs/SP-SP-053`: one observing 7.7a's
+invariance rule on `check --test`, and one pinning 7.8's precedence answer. Both
+should land before 1D-b.
 Source: the strict/strictness consensus panel of 2026-08-17, and `features/SP-006`
 
 ## 1. Request

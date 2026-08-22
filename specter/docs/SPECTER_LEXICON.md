@@ -1200,13 +1200,23 @@ payments --json` on a fixture whose `payments` domain is Tier 1 still reports
 reader of `domain.Tier` is `DomainCoverage` in `internal/manifest/domain.go:48`,
 which also has no caller. `domain.Tier` is read nowhere live.
 
-**Under consideration, and not current behavior.** `bugs/SP-SP-049` records the
-defect and carries a recommendation: relax `spec.tier` to optional so a spec
-inherits its domain's tier, remove `system.tier`, and report a spec whose
-declared tier disagrees with its domain's. The argument is that per-domain tier
-assignment is a capability the manifest already has a field for, and that
-`settings.coverage.tierN` becomes the allowed failure rate among criteria that
-have tests once `settings.annotation` lands.
+**Decided 2026-08-22, and not yet built.** `docs/ssrb/SSRB-106.md` settles this
+together with `system.tier` and `settings.tier_overrides`, under one principle:
+the spec declares its tier, the manifest may state a policy and be checked
+against it, and the manifest may not silently change it.
+
+So `domains.<name>.tier` becomes a **checked assertion**, not a source. A spec
+whose declared tier disagrees with its domain's produces a warning, and nothing
+resolves: `spec.Tier` stays what every consumer reads. `system.tier` and
+`settings.tier_overrides` are deprecated and leave the schema at v1.0.0.
+`ResolveTier` and `ResolveTierWithOverrides` are deleted.
+
+**That reverses an earlier recommendation in `bugs/SP-SP-049`** to relax
+`spec.tier` to optional and inherit. Measured, relaxing the schema does not
+produce inheritance: a tier-0 spec falls back to threshold 80, to severity
+warning, and vanishes from the summary rollup entirely. The deciding argument is
+not cost, though: the assertion is the safety half of inheritance, and
+inheritance without it reproduces this entry's own defect one level up.
 
 **The recommendation is what is undecided here, not `settings.annotation`.** The
 annotation model is settled and accepted (`docs/ssrb/SSRB-104.md`, status
