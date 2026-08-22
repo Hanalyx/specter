@@ -766,7 +766,7 @@ ladder reachable through whatever survives the retirement. Where it tells
 thresholds instead.
 
 Kept rather than deleted because the reasoning is still the reasoning, and
-because a reader tracing how `SP-005` was arrived at needs it.
+because a reader tracing how `features/SP-005` was arrived at needs it.
 
 The earlier framing of this document offered two readings of `--strict` as a
 single concept. That framing was wrong and has been withdrawn. `check` accepts
