@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "1.13.0"
+  version: "1.14.0"
   status: draft
   tier: 2
 
@@ -201,6 +201,21 @@ spec:
 
     - id: C-31
       description: "A command that loads `specter.yaml` MUST surface a rejection rather than discard it. When the manifest file exists and ParseManifest returns an error, the command writes two lines to stderr, the first naming the manifest path and the parser's reason, the second stating that the manifest was ignored and default settings are in effect, and then continues with defaults. This binds `parse`, `resolve`, and `explain`, which discard the error today and run against defaults with no signal. It does not bind the commands that already fail on a rejected manifest, `check`, `coverage`, `sync`, and `init --refresh`, which keep their current non-zero exit; this constraint may not be used to downgrade them to a warning. For those four the rejection must be the cause of the failure and not merely coincident with it, so the criterion pinning them runs on a workspace that succeeds once the manifest is removed. The exit code of the warn-and-continue commands is unchanged by the warning itself. Rationale, from the decision of 2026-06-10: silent fallback is the worst available behavior for a configuration error, because every later result is computed against settings the operator did not choose and cannot see. A manifest setting `specs_dir: customSpecs` and carrying one bad key made `parse` report two specs from a recursive walk instead of the one spec the operator configured, and exit 0."
+      type: business
+      enforcement: error
+
+    - id: C-32
+      description: "MUST parse `settings.annotation` as a block carrying one sub-key, `permissive` (bool, default `false`). `annotation` joins the valid settings keys so C-26 stops rejecting it. The parsed Manifest MUST distinguish a declared block from an absent one: `Settings.Annotation` is non-nil whenever the manifest carries the `annotation` key, and nil when it does not. Every declared form counts, including the two empty ones, `annotation: {}` and a bare `annotation:` with no sub-keys. Both empty forms carry `Permissive == false`, so declaredness and value stay separate facts. Declaredness MUST be read from the raw key set rather than from the decoded pointer, because gopkg.in/yaml.v3 leaves the pointer nil for a bare `annotation:` while allocating it for `annotation: {}` (measured 2026-08-22). An unknown sub-key under `settings.annotation` MUST be rejected with the C-26 error shape: the offending key, the closest valid sub-key by Levenshtein distance ≤ 3, and the valid sub-keys at that level. The block is manifest only. No command registers an `--annotation` flag, per SSRB-104 section 7.3, so `check`, `coverage`, and `sync` MUST reject `--annotation` as an unknown flag. Rationale: a manifest with no `annotation` block must behave exactly as it did in v0.14, and the coverage rule that consumes `permissive` can only stay opt-in if absence is observable at the manifest layer."
+      type: technical
+      enforcement: error
+
+    - id: C-33
+      description: "ParseManifest MUST reject a manifest carrying `settings.annotation.scope` with the staging message from SSRB-104 section 7.7, not with the generic unknown-key error of C-26. Every value is rejected, `test` and `all` alike, and the function returns an error and a nil Manifest. The message MUST state that the key is accepted in SSRB-104, that it is not implemented in v0.15.0, that annotation scope is test-only, and that the operator should remove the key. `scope` is not a valid sub-key and is not a schema field, so this is a validation rule and it adds nothing inert to the manifest surface. Rationale: SSRB-104 is public and its section 1 shows `scope: all` in the v1.0.0 target shape, so an adopter will write the key. A bare unknown-key error reads as a typo and sends that operator looking for the correct spelling of a key that does not exist yet."
+      type: technical
+      enforcement: error
+
+    - id: C-34
+      description: "When a manifest declares both `settings.strictness` and a `settings.annotation` block, the annotation block takes precedence and a warning names the ignored `settings.strictness`. Four parts. (a) The trigger is declaredness of both keys, not their values. C-24 rewrites an absent `strictness` to the default `threshold` at parse time, so a detector reading the parsed string cannot tell an absent key from an explicit `threshold`; declaredness of both keys must be recorded from the raw key set. (b) The detector is a pure function in the manifest package, `CheckAnnotationStrictnessConflict(m *Manifest)`, returning the warning or nil, with no I/O per C-10. The precedent is `CheckTierConflicts` (C-14). (c) `check`, `coverage`, and `sync` MUST write the warning to stderr. Those are the three commands that read a strictness level. The warning names `settings.strictness`, its declared value, and `settings.annotation` as the key that takes precedence. The exit code is not changed by the warning itself. (d) While the block is declared, no observable result may vary with the `settings.strictness` value. This constraint pins only that `strictness` stops mattering; what governs instead is set by the coverage rule in roadmap item 1D-b and is deliberately not decided here. The rule reads manifest keys only. The `--strictness` flag keeps its current behavior until v1.0.0 per SSRB-104 section 1, and this constraint does not define a conflict between that flag and the block. Rationale, from SSRB-104 section 7.1: `strictness: annotation` says markers alone are sufficient evidence, while an `annotation` block says every criterion must have a test. That is a lenient posture and a strict one in the same file. Silence is the worst available option, because the manifest would read as though `strictness` still applied."
       type: business
       enforcement: error
 
@@ -768,6 +783,114 @@ spec:
       references_constraints: ["C-31"]
       priority: high
 
+    - id: AC-52
+      description: "ParseManifest on `settings.annotation.permissive: true` returns a Manifest whose `Settings.Annotation` is non-nil with `Permissive == true`. On `settings.annotation.permissive: false` it returns non-nil with `Permissive == false`. On a manifest carrying no `annotation` key at all it returns `Settings.Annotation == nil`. The two empty forms, `annotation: {}` and a bare `annotation:` with no sub-keys, both return non-nil with `Permissive == false`, so a declared block is distinguishable from an absent one no matter how the operator wrote it. The bare form is the discriminating case: gopkg.in/yaml.v3 leaves the pointer nil there, so an implementation that reads declaredness from the decoded pointer alone fails this criterion while passing every other case."
+      inputs:
+        case_true: "settings.annotation.permissive: true"
+        case_false: "settings.annotation.permissive: false"
+        case_empty_map: "settings.annotation: {}"
+        case_bare_key: "settings.annotation: (no sub-keys, null value)"
+        case_absent: "settings with no annotation key"
+      expected_output:
+        true_annotation_non_nil: true
+        true_permissive: true
+        false_annotation_non_nil: true
+        false_permissive: false
+        empty_map_non_nil_permissive_false: true
+        bare_key_non_nil_permissive_false: true
+        absent_annotation_is_nil: true
+      references_constraints: ["C-32"]
+      priority: critical
+
+    - id: AC-53
+      description: "An unknown sub-key under `settings.annotation` is rejected with the C-26 error shape. `settings.annotation.permisive: true` (one s) returns an error naming `permisive`, suggesting `permissive`, and listing the valid sub-keys at that level. `settings.annotation.bogus: 1` returns an error naming `bogus` and listing the valid sub-keys. Both return a nil Manifest. This is the generic shape that AC-55 requires `scope` NOT to receive, so the two criteria together separate the special case from the general one."
+      inputs:
+        case_typo: "settings:\n  annotation:\n    permisive: true"
+        case_unrelated: "settings:\n  annotation:\n    bogus: 1"
+      expected_output:
+        typo_error_contains: "permisive"
+        typo_error_did_you_mean: "permissive"
+        unrelated_error_contains: "bogus"
+        both_list_valid_subkeys: true
+        both_return_nil_manifest: true
+      references_constraints: ["C-32"]
+      priority: high
+
+    - id: AC-54
+      description: "No command registers an `--annotation` flag. `specter check --annotation`, `specter coverage --annotation`, and `specter sync --annotation` each exit non-zero with an unknown-flag error from the CLI framework, and so does the value form `--annotation=true` on each. The assertion runs the three commands and reads their exit codes and stderr; it is not a source scan. Registering the flag later, in either the boolean or the string form, fails this criterion, which is the point: SSRB-104 section 7.3 makes flag-and-manifest divergence unreachable by having no flag."
+      inputs:
+        commands: ["specter check --annotation", "specter coverage --annotation", "specter sync --annotation"]
+        value_form: "--annotation=true on each of the three"
+      expected_output:
+        each_exit_code: "non-zero"
+        each_stderr_contains: "unknown flag"
+      references_constraints: ["C-32"]
+      priority: high
+
+    - id: AC-55
+      description: "ParseManifest rejects `settings.annotation.scope: test` and `settings.annotation.scope: all`, each with an error and a nil Manifest. Both values produce the same message, and that message contains `settings.annotation.scope`, `SSRB-104`, `not implemented in v0.15.0`, `test-only`, and `remove the key`. An implementation that routes `scope` through the generic unknown-key path of C-26 fails this criterion, because the AC-53 message contains none of those five substrings."
+      inputs:
+        case_test: "settings:\n  annotation:\n    scope: test"
+        case_all: "settings:\n  annotation:\n    scope: all"
+      expected_output:
+        both_return_error_and_nil_manifest: true
+        both_messages_identical: true
+        message_contains: ["settings.annotation.scope", "SSRB-104", "not implemented in v0.15.0", "test-only", "remove the key"]
+      references_constraints: ["C-33"]
+      priority: critical
+
+    - id: AC-56
+      description: "The conflict detector keys on declaredness, not on value. `CheckAnnotationStrictnessConflict` returns a warning for a manifest declaring both `settings.strictness: threshold` and `settings.annotation.permissive: false`. It returns nil for a manifest declaring the annotation block and no `strictness` key, and nil for a manifest declaring `settings.strictness: threshold` and no annotation block. The three manifests are one variable apart each. `threshold` is the chosen value on purpose: C-24 applies it as the default when the key is absent, so an implementation reading the parsed string rather than the raw key set returns a warning for the block-only manifest and fails here. The returned warning names `settings.strictness`, the declared value, and `settings.annotation`."
+      inputs:
+        case_both: "settings.strictness: threshold + settings.annotation.permissive: false"
+        case_block_only: "settings.annotation.permissive: false"
+        case_strictness_only: "settings.strictness: threshold"
+      expected_output:
+        both_returns_warning: true
+        block_only_returns_nil: true
+        strictness_only_returns_nil: true
+        warning_names: ["settings.strictness", "threshold", "settings.annotation"]
+      references_constraints: ["C-34"]
+      priority: critical
+
+    - id: AC-57
+      description: "The warning reaches the operator, and it changes no exit code. On a workspace whose manifest declares both `settings.strictness: annotation` and `settings.annotation.permissive: true`, `specter check`, `specter coverage`, and `specter sync` each write a stderr line containing `settings.strictness`, the declared value `annotation`, and `settings.annotation`. Each command is then run on the same workspace with only the `settings.strictness` line removed: no such stderr line appears, and the exit code matches the run that produced the warning, command by command. The second half is what pins the exit code to the ignored key rather than to the warning, and it also fails an implementation that prints the warning and then still applies the ladder. Each `sync` run needs a freshly written manifest, because C-06 has `sync` write the registry back into `specter.yaml`, and a second run against the rewritten file is no longer the input this criterion names."
+      inputs:
+        workspace: "one spec, one criterion, one annotated test file"
+        manifest_with_conflict: "settings.strictness: annotation + settings.annotation.permissive: true"
+        manifest_block_only: "settings.annotation.permissive: true"
+        commands: ["specter check", "specter coverage", "specter sync"]
+      expected_output:
+        conflict_run_stderr_contains: ["settings.strictness", "annotation", "settings.annotation"]
+        block_only_run_stderr_has_no_conflict_line: true
+        exit_codes_match_per_command: true
+      references_constraints: ["C-34"]
+      priority: critical
+
+    - id: AC-58
+      description: "While the annotation block is declared, the run does not vary with the `settings.strictness` value. Workspace: one spec with one acceptance criterion, one test file annotating it, and no `.specter-results.json`. Precondition, with no annotation block in the manifest, `specter coverage` exits 0 under `settings.strictness: annotation` and exits non-zero under `settings.strictness: threshold` with a message naming the results file, so the two values demonstrably diverge on this workspace. Assertion, with `settings.annotation.permissive: true` added and held byte-identical across the runs, `specter coverage` produces the same exit code and byte-identical stdout under `settings.strictness: annotation`, `threshold`, and `zero-tolerance`. Stdout is the comparison and stderr is not, because the C-34 warning names the declared value and therefore differs across the three runs by design. This criterion does not say what the common result is; the coverage rule in roadmap item 1D-b sets that."
+      inputs:
+        workspace: "one spec, one criterion, one annotated test file, no .specter-results.json"
+        precondition_runs: "no annotation block; settings.strictness: annotation, then threshold"
+        assertion_runs: "settings.annotation.permissive: true held constant; settings.strictness: annotation, then threshold, then zero-tolerance"
+      expected_output:
+        precondition_annotation_exit_code: 0
+        precondition_threshold_exit_code: "non-zero, message names .specter-results.json"
+        assertion_exit_codes_identical_across_three: true
+        assertion_stdout_byte_identical_across_three: true
+      references_constraints: ["C-34"]
+      priority: critical
+
+    - id: AC-59
+      description: "The conflict rule reads manifest keys only. On a workspace whose manifest declares `settings.annotation.permissive: true` and no `settings.strictness` key, `specter coverage --strictness threshold` writes no conflict warning to stderr. An implementation that computes the conflict from the effective strictness, after the flag has been merged with the manifest value, emits one here and fails. The criterion claims nothing about what the flag does to the run, only that it cannot trigger the warning: SSRB-104 section 1 preserves the flag's behavior until v1.0.0."
+      inputs:
+        manifest: "settings.annotation.permissive: true, no settings.strictness key"
+        command: "specter coverage --strictness threshold"
+      expected_output:
+        stderr_has_no_conflict_warning: true
+      references_constraints: ["C-34"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -777,6 +900,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.14.0"
+      date: "2026-08-22"
+      author: "specter-team"
+      type: minor
+      description: "v0.15 item 1D-a, the settings.annotation manifest surface. Add C-32 and AC-52 through AC-54 for the block itself: one sub-key, `permissive`, default false, with declaredness recorded separately from value so a manifest carrying no block behaves exactly as it did in v0.14. The bare `annotation:` form is called out because gopkg.in/yaml.v3 leaves the pointer nil there and allocates it for `annotation: {}`, so a pointer-only implementation would treat one declared form as absent. Add C-33 and AC-55 for the staged rejection of `settings.annotation.scope`: SSRB-104 is public and names `scope: all`, so the message states the staging rather than reading as a typo. Add C-34 and AC-56 through AC-59 for the conflict rule of SSRB-104 section 7.1. The trigger is declaredness of both keys, because C-24 rewrites an absent `strictness` to `threshold` at parse time and a value-reading detector cannot tell the two apart. What the annotation block resolves to is left to the coverage rule in item 1D-b; C-34 pins only that `strictness` stops mattering, and AC-58 falsifies that as invariance of the run under the ignored value."
     - version: "1.13.0"
       date: "2026-08-17"
       author: "specter-team"
