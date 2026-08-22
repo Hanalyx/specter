@@ -50,6 +50,7 @@ Specter emits four codes. There is no fifth.
 | `0` | all | The command completed and every gate it ran passed. | Stable |
 | `1` | all | Everything else. See the breakdown below. | Shipped, overloaded, frozen |
 | `2` | `coverage`, `sync` | Effective strictness `zero-tolerance`, and at least one annotated acceptance criterion has a results-file status other than `passed`. | Stable |
+| `2` | `coverage`, `sync` | A `settings.annotation` block is declared with `permissive: false`, and at least one acceptance criterion has no test at all. | Stable |
 | `2` | all | The process recovered a panic on the main goroutine. | Accidental collision |
 | `3` | `coverage`, `sync` | Effective strictness `zero-tolerance`, and at least one acceptance criterion carries `approval_gate: true` with an unset `approval_date`. | Stable |
 
@@ -87,6 +88,33 @@ by a hint to run `specter --help`, and no gate does that.
 **Code 1 is frozen.** Do not add a new condition to it. `bugs/SP-SP-020` defers
 the re-carve to the v1.0 contract release, because moving conditions off 1 breaks
 callers that read it today.
+
+### Code 2 has two triggers, and they do not overlap
+
+Added 2026-08-22, when `docs/ssrb/SSRB-104.md` section 7.5 was promoted from an
+observation to a decision and roadmap item 1D-b shipped.
+
+| Trigger | Condition |
+|---|---|
+| Ladder | Effective strictness `zero-tolerance`, and an **annotated** criterion has a results-file status other than `passed` |
+| Annotation model | A `settings.annotation` block is declared with `permissive: false`, and a criterion has **no test at all** |
+
+**The two cannot both describe one criterion**, because a criterion with no test
+has no results-file status to be wrong. So a caller reading 2 knows the run
+failed a contract gate and must read the message to know which, exactly as it
+must today between the ladder's own gates.
+
+**Why the model needed a second trigger rather than reusing code 1.** Under the
+ladder, a criterion with no test and a criterion whose test failed were the same
+failure: both counted as uncovered and both moved the percentage. The model
+separates them, so a missing test exits 2 and a pass rate below the tier exits 1.
+Collapsing them would have removed the distinction the model exists to draw.
+
+**This resolves the contradiction this document previously carried.** Section
+7.5 had noted that codes 2 and 3 fire only under `zero-tolerance` and would go
+unreachable when the ladder retires at v1.0.0, while this document registers both
+as Stable. Code 2 now has a trigger that survives the retirement. Code 3's
+trigger never depended on the ladder.
 
 ### Code 2, the zero-tolerance non-passed gate
 
