@@ -1,6 +1,6 @@
 spec:
   id: spec-coverage
-  version: "1.17.0"
+  version: "1.18.0"
   status: approved
   tier: 2
 
@@ -223,6 +223,11 @@ spec:
       type: technical
       enforcement: error
 
+
+    - id: C-38
+      description: "When `settings.annotation` is declared in the manifest, coverage MUST apply the model of docs/ssrb/SSRB-104.md section 1 instead of the strictness ladder. Six parts. (a) Rule 1, the annotation rule: every acceptance criterion MUST have a test, meaning a source annotation naming it exists. A criterion with none is a rule-1 violation, counted and reported separately from an uncovered criterion, because the two are different failures. (b) The tier threshold does not excuse a rule-1 violation. A Tier 3 spec at or above its threshold still fails if any criterion has no test. (c) Rule 1 severity is decided by `settings.annotation.permissive` and by nothing else: error when false, warning when true. Tier routing is wrong here because a Tier 3 criterion would emit info and not fail, contradicting (b); global escalation via settings.strict is wrong because it rebuilds the bundling this model dismantles. Both are rejected in SSRB-104 section 7.4. (d) A rule-1 violation exits 2 when permissive is false, per SSRB-104 section 7.5. Exit 2 thereby narrows from its ladder meaning, an annotated criterion that did not pass, to its model meaning, a criterion with no test at all. (e) Rule 3, the pass rate: among criteria that DO have an annotation, a criterion counts as covered when its annotation has a passing result, and the tier threshold applies to that rate. A rate below the threshold exits 1. Rules 1 and 3 are therefore different failures with different codes, which is the distinction the single ladder could not express. (f) A declared block requires `.specter-results.json`, exactly as `threshold` does, per SSRB-104 section 7.9. Rule 1 is structural and could be answered without results, but evaluating rule 1 alone would let a workspace move from an outcome-verified gate to a structural one by adding a key that reads as stricter."
+      type: technical
+      enforcement: error
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -898,7 +903,66 @@ spec:
       references_constraints: ["C-35", "C-16"]
       priority: high
 
+
+    - id: AC-60
+      description: "Rule 1 fails a criterion with no test, and the tier does not excuse it. Workspace: a Tier 3 spec with two acceptance criteria, threshold 50, where AC-01 carries a source annotation with a passing runner-visible result and AC-02 carries no annotation anywhere. A results file exists. With `settings.annotation.permissive: false` declared, `specter coverage` reports AC-02 as a rule-1 violation at error severity and exits 2. The same workspace under `settings.strictness: annotation` reports 1 of 2 covered, 50 percent, at or above the Tier 3 threshold, and exits 0. That contrast is the criterion: the tier arithmetic is unchanged and the verdict inverts, which is what part (b) requires."
+      inputs:
+        spec: "tier 3, two criteria, threshold 50"
+        ac_01: "source annotation plus a passing result"
+        ac_02: "no annotation anywhere"
+        manifest: "settings.annotation.permissive: false"
+      expected_output:
+        rule1_violations: ["AC-02"]
+        severity: "error"
+        exit_code: 2
+        same_workspace_under_strictness_annotation_exit: 0
+      references_constraints: ["C-38"]
+      priority: critical
+
+    - id: AC-61
+      description: "permissive decides rule 1 severity and nothing else. The AC-60 workspace, unchanged byte for byte except `permissive: true`, reports the same AC-02 rule-1 violation at warning severity and exits 0. The pair is what pins part (c): the violation is still found and still reported, so `permissive` is a severity switch rather than a scope switch, and an implementation that suppresses the violation entirely under permissive fails this criterion."
+      inputs:
+        workspace: "identical to AC-60"
+        manifest: "settings.annotation.permissive: true"
+      expected_output:
+        rule1_violations: ["AC-02"]
+        severity: "warning"
+        exit_code: 0
+        violation_still_reported: true
+      references_constraints: ["C-38"]
+      priority: critical
+
+    - id: AC-62
+      description: "Rule 3 is a separate failure with a separate code. Workspace: a Tier 1 spec, threshold 100, with two criteria that BOTH carry source annotations, where AC-01 has a passing result and AC-02 has a failing one. So there is no rule-1 violation: every criterion has a test. With `settings.annotation.permissive: false`, `specter coverage` exits 1 and not 2, because the failure is a pass rate below the threshold rather than a missing test. An implementation that routes both failures to one code fails this criterion, which is the distinction part (e) exists to draw."
+      inputs:
+        spec: "tier 1, two criteria, threshold 100"
+        ac_01: "annotation plus a passing result"
+        ac_02: "annotation plus a failing result"
+        manifest: "settings.annotation.permissive: false"
+      expected_output:
+        rule1_violations: []
+        exit_code: 1
+        not_exit_code: 2
+      references_constraints: ["C-38"]
+      priority: critical
+
+    - id: AC-63
+      description: "A declared annotation block requires a results file. On the AC-60 workspace with `.specter-results.json` deleted and `settings.annotation.permissive: false` declared, `specter coverage` fails rather than falling back to a structural check, and its message names the missing file. Part (f) is what this pins, and the reason is stated as a negative: without it, adding an `annotation` block to a manifest whose effective strictness was `threshold` would drop the results requirement, so a key that reads as stricter would produce a weaker gate."
+      inputs:
+        workspace: "AC-60's workspace with .specter-results.json removed"
+        manifest: "settings.annotation.permissive: false"
+      expected_output:
+        exits_nonzero: true
+        message_names_results_file: true
+        falls_back_to_structural: false
+      references_constraints: ["C-38"]
+      priority: high
   changelog:
+    - version: "1.18.0"
+      date: "2026-08-22"
+      author: "specter-team"
+      type: minor
+      description: "Roadmap item 1D-b. C-38 applies the SSRB-104 section 1 model when settings.annotation is declared, replacing the strictness ladder for that workspace. Rule 1, every criterion must have a test, is separated from rule 3, the pass rate among criteria that do, because the single ladder could not express them as different failures. They get different exit codes per SSRB-104 section 7.5, promoted from observation to decision: 2 for a missing test, 1 for a rate below the tier. permissive decides rule 1 severity and nothing else per section 7.4, since tier routing would emit info for a Tier 3 criterion and not fail, contradicting the rule. A declared block requires a results file per section 7.9, so a key that reads as stricter cannot produce a weaker gate. AC-60 through AC-63 pin the four parts, each with the contrast that makes it falsifiable."
     - version: "1.17.0"
       date: "2026-08-17"
       author: "specter-team"
