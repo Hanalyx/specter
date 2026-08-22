@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "1.15.0"
+  version: "1.16.0"
   status: draft
   tier: 2
 
@@ -907,6 +907,33 @@ spec:
       references_constraints: ["C-14"]
       priority: high
 
+    - id: AC-61
+      description: "C-34(d) holds on `check --test`, which is the surface where `settings.strictness` has its most visible effect. Workspace: one spec with one criterion, and one parseable Go test carrying `@spec` and `@ac` source comments whose name produces no runner-visible token, so a real `unreachable_annotation` fires rather than the `_unknown` fallback. Precondition, with no `annotation` block declared, the three strictness values MUST diverge: `annotation` suppresses the diagnostic at exit 0, `threshold` warns at exit 0, `zero-tolerance` errors at exit 1. Assertion, with `settings.annotation.permissive: false` declared and only `settings.strictness` varying across those same three values, every run MUST produce the same severity and the same exit code. The precondition is what makes the assertion a fact about the block rather than about the workspace. Measured 2026-08-22: the three diverge without the block and all warn at exit 0 with it."
+      inputs:
+        workspace: "one spec, one criterion, one Go test with source annotations and no runner-visible token"
+        precondition_runs: "check --test under strictness annotation, threshold, zero-tolerance, no annotation block"
+        assertion_runs: "the same three with settings.annotation.permissive: false declared"
+      expected_output:
+        precondition_severities: ["suppressed", "warning", "error"]
+        precondition_exit_codes: [0, 0, 1]
+        assertion_severities_all_equal: true
+        assertion_exit_codes_all_equal: true
+      references_constraints: ["C-34"]
+      priority: critical
+
+    - id: AC-62
+      description: "The `--strictness` flag outranks a declared `annotation` block, which is the v0.15.0 answer recorded in docs/ssrb/SSRB-104.md section 7.8. On a workspace whose manifest declares `settings.annotation.permissive: false` and NO `settings.strictness` key, and which has annotated tests but no `.specter-results.json`: plain `specter coverage` exits 1, because the block governs and resolves to the strict path; `specter coverage --strictness annotation` exits 0, because the flag wins and selects the lenient path. `specter sync` and `specter sync --strictness annotation` behave identically, 1 and 0. `check` is excluded because it registers no `--strictness` flag. This criterion pins the precedence in one direction only: an implementation in which the block outranks the flag gives 1 and 1 and fails. Before this criterion existed both readings passed the whole suite. SSRB-104 section 7.8 also records that 1D-b should choose the precedence again rather than inherit it, so expect this criterion to be revisited rather than assumed permanent."
+      inputs:
+        manifest: "settings.annotation.permissive: false, no settings.strictness key, no results file"
+        runs: ["coverage", "coverage --strictness annotation", "sync", "sync --strictness annotation"]
+      expected_output:
+        coverage_no_flag_exit: 1
+        coverage_with_flag_exit: 0
+        sync_no_flag_exit: 1
+        sync_with_flag_exit: 0
+      references_constraints: ["C-34"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -916,6 +943,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.16.0"
+      date: "2026-08-22"
+      author: "specter-team"
+      type: minor
+      description: "Close the two coverage gaps in C-34 recorded as bugs/SP-SP-053. AC-61 observes C-34(d) on `check --test`, which C-34(d) covers and no criterion read: AC-58 exercises `coverage` alone, so reverting the routing at cmd/specter/main.go survived the whole suite while changing a user's severity and exit code. AC-62 pins the flag-over-block precedence that docs/ssrb/SSRB-104.md section 7.8 answers for v0.15.0; before it, rewriting both call sites so the block outranks the flag also passed the suite, so the precedence was unguarded in both directions. Both criteria carry a precondition or a negative half, because an invariance claim is vacuous without a demonstration that the inputs can diverge, and a precedence claim is vacuous unless the opposite reading fails."
     - version: "1.15.0"
       date: "2026-08-22"
       author: "specter-team"
