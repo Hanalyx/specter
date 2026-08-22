@@ -23,7 +23,6 @@ type Manifest struct {
 	System        SystemConfig            `yaml:"system" json:"system"`
 	Domains       map[string]DomainConfig `yaml:"domains,omitempty" json:"domains,omitempty"`
 	Settings      Settings                `yaml:"settings,omitempty" json:"settings,omitempty"`
-	Registry      []RegistryEntry         `yaml:"registry,omitempty" json:"registry,omitempty"`
 }
 
 // SystemConfig defines the system-level metadata.
@@ -155,16 +154,6 @@ func (c *CoverageConfig) UnmarshalYAML(node *yaml.Node) error {
 		}
 	}
 	return nil
-}
-
-// RegistryEntry is a persistent index entry for a known spec.
-type RegistryEntry struct {
-	ID      string `yaml:"id" json:"id"`
-	File    string `yaml:"file" json:"file"`
-	Version string `yaml:"version" json:"version"`
-	Status  string `yaml:"status" json:"status"`
-	Tier    int    `yaml:"tier" json:"tier"`
-	Domain  string `yaml:"domain,omitempty" json:"domain,omitempty"`
 }
 
 // DomainCoverageEntry is an aggregated coverage summary for a domain.

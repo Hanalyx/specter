@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "1.16.0"
+  version: "1.17.0"
   status: draft
   tier: 2
 
@@ -50,7 +50,7 @@ spec:
 
   constraints:
     - id: C-01
-      description: "MUST parse valid specter.yaml into a typed Manifest structure with system, domains, settings, and registry sections"
+      description: "MUST parse valid specter.yaml into a typed Manifest structure with system, domains, and settings sections. The `registry` key is still accepted so an existing manifest parses, and its value is discarded: docs/ssrb/SSRB-105.md retires the section and removes the key at v1.0.0"
       type: technical
       enforcement: error
 
@@ -72,11 +72,6 @@ spec:
     - id: C-05
       description: "MUST return sensible defaults when no specter.yaml exists (specs_dir=specs, coverage T1=100 T2=80 T3=50)"
       type: technical
-      enforcement: error
-
-    - id: C-06
-      description: "MUST auto-update the registry section from the current set of parsed specs"
-      type: business
       enforcement: error
 
     - id: C-07
@@ -130,7 +125,7 @@ spec:
       enforcement: error
 
     - id: C-17
-      description: "`specter init --refresh` MUST update only `domains.default.specs` in an existing `specter.yaml`, leaving every other manifest field untouched: `system`, `settings`, `registry`, `settings.tier_overrides`, and any custom domains the operator declared (anything under `domains.*` that isn't `default`). Rationale: after adding new specs, the operator needs a deterministic, non-destructive way to refresh the manifest; `--force` rewrites everything, losing manual configuration."
+      description: "`specter init --refresh` MUST update only `domains.default.specs` in an existing `specter.yaml`, leaving every other manifest field untouched: `system`, `settings`, `settings.tier_overrides`, and any custom domains the operator declared (anything under `domains.*` that isn't `default`). Rationale: after adding new specs, the operator needs a deterministic, non-destructive way to refresh the manifest; `--force` rewrites everything, losing manual configuration."
       type: business
       enforcement: error
 
@@ -300,24 +295,6 @@ spec:
       references_constraints: ["C-05"]
       priority: high
 
-    - id: AC-09
-      description: "BuildRegistryFromSpecs produces entries for all parsed specs"
-      inputs:
-        specs: "3 specs with IDs checkout, login, blog"
-      expected_output:
-        registry_count: 3
-      references_constraints: ["C-06"]
-      priority: critical
-
-    - id: AC-10
-      description: "Specs in domains get correct domain field in registry"
-      inputs:
-        spec_id: "checkout"
-        domain: "payments"
-      expected_output:
-        registry_domain: "payments"
-      references_constraints: ["C-06"]
-      priority: high
 
     - id: AC-11
       description: "DomainCoverage aggregates per-spec coverage into per-domain summary"
@@ -855,7 +832,7 @@ spec:
       priority: critical
 
     - id: AC-57
-      description: "The warning reaches the operator, and it changes no exit code. On a workspace whose manifest declares both `settings.strictness: annotation` and `settings.annotation.permissive: true`, `specter check`, `specter coverage`, and `specter sync` each write a stderr line containing `settings.strictness`, the declared value `annotation`, and `settings.annotation`. Each command is then run on the same workspace with only the `settings.strictness` line removed: no such stderr line appears, and the exit code matches the run that produced the warning, command by command. The second half is what pins the exit code to the ignored key rather than to the warning, and it also fails an implementation that prints the warning and then still applies the ladder. Each `sync` run is given a freshly written manifest. That is defensive rather than required: C-06 says `sync` auto-updates the registry section, but no command performs that update (`bugs/SP-SP-054`), and a passing `sync` leaves `specter.yaml` byte-identical. Rewriting keeps the criterion true of its named input if C-06 is ever implemented."
+      description: "The warning reaches the operator, and it changes no exit code. On a workspace whose manifest declares both `settings.strictness: annotation` and `settings.annotation.permissive: true`, `specter check`, `specter coverage`, and `specter sync` each write a stderr line containing `settings.strictness`, the declared value `annotation`, and `settings.annotation`. Each command is then run on the same workspace with only the `settings.strictness` line removed: no such stderr line appears, and the exit code matches the run that produced the warning, command by command. The second half is what pins the exit code to the ignored key rather than to the warning, and it also fails an implementation that prints the warning and then still applies the ladder. Each `sync` run is given a freshly written manifest. That is defensive rather than required: no command rewrites the manifest, and a passing `sync` leaves `specter.yaml` byte-identical. C-06, which had mandated a registry auto-update no command performed, was removed by docs/ssrb/SSRB-105.md."
       inputs:
         workspace: "one spec, one criterion, one annotated test file"
         manifest_with_conflict: "settings.strictness: annotation + settings.annotation.permissive: true"
@@ -943,6 +920,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.17.0"
+      date: "2026-08-22"
+      author: "specter-team"
+      type: major
+      description: "Retire the manifest registry section, per docs/ssrb/SSRB-105.md. Removes C-06, which mandated an auto-update no command performed, and AC-09 and AC-10, which tested a builder whose only wrapper was never invoked. That combination is why coverage reported C-06 covered while nothing implemented it, filed as bugs/SP-SP-054 at P1. C-01 no longer names registry among the sections it parses, and C-13's init --refresh preservation list drops it. The `registry` key stays accepted so an existing manifest still parses, and its value is discarded; the key leaves the schema at v1.0.0 alongside settings.strictness, system.tier and settings.tier_overrides. Major because a constraint and two criteria are removed, which is a contract narrowing even though no shipped behavior changes: the behavior C-06 described never existed."
     - version: "1.16.0"
       date: "2026-08-22"
       author: "specter-team"

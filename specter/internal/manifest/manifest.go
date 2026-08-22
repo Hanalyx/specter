@@ -18,6 +18,10 @@ const MaxManifestBytes = 64 << 10 // 64 KiB
 
 // validTopLevelKeys lists every key allowed at the manifest top level.
 // Updated when adding a new top-level field.
+// registry is still accepted so an existing manifest parses, and its value is
+// discarded. docs/ssrb/SSRB-105.md retires the section: the code, C-06, AC-09
+// and AC-10 go now, and the key leaves this list at v1.0.0 alongside
+// settings.strictness, system.tier and settings.tier_overrides.
 var validTopLevelKeys = []string{"schema_version", "system", "domains", "settings", "registry"}
 
 // validSettingsKeys lists every key allowed under `settings:`. Updated when
