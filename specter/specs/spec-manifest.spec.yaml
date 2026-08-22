@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "1.17.0"
+  version: "1.18.0"
   status: draft
   tier: 2
 
@@ -65,7 +65,7 @@ spec:
       enforcement: error
 
     - id: C-04
-      description: "MUST resolve spec tiers via cascade: explicit spec tier -> domain tier -> system tier -> default 2"
+      description: "The tier declared in a spec governs every downstream decision. `tier` is required with enum [1, 2, 3] in the canonical spec schema, so a spec that parses always declares one, and no inheritance from a domain or from `system.tier` can occur. Nothing resolves a tier: every consumer reads the declared value directly. Rationale, per docs/ssrb/SSRB-106.md sections 7.1 and 7.4: this constraint previously described a four-step cascade, explicit tier then domain tier then system.tier then a default of 2, implemented by a ResolveTier function that nothing called. Steps two through four were unreachable twice over, because nothing invoked the cascade and because the schema forbids the input that would have reached them. The criteria asserting inheritance passed only by calling that function directly with a tier of zero, an input no parsed spec can produce."
       type: business
       enforcement: error
 
@@ -243,47 +243,17 @@ spec:
       priority: high
 
     - id: AC-04
-      description: "Spec with explicit tier ignores domain and system tier"
+      description: "The declared tier governs. A spec declaring tier: 3, in a domain declaring tier: 1, in a manifest declaring system.tier: 2, is treated as Tier 3 by every surface that reads a tier: the coverage threshold it is held to, the severity of its orphan constraints, and the tier reported by coverage --json. This is asserted end to end through the CLI rather than against a resolver function, because there is no resolver: SSRB-106 section 7.4 deleted ResolveTier, and a unit test calling it was how three unreachable criteria stayed green."
       inputs:
         spec_tier: 3
         domain_tier: 1
         system_tier: 2
       expected_output:
-        resolved_tier: 3
+        coverage_json_tier: 3
+        threshold_applied: 50
+        orphan_severity: "info"
       references_constraints: ["C-04"]
       priority: critical
-
-    - id: AC-05
-      description: "Spec without tier inherits domain tier"
-      inputs:
-        spec_tier: 0
-        domain_tier: 1
-      expected_output:
-        resolved_tier: 1
-      references_constraints: ["C-04"]
-      priority: critical
-
-    - id: AC-06
-      description: "Spec without tier or domain inherits system tier"
-      inputs:
-        spec_tier: 0
-        domain_tier: 0
-        system_tier: 2
-      expected_output:
-        resolved_tier: 2
-      references_constraints: ["C-04"]
-      priority: high
-
-    - id: AC-07
-      description: "Spec without any tier info defaults to 2"
-      inputs:
-        spec_tier: 0
-        domain_tier: 0
-        system_tier: 0
-      expected_output:
-        resolved_tier: 2
-      references_constraints: ["C-04"]
-      priority: high
 
     - id: AC-08
       description: "Defaults() returns sensible manifest when no specter.yaml exists"
@@ -920,6 +890,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.18.0"
+      date: "2026-08-22"
+      author: "specter-team"
+      type: major
+      description: "Delete the tier cascade, per docs/ssrb/SSRB-106.md sections 7.1 and 7.4. C-04 described a four-step inheritance from explicit tier to domain tier to system.tier to a default of 2, implemented by ResolveTier, which nothing called. Steps two through four were unreachable twice over: nothing invoked the cascade, and the canonical spec schema makes tier required with enum [1, 2, 3], so the tier-of-zero input those steps needed cannot survive parsing. AC-05, AC-06 and AC-07 asserted that inheritance and passed only by calling ResolveTier directly with a tier of zero, so three criteria were green over behavior no user could reach. They are removed. C-04 now states what is true, that the declared tier governs and nothing resolves. AC-04 is rewritten to assert it end to end through the CLI across all three surfaces that read a tier, rather than against a resolver function that no longer exists."
     - version: "1.17.0"
       date: "2026-08-22"
       author: "specter-team"

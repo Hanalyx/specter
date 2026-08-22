@@ -236,13 +236,3 @@ func (m *Manifest) ExcludePatterns() []string {
 	}
 	return []string{"node_modules", "dist", ".git", "vendor", "__pycache__", ".next"}
 }
-
-// ResolveTierWithOverrides returns the effective tier for a spec, applying
-// TierOverrides from the manifest if present. Override takes precedence.
-func (m *Manifest) ResolveTierWithOverrides(specID string, specTier int) int {
-	if override, ok := m.Settings.TierOverrides[specID]; ok {
-		return override
-	}
-	// Fall back to existing ResolveTier logic (domain -> system -> default 2)
-	return ResolveTier(specID, specTier, m)
-}

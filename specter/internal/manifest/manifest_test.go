@@ -150,67 +150,6 @@ func TestDefaults(t *testing.T) {
 
 // --- Tier resolution tests ---
 
-// @ac AC-04
-func TestResolveTier_ExplicitSpecTier(t *testing.T) {
-	t.Run("spec-manifest/AC-04 resolve tier explicit spec tier", func(t *testing.T) {
-		m := &Manifest{
-			System:  SystemConfig{Name: "test", Tier: 2},
-			Domains: map[string]DomainConfig{"auth": {Tier: 1, Specs: []string{"login"}}},
-		}
-		tier := ResolveTier("login", 3, m)
-		if tier != 3 {
-			t.Errorf("ResolveTier with explicit spec tier = %d, want 3", tier)
-		}
-	})
-}
-
-// @ac AC-05
-func TestResolveTier_InheritDomainTier(t *testing.T) {
-	t.Run("spec-manifest/AC-05 resolve tier inherit domain tier", func(t *testing.T) {
-		m := &Manifest{
-			System:  SystemConfig{Name: "test", Tier: 2},
-			Domains: map[string]DomainConfig{"auth": {Tier: 1, Specs: []string{"login"}}},
-		}
-		tier := ResolveTier("login", 0, m)
-		if tier != 1 {
-			t.Errorf("ResolveTier inheriting domain tier = %d, want 1", tier)
-		}
-	})
-}
-
-// @ac AC-06
-func TestResolveTier_InheritSystemTier(t *testing.T) {
-	t.Run("spec-manifest/AC-06 resolve tier inherit system tier", func(t *testing.T) {
-		m := &Manifest{
-			System: SystemConfig{Name: "test", Tier: 2},
-		}
-		tier := ResolveTier("orphan-spec", 0, m)
-		if tier != 2 {
-			t.Errorf("ResolveTier inheriting system tier = %d, want 2", tier)
-		}
-	})
-}
-
-// @ac AC-07
-func TestResolveTier_DefaultTo2(t *testing.T) {
-	t.Run("spec-manifest/AC-07 resolve tier default to 2", func(t *testing.T) {
-		m := &Manifest{
-			System: SystemConfig{Name: "test"},
-		}
-		tier := ResolveTier("orphan-spec", 0, m)
-		if tier != 2 {
-			t.Errorf("ResolveTier default = %d, want 2", tier)
-		}
-	})
-}
-
-func TestResolveTier_NilManifest(t *testing.T) {
-	tier := ResolveTier("any-spec", 0, nil)
-	if tier != 2 {
-		t.Errorf("ResolveTier with nil manifest = %d, want 2", tier)
-	}
-}
-
 // --- Domain tests ---
 
 func TestSpecDomain_Found(t *testing.T) {
