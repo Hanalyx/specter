@@ -225,7 +225,7 @@ spec:
 
 
     - id: C-38
-      description: "When `settings.annotation` is declared in the manifest, coverage MUST apply the model of docs/ssrb/SSRB-104.md section 1 instead of the strictness ladder. Six parts. (a) Rule 1, the annotation rule: every acceptance criterion MUST have a test, meaning a source annotation naming it exists. A criterion with none is a rule-1 violation, counted and reported separately from an uncovered criterion, because the two are different failures. (b) The tier threshold does not excuse a rule-1 violation. A Tier 3 spec at or above its threshold still fails if any criterion has no test. (c) Rule 1 severity is decided by `settings.annotation.permissive` and by nothing else: error when false, warning when true. Tier routing is wrong here because a Tier 3 criterion would emit info and not fail, contradicting (b); global escalation via settings.strict is wrong because it rebuilds the bundling this model dismantles. Both are rejected in SSRB-104 section 7.4. (d) A rule-1 violation exits 2 when permissive is false, per SSRB-104 section 7.5. Exit 2 thereby narrows from its ladder meaning, an annotated criterion that did not pass, to its model meaning, a criterion with no test at all. (e) Rule 3, the pass rate: among criteria that DO have an annotation, a criterion counts as covered when its annotation has a passing result, and the tier threshold applies to that rate. A rate below the threshold exits 1. Rules 1 and 3 are therefore different failures with different codes, which is the distinction the single ladder could not express. (f) A declared block requires `.specter-results.json`, exactly as `threshold` does, per SSRB-104 section 7.9. Rule 1 is structural and could be answered without results, but evaluating rule 1 alone would let a workspace move from an outcome-verified gate to a structural one by adding a key that reads as stricter."
+      description: "When `settings.annotation` is declared in the manifest, coverage MUST apply the model of docs/ssrb/SSRB-104.md section 1 instead of the strictness ladder. Six parts. (a) Rule 1, the annotation rule: every acceptance criterion MUST have a test, meaning a source annotation naming it exists. A criterion with none is a rule-1 violation, counted and reported separately from an uncovered criterion, because the two are different failures. The reporting distinction MUST be observable in the text output: a rule-1 violation is listed on a `no test:` line, distinct from the existing `uncovered:` line. Without a distinguishable marker a caller cannot tell the two apart, and a test asserting only that the criterion id appears somewhere passes vacuously under the ladder, where the same id is already listed as uncovered. (b) The tier threshold does not excuse a rule-1 violation. A Tier 3 spec at or above its threshold still fails if any criterion has no test. (c) Rule 1 severity is decided by `settings.annotation.permissive` and by nothing else: error when false, warning when true. Tier routing is wrong here because a Tier 3 criterion would emit info and not fail, contradicting (b); global escalation via settings.strict is wrong because it rebuilds the bundling this model dismantles. Both are rejected in SSRB-104 section 7.4. (d) A rule-1 violation exits 2 when permissive is false, per SSRB-104 section 7.5. Exit 2 thereby narrows from its ladder meaning, an annotated criterion that did not pass, to its model meaning, a criterion with no test at all. (e) Rule 3, the pass rate: among criteria that DO have an annotation, a criterion counts as covered when its annotation has a passing result, and the tier threshold applies to that rate. A rate below the threshold exits 1. Rules 1 and 3 are therefore different failures with different codes, which is the distinction the single ladder could not express. (f) A declared block requires `.specter-results.json`, exactly as `threshold` does, per SSRB-104 section 7.9. Rule 1 is structural and could be answered without results, but evaluating rule 1 alone would let a workspace move from an outcome-verified gate to a structural one by adding a key that reads as stricter."
       type: technical
       enforcement: error
   depends_on:
@@ -912,7 +912,7 @@ spec:
         ac_02: "no annotation anywhere"
         manifest: "settings.annotation.permissive: false"
       expected_output:
-        rule1_violations: ["AC-02"]
+        rule1_violations_on_no_test_line: ["AC-02"]
         severity: "error"
         exit_code: 2
         same_workspace_under_strictness_annotation_exit: 0
@@ -920,15 +920,15 @@ spec:
       priority: critical
 
     - id: AC-61
-      description: "permissive decides rule 1 severity and nothing else. The AC-60 workspace, unchanged byte for byte except `permissive: true`, reports the same AC-02 rule-1 violation at warning severity and exits 0. The pair is what pins part (c): the violation is still found and still reported, so `permissive` is a severity switch rather than a scope switch, and an implementation that suppresses the violation entirely under permissive fails this criterion."
+      description: "permissive decides rule 1 severity and nothing else. The AC-60 workspace, unchanged byte for byte except `permissive: true`, still reports AC-02 on the `no test:` line and exits 0. The pair is what pins part (c): the violation is still found and still reported as a rule-1 violation, so `permissive` is a severity switch rather than a scope switch, and an implementation that suppresses it under permissive fails. The assertion names the `no test:` line rather than the bare id, because under the ladder AC-02 already appears on the `uncovered:` line, so asserting the id alone would pass without the model being implemented at all."
       inputs:
         workspace: "identical to AC-60"
         manifest: "settings.annotation.permissive: true"
       expected_output:
-        rule1_violations: ["AC-02"]
+        rule1_violations_on_no_test_line: ["AC-02"]
         severity: "warning"
         exit_code: 0
-        violation_still_reported: true
+        violation_still_reported_as_rule1: true
       references_constraints: ["C-38"]
       priority: critical
 
