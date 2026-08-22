@@ -37,7 +37,7 @@ func annotationField(t *testing.T, m *Manifest) reflect.Value {
 	if !v.IsValid() {
 		t.Fatalf("manifest.Settings has no field Annotation: C-32 requires Settings.Annotation to record a declared settings.annotation block")
 	}
-	if v.Kind() != reflect.Ptr {
+	if v.Kind() != reflect.Pointer {
 		t.Fatalf("Settings.Annotation has kind %s, expected a pointer so that nil distinguishes an absent block (C-32)", v.Kind())
 	}
 	return v
