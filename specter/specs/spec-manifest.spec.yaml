@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "1.18.0"
+  version: "1.19.0"
   status: draft
   tier: 2
 
@@ -214,6 +214,16 @@ spec:
       type: business
       enforcement: error
 
+
+    - id: C-35
+      description: "`domains.<name>.tier` is a checked assertion, not a tier source. It declares the risk level the domain asserts, and a spec listed in that domain whose declared `tier` disagrees MUST produce a `domain_tier_conflict` diagnostic naming the spec, its declared tier, the domain, and the domain's tier. The domain tier MUST NOT change the spec's effective tier: nothing resolves, and the declared tier stays what every consumer reads, per C-04. Severity is warning, which `--strict` promotes, because a disagreement is not always an error: a mostly-Tier-1 domain may legitimately hold one Tier 3 spec. The diagnostic MUST appear in `specter check --json` as well as in the text output, with the same count in both. Rationale, per docs/ssrb/SSRB-106.md section 7.1: the governing principle is that the spec declares its tier, the manifest may state a policy and be checked against it, and the manifest may not silently change it. Before this, a domain tier was validated, range-checked, and read by nothing, so a team setting tiers per domain got silence and no effect."
+      type: technical
+      enforcement: error
+
+    - id: C-36
+      description: "`system.tier` and `settings.tier_overrides` are deprecated and MUST warn on every run that reads the manifest. A manifest declaring either gets one stderr line per key naming it, stating that it has no effect and that it is removed at v1.0.0. The warning MUST NOT change any exit code. Both keys stay accepted so an existing manifest parses. Rationale, per docs/ssrb/SSRB-106.md sections 7.2 and 7.3: both are validated and inert, `specter init` has been writing `system.tier` into every new workspace, and an operator who configures either currently gets no signal that it did nothing. `settings.tier_overrides` additionally emitted a message asserting the override was in use, corrected under C-14 at spec-manifest 1.15.0."
+      type: technical
+      enforcement: error
   acceptance_criteria:
     - id: AC-01
       description: "Valid specter.yaml with all sections parses into Manifest struct"
@@ -881,6 +891,45 @@ spec:
       references_constraints: ["C-34"]
       priority: high
 
+
+    - id: AC-63
+      description: "A domain tier that disagrees with a spec's declared tier warns, and changes nothing. Workspace: a spec declaring `tier: 3`, listed in a domain declaring `tier: 1`. `specter check` emits a `domain_tier_conflict` warning naming the spec, 3, the domain name, and 1. The exit code is 0, because a warning does not fail a run. `coverage --json` on the same workspace still reports tier 3 and threshold 50, so the assertion is a check and not a resolution. That last clause is what separates this from inheritance: an implementation that made the domain tier win would satisfy the warning and fail the tier assertion."
+      inputs:
+        spec: "declares tier: 3"
+        manifest: "domains.payments.tier: 1, listing the spec"
+      expected_output:
+        diagnostic_kind: "domain_tier_conflict"
+        severity: "warning"
+        exit_code: 0
+        coverage_json_tier: 3
+        coverage_json_threshold: 50
+      references_constraints: ["C-35"]
+      priority: critical
+
+    - id: AC-64
+      description: "The domain tier conflict reaches `check --json`, and the two output modes agree on the count. On the AC-63 workspace, `specter check --json` contains a diagnostic whose kind is `domain_tier_conflict`, and the warning count in its summary equals the warning count printed by `specter check` in text mode on the same workspace. This is the defect `bugs/SP-SP-002` records for the existing `tier_conflict`, which is computed after the JSON branch returns and so never reaches a JSON consumer, including the VS Code extension. Shipping a new diagnostic through the same path would inherit a defect already filed against the old one, so C-35 requires both to be fixed together."
+      inputs:
+        workspace: "identical to AC-63"
+        runs: ["check --json", "check"]
+      expected_output:
+        json_contains_kind: "domain_tier_conflict"
+        json_and_text_warning_counts_equal: true
+      references_constraints: ["C-35"]
+      priority: critical
+
+    - id: AC-65
+      description: "The deprecated tier keys warn without changing an exit code. A manifest declaring `system.tier: 2` produces one stderr line naming `system.tier`, stating it has no effect and is removed at v1.0.0. A manifest declaring `settings.tier_overrides` produces the equivalent line for that key. A manifest declaring neither produces neither line, which is the control that stops the assertion passing on a run that warns about everything. In all three cases the exit code matches the same workspace with no deprecated key declared, so the warning is advisory."
+      inputs:
+        case_system_tier: "system.tier: 2 declared"
+        case_tier_overrides: "settings.tier_overrides declared"
+        case_neither: "neither declared"
+      expected_output:
+        system_tier_warns: true
+        tier_overrides_warns: true
+        neither_warns: false
+        exit_code_unchanged: true
+      references_constraints: ["C-36"]
+      priority: high
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -890,6 +939,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.19.0"
+      date: "2026-08-22"
+      author: "specter-team"
+      type: minor
+      description: "The last two parts of docs/ssrb/SSRB-106.md. C-35 makes domains.<name>.tier a checked assertion rather than a tier source: a spec whose declared tier disagrees with its domain's produces a domain_tier_conflict warning, and nothing resolves, so the declared tier still governs per C-04. AC-63 pins both halves, and the second half is what separates a check from inheritance. C-35 also requires the diagnostic to reach check --json, which pulls bugs/SP-SP-002 into scope: tier_conflict is computed after the JSON branch returns and has never reached a JSON consumer including the VS Code extension, so a new diagnostic on the same path would inherit a filed defect. AC-64 pins both modes agreeing on the count. C-36 deprecates system.tier and settings.tier_overrides with per-key warnings that change no exit code, and AC-65 carries the neither-declared control so it cannot pass on a build that warns about everything."
     - version: "1.18.0"
       date: "2026-08-22"
       author: "specter-team"
