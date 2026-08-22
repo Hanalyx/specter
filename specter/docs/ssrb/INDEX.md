@@ -16,6 +16,7 @@ To start a new brief: copy [`TEMPLATE.md`](TEMPLATE.md) to `SSRB-NNN.md` (the nu
 | [102](SSRB-102.md) | `settings.diagnostics`, per-rule severity in the manifest | NEEDS-DESIGN | TBD (with the SP-004 resolution) |
 | [103](SSRB-103.md) | Multi-stream evidence in ingest and coverage | NEEDS-DESIGN | TBD |
 | [104](SSRB-104.md) | Retire `settings.strictness` for `settings.annotation` | ACCEPT | 2026-08-19 |
+| [105](SSRB-105.md) | Retire the manifest `registry` section | ACCEPT | 2026-08-22 |
 
 ## Status legend
 
