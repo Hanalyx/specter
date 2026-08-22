@@ -456,10 +456,42 @@ the block's behavior.
    `--strict` with `strictness: annotation`. Cheapest to reason about, and it
    makes an adopter mid-migration fix their CI invocation before they are ready.
 
-**No recommendation yet.** This does not block 1D-a, whose criteria are written
-not to depend on it, and it must be decided before 1D-b ships the rule that
-gives the block observable behavior. Deciding it late means deciding it under
-pressure.
+**Answered for v0.15.0 on 2026-08-22: option 1, the flag still wins.**
+
+The question was raised while 1D-a was in flight and it did not wait for a
+decision. The implementation took option 1, and phase 4 measured what shipped
+rather than what its author intended:
+
+```
+# manifest declares an annotation block and no settings.strictness
+coverage                          rc=1   block governs, resolves to threshold
+coverage --strictness annotation  rc=0   flag wins, lenient path
+```
+
+Only `coverage` and `sync` are affected, since `check` has no `--strictness`
+flag, and both are consistent.
+
+**It is recorded here because it was decided in code and undecided on paper,
+which is the worst of the two states.** Phase 4 confirmed the opposite reading
+also passes the full suite: rewriting both call sites so the block beats the
+flag is green. So the precedence is entirely unguarded, and a future change in
+either direction would pass CI.
+
+Option 1 is the right answer on its merits, not only by accident of what shipped.
+Section 1 promises `--strictness` behaves unchanged until v1.0.0, and options 2
+and 3 both break that promise for a workspace that has opted in to the new key.
+The divergence 7.3 exists to prevent is between the **new** key and a flag it
+does not have; the legacy flag was always going to keep working through the
+window.
+
+**Two things this still owes.**
+
+A criterion pinning the precedence, so the opposite reading fails. Filed with
+the other 1D-a coverage gap rather than left as a note.
+
+A re-decision at 1D-b, which gives the block observable behavior and therefore
+raises the stakes on what a flag can override. The answer may still be option 1;
+it should be chosen again rather than inherited.
 
 **It expires on its own** when `--strictness` is removed at v1.0.0, which is an
 argument for option 3: the least code, on a path that is going away.
