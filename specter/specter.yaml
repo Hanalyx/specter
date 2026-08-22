@@ -1,0 +1,17 @@
+# Specter's own manifest. Deliberately minimal.
+#
+# It exists so Specter dogfoods settings.annotation, the feature roadmap item
+# 1D shipped. Without a manifest the annotation rule is inert on this corpus,
+# and shipping a feature the project does not run on itself is not acceptable
+# here.
+#
+# No system.tier and no domains.<name>.tier: both are deprecated by
+# docs/ssrb/SSRB-106.md and warn. `specter init` still writes them, which is
+# corrected separately.
+schema_version: 1
+system:
+  name: specter
+settings:
+  specs_dir: specs
+  annotation:
+    permissive: true
