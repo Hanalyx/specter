@@ -307,9 +307,50 @@ a ladder:
 | 2 | A criterion has no test at all |
 | 3 | Approval gate unmet |
 
-This is offered as an observation rather than a decision. It resolves the
-contradiction between this brief and `docs/EXIT_CODES.md`, which registers both
-codes as Stable.
+**Promoted from observation to decision on 2026-08-22**, because roadmap item
+1D-b cannot be specified without it. The annotation rule needs an exit code for
+"a criterion has no test", and leaving codes 2 and 3 unreachable is the only
+alternative, which contradicts `docs/EXIT_CODES.md` registering both as Stable.
+
+The mapping above is adopted as written. Three consequences worth stating:
+
+**Code 2 changes meaning, and the change is a narrowing.** Today it fires under
+`zero-tolerance` when an annotated criterion did not pass. Under the model it
+fires when a criterion has no test at all. A workspace whose criteria all have
+tests, some failing, moves from code 2 to code 1. That is the intended
+distinction: rule 1 and rule 3 are different failures and had one code between
+them.
+
+**Code 3 is unchanged.** The approval-gate trigger does not depend on the
+ladder, so it survives the retirement untouched.
+
+**This unblocks roadmap item 1A4**, the exit-code parity test, which was blocked
+on precisely this question, and it settles the codes 2 and 3 trigger section that
+`docs/EXIT_CODES.md` still owes.
+
+### 7.9 An `annotation` block requires a results file
+
+Decided 2026-08-22, surfaced while specifying 1D-b. Section 1 does not address
+it and the answer is not derivable from the four rules.
+
+Rule 1 is **structural**: whether a criterion has a test can be answered from
+annotations alone, with no results file. Rule 3 is **outcome-based**: a pass rate
+needs results. So a workspace declaring an `annotation` block with no
+`.specter-results.json` can evaluate one rule and not the other.
+
+**The block requires `.specter-results.json`, exactly as `threshold` does
+today.** Both rules then always evaluate together.
+
+The alternative, evaluating rule 1 and skipping rule 3 with a warning, was
+rejected. The manifest default today is `threshold`, which requires results.
+Declaring an `annotation` block would then silently drop that requirement, and a
+workspace would move from an outcome-verified gate to a structural one by adding
+a key that reads as *stricter*. That is the silent-weakening class this project
+has spent the cycle removing.
+
+It also keeps the interim behavior in section 7.7a and the final behavior
+agreeing on this point, so 1D-b does not change what a missing results file
+does.
 
 ### 7.6 Deferred criteria become a prerequisite, not an optional phase
 
