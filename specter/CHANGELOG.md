@@ -10,9 +10,13 @@ Unreleased changes accumulate under `## Unreleased`. Every user-visible change a
 
 ### Added
 
+- **`domains.<name>.tier` is now a checked assertion.** A domain's `tier` declares the risk level it asserts, and a spec listed in that domain whose declared `tier` disagrees produces a `domain_tier_conflict` warning naming both values. It does **not** change the spec's tier: the declared tier still governs. The warning appears in both text and `--json` output. **Action:** none required. If you had set a domain tier expecting it to apply, it never did, and now it says so.
+
 - **`settings.annotation` in `specter.yaml`.** A new manifest block carrying one sub-key, `permissive` (boolean, default `false`), which warns where the same configuration would otherwise fail. Declaring the block is what counts: `annotation: {}` and a bare `annotation:` both register as declared. A manifest carrying no `annotation` key behaves exactly as it did in v0.14, so nothing changes on upgrade unless you opt in. **Action:** none required. This is the replacement for `settings.strictness`, deprecated below, which keeps working until v1.0.0.
 
   Two behaviors worth knowing before you declare the block. When a manifest carries **both** `settings.strictness` and an `annotation` block, the block wins and `check`, `coverage` and `sync` each warn on stderr naming the ignored key; the exit code is unchanged by the warning. And a declared block currently resolves to the strict path, so a workspace on `settings.strictness: annotation` that declares one moves from the lenient path to the strict one and may go red. That is visible rather than silent, and it is the safer of the two available defaults: the alternative would silently drop the strict path for the far more common `settings.strictness: threshold` case.
+
+  **The rule it enables now ships too.** With a block declared, every acceptance criterion must have a test, and the tier threshold does not excuse one that has none. A criterion with no test is listed on a `no test:` line, appears in `coverage --json` as `no_test_acs`, and exits **2**. A pass rate below the tier threshold exits **1**. Those are different failures and the strictness ladder had one code for both. **Action:** if you declare the block, expect criteria with no test to fail where they previously passed on tier arithmetic. Set `permissive: true` to warn instead while you close the gap.
 
   `settings.annotation.scope` is **not** accepted. `docs/ssrb/SSRB-104.md` names `scope: test | all` in its target shape and only test scope is implemented, so the key is rejected with a message saying so rather than one that reads as a typo.
 
@@ -20,16 +24,26 @@ Unreleased changes accumulate under `## Unreleased`. Every user-visible change a
 
 ### Fixed
 
+- **`tier_conflict` asserted something false on every run.** The warning ended `using override (N)` while nothing applied the override, so `check` claimed one tier was in use while `coverage` reported another for the same spec on the same run. It now states that the declared tier governs. This is not cosmetic: correcting the public documentation in August nearly shipped a second false claim, because the only evidence for the reading that the override wins was this message.
+
+- **`tier_conflict` never reached `specter check --json`.** It was computed after the JSON branch returned and counted separately in the text summary, so no JSON consumer had ever seen it, including the VS Code extension, and the two output modes disagreed on the warning count for the same workspace. Both `tier_conflict` and the new `domain_tier_conflict` now go through one diagnostic list, so the counts agree by construction. **Action:** if you parse `check --json` and had compensated for the missing diagnostic, remove the workaround.
+
 - **32 Dependabot alerts closed in the VS Code extension's dependency tree.** A lockfile-only refresh with no version-range changes. **No release was affected:** the extension declares zero runtime dependencies, and the published VSIX contains zero `node_modules` entries, so none of the flagged packages has ever shipped to a user. The exposure was to CI and developer machines, where these run during `npm ci`, `tsc`, `jest` and `vsce package`. Nine of the eleven packages arrived through `@vscode/vsce` alone. **Action:** none. Run `npm ci` in `vscode-extension/` if you build the extension locally.
 
 - **`specter check` documentation described a diagnostic that does not exist.** The README and `docs/CLI_REFERENCE.md` said `tier_conflict` catches "a Tier 1 spec depends on a Tier 3 spec", and the README printed it as an ERROR. It fires only when a spec's declared `tier:` disagrees with an entry in `settings.tier_overrides`. It is a warning, `--strict` does not escalate it, and it does not appear in `--json` output. `settings.tier_overrides` does not change a spec's effective tier. **Action:** if you set `tier_overrides` expecting a stricter or looser gate, it is not in effect. Set `tier:` in the spec instead.
 - **The pre-commit hook ran no checks once installed.** It resolved the Go module path relative to its own location, which is `.git/hooks` after `make install-hooks`, so `gofmt` and `go vet` were skipped on every commit. **Action:** run `make install-hooks`, then `make check` on any branch you have in flight.
 
+### Removed
+
+- **The tier inheritance cascade.** `ResolveTier` implemented explicit tier, then domain tier, then `system.tier`, then a default of 2. Nothing called it, and the last three steps were unreachable regardless, because the schema makes `tier` required. Three acceptance criteria asserted that inheritance and passed only because their tests called the function directly with a tier of zero, an input no parsed spec can produce. **Action:** none. No shipped behavior changes, because the behavior never existed. `docs/ssrb/SSRB-106.md`.
+
 ### Deprecated
 
 Four manifest surfaces are on a removal path for v1.0.0. **Three of them do nothing today**, so removing them changes no workspace's behavior; an operator who configured one was already getting nothing. Only `settings.strictness` carries real behavior and needs a migration.
 
-- **`system.tier`, `domains.<name>.tier` as a tier source, `settings.tier_overrides`, and the `registry` section.** All are validated, range-checked, and inert. No command reads any of them, and `specter init` has been writing two of them into every new workspace. `settings.tier_overrides` is the worst of the four: it emits a `tier_conflict` warning ending `using override (N)` while nothing applies the override, so the binary states something false on every run. **Action:** set `tier:` in the `.spec.yaml` file, the only place that has ever governed a spec's tier. Delete the `registry` block; nothing ever read or wrote it. Decisions recorded in `docs/ssrb/SSRB-105.md` and `docs/ssrb/SSRB-106.md`.
+- **`system.tier` and `settings.tier_overrides` now warn on every run**, name themselves, and state that they are removed at v1.0.0. Both were previously validated, range-checked, and read by nothing, so an operator who set one got silence. The warning changes no exit code. **Action:** set `tier:` in the `.spec.yaml` file, the only place that has ever governed a spec's tier.
+
+- **The `registry` section is retired.** Its key is still accepted so an existing manifest parses, and its value is discarded. The key is removed at v1.0.0. Nothing ever read or wrote it: the constraint mandating an auto-update was never implemented. **Action:** delete the block. Nothing is lost, because nothing was ever stored there. `docs/ssrb/SSRB-105.md`.
 
 - **`settings.strictness` and `--strictness` will be retired at v1.0.0.** Both keep their current behavior unchanged for every release before then, so nothing in your manifest or your CI stops working now. This is advance notice, not a migration you have to run today.
 

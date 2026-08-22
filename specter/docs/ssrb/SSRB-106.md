@@ -1,6 +1,6 @@
 # SSRB-106: settle the three inert tier mechanisms
 
-Status: ACCEPT
+Status: ACCEPT. **Implemented 2026-08-22.** The `tier_conflict` message correction, the `domain_tier_conflict` check, the `system.tier` and `settings.tier_overrides` deprecation warnings, the deletion of `ResolveTier` and `ResolveTierWithOverrides`, and the `check --json` fix all shipped. Closes `bugs/SP-SP-001`, `bugs/SP-SP-002` and `bugs/SP-SP-049`. Removal of the two keys from the schema lands at v1.0.0.
 Directed: 2026-08-22, founder, carrying `bugs/SP-SP-049`, `system.tier`, and `bugs/SP-SP-001` as one decision.
 Source: the lexicon review of 2026-08-20 and the phase 4 review of v0.15 item 1D-a.
 

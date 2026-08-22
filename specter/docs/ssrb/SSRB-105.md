@@ -1,6 +1,6 @@
 # SSRB-105: retire the manifest registry section
 
-Status: ACCEPT
+Status: ACCEPT. **Implemented 2026-08-22.** C-06, AC-09, AC-10, `internal/manifest/registry.go`, `Manifest.Registry` and `RegistryEntry` are removed. The `registry` key stays accepted with its value discarded and leaves the schema at v1.0.0. Closes `bugs/SP-SP-054`.
 Directed: 2026-08-22, founder, deciding `bugs/SP-SP-054` and `bugs/SP-SP-049` together.
 Source: the phase 4 review of v0.15 item 1D-a, which found C-06 mandates behavior no command performs.
 

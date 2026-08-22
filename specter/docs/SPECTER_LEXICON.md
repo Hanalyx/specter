@@ -1200,16 +1200,23 @@ payments --json` on a fixture whose `payments` domain is Tier 1 still reports
 reader of `domain.Tier` is `DomainCoverage` in `internal/manifest/domain.go:48`,
 which also has no caller. `domain.Tier` is read nowhere live.
 
-**Decided 2026-08-22, and not yet built.** `docs/ssrb/SSRB-106.md` settles this
+**Decided and shipped 2026-08-22.** `docs/ssrb/SSRB-106.md` settled this
 together with `system.tier` and `settings.tier_overrides`, under one principle:
 the spec declares its tier, the manifest may state a policy and be checked
 against it, and the manifest may not silently change it.
 
-So `domains.<name>.tier` becomes a **checked assertion**, not a source. A spec
-whose declared tier disagrees with its domain's produces a warning, and nothing
-resolves: `spec.Tier` stays what every consumer reads. `system.tier` and
-`settings.tier_overrides` are deprecated and leave the schema at v1.0.0.
-`ResolveTier` and `ResolveTierWithOverrides` are deleted.
+**Everything below this entry described is now the shipped behavior.**
+`domains.<name>.tier` is a **checked assertion**, not a source: a spec whose
+declared tier disagrees with its domain's produces a `domain_tier_conflict`
+warning, and nothing resolves. `system.tier` and `settings.tier_overrides` warn
+on every run and leave the schema at v1.0.0. `ResolveTier`,
+`ResolveTierWithOverrides` and `internal/manifest/tier.go` are deleted, so the
+cascade this entry spent three drafts getting wrong no longer exists to describe.
+
+Three acceptance criteria went with it. AC-05, AC-06 and AC-07 asserted the
+inheritance and passed only because their tests called `ResolveTier` directly
+with a tier of zero, an input the schema forbids. That is the same shape as C-06
+in `bugs/SP-SP-054`: criteria green over behavior no user could reach.
 
 **That reverses an earlier recommendation in `bugs/SP-SP-049`** to relax
 `spec.tier` to optional and inherit. Measured, relaxing the schema does not
@@ -1519,9 +1526,9 @@ above with its evidence.
 | `tier_conflict` | Code: a `tier_overrides` mismatch | `CLI_REFERENCE.md:190`: a high-tier spec depending on a low-tier one | Not filed |
 | Convention B grammar | `check --test`: either `@spec` or `@ac` alone marks a test reachable, and a bare pair in any string-literal argument counts | `ingest`: both markers required, and a bare pair read only from the name or classname | `SP-SP-050` |
 | `gap` readers | This document, earlier draft: "nothing reads it" | `reverse.go:235` and `:241` read it in process, and `main.go:1617` prints the count. Roadmap 3C7 had it right; the summary here did not | Not filed; a defect in this document |
-| `tier_overrides` | Warning says "using override" | No caller applies it | `SP-SP-001` |
-| tier cascade | `ResolveTier` inherits from a domain tier, then `system.tier`, then a default of 2 | Nothing calls it. Both call sites sit in functions with no callers, and every live consumer reads `spec.Tier` raw | `SP-SP-049` |
-| `registry` block | Parsed into `Manifest.Registry`, and `full.specter.yaml` carries per-entry tiers | No command reads it or regenerates it | `SP-SP-049` |
+| `tier_overrides` | Warning said "using override" | No caller applied it. **Resolved 2026-08-22**: the message states that the declared tier governs, and the key is deprecated | `SP-SP-001`, closed |
+| tier cascade | `ResolveTier` inherited from a domain tier, then `system.tier`, then a default of 2 | Nothing called it. **Resolved 2026-08-22**: SSRB-106 deleted the function, and the domain tier is now a checked assertion | `SP-SP-049`, closed |
+| `registry` block | Parsed into `Manifest.Registry` | No command read it or regenerated it. **Resolved 2026-08-22**: SSRB-105 retired the section; the key is accepted and discarded until v1.0.0 | `SP-SP-054`, closed |
 | `dangling_reference` | Parse: an undeclared constraint reference | Resolve: an unknown `depends_on` target | Not filed |
 | Tier 3 orphan severity | `spec-check` C-02 and the code: `info` | `spec-check` objective scope, line 36: `warning` | `SP-SP-003` |
 | sync's default strictness | Code comment at `main.go:1318`: "ultimate default is `annotation`" | Behavior: `threshold`, because the manifest loader fills it in | Not filed |

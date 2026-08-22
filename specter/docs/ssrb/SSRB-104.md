@@ -1,6 +1,6 @@
 # SSRB-104: retire `settings.strictness` for `settings.annotation`
 
-Status: ACCEPT. **Partially implemented: 1D-a shipped 2026-08-22, 1D-b not started.**
+Status: ACCEPT. **Implemented for v0.15.0 on 2026-08-22: 1D-a, 1D-b and 1D6 all shipped.**
 Directed: 2026-08-18, founder. Shape settled 2026-08-19.
 **Delivery staged 2026-08-21, founder: v0.15.0 ships `scope: test` behavior only.
 See section 7.7.**
@@ -10,13 +10,25 @@ See section 7.7.**
 section 7.1 conflict rule across `check`, `coverage` and `sync`. Recorded in
 `spec-manifest` 1.14.1 as C-32, C-33, C-34 and AC-52 through AC-59.
 
-**What has not.** Item 1D-b, the coverage rule that consumes `permissive`. Until
-it lands, a declared block resolves to the interim in section 7.7a and
-`permissive` itself changes nothing.
+**1D-b shipped the same day.** `spec-coverage` C-38 applies the section 1 model
+when a block is declared: rule 1 separated from rule 3, with exit 2 and exit 1
+respectively per section 7.5, and `permissive` as the severity switch per
+section 7.4. Section 7.9 was added to settle a question section 1 did not
+address, whether a declared block requires a results file. It does.
 
-**Two criteria are owed**, tracked in `bugs/SP-SP-053`: one observing 7.7a's
-invariance rule on `check --test`, and one pinning 7.8's precedence answer. Both
-should land before 1D-b.
+**1D6 shipped too.** Specter carries a root `specter.yaml` at
+`permissive: true`, so the feature runs on its own corpus. At
+`permissive: false` three criteria fail, one of which asserts a fact about git
+and can have no honest test.
+
+**The two criteria owed in `bugs/SP-SP-053` landed**, `spec-manifest` AC-61 and
+AC-62, before 1D-b as the roadmap required. Section 7.8's precedence answer is
+now pinned by a criterion rather than only recorded here.
+
+**What remains for v1.0.0:** removing `settings.strictness` and `--strictness`
+from the schema and the CLI, alongside the three other removals in
+`docs/roadmap/v1.0.0.md` section A5. `scope: all` stays unshipped and
+conditional on SSRB-101 being reopened, per section 7.7.
 Source: the strict/strictness consensus panel of 2026-08-17, and `features/SP-006`
 
 ## 1. Request
