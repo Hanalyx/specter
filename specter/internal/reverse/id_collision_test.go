@@ -157,3 +157,93 @@ func TestReverse_CollisionEmitsDiagnostic(t *testing.T) {
 		}
 	})
 }
+
+// @ac AC-21
+// The numeric fallback, exercised directly. Two groups in the same directory
+// with the same provisional id run out of path segments: no amount of
+// deepening separates them, so one takes a suffix. Neither the unit fixtures
+// above nor the 12-repo corpus reach this branch, because both separate on the
+// first segment.
+func TestDisambiguateSpecIDs_NumericFallbackWhenPathExhausted(t *testing.T) {
+	t.Run("spec-reverse/AC-21 numeric fallback when path exhausted", func(t *testing.T) {
+		keys := []string{"pkg/thing.go", "pkg/thing_test.go"}
+		provisional := map[string]string{
+			"pkg/thing.go":      "thing",
+			"pkg/thing_test.go": "thing",
+		}
+
+		final, renames := DisambiguateSpecIDs(keys, provisional)
+		if final[keys[0]] == final[keys[1]] {
+			t.Fatalf("both keys still map to %q; C-16 requires unique ids", final[keys[0]])
+		}
+		// Both, not one. Every member of a colliding set is disambiguated, so
+		// adding a third file later cannot silently take the short id away
+		// from whichever spec happened to hold it.
+		if len(renames) != 2 {
+			t.Errorf("expected both members renamed, got %d: %v", len(renames), renames)
+		}
+		// Sorted order decides: the first key keeps the deepened id, the second
+		// takes the suffix. The point is that it is decided, not which way.
+		if final["pkg/thing.go"] != "pkg-thing" {
+			t.Errorf("first key by sort order got %q, want %q", final["pkg/thing.go"], "pkg-thing")
+		}
+		if final["pkg/thing_test.go"] != "pkg-thing-2" {
+			t.Errorf("second key by sort order got %q, want %q",
+				final["pkg/thing_test.go"], "pkg-thing-2")
+		}
+	})
+}
+
+// @ac AC-21
+// A deepened id can land on an id that was never part of the original
+// colliding set. The uniqueness pass runs over every key, not only the ones
+// that started out colliding, so this resolves rather than silently shipping a
+// duplicate.
+func TestDisambiguateSpecIDs_DeepenedIDCollidesWithUnrelated(t *testing.T) {
+	t.Run("spec-reverse/AC-21 deepened id collides with unrelated", func(t *testing.T) {
+		keys := []string{
+			"coverage/coverage.go",
+			"diff/coverage.go",
+			"root/coverage-coverage.go",
+		}
+		provisional := map[string]string{
+			"coverage/coverage.go":      "coverage",
+			"diff/coverage.go":          "coverage",
+			"root/coverage-coverage.go": "coverage-coverage",
+		}
+
+		final, _ := DisambiguateSpecIDs(keys, provisional)
+		seen := make(map[string]string)
+		for _, k := range keys {
+			if prev, dup := seen[final[k]]; dup {
+				t.Errorf("id %q assigned to both %s and %s", final[k], prev, k)
+			}
+			seen[final[k]] = k
+		}
+	})
+}
+
+// @ac AC-22
+// Determinism at the unit level: the same keys in a different order produce
+// the same assignment. DisambiguateSpecIDs documents that the caller sorts, so
+// this feeds it sorted input both times and varies only the map insertion
+// order, which is what a caller cannot control.
+func TestDisambiguateSpecIDs_StableAcrossMapOrdering(t *testing.T) {
+	t.Run("spec-reverse/AC-22 stable across map ordering", func(t *testing.T) {
+		keys := []string{"a/dup.go", "b/dup.go", "c/dup.go"}
+		build := func(order []string) map[string]string {
+			m := make(map[string]string)
+			for _, k := range order {
+				m[k] = "dup"
+			}
+			return m
+		}
+		first, _ := DisambiguateSpecIDs(keys, build([]string{"a/dup.go", "b/dup.go", "c/dup.go"}))
+		second, _ := DisambiguateSpecIDs(keys, build([]string{"c/dup.go", "a/dup.go", "b/dup.go"}))
+		for _, k := range keys {
+			if first[k] != second[k] {
+				t.Errorf("%s got %q then %q", k, first[k], second[k])
+			}
+		}
+	})
+}
