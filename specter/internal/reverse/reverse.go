@@ -506,8 +506,13 @@ func assembleSpec(groupKey string, group *fileGroup, adapter Adapter, systemName
 		specACs = []schema.AcceptanceCriterion{{
 			ID:          "AC-01",
 			Description: "Module behavior matches implementation (auto-generated placeholder)",
-			Gap:         true,
-			Priority:    "high",
+			// C-19: no Gap. `gap` asserts that a constraint has no covering
+			// assertion. This criterion is not about a constraint; it exists
+			// because the schema requires minItems 1. Flagging it made the
+			// extractor finding nothing indistinguishable from a measured
+			// finding, and inflated the C-13 count past any reading as a gap
+			// count: go-chi/chi reported 0 constraints and 21 gaps.
+			Priority: "high",
 		}}
 	}
 

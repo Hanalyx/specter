@@ -1717,11 +1717,14 @@ func reverseCmd() *cobra.Command {
 				gapCount, pluralize("gap", gapCount),
 				result.Summary.SpecsGenerated, pluralize("file", result.Summary.SpecsGenerated))
 
-			// spec-reverse 1.3.0 C-14: single-line handoff pointing at
-			// `specter explain <first-spec-id>` for each generated draft.
+			// C-14: single-line handoff pointing at `specter explain
+			// <first-spec-id>`. It must name something explain can do. It said
+			// "triage gaps" for three releases while internal/explain had no
+			// gap handling; explain lists criteria with coverage status, so
+			// the line says review.
 			if len(result.Specs) > 0 {
 				firstID := result.Specs[0].Spec.ID
-				fmt.Printf("Run `specter explain %s` to triage gaps in each generated draft.\n", firstID)
+				fmt.Printf("Run `specter explain %s` to review the criteria in each generated draft.\n", firstID)
 			}
 
 			return nil
