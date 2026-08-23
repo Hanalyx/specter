@@ -23,10 +23,10 @@
 # @spec/@ac annotations, so coverage is 0% by construction and any number from
 # it would measure the repo's annotation habits, not Specter.
 #
-# Each repo is scanned by `reverse` TWICE: once with `--dry-run --json` for the
-# stage-1 metrics, once plain with `-o` for the files stage 2 needs. One run
-# cannot serve both, because `reverse --json -o DIR` reports specs generated
-# and writes nothing (bugs/SP-SP-061). Remove the second run when that is fixed.
+# One `reverse --json -o` per repo serves both stages: the JSON report on
+# stdout, the generated files on disk. That needed SP-SP-061 fixed, which
+# separated `--json` (report format) from `--dry-run` (whether files are
+# written). Before that the harness scanned every repo twice.
 #
 # One reading caution. `check` refuses to run structural checks while `resolve`
 # has errors, so a repo that trips SP-SP-060 reports zero structural conflicts
@@ -115,7 +115,7 @@ run_one() {
     if [[ ! -d "${clone_dir}/.git" ]]; then
         if ! git clone --depth=1 --quiet "${url}" "${clone_dir}" 2>"${log_file}.clone"; then
             echo "  CLONE FAILED, see ${log_file}.clone"
-            ROW_DATA+=("${name}|${lang}|CLONE FAILED|-|-|-|-|-")
+            ROW_DATA+=("${name}|${lang}|CLONE FAILED|-|-|-|-|-|-|-")
             ROUND_TRIP+=("${name}|-|CLONE FAILED|-|-|-|-|-|-|-")
             return
         fi
@@ -127,13 +127,16 @@ run_one() {
     local start_ts end_ts elapsed
     start_ts=$(date +%s)
     local exit_code=0
-    (cd "${clone_dir}" && "${SPECTER_BIN}" reverse --dry-run --json . > "${json_file}" 2> "${log_file}") || exit_code=$?
+    # Writes the specs stage 2 needs AND emits the stage-1 JSON, in one scan.
+    rm -rf "${WORKDIR}/generated/${slug}"; mkdir -p "${WORKDIR}/generated/${slug}/specs"
+    (cd "${clone_dir}" && "${SPECTER_BIN}" reverse --json . \
+        -o "${WORKDIR}/generated/${slug}/specs" > "${json_file}" 2> "${log_file}") || exit_code=$?
     end_ts=$(date +%s)
     elapsed=$((end_ts - start_ts))
 
     if [[ ${exit_code} -ne 0 ]] || ! python3 -c "import json; json.load(open('${json_file}'))" 2>/dev/null; then
         echo "  CRASH or non-JSON output, exit ${exit_code}; see ${log_file}"
-        ROW_DATA+=("${name}|${lang}|${commit_sha}|CRASH (exit ${exit_code})|-|-|-|${elapsed}s")
+        ROW_DATA+=("${name}|${lang}|${commit_sha}|CRASH (exit ${exit_code})|-|-|-|-|-|${elapsed}s")
         ROUND_TRIP+=("${name}|-|CRASH|-|-|-|-|-|-|-")
         return
     fi
@@ -147,12 +150,13 @@ with open("${json_file}") as f:
 s = d.get("summary") or {}
 diags = d.get("diagnostics") or []
 errors = sum(1 for x in diags if (x.get("severity") or "").lower() == "error")
-print(f"{s.get('FilesProcessed', 0)}|{s.get('SpecsGenerated', 0)}|{s.get('AssertionsFound', 0)}|{errors}")
+print(f"{s.get('FilesProcessed', 0)}|{s.get('SpecsGenerated', 0)}|{s.get('AssertionsFound', 0)}|{errors}|{s.get('ConstraintsFound', 0)}|{s.get('GapsDetected', 0)}")
 PYEOF
 )
 
-    IFS='|' read -r files specs assertions errors <<< "${metrics}"
-    echo "  files=${files} specs=${specs} assertions=${assertions} errors=${errors} time=${elapsed}s"
+    IFS='|' read -r files specs assertions errors constraints gaps <<< "${metrics}"
+    echo "  files=${files} specs=${specs} constraints=${constraints} assertions=${assertions}" \
+         "gaps=${gaps} errors=${errors} time=${elapsed}s"
 
     # Assertions-per-file, to two decimals. A repo the extractor understands
     # nothing about scores 0 errors and 0 crashes, identically to one it
@@ -175,12 +179,12 @@ PYEOF
     # `reverse --json -o DIR` reports specs generated and writes nothing
     # (`bugs/SP-SP-061`). Stage 1 needs the JSON, stage 2 needs the files.
     local out_dir="${WORKDIR}/generated/${slug}"
-    rm -rf "${out_dir}"; mkdir -p "${out_dir}/specs"
     local parse_rc="-" resolve_rc="-" check_rc="-"
     local dup_ids="-" orphans="-" structconf="-" dupacs="-"
 
-    (cd "${clone_dir}" && "${SPECTER_BIN}" reverse . -o "${out_dir}/specs" \
-        > "${PER_REPO_LOG}/${slug}.gen.log" 2>&1) || true
+    # The per-spec GENERATED and SKIPPED lines are on stderr under --json, so
+    # the stage-1 log doubles as the generation log.
+    cp "${log_file}" "${PER_REPO_LOG}/${slug}.gen.log" 2>/dev/null || true
 
     local gen_count
     gen_count=$(find "${out_dir}/specs" -name '*.spec.yaml' 2>/dev/null | wc -l | tr -d ' ')
@@ -209,7 +213,7 @@ PYEOF
         echo "  round trip: reverse wrote no spec files; pipeline not run"
     fi
 
-    ROW_DATA+=("${name}|${lang}|${commit_sha}|${files}|${specs}|${assertions}|${errors}|${elapsed}s")
+    ROW_DATA+=("${name}|${lang}|${commit_sha}|${files}|${specs}|${constraints}|${assertions}|${gaps}|${errors}|${elapsed}s")
     ROUND_TRIP+=("${name}|${ratio}|${extraction}|${parse_rc}|${resolve_rc}|${check_rc}|${dup_ids}|${orphans}|${structconf}|${dupacs}")
 }
 
@@ -221,6 +225,8 @@ done
 TOTAL_FILES=0
 TOTAL_SPECS=0
 TOTAL_ASSERTIONS=0
+TOTAL_CONSTRAINTS=0
+TOTAL_GAPS=0
 TOTAL_ERRORS=0
 CRASH_COUNT=0
 ZERO_EXTRACTION=0
@@ -235,14 +241,16 @@ for row in "${ROUND_TRIP[@]}"; do
     [[ "${prc}" == "0" && "${rrc}" == "0" && "${crc}" == "0" ]] && PIPELINE_CLEAN=$((PIPELINE_CLEAN + 1))
 done
 for row in "${ROW_DATA[@]}"; do
-    IFS='|' read -r _ _ _ files specs assertions errors _ <<< "${row}"
+    IFS='|' read -r _ _ _ files specs constraints assertions gaps errors _ <<< "${row}"
     if [[ "${files}" == CRASH* ]] || [[ "${files}" == "-" ]]; then
         CRASH_COUNT=$((CRASH_COUNT + 1))
         continue
     fi
     TOTAL_FILES=$((TOTAL_FILES + files))
     TOTAL_SPECS=$((TOTAL_SPECS + specs))
+    TOTAL_CONSTRAINTS=$((TOTAL_CONSTRAINTS + constraints))
     TOTAL_ASSERTIONS=$((TOTAL_ASSERTIONS + assertions))
+    TOTAL_GAPS=$((TOTAL_GAPS + gaps))
     TOTAL_ERRORS=$((TOTAL_ERRORS + errors))
 done
 
@@ -261,13 +269,21 @@ done
     echo
     echo "## Per-repo results"
     echo
-    echo "| Repo | Language | HEAD | Files | Specs | Assertions | Errors | Time |"
-    echo "|------|----------|------|-------|-------|------------|--------|------|"
+    echo "| Repo | Language | HEAD | Files | Specs | Constraints | Assertions | Gaps | Errors | Time |"
+    echo "|------|----------|------|-------|-------|-------------|------------|------|--------|------|"
     for row in "${ROW_DATA[@]}"; do
-        IFS='|' read -r name lang sha files specs assertions errors time <<< "${row}"
-        echo "| ${name} | ${lang} | \`${sha}\` | ${files} | ${specs} | ${assertions} | ${errors} | ${time} |"
+        IFS='|' read -r name lang sha files specs constraints assertions gaps errors time <<< "${row}"
+        echo "| ${name} | ${lang} | \`${sha}\` | ${files} | ${specs} | ${constraints} | ${assertions} | ${gaps} | ${errors} | ${time} |"
     done
-    echo "| **TOTAL** | | | **${TOTAL_FILES}** | **${TOTAL_SPECS}** | **${TOTAL_ASSERTIONS}** | **${TOTAL_ERRORS}** | |"
+    echo "| **TOTAL** | | | **${TOTAL_FILES}** | **${TOTAL_SPECS}** | **${TOTAL_CONSTRAINTS}** | **${TOTAL_ASSERTIONS}** | **${TOTAL_GAPS}** | **${TOTAL_ERRORS}** | |"
+    echo
+    echo "**The gaps column is not a measure of test coverage.** A constraint"
+    echo "counts as covered only when an assertion's text contains the"
+    echo "constraint's field name, and real test names rarely do, so most of"
+    echo "this column is false. It is recorded to characterize the extractor,"
+    echo "not the repositories. See \`bugs/SP-SP-064\`, which is deferred: the"
+    echo "reverse compiler is a bootstrap tool and this number is not a claim"
+    echo "it is being asked to support."
     echo
     echo "## Round trip: can Specter consume its own output"
     echo
