@@ -272,12 +272,23 @@ func checkStructuralConflicts(graph *resolver.SpecGraph) []CheckDiagnostic {
 	var diagnostics []CheckDiagnostic
 
 	absenceKeywords := []string{"absent", "missing", "not provided", "not present", "is empty", "is null", "without"}
-	requiredKeywords := []string{"MUST", "required", "MUST be present", "MUST exist", "mandatory"}
+	// C-19: only ` MUST` is here, because it is the only keyword extraction can
+	// turn into a subject. `required`, `MUST be present`, `MUST exist` and
+	// `mandatory` used to sit in this list, set the required flag, and then
+	// produce an empty subject a few lines below, so every constraint matching
+	// one of them was discarded. They were removed rather than made to work:
+	// the check is advisory under C-15 and C-05 declines to bound its false
+	// positives, so matching more constraints buys more noise.
+	//
+	// ` MUST` is matched case sensitively, so a constraint written with a
+	// lowercase `must` is invisible. That is a false negative in an advisory
+	// check and is left as it is, deliberately.
+	requiredKeywords := []string{"MUST"}
 
+	// C-20: every edge, not only `requires`. A `conflicts_with` edge is where a
+	// contradiction check has the strongest reason to look, and it was the one
+	// place this did not look at all.
 	for _, edge := range graph.Edges {
-		if edge.Relationship != "requires" {
-			continue
-		}
 		upstream, ok1 := graph.Nodes[edge.To]
 		downstream, ok2 := graph.Nodes[edge.From]
 		if !ok1 || !ok2 {
@@ -316,11 +327,17 @@ func checkStructuralConflicts(graph *resolver.SpecGraph) []CheckDiagnostic {
 						// constraint make a heuristic fail a build.
 						severity := "info"
 						diagnostics = append(diagnostics, CheckDiagnostic{
-							Kind:           "structural_conflict",
-							Severity:       severity,
-							Message:        fmt.Sprintf("Structural conflict: %q constraint %s requires %q but %q %s handles it as absent", upstream.Spec.ID, constraint.ID, subject, downstream.Spec.ID, ac.ID),
-							SpecID:         downstream.Spec.ID,
-							ConstraintID:   constraint.ID,
+							Kind:     "structural_conflict",
+							Severity: severity,
+							Message:  fmt.Sprintf("Structural conflict: %q constraint %s requires %q but %q %s handles it as absent", upstream.Spec.ID, constraint.ID, subject, downstream.Spec.ID, ac.ID),
+							SpecID:   downstream.Spec.ID,
+							// C-18: qualified with the spec that owns it. The
+							// header renders as "<SpecID> <ConstraintID>", and
+							// SpecID is the downstream spec, so a bare upstream
+							// id here reads as one of the downstream spec's own
+							// constraints. A reader looking it up finds nothing,
+							// or finds a different constraint sharing the id.
+							ConstraintID:   upstream.Spec.ID + "/" + constraint.ID,
 							ConstraintType: constraint.Type,
 							Details:        fmt.Sprintf("Upstream: %s | Downstream AC: %s", desc, ac.Description),
 						})
