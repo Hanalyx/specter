@@ -182,12 +182,54 @@ func Reverse(input ReverseInput, adapters []Adapter) *ReverseResult {
 		systemName = "unknown-system"
 	}
 
-	// Assemble specs per group
-	for groupKey, group := range groups {
-		spec := assembleSpec(groupKey, group, adapter, systemName, input.Date, result)
+	// Pass 1: assemble every spec, in sorted group order.
+	//
+	// Sorted rather than ranging the map directly, because C-16 requires
+	// disambiguation to be deterministic and Go map iteration is not. It also
+	// makes result.Specs ordering stable, which it was not before.
+	groupKeys := make([]string, 0, len(groups))
+	for k := range groups {
+		groupKeys = append(groupKeys, k)
+	}
+	sort.Strings(groupKeys)
+
+	type assembled struct {
+		groupKey string
+		spec     *schema.SpecAST
+	}
+	built := make([]assembled, 0, len(groupKeys))
+	provisional := make(map[string]string, len(groupKeys))
+	for _, groupKey := range groupKeys {
+		spec := assembleSpec(groupKey, groups[groupKey], adapter, systemName, input.Date, result)
 		if spec == nil {
 			continue
 		}
+		built = append(built, assembled{groupKey: groupKey, spec: spec})
+		provisional[groupKey] = spec.ID
+	}
+
+	// Pass 2: C-16, make the ids unique before anything is marshaled, so the
+	// YAML and the file name both carry the final id.
+	builtKeys := make([]string, 0, len(built))
+	for _, b := range built {
+		builtKeys = append(builtKeys, b.groupKey)
+	}
+	finalIDs, renames := DisambiguateSpecIDs(builtKeys, provisional)
+	for _, r := range renames {
+		result.Diagnostics = append(result.Diagnostics, ReverseDiagnostic{
+			Kind:     "id_collision",
+			Severity: "warning",
+			Message: fmt.Sprintf(
+				"spec id %q was already taken; %s is now %q. Ids must be unique or `specter resolve` rejects the workspace.",
+				r.From, r.GroupKey, r.To),
+			File: r.GroupKey,
+		})
+	}
+
+	// Pass 3: marshal, validate and emit.
+	for _, b := range built {
+		groupKey, spec := b.groupKey, b.spec
+		renameSpec(spec, finalIDs[groupKey])
 
 		// Marshal to YAML
 		doc := schema.SpecDocument{Spec: *spec}
@@ -250,6 +292,30 @@ func Reverse(input ReverseInput, adapters []Adapter) *ReverseResult {
 }
 
 // --- Internal helpers ---
+
+// renameSpec applies a disambiguated id to an already-assembled spec.
+//
+// Three fields derive from the id. `id` is identity and must change.
+// `context.feature` and the objective summary are descriptive and would
+// otherwise still name the id that collided, which reads as a different spec.
+// Nothing else in a generated spec carries the id: `reverse` emits no
+// `depends_on`, so no cross-spec reference needs rewriting.
+func renameSpec(spec *schema.SpecAST, newID string) {
+	old := spec.ID
+	if newID == "" || old == newID {
+		return
+	}
+	spec.ID = newID
+	if spec.Context.Feature == old {
+		spec.Context.Feature = newID
+	}
+	spec.Objective.Summary = strings.Replace(
+		spec.Objective.Summary,
+		"Reverse-compiled spec for "+old+".",
+		"Reverse-compiled spec for "+newID+".",
+		1,
+	)
+}
 
 func selectAdapter(input ReverseInput, adapters []Adapter, result *ReverseResult) Adapter {
 	if input.AdapterName != "" {
