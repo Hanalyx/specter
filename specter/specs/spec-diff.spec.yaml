@@ -1,6 +1,6 @@
 spec:
   id: spec-diff
-  version: "2.2.0"
+  version: "2.3.0"
   status: draft
   tier: 2
   context:
@@ -88,6 +88,17 @@ spec:
       description: "`specter diff coverage <baseline> <current>` MUST refuse to read either input file when its on-disk size exceeds `MaxCoverageReportBytes` (16 MiB, matching the `coverage.MaxResultsFileBytes` convention). The cap MUST be enforced BEFORE `json.Unmarshal` allocates on the buffer — `os.ReadFile` followed by an unbounded `json.Unmarshal` over arbitrary multi-GiB JSON OOMs CI runners and is the same defense-in-depth that `coverage.ParseResultsFile` applies on `.specter-results.json`. Error message MUST name the path, the actual byte count, and the cap, so the operator knows why the run refused. Rationale: a malicious or accidentally large coverage report (e.g., a CI artifact rewritten by a hostile workflow, or a JSON blob with deeply nested arrays designed to exhaust the decoder) becomes a denial-of-service vector if the read path is unbounded. v0.13 security audit surfaced this as the M3 gap."
       type: business
       enforcement: error
+
+    - id: C-13
+      description: "The acceptance-criterion comparator MUST compare the fields that make a criterion concrete, not only its id and description. Those fields are `inputs`, `expected_output`, `error_cases`, `references_constraints` and `approval_gate`. A change to any of them MUST be reported and MUST classify the overall change as breaking, because each changes the contract the criterion's tests were written against. Rationale: comparing id and description alone is what C-03 and C-06 asked for, so the blindness was spec-compliant rather than a bug, which is why this is an amendment and not a defect fix. Measured 2026-08-24 on a two-criterion fixture: inverting `expected_output` from [1, 2, 3] to [3, 2, 1], flipping `approval_gate` from true to false, downgrading `priority` from high to low, rewriting `inputs`, and rewriting `error_cases` each produced `no changes` and exit 0. Inverting an expected output is the goalpost move a freeze comparator exists to catch, and flipping `approval_gate` deletes a human approval requirement."
+      type: technical
+      enforcement: error
+
+    - id: C-14
+      description: "`specter diff` MUST NOT signal a breaking change through its exit code by default, and MUST offer `--exit-code` to opt in. With the flag, a breaking classification exits with a code from the orchestration band (10 to 19) and every other outcome exits 0. Rationale: the default is unchanged because `diff` is documented as a diagnostic surface and changing an exit code silently breaks every existing caller. The flag exists because a freeze comparator has to be able to fail. The band is per docs/EXIT_CODES.md: orchestration gates take 10 to 19, and no shipped code lands there today. **This constraint depends on C-13 being satisfied first.** `--exit-code` over an id-and-description comparator is a gate that passes while `expected_output` is inverted, which is worse than no gate, because a driver author reads a green exit as verification that the contract held. The dependency is stated here rather than as a separate constraint because a shipping-order rule has no acceptance criterion that could test it; the roadmap carries the sequence."
+      type: technical
+      enforcement: error
+
 
   acceptance_criteria:
     - id: AC-01
@@ -185,7 +196,55 @@ spec:
       references_constraints: ["C-12"]
       priority: high
 
+    - id: AC-16
+      description: "Two revisions of one criterion differing only in `expected_output`, with identical id and description, are reported as changed and classified breaking."
+      inputs:
+        before: "AC-01 with expected_output order [1, 2, 3]"
+        after: "AC-01 with expected_output order [3, 2, 1]"
+      expected_output:
+        reports_change: true
+        classification: "breaking"
+      references_constraints: ["C-13"]
+      priority: high
+
+    - id: AC-17
+      description: "The same holds for `approval_gate` flipped from true to false, for rewritten `inputs`, for rewritten `error_cases`, and for a changed `references_constraints` list. Each is reported and each classifies breaking."
+      inputs:
+        fields: ["approval_gate", "inputs", "error_cases", "references_constraints"]
+      expected_output:
+        each_reported: true
+        each_classification: "breaking"
+      references_constraints: ["C-13"]
+      priority: high
+
+    - id: AC-18
+      description: "A priority upgrade classifies breaking, which C-06 has required since 2.0.0 and no code has ever implemented. `internal/diff` contains no reference to priority at all."
+      inputs:
+        before: "AC-01 priority low"
+        after: "AC-01 priority high"
+      expected_output:
+        classification: "breaking"
+      references_constraints: ["C-06", "C-13"]
+      priority: high
+
+    - id: AC-19
+      description: "`specter diff` exits 0 on a breaking change by default, and exits with a code in 10 to 19 under `--exit-code`. A non-breaking change exits 0 under the flag."
+      inputs:
+        commands: ["diff a b", "diff a b --exit-code"]
+      expected_output:
+        default_exit_code: 0
+        exit_code_flag_on_breaking: "10 to 19"
+        exit_code_flag_on_additive: 0
+      references_constraints: ["C-14"]
+      priority: high
+
+
   changelog:
+    - version: "2.3.0"
+      date: "2026-08-24"
+      author: "specter-team"
+      type: minor
+      description: "Add C-13/C-14 and AC-16..19: the criterion comparator widens to inputs, expected_output, error_cases, references_constraints and approval_gate, all classifying breaking; `--exit-code` opts into a failing exit from the orchestration band;. C-14 records that it depends on C-13 landing first, because an exit code over the old comparator is a gate that passes while the goalposts move. Roadmap 2B. AC-18 also covers the priority upgrade C-06 has required since 2.0.0 with no implementation."
     - version: "2.2.0"
       date: "2026-05-18"
       author: "specter-team"
