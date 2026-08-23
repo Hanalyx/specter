@@ -10,6 +10,8 @@ package reverse
 import (
 	"strings"
 	"testing"
+
+	"github.com/Hanalyx/specter/internal/schema"
 )
 
 // pairedGoFiles returns a source file with two validated fields, the test that
@@ -247,6 +249,82 @@ func TestAlone(t *testing.T) {
 			!strings.Contains(alone.Spec.Constraints[0].Description, "placeholder") {
 			t.Errorf("expected the unpaired test to carry only the placeholder constraint, got %d: %+v",
 				len(alone.Spec.Constraints), alone.Spec.Constraints)
+		}
+	})
+}
+
+// @ac AC-29
+// The synthesized placeholder criterion is not a gap. It says the extractor
+// found nothing, not that a constraint is uncovered, and C-13 counts criteria
+// carrying the flag.
+//
+// The fixture is a file with routes and nothing else. That is the branch:
+// assembleSpec returns nil for a group with no content at all, so reaching the
+// placeholder needs a group that has something to extract but yields no
+// criteria. All 15 gap criteria in the go-chi/chi corpus run are this exact
+// placeholder, which is why the repo reported "0 constraints, 21 gaps".
+func TestReverse_PlaceholderCriterionIsNotAGap(t *testing.T) {
+	t.Run("spec-reverse/AC-29 placeholder criterion is not a gap", func(t *testing.T) {
+		files := []SourceFile{
+			{Path: "routes.go", Content: `package main
+
+import "net/http"
+
+func register() {
+	http.HandleFunc("/health", healthHandler)
+	http.HandleFunc("/status", statusHandler)
+}
+`},
+		}
+		result := Reverse(ReverseInput{Files: files, Date: "2026-08-23"}, []Adapter{&GoAdapter{}})
+
+		var placeholder *schema.AcceptanceCriterion
+		for _, gs := range result.Specs {
+			for i, ac := range gs.Spec.AcceptanceCriteria {
+				if strings.Contains(ac.Description, "auto-generated placeholder") {
+					placeholder = &gs.Spec.AcceptanceCriteria[i]
+				}
+			}
+		}
+		if placeholder == nil {
+			t.Fatalf("fixture reached no placeholder criterion, so it cannot test C-19; "+
+				"got %d spec(s)", len(result.Specs))
+		}
+		if placeholder.Gap {
+			t.Errorf("the placeholder criterion carries gap: true; C-19 forbids it, "+
+				"because it reports the extractor finding nothing as a measured gap: %q",
+				placeholder.Description)
+		}
+		if result.Summary.GapsDetected != 0 {
+			t.Errorf("reported %d gap(s) from a run that extracted 0 constraints",
+				result.Summary.GapsDetected)
+		}
+	})
+}
+
+// @ac AC-29
+// The count follows from C-19. A run that extracted no constraints has no
+// constraint that could be uncovered, so it must report no gaps.
+func TestReverse_NoConstraintsMeansNoGaps(t *testing.T) {
+	t.Run("spec-reverse/AC-29 no constraints means no gaps", func(t *testing.T) {
+		files := []SourceFile{
+			{Path: "a.go", Content: "package main\n\nfunc A() int { return 1 }\n"},
+			{Path: "a_test.go", Content: `package main
+import "testing"
+func TestA(t *testing.T) {
+	t.Run("returns one", func(t *testing.T) {})
+}
+`},
+		}
+		result := Reverse(ReverseInput{Files: files, Date: "2026-08-23"}, []Adapter{&GoAdapter{}})
+
+		if result.Summary.ConstraintsFound != 0 {
+			t.Skipf("fixture extracted %d constraint(s); it cannot show the count is honest",
+				result.Summary.ConstraintsFound)
+		}
+		if result.Summary.GapsDetected != 0 {
+			t.Errorf("reported %d gap(s) from 0 constraints, which is not a gap count",
+				result.Summary.GapsDetected)
 		}
 	})
 }
