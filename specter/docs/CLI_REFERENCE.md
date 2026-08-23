@@ -188,6 +188,8 @@ specter check [--json] [--tier <n>] [--strict] [--test] [--concrete]
 |------------|-----------------|-------------|
 | `orphan_constraint` | T1=error, T2=warning, T3=info | A constraint is not referenced by any acceptance criterion. Individual constraints may override severity via `constraint.enforcement`. |
 | `structural_conflict` | info, always | An upstream constraint requires something a downstream AC handles as absent. **Advisory since v0.15**: it never fails a build, `--strict` does not raise it, and `constraint.enforcement` does not override it. Detection binds the absence expression to the required subject rather than testing whether both appear in the same sentence. It still cannot separate a contradiction from a criterion testing the constraint being enforced, because those differ only in the outcome verb, which is why it is advisory. |
+| `draft_spec` | warning | A spec has `status: draft`. Emitted only when `settings.warn_on_draft` is set. |
+| `malformed_ac_id` | error (under `--test`) | A test annotation names an AC id that does not match `^AC-\d{2,}$`, for example `AC-1` or `ac-01`. Emitted only under `--test`. |
 | `duplicate_ac_id` | error, all tiers | Two or more acceptance criteria in one spec share an id. Names the id, the count, and the positions. Severity does not vary by tier: a repeated id makes coverage overstate itself, because one annotation satisfies every entry sharing the id. |
 | `vague_criterion` | T1=error, T2=warning, T3=info | An acceptance criterion carries neither `inputs` nor `expected_output`, so nothing states what it asserts. Emitted only under `--concrete`. |
 | `tier_conflict` | warning | A higher-tier spec depends on a lower-tier spec (e.g., Tier 1 depends on Tier 3). |
