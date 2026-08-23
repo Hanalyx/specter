@@ -28,6 +28,7 @@ vscode-extension/junit.xml
 
 # Claude Code instructions
 CLAUDE.md
+.claude/
 
 # Codex / agent instructions
 AGENTS.md
