@@ -71,7 +71,11 @@ export const PaymentSchema = z.object({
 			t.Fatal(err)
 		}
 
-		out, code := runCLI(t, dir, "reverse", "--dry-run", "--json")
+		// Streams split, not combined. AC-19 is a claim about stdout, and
+		// CombinedOutput cannot express it: it would pass while prose went to
+		// stdout as long as the bytes happened to parse, and fail while stdout
+		// was correct as soon as anything reached stderr.
+		out, _, code := runCLISplit(t, dir, "reverse", "--dry-run", "--json")
 		if code != 0 {
 			t.Fatalf("expected reverse --dry-run --json exit 0, got %d. output:\n%s", code, out)
 		}

@@ -1627,7 +1627,11 @@ func reverseCmd() *cobra.Command {
 			result := reverse.Reverse(input, adapters)
 			spin.stop()
 
-			if jsonOutput {
+			// C-18: --json selects the report format. It does not decide
+			// whether files are written; only --dry-run does. The payload is
+			// encoded after the write loop so a write failure exits without
+			// emitting JSON a consumer would read as success.
+			emitJSON := func() {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
 				_ = enc.Encode(map[string]interface{}{
@@ -1635,10 +1639,6 @@ func reverseCmd() *cobra.Command {
 					"diagnostics": result.Diagnostics,
 					"summary":     result.Summary,
 				})
-				if result.Summary.SpecsGenerated == 0 {
-					return errSilent
-				}
-				return nil
 			}
 
 			for _, d := range result.Diagnostics {
@@ -1646,14 +1646,29 @@ func reverseCmd() *cobra.Command {
 			}
 
 			if result.Summary.SpecsGenerated == 0 {
-				fmt.Println("No specs generated. Check diagnostics above.")
+				if jsonOutput {
+					emitJSON()
+				} else {
+					fmt.Println("No specs generated. Check diagnostics above.")
+				}
 				return errSilent
+			}
+
+			// C-18: under --json, stdout carries the payload and nothing else,
+			// so the per-spec lines go to stderr.
+			specOut := os.Stdout
+			if jsonOutput {
+				specOut = os.Stderr
 			}
 
 			for _, gs := range result.Specs {
 				if dryRun {
-					fmt.Printf("--- %s (dry-run) ---\n", gs.FileName)
-					fmt.Println(gs.YAML)
+					// Under --json the payload already carries every spec's
+					// YAML, so the preview would only duplicate it.
+					if !jsonOutput {
+						fmt.Printf("--- %s (dry-run) ---\n", gs.FileName)
+						fmt.Println(gs.YAML)
+					}
 					for _, w := range gs.Warnings {
 						fmt.Fprintf(os.Stderr, "  warning: %s\n", w)
 					}
@@ -1664,7 +1679,7 @@ func reverseCmd() *cobra.Command {
 
 				// Skip existing files unless --overwrite is set
 				if _, existErr := os.Stat(outPath); existErr == nil && !overwrite {
-					fmt.Printf("SKIPPED %s (already exists, use --overwrite to replace)\n", outPath)
+					fmt.Fprintf(specOut, "SKIPPED %s (already exists, use --overwrite to replace)\n", outPath)
 					continue
 				}
 
@@ -1676,12 +1691,20 @@ func reverseCmd() *cobra.Command {
 					fmt.Fprintf(os.Stderr, "error writing %s: %v\n", outPath, wErr)
 					return errSilent
 				}
-				fmt.Printf("GENERATED %s — %s@%s (%d constraints, %d ACs)\n",
+				fmt.Fprintf(specOut, "GENERATED %s — %s@%s (%d constraints, %d ACs)\n",
 					outPath, gs.Spec.ID, gs.Spec.Version,
 					len(gs.Spec.Constraints), len(gs.Spec.AcceptanceCriteria))
 				for _, w := range gs.Warnings {
 					fmt.Fprintf(os.Stderr, "  warning: %s\n", w)
 				}
+			}
+
+			// AC-19: both human-facing lines below are suppressed under
+			// --json, so stdout carries the payload and nothing else. The
+			// writes above already happened; C-18 separates the two.
+			if jsonOutput {
+				emitJSON()
+				return nil
 			}
 
 			// spec-reverse 1.3.0 C-13: single-line summary after the
@@ -1694,10 +1717,8 @@ func reverseCmd() *cobra.Command {
 				gapCount, pluralize("gap", gapCount),
 				result.Summary.SpecsGenerated, pluralize("file", result.Summary.SpecsGenerated))
 
-			// spec-reverse 1.3.0 C-14: single-line handoff pointing
-			// at `specter explain <first-spec-id>` for gap triage in
-			// each generated draft. Suppressed under --json (handled
-			// at the top of this RunE).
+			// spec-reverse 1.3.0 C-14: single-line handoff pointing at
+			// `specter explain <first-spec-id>` for each generated draft.
 			if len(result.Specs) > 0 {
 				firstID := result.Specs[0].Spec.ID
 				fmt.Printf("Run `specter explain %s` to triage gaps in each generated draft.\n", firstID)
