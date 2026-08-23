@@ -1095,7 +1095,15 @@ func coverageCmd() *cobra.Command {
 				fmt.Fprintln(os.Stderr, "      see docs/explainer/v0.10-ci-gated-coverage.md, Conventions A and B")
 			}
 
-			report, strictErr := coverage.BuildCoverageReportStrict(specs, allAnnotations, m.CoverageThresholds(), results, strictPath, scopedSpecs)
+			// C-39: zero-tolerance reaches classification, so the gate
+			// demotion is part of building the report rather than a pass over
+			// it afterward.
+			report, strictErr := coverage.BuildCoverageReportMode(specs, allAnnotations, m.CoverageThresholds(), results,
+				coverage.ClassifyMode{
+					Strict:        strictPath,
+					ZeroTolerance: effectiveStrictness == "zero-tolerance",
+					ScopedSpecs:   scopedSpecs,
+				})
 			if strictErr != nil {
 				// C-32: when the strict path came from --strictness or the
 				// manifest (not the --strict flag), the missing-results
@@ -1145,20 +1153,6 @@ func coverageCmd() *cobra.Command {
 							coverage.InvalidStatusWarning{Status: k, Count: invalid[k]})
 					}
 				}
-			}
-
-			// GH #94 — under zero-tolerance, demote ACs that violate the
-			// approval_gate contract (approval_gate: true with unset
-			// approval_date) so the report reflects the same enforcement
-			// signal the exit code carries. v0.11.0 fired the exit code but
-			// left the report unchanged; the user-visible PASS/FAIL cell
-			// stayed identical between threshold and zero-tolerance.
-			//
-			// Demotion shape: move the AC from CoveredACs to UncoveredACs,
-			// recompute CoveragePct + PassesThreshold per entry, recompute
-			// Summary.Passing / Summary.Failing.
-			if effectiveStrictness == "zero-tolerance" {
-				coverage.DemoteApprovalGateViolations(report, specs)
 			}
 
 			// C-10: --json emits the report in every state, including when

@@ -74,6 +74,14 @@ type CoverageReport struct {
 	Entries     []SpecCoverageEntry `json:"entries"`
 	Summary     CoverageSummary     `json:"summary"`
 	ParseErrors []ParseErrorEntry   `json:"parse_errors,omitempty"`
+	// Verdicts carries the per-criterion classification every field above was
+	// derived from, in spec order and then declaration order. It is how a
+	// caller computes a guard over the same answers the report used, rather
+	// than recomputing them from the specs and reaching a different one.
+	//
+	// Deliberately not serialized. It is an internal carrier, and adding it to
+	// the JSON would change a published contract for no consumer's benefit.
+	Verdicts []CriterionVerdict `json:"-"`
 	// SpecCandidatesCount is the number of .spec.yaml files discovered on
 	// disk before any parse was attempted. When > 0 but len(Entries) == 0,
 	// the workspace has specs but none parsed — almost certainly a schema
@@ -449,7 +457,8 @@ func BuildCoverageReportStrict(specs []schema.SpecAST, annotations []AnnotationM
 	if !strict {
 		return BuildCoverageReportWithResults(specs, annotations, thresholds, results), nil
 	}
-	return buildCoverageReportCore(specs, annotations, thresholds, results, true, scopedSpecs), nil
+	return buildCoverageReportCore(specs, annotations, thresholds, results,
+		ClassifyMode{Strict: true, ScopedSpecs: scopedSpecs}), nil
 }
 
 // BuildCoverageReportWithResults is like BuildCoverageReport but additionally
@@ -458,10 +467,24 @@ func BuildCoverageReportStrict(specs []schema.SpecAST, annotations []AnnotationM
 //
 // C-07: Pass-rate-aware coverage for Tier 1
 func BuildCoverageReportWithResults(specs []schema.SpecAST, annotations []AnnotationMatch, thresholds map[int]int, results *ResultsFile) *CoverageReport {
-	return buildCoverageReportCore(specs, annotations, thresholds, results, false, nil)
+	return buildCoverageReportCore(specs, annotations, thresholds, results, ClassifyMode{})
 }
 
-func buildCoverageReportCore(specs []schema.SpecAST, annotations []AnnotationMatch, thresholds map[int]int, results *ResultsFile, strict bool, scopedSpecs map[string]bool) *CoverageReport {
+// BuildCoverageReportMode is the entry point that carries the full
+// ClassifyMode, including zero-tolerance. The three older constructors are
+// wrappers over it and stay for callers that do not need the mode.
+//
+// C-39: zero-tolerance reaches classification here rather than through a
+// second pass over the finished report, which is what roadmap item 1C removed.
+// A nil results file under Strict is the same hard error C-20 describes.
+func BuildCoverageReportMode(specs []schema.SpecAST, annotations []AnnotationMatch, thresholds map[int]int, results *ResultsFile, mode ClassifyMode) (*CoverageReport, error) {
+	if mode.Strict && results == nil {
+		return nil, ErrMissingResults
+	}
+	return buildCoverageReportCore(specs, annotations, thresholds, results, mode), nil
+}
+
+func buildCoverageReportCore(specs []schema.SpecAST, annotations []AnnotationMatch, thresholds map[int]int, results *ResultsFile, mode ClassifyMode) *CoverageReport {
 	// Group annotations by spec ID
 	annotBySpec := make(map[string]struct {
 		acIDs map[string]bool
@@ -504,39 +527,26 @@ func buildCoverageReportCore(specs []schema.SpecAST, annotations []AnnotationMat
 		// consumers declare these as non-nullable arrays.
 		coveredACs := []string{}
 		uncoveredACs := []string{}
-		// C-23: under --scope, only specs in the scoped set get strict
-		// demotion semantics. Specs outside the set fall back to v0.9
-		// boolean-passed logic (tier 1 needs passing result; tier 2/3
-		// annotation alone). A nil/empty scopedSpecs means no scope
-		// restriction — strict applies to all specs, preserving the
-		// v0.10 default.
-		specInScope := strict && (len(scopedSpecs) == 0 || scopedSpecs[spec.ID])
+		// C-39 / roadmap 1C: one verdict per criterion, and one function
+		// deciding what it means. The covered and uncovered lists are built by
+		// walking the verdicts in declaration order, so a criterion demoted
+		// under zero-tolerance lands where it was declared rather than
+		// appended after the rest (AC-64).
+		verdicts := buildVerdicts(spec, ann.acIDs, results, mode)
+		report.Verdicts = append(report.Verdicts, verdicts...)
 
 		noTestACs := []string{}
-		for _, id := range allACIDs {
-			annotationExists := ann.acIDs != nil && ann.acIDs[id]
+		for _, v := range verdicts {
 			// C-38(a): rule 1 asks only whether a test exists. It is
 			// evaluated for every spec; the CLI decides what to do with it
 			// based on whether an annotation block is declared.
-			if !annotationExists {
-				noTestACs = append(noTestACs, id)
+			if !v.HasAnnotation {
+				noTestACs = append(noTestACs, v.ACID)
 			}
-			var isCovered bool
-			switch {
-			case specInScope:
-				// C-19: --strict requires annotation AND status=passed, all tiers.
-				isCovered = annotationExists && results.status(spec.ID, id) == "passed"
-			case spec.Tier == 1:
-				// C-07: Tier 1 requires annotation AND passing result
-				isCovered = annotationExists && results.passed(spec.ID, id)
-			default:
-				// Tier 2/3: annotation alone is sufficient
-				isCovered = annotationExists
-			}
-			if isCovered {
-				coveredACs = append(coveredACs, id)
+			if v.Covered(mode) {
+				coveredACs = append(coveredACs, v.ACID)
 			} else {
-				uncoveredACs = append(uncoveredACs, id)
+				uncoveredACs = append(uncoveredACs, v.ACID)
 			}
 		}
 

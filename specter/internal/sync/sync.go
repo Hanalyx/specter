@@ -239,7 +239,14 @@ func RunSync(input SyncInput) *SyncResult {
 
 	var coverageReport *coverage.CoverageReport
 	if useStrictPath {
-		report, strictErr := coverage.BuildCoverageReportStrict(specs, allAnnotations, thresholds, input.Results, true, nil)
+		// spec-sync C-09(b) / spec-coverage C-39: zero-tolerance reaches
+		// classification, so sync's report demotes identically to coverage's
+		// because it is the same function rather than the same follow-up call.
+		report, strictErr := coverage.BuildCoverageReportMode(specs, allAnnotations, thresholds, input.Results,
+			coverage.ClassifyMode{
+				Strict:        true,
+				ZeroTolerance: effectiveStrictness == "zero-tolerance",
+			})
 		if strictErr != nil {
 			// C-08: missing .specter-results.json under strict mode
 			// fails the coverage phase. Surface a sync-specific message
@@ -266,13 +273,6 @@ func RunSync(input SyncInput) *SyncResult {
 		coverageReport = coverage.BuildCoverageReportWithResults(specs, allAnnotations, thresholds, input.Results)
 	}
 	result.CoverageReport = coverageReport
-
-	// spec-sync C-09 / spec-coverage GH #94: under zero-tolerance the
-	// report demotes approval_gate violations so the report and the
-	// exit signal agree — same demotion `coverage` applies.
-	if effectiveStrictness == "zero-tolerance" {
-		coverage.DemoteApprovalGateViolations(coverageReport, specs)
-	}
 
 	// Dependency coverage warnings (C-08 — spec-coverage, not spec-sync)
 	var edges []coverage.DepEdge
