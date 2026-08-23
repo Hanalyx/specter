@@ -1,6 +1,6 @@
 spec:
   id: spec-ingest
-  version: "1.3.0"
+  version: "1.4.0"
   status: approved
   tier: 1
 
@@ -112,26 +112,59 @@ spec:
   acceptance_criteria:
     - id: AC-01
       description: "ParseJUnit given a Surefire XML document with one <testcase name='engine-transaction/AC-07 serializes per host'> and no <failure> child returns one TestResult with SpecID='engine-transaction', ACID='AC-07', Status='passed'."
+      inputs:
+        parser: "ParseJUnit"
+        document: "Surefire XML with one <testcase name='engine-transaction/AC-07 serializes per host'> and no child element"
+      expected_output:
+        result_count: 1
+        spec_id: "engine-transaction"
+        ac_id: "AC-07"
+        status: "passed"
       references_constraints: ["C-01", "C-03"]
       priority: critical
 
     - id: AC-02
       description: "ParseJUnit given a <testcase> with a <failure> child returns Status='failed'; given a <skipped> child returns Status='skipped'; given an <error> child returns Status='errored'. No child means passed."
+      inputs:
+        parser: "ParseJUnit"
+        testcase_children: ["<failure>", "<skipped>", "<error>", "none"]
+      expected_output:
+        status_per_child: ["failed", "skipped", "errored", "passed"]
       references_constraints: ["C-01", "C-05"]
       priority: critical
 
     - id: AC-03
       description: "ParseGoTest given `{\"Action\":\"pass\",\"Package\":\"p\",\"Test\":\"TestAuthService/AC-03\"}\\n` returns one TestResult with ACID='AC-03', Status='passed'. SpecID derived from the package path's final component mapping (`auth-service` for `.../auth-service`) or explicit annotation in a preceding output line."
+      inputs:
+        parser: "ParseGoTest"
+        line: "{\"Action\":\"pass\",\"Package\":\"p\",\"Test\":\"TestAuthService/AC-03\"}"
+      expected_output:
+        result_count: 1
+        ac_id: "AC-03"
+        status: "passed"
+        spec_id_source: "final component of the package path, or an explicit annotation in a preceding output line"
       references_constraints: ["C-02", "C-03"]
       priority: critical
 
     - id: AC-04
       description: "ParseGoTest actions `pass`, `fail`, `skip` map to statuses `passed`, `failed`, `skipped` respectively. Action `output` with body containing `// @spec foo\\n// @ac AC-NN` is absorbed as annotation context for the current test."
+      inputs:
+        parser: "ParseGoTest"
+        actions: ["pass", "fail", "skip", "output"]
+        output_body: "// @spec foo\n// @ac AC-NN"
+      expected_output:
+        status_per_action: ["passed", "failed", "skipped", "absorbed as annotation context"]
       references_constraints: ["C-02", "C-05"]
       priority: high
 
     - id: AC-05
       description: "A test whose name, classname, and body contain no spec or AC annotation is silently dropped from ParseJUnit output — the returned slice contains no entry for it, and no error is returned."
+      inputs:
+        parser: "ParseJUnit"
+        testcase: "no spec or AC annotation in name, classname or body"
+      expected_output:
+        entry_returned: false
+        error_returned: false
       references_constraints: ["C-04"]
       priority: high
 
@@ -151,11 +184,29 @@ spec:
 
     - id: AC-07
       description: "MergeResults given two TestResult entries for (spec-a, AC-07) — one passed, one failed — returns a single entry with Status='failed'. The worst-status rule (errored > failed > skipped > passed) deterministically resolves conflicts."
+      inputs:
+        function: "MergeResults"
+        entries: ["(spec-a, AC-07) passed", "(spec-a, AC-07) failed"]
+      expected_output:
+        result_count: 1
+        status: "failed"
+        rule: "worst status wins, errored > failed > skipped > passed"
       references_constraints: ["C-08"]
       priority: high
 
     - id: AC-08
       description: "The CLI `specter ingest --junit fixture.xml --output out.json` exits 0 and writes out.json. `specter ingest --go-test fixture.json --output out.json` does the same for go test JSON. Missing input file: exit non-zero with an error on stderr. Missing --output: default to `.specter-results.json`."
+      inputs:
+        commands:
+          - "specter ingest --junit fixture.xml --output out.json"
+          - "specter ingest --go-test fixture.json --output out.json"
+          - "specter ingest --junit missing.xml"
+          - "specter ingest --junit fixture.xml"
+      expected_output:
+        exit_code_on_success: 0
+        output_file_written: true
+        exit_code_on_missing_input: "non-zero, with an error on stderr"
+        default_output_path: ".specter-results.json"
       references_constraints: ["C-01", "C-02", "C-06"]
       priority: high
 
@@ -171,6 +222,15 @@ spec:
 
     - id: AC-10
       description: "`specter ingest --junit fixture.xml --verbose` on the same 5-testcase fixture emits the C-09 summary PLUS three additional stderr lines, one per dropped testcase, in input order. Each line starts with `  dropped: ` followed by the testcase name and the reason text. Without --verbose, only the summary line is emitted. Rationale: --verbose keeps CI logs compact by default while making diagnostics available on demand."
+      inputs:
+        command: "specter ingest --junit fixture.xml --verbose"
+        fixture: "5 testcases, 3 of which are dropped"
+      expected_output:
+        summary_line_emitted: true
+        dropped_lines: 3
+        dropped_line_order: "input order"
+        dropped_line_prefix: "  dropped: "
+        without_verbose: "summary line only"
       references_constraints: ["C-10"]
       priority: medium
 
@@ -200,6 +260,12 @@ spec:
       priority: critical
 
   changelog:
+    - version: "1.4.0"
+      date: "2026-08-24"
+      author: "specter-team"
+      type: minor
+      description: "Backfill inputs and expected_output on the eight criteria that carried neither: AC-01 to AC-05, AC-07, AC-08 and AC-10. Every block is derived from the criterion's own description, which already stated its inputs and outputs in prose. Prerequisite for roadmap 2C2, which makes concreteness an error at Tier 1; spec-ingest held all eight of Tier 1's gaps, so this is what lets the gate ship green."
+
     - version: "1.3.0"
       date: "2026-04-25"
       author: "specter-team"
