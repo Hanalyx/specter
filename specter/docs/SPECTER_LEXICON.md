@@ -1366,46 +1366,71 @@ decides.
 spec's constraint. The canonical shape: an upstream constraint requires a field,
 and a downstream criterion handles that field being absent.
 
-**Surfaces.** Detected by `check` across the dependency graph. Default severity
-error, overridable by the **upstream** constraint's `enforcement:`.
+**Surfaces.** Detected by `check` across the dependency graph.
 
-Which constraint owns the override is easy to get wrong, because the diagnostic
-is attributed to the downstream spec. `internal/checker/check.go:252-254` reads
-`constraint.Enforcement` from the upstream loop. Measured: setting
-`enforcement: warning` on the upstream constraint dropped the diagnostic to a
-warning and the run to exit 0, while setting `enforcement: info` on a downstream
-constraint changed nothing.
+**Rewritten 2026-08-24.** Everything below the meaning changed in v0.15, in two
+separate items. The entry is rewritten rather than annotated, because a reader
+correcting for three superseded paragraphs is worse served than one reading the
+current state.
 
-**Standing.** Settled as a definition, and one of its two cited defects is now
-reproduced rather than cited.
+**Severity is always `info`, and nothing raises it.** Not `--strict`, and not
+the upstream constraint's `enforcement:` field. It never contributes to a
+non-zero exit. spec-check C-15. That field says how strictly a constraint binds
+the system, not how far to trust a lexical match, and reading it here let a
+Tier 1 constraint turn a heuristic into a build failure.
 
-`bugs/SP-SP-014`, the diagnostic naming two specs as one, **reproduces**. On a
-fixture with deliberately distinct constraint IDs:
+The old text here explained which constraint owns the override and how to get
+it right. That question no longer exists.
+
+**Detection is attachment, not co-occurrence.** spec-check C-21. The rule fires
+only when the absence expression predicates the subject, in one of two shapes:
+forward, `<subject>` then at most three intervening words then a copula then an
+optional `not` then an absence predicate; or backward, `without` or a sibling
+then an optional article then the subject. Whole tokens on both sides, and a
+leading article stripped from the extracted subject.
+
+Implemented as a token scanner in `internal/checker/attachment.go`, because
+Go's RE2 has no lookaround and the prototype that established the numbers below
+used it.
+
+**Accuracy, measured on three corpora rather than two.**
+
+| corpus | result |
+|---|---|
+| this repository, every ordered pair | 0 fires, down from 34 |
+| twelve genuine conflicts | 12 detected |
+| nine written-down non-conflicts | 5 wrongly fired |
+
+**The zero is a property of this corpus, not of the rule.** The five remaining
+false positives are one class, and it is not reachable lexically:
 
 ```
-error [structural_conflict] down-spec C-07 (technical): Structural conflict: "up-spec" constraint C-07 requires "email" but "down-spec" AC-01 handles it as absent
+conflict     Process checkout when email is absent
+enforcement  Registration fails when email is absent
 ```
 
-The header reads `down-spec C-07`. `C-07` belongs to `up-spec`, and `down-spec`
-has no `C-07` at all. `check.go:257-259` sets `SpecID` from the downstream spec
-and `ConstraintID` from the upstream constraint.
+Same subject, same absence expression, same clause structure. They differ in
+the polarity of the outcome verb, which the rule never reads. Roughly one
+criterion in ten in this repository is enforcement-shaped, so a correctly
+binding rule fires on them more readily than the co-occurrence rule did.
 
-`bugs/SP-SP-004`, the false positives against spec-check C-05, is **now measured
-too**, on 2026-08-21. Crossing all 111 subject-bearing constraints against all
-379 acceptance criteria in Specter's own corpus gives 31 fires over 42069 pairs,
-an upper bound over any conceivable graph. **On the real graph the count is 0**,
-and `check --json` carries no `structural_conflict` entry, because 22 of the 31
-are same-spec pairs the resolver rejects as circular and the other 9 sit on
-edges that do not exist.
+spec-check C-22 forbids describing this rule as eliminating false positives,
+and C-05 excludes structural conflicts from the zero-false-positive promise the
+other five structural checks keep.
 
-All 31 were classified and none is a genuine conflict. The clearest case:
-`spec-commits` C-06 reads "CI MUST validate the PR title", so the subject is the
-two letters `CI`, and two of its fires match `ci` inside "produ**ci**ng" and
-"exer**ci**ses". The rule is not doing word matching.
+**Two of the five are new**, introduced by the attachment rule. `is present`
+matches because `present` is in the predicate list so that `is not present`
+matches, and a double negation reads as an absence.
 
-The reachable count being 0 does not make the defect theoretical. An
-eleven-line two-spec fixture still fails a build at HEAD, and C-05 is scoped to
-anyone's specs.
+**The corpora are committed** as `internal/checker/conflict_corpus_test.go`,
+twenty-one cases each carrying a human verdict and the shipped behavior, plus
+the two `CI` proximity survivors that a simplification back to a proximity rule
+would fire on again. The numbers above are asserted there, so they move
+deliberately or not at all.
+
+**The header names the owning spec.** `bugs/done/SP-SP-014` is fixed: the
+constraint id is qualified, so the line reads `down-spec up-spec/C-07` rather
+than attributing `C-07` to a spec that has no such constraint.
 
 ## dangling reference
 
