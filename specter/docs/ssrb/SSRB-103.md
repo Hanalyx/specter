@@ -113,11 +113,33 @@ contradiction to resolve. They are two facts.
 
 **Multiple results files, labeled at the command line.** Accept
 `--results unit=a.json --results live=b.json` and let the label come from the
-invocation rather than the file. No format change, no producer breakage, and each
-stream stays a file some existing tool already writes. Trade-off: the labeling
-lives in CI configuration rather than in the artifact, so a results file is no
-longer self-describing and two invocations can disagree about what a file means.
-This is the strongest alternative and may be the answer.
+invocation rather than the file. No format change and no producer breakage.
+Trade-off: the labeling lives in CI configuration rather than in the artifact, so
+a results file is no longer self-describing and two invocations can disagree
+about what a file means. This is the strongest alternative and may be the answer.
+
+**Corrected 2026-08-23.** This alternative was first written as letting each
+stream stay "a file some existing tool already writes," and that was carried into
+the Context Plane response to Kensa as the cheapest path to their item 1. It is
+wrong on the filing's own evidence. Kensa's ledger is keyed
+`rule_id` / `os` / `scope` / `host` / `verified_at`; the results artifact is
+keyed `(spec_id, ac_id)` with a status per entry. Command-line labeling decides
+which stream a file belongs to. It does not teach `ingest` to read a shape it has
+no adapter for, so that ledger needs a translation step under either fork.
+
+Two consequences, and the second is what unblocks this brief.
+
+The alternative is still the strongest one, but on its own merits rather than on
+zero cost to this requester. What it buys is no artifact change and no producer
+breakage. What it does not buy is a requester keeping the file they have.
+
+And **section 8's first reconsideration trigger cannot be met by asking Kensa.**
+That trigger, and the first of the two questions put to them on 2026-08-15, both
+turn on whether their records map one to one onto `(spec_id, ac_id)` pairs. They
+do not, and the answer is the same under both branches, so it does not
+discriminate. The fork is a Specter-internal question about whether a results
+file must be self-describing, and it should be decided here rather than held open
+pending a reply.
 
 **Consumers gate separately, as today.** Kensa's current position. The ledger is
 maintained and enforced outside Specter. Trade-off: the evidence never reaches
