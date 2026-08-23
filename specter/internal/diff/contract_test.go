@@ -168,3 +168,75 @@ func TestDiff_DescriptionOnlyChangeStaysPatch(t *testing.T) {
 		}
 	})
 }
+
+// @ac AC-20
+// Every contract field reports itself by name, and only the one that changed.
+// A report naming all six on every change would be as useless as naming none.
+func TestDiff_ChangedFieldsNamesOnlyWhatChanged(t *testing.T) {
+	cases := []struct {
+		field  string
+		mutate func(*schema.AcceptanceCriterion)
+	}{
+		{"inputs", func(ac *schema.AcceptanceCriterion) {
+			ac.Inputs = map[string]interface{}{"payload": "two"}
+		}},
+		{"expected_output", func(ac *schema.AcceptanceCriterion) {
+			ac.ExpectedOutput = map[string]interface{}{"order": []interface{}{9}}
+		}},
+		{"error_cases", func(ac *schema.AcceptanceCriterion) {
+			ac.ErrorCases = []schema.ErrorCase{{Condition: "other", ExpectedBehavior: "rejected"}}
+		}},
+		{"references_constraints", func(ac *schema.AcceptanceCriterion) {
+			ac.ReferencesConstraints = []string{"C-02"}
+		}},
+		{"priority", func(ac *schema.AcceptanceCriterion) { ac.Priority = "low" }},
+		{"approval_gate", func(ac *schema.AcceptanceCriterion) { ac.ApprovalGate = false }},
+	}
+
+	for _, c := range cases {
+		t.Run("spec-diff/AC-20 "+c.field+" names itself", func(t *testing.T) {
+			before := baseSpec()
+			after := baseSpec()
+			c.mutate(&after.AcceptanceCriteria[0])
+
+			ch := acChangeFor(DiffSpecs(before, after), "AC-01")
+			if ch == nil {
+				t.Fatalf("changing %s reported no change", c.field)
+			}
+			if len(ch.ChangedFields) != 1 || ch.ChangedFields[0] != c.field {
+				t.Errorf("changing %s reported fields %v, want exactly [%s]",
+					c.field, ch.ChangedFields, c.field)
+			}
+		})
+	}
+}
+
+// @ac AC-20
+// The field order is fixed rather than derived from a map, so two runs over
+// identical input render identically. Asserted over repeated runs because a
+// map-ordering defect is intermittent by nature.
+func TestDiff_ChangedFieldsOrderIsStable(t *testing.T) {
+	t.Run("spec-diff/AC-20 changed fields order is stable", func(t *testing.T) {
+		before := baseSpec()
+		after := baseSpec()
+		after.AcceptanceCriteria[0].Inputs = map[string]interface{}{"payload": "two"}
+		after.AcceptanceCriteria[0].Priority = "low"
+		after.AcceptanceCriteria[0].ApprovalGate = false
+
+		want := []string{"inputs", "priority", "approval_gate"}
+		for i := 0; i < 50; i++ {
+			ch := acChangeFor(DiffSpecs(before, after), "AC-01")
+			if ch == nil {
+				t.Fatal("no change reported")
+			}
+			if len(ch.ChangedFields) != len(want) {
+				t.Fatalf("run %d: got %v, want %v", i, ch.ChangedFields, want)
+			}
+			for j := range want {
+				if ch.ChangedFields[j] != want[j] {
+					t.Fatalf("run %d: got %v, want %v", i, ch.ChangedFields, want)
+				}
+			}
+		}
+	})
+}

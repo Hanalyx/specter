@@ -221,7 +221,7 @@ band and nothing more.
 | `0` | Success | Shipped |
 | `1` | Unclassified failure. Frozen. | Shipped |
 | `2` to `9` | Spec and coverage contract | `2` and `3` shipped. `4` to `9` free. |
-| `10` to `19` | Orchestration gates | None allocated |
+| `10` to `19` | Orchestration gates | `10` shipped (`diff --exit-code`). `11` to `19` free. |
 | `20` to `29` | Evidence stream validation | None allocated |
 | `30` to `63` | Unallocated | Reserved for a future track |
 | `64` to `78` | Usage, internal, and configuration errors, per `sysexits.h` | None allocated |
@@ -230,8 +230,9 @@ band and nothing more.
 
 The band edges are the roadmap's proposal, and the shipped codes fit them without
 change. Codes 2 and 3 both gate the spec and coverage contract, and both sit
-inside `2` to `9`. No shipped code lands in the orchestration or evidence bands,
-so neither band is contended.
+inside `2` to `9`. Code 10 is the first allocation from the
+orchestration band, taken by `specter diff --exit-code` on a breaking change.
+No shipped code lands in the evidence band, so it is uncontended.
 
 ### Three constraints on any number picked from a band
 
@@ -256,7 +257,7 @@ ships.
 
 | Planned gate | Roadmap | Band |
 |---|---|---|
-| Failing exit for `diff` on a breaking change | 2B3 | Orchestration, `10` to `19` |
+| Failing exit for `diff` on a breaking change | 2B3 | **Shipped as `10`** |
 | Stream validation refusing a differential | 3B4 | Evidence stream, `20` to `29` |
 | The panic path, once it moves off 2 | Not scheduled | `sysexits.h`, `70` |
 | Configuration errors, once they move off 1 | v1.0, per `bugs/SP-SP-020` | `sysexits.h`, `78` |

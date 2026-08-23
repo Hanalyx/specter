@@ -857,14 +857,30 @@ specter diff coverage <baseline.json> <current.json>    # coverage kind
 
 Future cycles add more kinds (e.g., `ingest`, `check`) under the same `specter diff <kind>` grammar. New diffable artifacts MUST NOT introduce a per-subcommand `--diff` flag. They land as kinds here.
 
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--exit-code` | false | Exit with code 10 when the change is breaking. Without it `diff` always exits 0, because it is a diagnostic surface rather than a gate. Code 10 is in the orchestration band; see [EXIT_CODES.md](EXIT_CODES.md). |
+
 **spec kind, change classes:**
 
 | Class | Meaning |
 |-------|---------|
-| `breaking` | ACs or constraints removed, or descriptions changed in a way that narrows the contract. Requires a MAJOR version bump. |
+| `breaking` | An AC or constraint removed, or a criterion's contract changed: its `inputs`, `expected_output`, `error_cases`, `references_constraints`, `priority` or `approval_gate`. Requires a MAJOR version bump. |
 | `additive` | New ACs or constraints added. Requires a MINOR version bump. |
 | `patch` | Wording-only changes that don't alter meaning. PATCH version bump. |
 | `unchanged` | No changes detected. |
+
+**A criterion changes in two ways and the report says which.** When the
+description changed, the line shows the transition. When only the contract
+changed, the description is identical on both sides, so the line names the
+fields that differ instead:
+
+```
+  ~AC-01: expected_output changed (description unchanged)
+  ~AC-02: old wording → new wording (also priority, approval_gate)
+```
 
 **Example, spec kind:**
 

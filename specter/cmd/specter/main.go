@@ -53,6 +53,11 @@ const watchDebounce = 150 * time.Millisecond
 
 const maxDescLen = 50
 
+// exitDiffBreaking is the code `specter diff --exit-code` returns on a breaking
+// change. It sits in the orchestration band, 10 to 19, per docs/EXIT_CODES.md,
+// and is the first code allocated from it. spec-diff C-14.
+const exitDiffBreaking = 10
+
 // noSpecsMessage is used by parse/resolve/sync when discovery turns up
 // nothing. Explains where specter looked and what to try next — users often
 // keep specs in a non-default directory and need the hint.
@@ -3173,6 +3178,10 @@ func modsChanged(prev, curr map[string]time.Time) bool {
 
 // @spec spec-diff
 func diffCmd() *cobra.Command {
+	// C-14: opt-in. The default stays 0 because `diff` is a documented
+	// diagnostic surface, and changing an exit code silently breaks every
+	// existing caller.
+	var exitCode bool
 	cmd := &cobra.Command{
 		Use:   "diff <path>[@<ref>] <path>[@<ref>]",
 		Short: "Polymorphic diff — spec (default) or coverage",
@@ -3210,6 +3219,14 @@ Example (coverage kind):
 				return nil
 			}
 
+			// C-14: the failing exit is applied after the report, so the
+			// operator always sees what failed before the process leaves.
+			defer func() {
+				if exitCode && d.Class == specdiff.ChangeBreaking {
+					os.Exit(exitDiffBreaking)
+				}
+			}()
+
 			fmt.Printf("spec %s %s → %s [%s]\n", d.SpecID, d.OldVersion, d.NewVersion, d.Class)
 			fmt.Println()
 
@@ -3220,7 +3237,19 @@ Example (coverage kind):
 				case "removed":
 					fmt.Printf("  -%s: %s\n", c.ID, c.Description)
 				case "changed":
-					fmt.Printf("  ~%s: %s → %s\n", c.ID, c.OldDesc, c.Description)
+					// C-03: a criterion changes in two ways and the line says
+					// which. An identical description on both sides of an
+					// arrow tells the reader nothing.
+					switch {
+					case c.OldDesc != c.Description && len(c.ChangedFields) > 0:
+						fmt.Printf("  ~%s: %s → %s (also %s)\n",
+							c.ID, c.OldDesc, c.Description, strings.Join(c.ChangedFields, ", "))
+					case c.OldDesc != c.Description:
+						fmt.Printf("  ~%s: %s → %s\n", c.ID, c.OldDesc, c.Description)
+					default:
+						fmt.Printf("  ~%s: %s changed (description unchanged)\n",
+							c.ID, strings.Join(c.ChangedFields, ", "))
+					}
 				}
 			}
 			for _, c := range d.ConstraintChanges {
@@ -3245,6 +3274,9 @@ Example (coverage kind):
 	// The parent diffCmd's RunE handles the implicit spec kind for
 	// backward-compat with v1.x callers (`specter diff <path1> <path2>`).
 	cmd.AddCommand(diffCoverageCmd())
+	cmd.Flags().BoolVar(&exitCode, "exit-code", false,
+		"Exit with code 10 when the change is breaking (default: always exit 0)")
+
 	return cmd
 }
 

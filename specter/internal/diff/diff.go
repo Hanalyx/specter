@@ -21,6 +21,11 @@ type ItemChange struct {
 	// error_cases, references_constraints, priority or approval_gate changed.
 	// C-13: that is a breaking change even when the description is identical.
 	ContractChanged bool
+	// ChangedFields names the contract fields that differ, in a stable order.
+	// C-03: a contract-only change has an identical description on both sides,
+	// so a renderer showing the description twice says nothing. It shows these
+	// instead.
+	ChangedFields []string
 }
 
 // DepChange represents a version_range change in depends_on.
@@ -76,6 +81,38 @@ type namedItem struct {
 	// contracts are a changed criterion and a breaking change, per C-13.
 	// Empty for constraints, which have no contract fields.
 	Contract string
+	// Fields is the per-field breakdown behind Contract, so a change can name
+	// what moved. Nil for constraints.
+	Fields map[string]string
+}
+
+// contractFields returns one fingerprint per contract field, keyed by the
+// field's spec name. C-03 needs to name which fields moved, and comparing them
+// individually is what makes that possible; contractOf is the concatenation.
+//
+// The order of contractFieldNames is the report order, fixed here rather than
+// derived from a map, so two runs over identical input render identically.
+var contractFieldNames = []string{
+	"inputs", "expected_output", "error_cases",
+	"references_constraints", "priority", "approval_gate",
+}
+
+func contractFields(ac schema.AcceptanceCriterion) map[string]string {
+	enc := func(v interface{}) string {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return "unserializable"
+		}
+		return string(b)
+	}
+	return map[string]string{
+		"inputs":                 enc(ac.Inputs),
+		"expected_output":        enc(ac.ExpectedOutput),
+		"error_cases":            enc(ac.ErrorCases),
+		"references_constraints": enc(ac.ReferencesConstraints),
+		"priority":               enc(ac.Priority),
+		"approval_gate":          enc(ac.ApprovalGate),
+	}
 }
 
 // contractOf fingerprints the fields C-13 names, plus priority per C-06.
@@ -113,7 +150,7 @@ func contractOf(ac schema.AcceptanceCriterion) string {
 func acItems(s schema.SpecAST) []namedItem {
 	out := make([]namedItem, len(s.AcceptanceCriteria))
 	for i, ac := range s.AcceptanceCriteria {
-		out[i] = namedItem{ID: ac.ID, Desc: ac.Description, Contract: contractOf(ac)}
+		out[i] = namedItem{ID: ac.ID, Desc: ac.Description, Contract: contractOf(ac), Fields: contractFields(ac)}
 	}
 	return out
 }
@@ -153,12 +190,23 @@ func diffItems(old, new []namedItem) []ItemChange {
 		descChanged := next.Desc != item.Desc
 		contractChanged := next.Contract != item.Contract
 		if descChanged || contractChanged {
+			var changedFields []string
+			if contractChanged {
+				// Walk the fixed name list rather than either map, so the
+				// report order is the same on every run.
+				for _, name := range contractFieldNames {
+					if item.Fields[name] != next.Fields[name] {
+						changedFields = append(changedFields, name)
+					}
+				}
+			}
 			changes = append(changes, ItemChange{
 				Kind:            "changed",
 				ID:              item.ID,
 				Description:     next.Desc,
 				OldDesc:         item.Desc,
 				ContractChanged: contractChanged,
+				ChangedFields:   changedFields,
 			})
 		}
 	}
