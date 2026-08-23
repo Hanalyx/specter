@@ -1,6 +1,6 @@
 spec:
   id: spec-check
-  version: "1.9.0"
+  version: "1.10.0"
   status: approved
   tier: 1
 
@@ -128,6 +128,22 @@ spec:
     - id: C-17
       description: "The concreteness rule of C-16 MUST be opt-in and MUST NOT run without `--concrete`. Rationale, and it is the whole of the design. `inputs` and `expected_output` are optional in the canonical schema, whose `required` list for an acceptance criterion is `id` and `description`. A criterion carrying neither is therefore valid, and failing a build on it is a gate failing on correct input, which is the priority framework's P0 row and the defect `bugs/doing/SP-SP-004` spent this cycle removing. The tier gradient makes the rule survivable for **this** repository, whose Tier 1 gaps were backfilled before the rule shipped; it says nothing about an adopter whose Tier 1 specs have the same gaps and who upgrades. The precedent is `settings.annotation` in this same cycle, which introduced a comparable new demand on previously valid workspaces and shipped opt-in for the same reason. A flag rather than a manifest key because a manifest key is a schema change and would need its own brief, and the flag costs nothing the key would have bought. Reconsideration trigger: a v0.18 pre-lock pass that makes concreteness unconditional, which is where the roadmap already places enforcement across all tiers."
       type: business
+      enforcement: error
+
+
+    - id: C-18
+      description: "A `structural_conflict` diagnostic MUST NOT present the downstream spec id beside the upstream spec's constraint id as though the two belonged together. The header line reads `<spec> <constraint-id>`, and today the spec is the downstream one while the constraint id belongs to the upstream spec, so a reader looking up that id in the named spec finds nothing, or finds a different constraint that happens to share it. The constraint id MUST therefore be qualified with its owning spec wherever the two appear together. Rationale: the header is what a terminal scan and an editor problem list show, and both truncate the message body that names the specs correctly (`bugs/doing/SP-SP-014`)."
+      type: technical
+      enforcement: error
+
+    - id: C-19
+      description: "The required-keyword list used by structural-conflict detection MUST contain only keywords that can yield a subject. `required`, `MUST be present`, `MUST exist` and `mandatory` set the required flag and then produce an empty subject, because subject extraction reads the text before the literal ` MUST` and nothing else, so a constraint matching one of them is discarded a few lines later. They are dead rather than merely imprecise. They MUST be removed rather than made to work: activating them widens a false-positive surface that C-05 already declines to bound, and the detector is advisory under C-15, so the value of matching more constraints is low and the cost is more noise. The case sensitivity of ` MUST` is left as it is and documented: a constraint written with a lowercase `must` is invisible to the detector, which is a false negative in an advisory check and not worth a second matching rule."
+      type: technical
+      enforcement: error
+
+    - id: C-20
+      description: "Structural-conflict detection MUST scan every dependency edge, not only those whose relationship is `requires`. `extends` and `conflicts_with` edges are skipped today. Rationale: a `conflicts_with` edge is the one place a contradiction check has the strongest reason to look, and it is the one place it does not look at all. The corpus has no such edges today, so this changes no current output; it is a gap that would surface silently the first time an adopter declared one."
+      type: technical
       enforcement: error
 
 
@@ -609,7 +625,44 @@ spec:
       priority: high
 
 
+    - id: AC-39
+      description: "A structural conflict between two specs renders a header that does not attribute the upstream constraint id to the downstream spec. The constraint id appears qualified with the spec that owns it."
+      inputs:
+        upstream: "spec-core, constraint C-01"
+        downstream: "spec-app, criterion AC-01"
+      expected_output:
+        header_attributes_constraint_to_owner: true
+        header_pairs_downstream_spec_with_upstream_constraint_id: false
+      references_constraints: ["C-18"]
+      priority: medium
+
+    - id: AC-40
+      description: "A constraint whose text uses `required` or `mandatory` rather than ` MUST` produces no structural-conflict diagnostic, and does so because the keyword is no longer in the required list rather than because the subject came out empty. The observable behavior is unchanged; the dead branch is gone."
+      inputs:
+        constraints: ["The system required to log every request", "Logging by the system is mandatory"]
+      expected_output:
+        diagnostics: 0
+      references_constraints: ["C-19"]
+      priority: medium
+
+    - id: AC-41
+      description: "A `conflicts_with` edge is scanned for structural conflicts, as is an `extends` edge. A workspace whose only edge is `conflicts_with` and whose text conflicts produces the diagnostic."
+      inputs:
+        edge_relationship: "conflicts_with"
+        upstream_constraint: "email MUST be required"
+        downstream_criterion: "Process checkout when email is absent"
+      expected_output:
+        diagnostic_emitted: true
+      references_constraints: ["C-20"]
+      priority: medium
+
+
   changelog:
+    - version: "1.10.0"
+      date: "2026-08-24"
+      author: "specter-team"
+      type: minor
+      description: "Add C-18/C-19/C-20 and AC-39..41, roadmap 2A4. The structural-conflict header stops attributing the upstream constraint id to the downstream spec (bugs/doing/SP-SP-014). The dead required-keywords are removed rather than activated, because activating them widens a false-positive surface C-05 declines to bound on a check that is advisory under C-15. And detection scans every dependency edge rather than only `requires`, because a conflicts_with edge is where a contradiction check has the strongest reason to look and the one place it did not."
     - version: "1.9.0"
       date: "2026-08-24"
       author: "specter-team"
