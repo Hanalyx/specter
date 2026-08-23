@@ -1466,8 +1466,23 @@ the reverse-compiler edits and records that the count survives because it can be
 computed rather than persisted. Anyone scoping 3C7 should read the roadmap entry
 rather than the one-line summary that used to sit here.
 
-Noted in passing, and not part of any claim above: `reverse` tells the user to
-run `specter explain` to triage gaps, and `explain` reads no gap data.
+Noted in passing, and not part of any claim above: `reverse` used to tell the
+user to run `specter explain` to triage gaps while `explain` read no gap data.
+Filed as `bugs/SP-SP-065` and corrected in v0.15.0; the line now says review the
+criteria, which is what `explain` does. The spec mandated the false wording, so
+a green `make dogfood-strict` had confirmed it for three releases.
+
+Also corrected in v0.15.0: the placeholder criterion `reverse` synthesizes when
+extraction found nothing no longer carries `gap: true`. It made "the extractor
+found nothing" indistinguishable from a measured finding and inflated the count
+past any reading as a gap count. `go-chi/chi` reported 0 constraints and 21
+gaps. It now reports 0 and 0.
+
+What the field still cannot support is the claim its name makes. A constraint
+counts as covered only when an assertion's text contains the constraint's field
+name, so most `gap: true` values on a real repository are false. That is
+`bugs/SP-SP-064`, deferred by owner decision on 2026-08-23: the reverse compiler
+is a bootstrap tool, and tuning a match rate is not what it is for.
 
 Do not write `gap: true` into a spec on the strength of the label above. The
 prose use should be avoided in technical documents, because it collides with a

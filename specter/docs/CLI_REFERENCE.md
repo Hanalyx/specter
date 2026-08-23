@@ -536,10 +536,10 @@ specter reverse [path] [--adapter <lang>] [--output <dir>] [--group-by <strategy
 | `--adapter <lang>` | auto | Language adapter: `typescript`, `python`, `go`. Auto-detects from file extensions if omitted. |
 | `--output <dir>` / `-o` | `specs` | Output directory for generated `.spec.yaml` files. |
 | `--group-by <strategy>` | `file` | Grouping strategy: `file` (one spec per source file) or `directory` (one spec per directory). |
-| `--dry-run` | false | Preview generated YAML to stdout without writing files. |
+| `--dry-run` | false | Preview generated YAML to stdout without writing files. This is the only flag that stops files being written. |
 | `--overwrite` | false | Overwrite existing spec files. Default skips files that already exist. |
 | `--exclude <pattern>` | none | Exclude paths matching pattern. Can be repeated. |
-| `--json` | false | Output results as JSON. |
+| `--json` | false | Report the run as JSON on stdout. Selects the output format only: files are still written to `--output`. Combine with `--dry-run` for a report without writes. Under `--json`, stdout carries exactly one JSON document and the per-spec `GENERATED` and `SKIPPED` lines go to stderr. |
 
 **Example:**
 
