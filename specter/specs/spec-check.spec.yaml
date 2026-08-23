@@ -1,6 +1,6 @@
 spec:
   id: spec-check
-  version: "1.8.0"
+  version: "1.9.0"
   status: approved
   tier: 1
 
@@ -119,6 +119,17 @@ spec:
       description: "`structural_conflict` MUST be advisory. Three parts, and all three are required for the posture to hold. (a) Its severity is always `info`, whatever the upstream constraint's `enforcement` field says. That field expresses how strictly the constraint binds the system, not how confident this scan is about a sentence, and reading it here let a Tier 1 constraint make a heuristic match fail a build. (b) `--strict` does not upgrade it, exempting it from C-07. (c) It never contributes to a non-zero exit code from `specter check`. Rationale: the detector is a lexical heuristic and cannot be made sound, per C-05. An unsound gate that fails builds is worse than no gate, because the failure lands on correct work and the operator's only recourse is to reword a criterion until the tool stops complaining. The diagnostic still names a real tension worth a human glance, which is why it is retained rather than removed. Reconsideration trigger: an implementation that distinguishes a conflict from an enforcement, which needs the outcome clause and is therefore semantic analysis rather than a lexical rule."
       type: business
       enforcement: error
+
+    - id: C-16
+      description: "`specter check --concrete` MUST report every acceptance criterion that carries neither `inputs` nor `expected_output`, as a `vague_criterion` diagnostic naming the spec and the criterion. Severity follows the tier: error at Tier 1, warning at Tier 2, info at Tier 3. The rule reads fields that already exist and needs no schema change. It checks presence only. Whether `completes within budget` is a checkable assertion is semantic reading, and a rule that rejects the word `gracefully` is theater; this constraint makes no attempt at it."
+      type: technical
+      enforcement: error
+
+    - id: C-17
+      description: "The concreteness rule of C-16 MUST be opt-in and MUST NOT run without `--concrete`. Rationale, and it is the whole of the design. `inputs` and `expected_output` are optional in the canonical schema, whose `required` list for an acceptance criterion is `id` and `description`. A criterion carrying neither is therefore valid, and failing a build on it is a gate failing on correct input, which is the priority framework's P0 row and the defect `bugs/doing/SP-SP-004` spent this cycle removing. The tier gradient makes the rule survivable for **this** repository, whose Tier 1 gaps were backfilled before the rule shipped; it says nothing about an adopter whose Tier 1 specs have the same gaps and who upgrades. The precedent is `settings.annotation` in this same cycle, which introduced a comparable new demand on previously valid workspaces and shipped opt-in for the same reason. A flag rather than a manifest key because a manifest key is a schema change and would need its own brief, and the flag costs nothing the key would have bought. Reconsideration trigger: a v0.18 pre-lock pass that makes concreteness unconditional, which is where the roadmap already places enforcement across all tiers."
+      type: business
+      enforcement: error
+
 
   depends_on:
     - spec_id: spec-parse
@@ -574,7 +585,36 @@ spec:
       references_constraints: ["C-15", "C-07"]
       priority: high
 
+    - id: AC-37
+      description: "`specter check --concrete` reports a criterion carrying neither `inputs` nor `expected_output` as `vague_criterion`, at error for a Tier 1 spec, warning for Tier 2 and info for Tier 3. A criterion carrying either field is not reported."
+      inputs:
+        specs: ["Tier 1 with one bare criterion", "Tier 2 with one bare criterion", "Tier 3 with one bare criterion", "Tier 1 with a criterion carrying inputs only"]
+        command: "check --concrete"
+      expected_output:
+        diagnostic_kind: "vague_criterion"
+        severity_by_tier: {"1": "error", "2": "warning", "3": "info"}
+        reported_when_either_field_present: false
+      references_constraints: ["C-16"]
+      priority: high
+
+    - id: AC-38
+      description: "Without `--concrete`, the same workspace produces no `vague_criterion` diagnostic and exits 0. The rule is opt-in and a workspace that never passes the flag cannot be failed by it."
+      inputs:
+        specs: ["Tier 1 with one bare criterion"]
+        commands: ["check", "check --strict"]
+      expected_output:
+        diagnostic_present: false
+        exit_code: 0
+      references_constraints: ["C-17"]
+      priority: high
+
+
   changelog:
+    - version: "1.9.0"
+      date: "2026-08-24"
+      author: "specter-team"
+      type: minor
+      description: "Add C-16/C-17 and AC-37/AC-38: `check --concrete` reports criteria carrying neither inputs nor expected_output, severity by tier. Roadmap 2C2. The rule is opt-in, and C-17 records why: both fields are optional in the canonical schema, so erroring on their absence by default would fail a build on a valid spec, which is the P0 row this cycle spent itself removing. The tier gradient protects this repository, whose Tier 1 gaps were backfilled first; it does not protect an adopter upgrading."
     - version: "1.8.0"
       date: "2026-08-24"
       author: "specter-team"
