@@ -1,6 +1,6 @@
 spec:
   id: spec-reverse
-  version: "1.3.0"
+  version: "1.4.0"
   status: draft
   tier: 2
 
@@ -124,6 +124,11 @@ spec:
       description: "After the C-13 summary line (and only when at least one spec was generated, non-empty result), `specter reverse` MUST emit a handoff line: `Run \\`specter explain <first-spec-id>\\` to triage gaps in each generated draft.` where <first-spec-id> is the id of the lexicographically-first generated spec (or any deterministic choice; first-by-creation-order is acceptable as long as the choice is reproducible across runs over identical input). The line is suppressed under --json output to keep machine-readable output clean. Rationale: closes the v0.2 carry-over UX gap where `reverse` ended silently and left first-time users without a next-step."
       type: business
       enforcement: warning
+
+    - id: C-15
+      description: "Every constraint `specter reverse` writes MUST omit the `enforcement` key, so the tier default applies. This covers both the constraints extracted from source and the placeholder constraint synthesized when extraction found none (the schema requires `minItems: 1`). Rationale: `enforcement` overrides the tier-based severity `spec-check` assigns to a diagnostic about that constraint, and the schema documents it as opt-in (\"Omit to use the tier default\"). Generated specs are `status: draft` and `tier: 3`, both of which say the spec is not yet load-bearing; stamping `enforcement: error` contradicts that and makes every unreferenced generated constraint fail `check` at error severity. A constraint that no acceptance criterion references is an expected state of a draft, not a build failure. An author who later decides a specific constraint is always-error sets the key themselves."
+      type: technical
+      enforcement: error
 
   acceptance_criteria:
     - id: AC-01
@@ -329,12 +334,29 @@ spec:
       references_constraints: ["C-13", "C-14"]
       priority: high
 
+    - id: AC-20
+      description: "Generated spec YAML carries no `enforcement` key on any constraint, on both the extracted-constraint path and the synthesized-placeholder path. Asserted against the marshaled YAML rather than the struct field, because an empty string field and an absent key are different documents and only the second one takes the tier default."
+      inputs:
+        case_a: "source file with validation rules, so constraints are extracted from it"
+        case_b: "source file with no extractable constraints, so the minItems placeholder is synthesized"
+      expected_output:
+        yaml_contains_enforcement_key: false
+        placeholder_constraint_emitted: true
+        constraint_count_minimum: 1
+      references_constraints: ["C-15"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
       relationship: requires
 
   changelog:
+    - version: "1.4.0"
+      date: "2026-08-23"
+      author: "specter-team"
+      type: minor
+      description: "Add C-15/AC-20: generated constraints omit `enforcement` so the tier default applies. Closes SP-062. `reverse` stamped `enforcement: error` on every constraint it wrote, including the synthesized placeholder, which overrode the tier-3 `info` default and made every unreferenced generated constraint an error. Measured on the 12-repo real-world corpus: the two repositories whose output cleared `resolve` both failed `check`, 37 and 61 diagnostics, all `orphan_constraint`, none at info."
     - version: "1.3.0"
       date: "2026-05-15"
       author: "specter-team"
