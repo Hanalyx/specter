@@ -7,6 +7,10 @@
 // appears once you write down the sentences that must NOT fire.
 //
 // These tests characterize the SHIPPED behavior, including where it is wrong.
+// Five of nine non-conflicts still fire, all of them the enforcement class:
+// a conflict and an enforcement are lexically identical and no rule over the
+// subject and the absence expression can separate them. C-22 forbids
+// describing this rule as eliminating false positives for that reason.
 // A run that changes any count fails, which is the point: the numbers move
 // deliberately or not at all.
 //
@@ -52,7 +56,9 @@ var trueConflicts = []conflictCase{
 	// The only true positive the shipped detector misses. extractSubject keeps
 	// the article, so the subject is "The audit record" and the criterion says
 	// "an audit record".
-	{"The audit record MUST be written", "Deletion completes without an audit record", true, false, "FALSE NEGATIVE: article mismatch"},
+	// Detected since C-21 strips the leading article from the extracted
+	// subject. It was the only true conflict the co-occurrence rule missed.
+	{"The audit record MUST be written", "Deletion completes without an audit record", true, true, "backward, indefinite article"},
 }
 
 // nearMisses: the subject and an absence word both appear and there is no
@@ -67,22 +73,30 @@ var nearMisses = []conflictCase{
 		"FALSE POSITIVE: enforcement, backward form"},
 	{"email MUST be required", "Confirm that email is not absent before sending", false, true,
 		"FALSE POSITIVE: double negation, means present"},
-	{"email MUST be required", "The phone number is absent from the email template", false, true,
-		"FALSE POSITIVE: subject inside an unrelated noun phrase"},
+	// Silent under C-21: "absent" predicates "The phone number", not the
+	// subject, so nothing attaches.
+	{"email MUST be required", "The phone number is absent from the email template", false, false,
+		"correctly silent: the absence predicates a different noun"},
 	{"The refresh token MUST be present on every request", "Audit log records that the refresh token is present", false, false,
 		"correctly silent: no absence word"},
-	{"api_key MUST be supplied by the caller", "Rate limit applies without regard to api_key", false, true,
-		"FALSE POSITIVE: 'without' governs 'regard', not the subject"},
+	// Silent under C-21: the backward shape needs the subject immediately
+	// after the absence word, and "regard to" intervenes.
+	{"api_key MUST be supplied by the caller", "Rate limit applies without regard to api_key", false, false,
+		"correctly silent: 'without' governs 'regard', not the subject"},
 }
 
 // ciProximitySurvivors are the two real-corpus cases that survive a word
 // boundary plus proximity tightening. SP-004 asks for them by name, so a later
 // simplification to a proximity rule cannot pass unnoticed.
 var ciProximitySurvivors = []conflictCase{
-	{"CI MUST validate the PR title", "in a ci environment without a controlling terminal", false, true,
-		"FALSE POSITIVE: survives boundaries plus proximity"},
-	{"CI MUST validate the PR title", "any ci script that pipes confirmation tokens) without", false, true,
-		"FALSE POSITIVE: survives boundaries plus proximity"},
+	// Both silent under C-21. They survive word boundaries plus proximity,
+	// which is why SP-004 asks for them by name: a later simplification back
+	// to a proximity rule would fire on them again and this table would catch
+	// it.
+	{"CI MUST validate the PR title", "in a ci environment without a controlling terminal", false, false,
+		"correctly silent: nothing attaches to the subject"},
+	{"CI MUST validate the PR title", "any ci script that pipes confirmation tokens) without", false, false,
+		"correctly silent: nothing attaches to the subject"},
 }
 
 func detectorFires(c conflictCase) bool {
@@ -150,10 +164,12 @@ func TestConflictCorpus_AccuracyIsRecorded(t *testing.T) {
 			}
 		}
 
+		// C-21 attachment. AC-44 records these three, so they move
+		// deliberately or not at all.
 		const (
-			wantDetected       = 11
-			wantMissed         = 1
-			wantFalsePositives = 8
+			wantDetected       = 12
+			wantMissed         = 0
+			wantFalsePositives = 5
 		)
 		if detected != wantDetected || missed != wantMissed {
 			t.Errorf("true conflicts: %d detected, %d missed; recorded %d and %d",
@@ -162,6 +178,60 @@ func TestConflictCorpus_AccuracyIsRecorded(t *testing.T) {
 		if falsePositives != wantFalsePositives {
 			t.Errorf("false positives: %d of %d non-conflicts fired; recorded %d",
 				falsePositives, len(nearMisses)+len(ciProximitySurvivors), wantFalsePositives)
+		}
+	})
+}
+
+// @ac AC-42
+// The subject matches on whole-token boundaries. `ci` inside "producing" and
+// "exercises" is what the co-occurrence rule matched, and it is the sharpest
+// demonstration available that the old rule was not doing word matching.
+func TestConflictCorpus_SubjectMatchesOnTokenBoundaries(t *testing.T) {
+	for _, criterion := range []string{
+		"a step producing artifacts without a cache",
+		"the suite exercises the path without a fixture",
+	} {
+		t.Run("spec-check/AC-42 token boundaries", func(t *testing.T) {
+			c := conflictCase{constraint: "CI MUST validate the PR title", criterion: criterion}
+			if detectorFires(c) {
+				t.Errorf("fired on %q; `ci` appears only inside a longer word", criterion)
+			}
+		})
+	}
+}
+
+// @ac AC-43
+// Both attachment shapes are detected, listed separately so a regression in
+// one is not masked by the other.
+func TestConflictCorpus_BothAttachmentShapesDetected(t *testing.T) {
+	forward := []string{
+		"Process checkout when email is absent",
+		"Submit the form when email is not provided",
+		"Checkout proceeds when the email is empty",
+	}
+	backward := []string{
+		"Order is accepted without email",
+	}
+	for _, criterion := range forward {
+		t.Run("spec-check/AC-43 forward shape", func(t *testing.T) {
+			if !detectorFires(conflictCase{constraint: "email MUST be required", criterion: criterion}) {
+				t.Errorf("forward shape missed: %q", criterion)
+			}
+		})
+	}
+	for _, criterion := range backward {
+		t.Run("spec-check/AC-43 backward shape", func(t *testing.T) {
+			if !detectorFires(conflictCase{constraint: "email MUST be required", criterion: criterion}) {
+				t.Errorf("backward shape missed: %q", criterion)
+			}
+		})
+	}
+	t.Run("spec-check/AC-43 backward shape with a stripped article", func(t *testing.T) {
+		if !detectorFires(conflictCase{
+			constraint: "The audit record MUST be written",
+			criterion:  "Deletion completes without an audit record",
+		}) {
+			t.Error("the leading article on the extracted subject was not stripped")
 		}
 	})
 }

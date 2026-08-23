@@ -148,16 +148,11 @@ spec:
 
 
     - id: C-21
-      description: "Structural-conflict detection MUST NOT fire on mere co-occurrence. It fires only when the absence expression attaches to the required subject, in one of two shapes. Forward: the subject, then at most three intervening words with no sentence punctuation between them, then a copula (`is`, `are`, `was`, `were`, `be`, `being`, `been`), then an optional `not`, then an absence predicate (`absent`, `missing`, `empty`, `null`, `provided`, `present`, `supplied`, `set`, `defined`). Backward: `without`, `missing`, `lacking` or `absent`, then an optional article, then the subject. The subject MUST match on whole-token boundaries, so `ci` does not match inside `producing`. A leading article on the extracted subject MUST be stripped before matching, because extraction keeps everything before ` MUST` and a criterion saying `an audit record` cannot otherwise match a subject of `The audit record`. Rationale: the shipped rule asked whether the subject appeared anywhere and whether an absence word appeared anywhere, with nothing binding the two, which produced 34 fires on this repository's own specs and not one of them a genuine conflict."
+      description: "Structural-conflict detection MUST NOT fire on mere co-occurrence. It fires only when the absence expression attaches to the required subject, in one of two shapes. Forward: the subject, then at most three intervening words with no sentence punctuation between them, then a copula (`is`, `are`, `was`, `were`, `be`, `being`, `been`), then an optional `not`, then an absence predicate (`absent`, `missing`, `empty`, `null`, `provided`, `present`, `supplied`, `set`, `defined`). Backward: `without`, `missing`, `lacking` or `absent`, then an optional article, then the subject. The subject MUST match on whole-token boundaries, so `ci` does not match inside `producing`. A leading article on the extracted subject MUST be stripped before matching, because extraction keeps everything before ` MUST` and a criterion saying `an audit record` cannot otherwise match a subject of `The audit record`. Rationale: the shipped rule asked whether the subject appeared anywhere and whether an absence word appeared anywhere, with nothing binding the two, which produced 34 fires on this repository's own specs and not one of them a genuine conflict. Implementation note, recorded because the next implementer would otherwise rediscover it: **Go's RE2 has no lookaround**, so the prototype that established these numbers cannot be ported directly. `\\b` is available and covers the boundary half, but the intervening-word window and the optional article are not expressible without it, so the whole rule is a token scanner rather than a mix of two mechanisms."
       type: technical
       enforcement: error
 
     - id: C-22
-      description: "The attachment rule of C-21 MUST be implemented without regular-expression lookaround, because Go's RE2 engine has none. A token scanner over word boundaries is the sanctioned form. Rationale: a lookaround-based prototype was written first, in a language that has it, and porting it directly is not possible; recording that here saves the next implementer the same discovery. `\\b` is available in RE2 and is sufficient for the boundary half, but the intervening-word window and the optional-article handling are not expressible without lookaround, so the scanner covers all of it rather than mixing two mechanisms."
-      type: technical
-      enforcement: error
-
-    - id: C-23
       description: "C-21 MUST NOT be described as eliminating false positives, and any measurement of it MUST be taken against three corpora rather than two: genuine conflicts, criteria that must not fire, and this repository's own specs. Rationale: the rule reaches zero fires on this repository and keeps every genuine conflict, and it still fires on five of seven written-down non-conflicts, because a conflict and an enforcement are lexically identical. `Process checkout when email is absent` and `Registration fails when email is absent` share subject, absence expression and clause structure and differ only in the polarity of the outcome verb, which the rule never reads. Roughly one criterion in ten in this repository is enforcement-shaped. The zero is a property of this corpus, not of the rule, which is why C-15 keeps the diagnostic advisory and C-05 declines to promise zero."
       type: business
       enforcement: error
@@ -694,14 +689,14 @@ spec:
       priority: high
 
     - id: AC-44
-      description: "Accuracy is measured against all three corpora and the numbers are recorded rather than described. On this repository's specs the rule fires zero times over every ordered pair. Of twelve genuine conflicts it detects twelve. Of nine written-down non-conflicts it wrongly fires on five, all of which are the enforcement class C-23 names."
+      description: "Accuracy is measured against all three corpora and the numbers are recorded rather than described. On this repository's specs the rule fires zero times over every ordered pair. Of twelve genuine conflicts it detects twelve. Of nine written-down non-conflicts it wrongly fires on five, all of which are the enforcement class C-22 names."
       inputs:
         corpora: ["this repository, all ordered pairs", "12 genuine conflicts", "9 non-conflicts"]
       expected_output:
         corpus_fires: 0
         true_conflicts_detected: 12
         non_conflicts_wrongly_fired: 5
-      references_constraints: ["C-21", "C-23"]
+      references_constraints: ["C-21", "C-22"]
       priority: high
 
 
@@ -710,7 +705,7 @@ spec:
       date: "2026-08-24"
       author: "specter-team"
       type: minor
-      description: "Add C-21/C-22/C-23 and AC-42..44, roadmap 2A2. Structural-conflict detection binds the absence expression to the required subject rather than testing co-occurrence, in two shapes, on whole-token boundaries, with a leading article stripped from the extracted subject. C-22 records that Go's RE2 has no lookaround so the implementation is a token scanner. C-23 forbids describing the rule as eliminating false positives and requires three corpora for any measurement, because the zero it reaches on this repository is a property of the corpus rather than of the rule."
+      description: "Add C-21/C-22 and AC-42..44, roadmap 2A2. Structural-conflict detection binds the absence expression to the required subject rather than testing co-occurrence, in two shapes, on whole-token boundaries, with a leading article stripped from the extracted subject. C-22 records that Go's RE2 has no lookaround so the implementation is a token scanner. C-22 forbids describing the rule as eliminating false positives and requires three corpora for any measurement, because the zero it reaches on this repository is a property of the corpus rather than of the rule."
     - version: "1.10.0"
       date: "2026-08-24"
       author: "specter-team"
