@@ -1,6 +1,6 @@
 spec:
   id: spec-diff
-  version: "2.4.0"
+  version: "2.5.0"
   status: draft
   tier: 2
   context:
@@ -48,7 +48,7 @@ spec:
       type: technical
       enforcement: error
     - id: C-03
-      description: "MUST report added ACs with + prefix, removed with - prefix, changed description with ~ prefix"
+      description: "MUST report added ACs with a + prefix, removed with a - prefix, and changed with a ~ prefix. A criterion can change in two ways and the line MUST distinguish them. When the description changed, the line shows the old and new description. When only the contract changed (C-13), the description is identical on both sides, so showing it twice tells the reader nothing: the line MUST instead name which contract fields differ. A criterion whose description and contract both changed shows the description transition and names the fields. Rationale: 2.3.0 widened the comparator without widening the report, so an inverted `expected_output` printed `~AC-01: same text → same text` above a `[breaking]` header, which reads as a bug in the tool rather than a finding about the spec."
       type: technical
       enforcement: error
     - id: C-04
@@ -240,7 +240,23 @@ spec:
       priority: high
 
 
+    - id: AC-20
+      description: "A criterion whose description is unchanged and whose `expected_output` is inverted renders a ~ line naming `expected_output` rather than printing the identical description twice."
+      inputs:
+        before: "AC-01, expected_output order [1, 2, 3]"
+        after: "AC-01, same description, expected_output order [3, 2, 1]"
+      expected_output:
+        line_names_changed_fields: ["expected_output"]
+        line_repeats_identical_description: false
+      references_constraints: ["C-03", "C-13"]
+      priority: high
+
   changelog:
+    - version: "2.5.0"
+      date: "2026-08-24"
+      author: "specter-team"
+      type: minor
+      description: "C-03 gains the rule for reporting a contract-only change, and AC-20 asserts it. 2.3.0 widened the comparator without widening the report, so an inverted expected_output printed `~AC-01: same text -> same text` under a [breaking] header. The classification was right and the line was useless. Found while implementing 2B3."
     - version: "2.4.0"
       date: "2026-08-24"
       author: "specter-team"
