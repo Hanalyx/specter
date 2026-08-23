@@ -1,6 +1,6 @@
 spec:
   id: spec-coverage
-  version: "1.18.0"
+  version: "1.19.0"
   status: approved
   tier: 2
 
@@ -228,6 +228,11 @@ spec:
       description: "When `settings.annotation` is declared in the manifest, coverage MUST apply the model of docs/ssrb/SSRB-104.md section 1 instead of the strictness ladder. Six parts. (a) Rule 1, the annotation rule: every acceptance criterion MUST have a test, meaning a source annotation naming it exists. A criterion with none is a rule-1 violation, counted and reported separately from an uncovered criterion, because the two are different failures. The reporting distinction MUST be observable in the text output: a rule-1 violation is listed on a `no test:` line, distinct from the existing `uncovered:` line. Without a distinguishable marker a caller cannot tell the two apart, and a test asserting only that the criterion id appears somewhere passes vacuously under the ladder, where the same id is already listed as uncovered. (b) The tier threshold does not excuse a rule-1 violation. A Tier 3 spec at or above its threshold still fails if any criterion has no test. (c) Rule 1 severity is decided by `settings.annotation.permissive` and by nothing else: error when false, warning when true. Tier routing is wrong here because a Tier 3 criterion would emit info and not fail, contradicting (b); global escalation via settings.strict is wrong because it rebuilds the bundling this model dismantles. Both are rejected in SSRB-104 section 7.4. (d) A rule-1 violation exits 2 when permissive is false, per SSRB-104 section 7.5. Exit 2 thereby narrows from its ladder meaning, an annotated criterion that did not pass, to its model meaning, a criterion with no test at all. (e) Rule 3, the pass rate: among criteria that DO have an annotation, a criterion counts as covered when its annotation has a passing result, and the tier threshold applies to that rate. A rate below the threshold exits 1. Rules 1 and 3 are therefore different failures with different codes, which is the distinction the single ladder could not express. (f) A declared block requires `.specter-results.json`, exactly as `threshold` does, per SSRB-104 section 7.9. Rule 1 is structural and could be answered without results, but evaluating rule 1 alone would let a workspace move from an outcome-verified gate to a structural one by adding a key that reads as stricter."
       type: technical
       enforcement: error
+    - id: C-39
+      description: "Under an effective strictness of `zero-tolerance`, an acceptance criterion carrying `approval_gate: true` with an unset `approval_date` MUST be reported as uncovered, and the entry's coverage percentage, threshold verdict, and the report summary MUST reflect that. The demotion is part of classifying the criterion, not an edit applied to a finished report, so every surface that reports coverage sees the same verdict for the same criterion: `coverage`, `coverage --json`, and `sync` alike. Two consequences follow and are observable. A demoted criterion appears in the uncovered list in acceptance-criterion declaration order, alongside criteria uncovered for any other reason, because there is one list built once rather than a list edited afterward. And an entry whose every covered criterion is demoted reports an empty covered list, never a null one, which is the same JSON-shape guarantee C-14 makes for every other entry. Rationale: this behavior shipped as the GH #94 fix and was required only by spec-sync C-09(b), which cited `spec-coverage GH #94 semantics` for a rule spec-coverage never stated. It was implemented as a second pass over the report, which is what let its output diverge from the builder's own invariants."
+      type: business
+      enforcement: error
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -957,7 +962,43 @@ spec:
         falls_back_to_structural: false
       references_constraints: ["C-38"]
       priority: high
+    - id: AC-64
+      description: "A zero-tolerance workspace whose spec carries a gate-violating criterion, a plainly covered criterion, and a criterion with no annotation reports the gate-violating one as uncovered in declaration order, not appended after the others."
+      inputs:
+        spec: "AC-01 approval_gate with no date and a passing result, AC-02 annotated and passing, AC-03 unannotated"
+        command: "coverage --strictness zero-tolerance --json"
+      expected_output:
+        covered_acs: ["AC-02"]
+        uncovered_acs: ["AC-01", "AC-03"]
+      references_constraints: ["C-39"]
+      priority: high
+
+    - id: AC-65
+      description: "An entry whose only covered criterion is demoted reports `covered_acs` as an empty array. It must never marshal as null, because the JSON contract declares it a non-nullable array and a consumer iterating it would throw."
+      inputs:
+        spec: "one criterion, annotated, passing result, approval_gate with no date"
+        command: "coverage --strictness zero-tolerance --json"
+      expected_output:
+        covered_acs_is_empty_array: true
+        covered_acs_is_null: false
+      references_constraints: ["C-39", "C-14"]
+      priority: high
+
+    - id: AC-66
+      description: "`coverage` and `sync` classify every criterion identically for the same workspace, because both read one classification and neither carries its own. Asserted on a workspace exercising the gate demotion, a failing result, and an unannotated criterion at once."
+      inputs:
+        commands: ["coverage --strictness zero-tolerance --json", "sync --strictness zero-tolerance --json"]
+      expected_output:
+        per_criterion_verdicts_identical: true
+      references_constraints: ["C-39"]
+      priority: high
+
   changelog:
+    - version: "1.19.0"
+      date: "2026-08-24"
+      author: "specter-team"
+      type: minor
+      description: "Add C-39/AC-64..66: the zero-tolerance approval-gate demotion is part of classifying a criterion rather than a second pass over a finished report. Roadmap item 1C. The behavior shipped as the GH #94 fix and was stated only in spec-sync C-09(b), which cited spec-coverage semantics spec-coverage never wrote down. Stating it here also pins two things the second pass got wrong: a demoted criterion was appended to the uncovered list rather than placed in declaration order, and an entry whose every covered criterion was demoted marshalled covered_acs as null (bugs/SP-SP-067)."
     - version: "1.18.0"
       date: "2026-08-22"
       author: "specter-team"

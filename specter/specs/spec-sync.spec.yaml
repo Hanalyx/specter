@@ -1,6 +1,6 @@
 spec:
   id: spec-sync
-  version: "1.6.0"
+  version: "1.7.0"
   status: approved
   tier: 2
 
@@ -79,7 +79,7 @@ spec:
       enforcement: error
 
     - id: C-09
-      description: "Under an effective strictness of `zero-tolerance`, sync's coverage phase MUST enforce the same two zero-tolerance gates `coverage` enforces (spec-coverage C-25/C-26), in the same order: (a) any annotated AC with a results-file status other than `passed` fails the coverage phase and the process exits with code 2, even when every spec meets its tier coverage threshold; (b) any AC carrying `approval_gate: true` with an unset `approval_date` is demoted in the coverage report (spec-coverage GH #94 semantics — the report and the exit signal agree) and, when no code-2 violation is present, the process exits with code 3. Both gates apply identically under `--json` (mirroring spec-coverage C-29's text/JSON exit parity). C-03's contract is unchanged — exit 0 still means all phases passed; codes 2 and 3 refine the failure exit so CI can distinguish violation classes exactly as it can with `coverage`. Rationale: pre-1.4.0, sync routed zero-tolerance through the strict report path but gated only on tier thresholds (Summary.Failing), so a Tier 3 spec with one passing and one failing annotated AC passed sync at 50% while `coverage --strictness zero-tolerance` exited 2 on the same workspace — a false-green in the primary CI command, contradicting C-06 and AC-09."
+      description: "Under an effective strictness of `zero-tolerance`, sync's coverage phase MUST enforce the same two zero-tolerance gates `coverage` enforces (spec-coverage C-25/C-26), in the same order: (a) any annotated AC with a results-file status other than `passed` fails the coverage phase and the process exits with code 2, even when every spec meets its tier coverage threshold; (b) any AC carrying `approval_gate: true` with an unset `approval_date` is demoted in the coverage report (spec-coverage C-39 — the report and the exit signal agree) and, when no code-2 violation is present, the process exits with code 3. Both gates apply identically under `--json` (mirroring spec-coverage C-29's text/JSON exit parity). C-03's contract is unchanged — exit 0 still means all phases passed; codes 2 and 3 refine the failure exit so CI can distinguish violation classes exactly as it can with `coverage`. Rationale: pre-1.4.0, sync routed zero-tolerance through the strict report path but gated only on tier thresholds (Summary.Failing), so a Tier 3 spec with one passing and one failing annotated AC passed sync at 50% while `coverage --strictness zero-tolerance` exited 2 on the same workspace — a false-green in the primary CI command, contradicting C-06 and AC-09."
       type: business
       enforcement: error
 
@@ -272,6 +272,11 @@ spec:
       references_constraints: ["C-12"]
       priority: high
   changelog:
+    - version: "1.7.0"
+      date: "2026-08-24"
+      author: "specter-team"
+      type: patch
+      description: "C-09(b) cited `spec-coverage GH #94 semantics` for a rule spec-coverage did not state. spec-coverage 1.19.0 states it as C-39, and the reference now points there. No behavior change; the dangling citation is the defect."
     - version: "1.6.0"
       date: "2026-08-22"
       author: "specter-team"
