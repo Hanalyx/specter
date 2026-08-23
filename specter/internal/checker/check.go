@@ -146,9 +146,17 @@ func CheckSpecs(graph *resolver.SpecGraph, opts *CheckOptions) *CheckResult {
 		diagnostics = append(diagnostics, checkDuplicateACIDs(&graph.Nodes[id].Spec)...)
 	}
 
-	// C-07: strict mode — upgrade warnings and info to errors
+	// C-07: strict mode, upgrade warnings and info to errors.
+	//
+	// C-15(b): structural_conflict is exempt. An advisory posture that holds
+	// until someone passes --strict holds until CI runs, which is the same as
+	// not holding. The exemption is here rather than at the emit site because
+	// this loop is what would undo it.
 	if opts.Strict {
 		for i := range diagnostics {
+			if diagnostics[i].Kind == "structural_conflict" {
+				continue
+			}
 			if diagnostics[i].Severity == "warning" || diagnostics[i].Severity == "info" {
 				diagnostics[i].Severity = "error"
 			}
@@ -249,10 +257,12 @@ func checkStructuralConflicts(graph *resolver.SpecGraph) []CheckDiagnostic {
 				}
 				for _, kw := range absenceKeywords {
 					if strings.Contains(acDesc, strings.ToLower(kw)) {
-						severity := "error"
-						if constraint.Enforcement != "" {
-							severity = constraint.Enforcement
-						}
+						// C-15(a): always info. The upstream constraint's
+						// `enforcement` field says how strictly the constraint
+						// binds the system, not how much to trust a lexical
+						// match on a sentence. Reading it here let a Tier 1
+						// constraint make a heuristic fail a build.
+						severity := "info"
 						diagnostics = append(diagnostics, CheckDiagnostic{
 							Kind:           "structural_conflict",
 							Severity:       severity,
