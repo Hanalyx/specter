@@ -44,6 +44,52 @@ type CheckOptions struct {
 	PreviousVersions map[string]*schema.SpecAST
 	Strict           bool // C-07: upgrade all warning/info diagnostics to error
 	WarnOnDraft      bool // C-08: emit warning for specs with status: draft
+	// Concrete opts into the C-16 concreteness rule. C-17: it is off by
+	// default because `inputs` and `expected_output` are optional in the
+	// canonical schema, so a criterion carrying neither is valid and failing a
+	// build on it would be a gate failing on correct input.
+	Concrete bool
+}
+
+// vagueSeverityByTier is the C-16 gradient. It is a separate table from
+// orphanSeverityByTier because the two rules are independent: changing one
+// should not silently move the other.
+var vagueSeverityByTier = map[int]string{
+	1: "error",
+	2: "warning",
+	3: "info",
+}
+
+// checkConcreteness reports every criterion carrying neither `inputs` nor
+// `expected_output`. C-16.
+//
+// Presence only. Whether "completes within budget" is a checkable assertion is
+// semantic reading, and a rule that rejects the word "gracefully" is theater.
+func checkConcreteness(graph *resolver.SpecGraph, ids []string) []CheckDiagnostic {
+	var diagnostics []CheckDiagnostic
+	for _, id := range ids {
+		node := graph.Nodes[id]
+		if node == nil {
+			continue
+		}
+		severity := vagueSeverityByTier[node.Spec.Tier]
+		if severity == "" {
+			severity = "warning"
+		}
+		for _, ac := range node.Spec.AcceptanceCriteria {
+			if len(ac.Inputs) > 0 || len(ac.ExpectedOutput) > 0 {
+				continue
+			}
+			diagnostics = append(diagnostics, CheckDiagnostic{
+				Kind:     "vague_criterion",
+				Severity: severity,
+				Message: fmt.Sprintf("Criterion %s in %q carries neither inputs nor expected_output, so nothing states what it asserts",
+					ac.ID, node.Spec.ID),
+				SpecID: node.Spec.ID,
+			})
+		}
+	}
+	return diagnostics
 }
 
 // Tier-based severity for orphan constraints.
@@ -144,6 +190,12 @@ func CheckSpecs(graph *resolver.SpecGraph, opts *CheckOptions) *CheckResult {
 	sort.Strings(specIDs)
 	for _, id := range specIDs {
 		diagnostics = append(diagnostics, checkDuplicateACIDs(&graph.Nodes[id].Spec)...)
+	}
+
+	// C-16 / C-17: opt-in, and off unless asked for. Reuses the sorted id list
+	// above for the same reason it exists.
+	if opts.Concrete {
+		diagnostics = append(diagnostics, checkConcreteness(graph, specIDs)...)
 	}
 
 	// C-07: strict mode, upgrade warnings and info to errors.

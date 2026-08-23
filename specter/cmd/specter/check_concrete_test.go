@@ -57,8 +57,10 @@ func TestCheckConcrete_SeverityFollowsTier(t *testing.T) {
 		want     string
 		wantFail bool
 	}{
+		// The rendered label, not the severity name: the reporter prints
+		// "warn" for a warning.
 		{1, "error", true},
-		{2, "warning", false},
+		{2, "warn", false},
 		{3, "info", false},
 	}
 	for _, c := range cases {

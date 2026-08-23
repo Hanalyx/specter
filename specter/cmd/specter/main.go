@@ -682,6 +682,7 @@ func checkCmd() *cobra.Command {
 	var tierOverride int
 	var strict bool
 	var testAnnotations bool
+	var concrete bool
 	cmd := &cobra.Command{
 		Use:   "check",
 		Short: "Run type-checking rules across the spec graph",
@@ -717,6 +718,10 @@ func checkCmd() *cobra.Command {
 			opts := &checker.CheckOptions{
 				Strict:      strict || m.Settings.Strict,
 				WarnOnDraft: m.Settings.WarnOnDraft,
+				// C-17: opt-in, and deliberately not derived from --strict or
+				// from a manifest key. Both fields the rule reads are optional
+				// in the schema, so a criterion without them is valid.
+				Concrete: concrete,
 			}
 			if tierOverride > 0 {
 				opts.TierOverride = tierOverride
@@ -875,6 +880,8 @@ func checkCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
 	cmd.Flags().IntVar(&tierOverride, "tier", 0, "Override tier enforcement level")
 	cmd.Flags().BoolVar(&strict, "strict", false, "Treat warnings as errors (also set via settings.strict in specter.yaml)")
+	cmd.Flags().BoolVar(&concrete, "concrete", false,
+		"Report acceptance criteria carrying neither inputs nor expected_output (error at Tier 1, warning at Tier 2, info at Tier 3)")
 	cmd.Flags().BoolVarP(&testAnnotations, "test", "t", false, "Cross-reference test-file @spec/@ac annotations against parsed specs")
 	return cmd
 }

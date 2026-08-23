@@ -169,7 +169,7 @@ Run structural type-checking rules across the spec dependency graph. Detects sem
 **Synopsis:**
 
 ```
-specter check [--json] [--tier <n>] [--strict] [--test]
+specter check [--json] [--tier <n>] [--strict] [--test] [--concrete]
 ```
 
 **Options:**
@@ -180,13 +180,15 @@ specter check [--json] [--tier <n>] [--strict] [--test]
 | `--tier <n>` | Override the tier enforcement level for all specs (1, 2, or 3). |
 | `--strict` | Treat warnings as errors. Also configurable via `settings.strict` in `specter.yaml`. |
 | `--test`, `-t` | Cross-reference test-file `@spec` / `@ac` annotations against parsed specs. |
+| `--concrete` | Report acceptance criteria carrying neither `inputs` nor `expected_output`. Opt-in: both fields are optional in the schema, so a criterion without them is valid and the rule does not run unless asked. `--strict` does not enable it. |
 
 **Diagnostics:**
 
 | Diagnostic | Severity by tier | Description |
 |------------|-----------------|-------------|
 | `orphan_constraint` | T1=error, T2=warning, T3=info | A constraint is not referenced by any acceptance criterion. Individual constraints may override severity via `constraint.enforcement`. |
-| `structural_conflict` | error (override via `constraint.enforcement`) | An upstream constraint requires something that a downstream AC handles as absent. |
+| `structural_conflict` | info, always | An upstream constraint requires something that a downstream AC handles as absent. **Advisory since v0.15.** It is a lexical heuristic that cannot separate a contradiction from a criterion testing the constraint being enforced, so it never fails a build, `--strict` does not raise it, and `constraint.enforcement` does not override it. |
+| `vague_criterion` | T1=error, T2=warning, T3=info | An acceptance criterion carries neither `inputs` nor `expected_output`, so nothing states what it asserts. Emitted only under `--concrete`. |
 | `tier_conflict` | warning | A higher-tier spec depends on a lower-tier spec (e.g., Tier 1 depends on Tier 3). |
 | `unknown_spec_ref` | error (under `--test`) | A test annotates `@spec <id>` but no spec with that ID was parsed. Emitted only under `--test`. |
 | `unknown_ac_ref` | error (under `--test`) | A test annotates `@ac AC-NN` but the spec has no AC with that ID. Emitted only under `--test`. |
