@@ -39,13 +39,29 @@ type SyncResult struct {
 	// ApprovalGateViolations to exit code 3, matching `coverage`.
 	ZeroToleranceNonPassed int `json:"zero_tolerance_non_passed,omitempty"`
 	ApprovalGateViolations int `json:"approval_gate_violations,omitempty"`
+
+	// spec-sync C-11: rule 1 of the SSRB-104 annotation model, mirrored from
+	// spec-coverage C-38 the same way the two fields above mirror C-25/C-26.
+	// The CLI maps a non-zero AnnotationRuleViolations to exit code 2 when
+	// AnnotationPermissive is false, matching `coverage`.
+	//
+	// bugs/SP-SP-058: 1D-b wired this decision into the coverage command
+	// alone, so `sync` returned 1 where `coverage` returned 2 for the same
+	// workspace, and named a different cause.
+	AnnotationRuleViolations int  `json:"annotation_rule_violations,omitempty"`
+	AnnotationPermissive     bool `json:"annotation_permissive,omitempty"`
 }
 
 // SyncInput provides spec and test file contents.
 type SyncInput struct {
-	SpecFiles            []FileContent // [filepath, content]
-	TestFiles            []FileContent
-	Thresholds           map[int]int           // optional coverage thresholds by tier; nil uses defaults
+	SpecFiles  []FileContent // [filepath, content]
+	TestFiles  []FileContent
+	Thresholds map[int]int // optional coverage thresholds by tier; nil uses defaults
+	// AnnotationDeclared reports whether the manifest declares a
+	// settings.annotation block, and AnnotationPermissive its value. Passed
+	// in rather than read here, because internal packages take no I/O.
+	AnnotationDeclared   bool
+	AnnotationPermissive bool
 	CheckOpts            *checker.CheckOptions // optional check options (strict, warn_on_draft)
 	OnlyPhase            string                // C-05: if set, run prerequisites without halting then run this phase
 	Results              *coverage.ResultsFile // optional: pass-rate-aware coverage for Tier 1
@@ -271,6 +287,24 @@ func RunSync(input SyncInput) *SyncResult {
 	// even when the demoted coverage still clears the tier threshold
 	// (the pre-1.4.0 false-green: one passing + one failing AC on a
 	// Tier 3 spec passed at 50%).
+	// spec-sync C-11 / spec-coverage C-38: rule 1 runs before the tier
+	// arithmetic and before the zero-tolerance gates, in the same order
+	// `coverage` uses, because the threshold does not excuse a missing test.
+	if input.AnnotationDeclared {
+		if total := coverage.AnnotationRuleVerdict(coverageReport); total > 0 {
+			result.AnnotationRuleViolations = total
+			result.AnnotationPermissive = input.AnnotationPermissive
+			if !input.AnnotationPermissive {
+				result.Phases = append(result.Phases, PhaseResult{
+					Phase: "coverage", Passed: false,
+					Message: coverage.AnnotationRuleMessage(total, false),
+				})
+				result.StoppedAt = "coverage"
+				return result
+			}
+		}
+	}
+
 	if effectiveStrictness == "zero-tolerance" {
 		if nonPassed := coverage.CountNonPassed(input.Results); nonPassed > 0 {
 			result.ZeroToleranceNonPassed = nonPassed

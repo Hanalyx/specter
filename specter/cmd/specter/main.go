@@ -1271,15 +1271,9 @@ func coverageCmd() *cobra.Command {
 			// does not excuse a criterion with no test. permissive decides
 			// severity and nothing else, per SSRB-104 section 7.4.
 			if m.Settings.Annotation != nil {
-				total := 0
-				for _, e := range report.Entries {
-					total += len(e.NoTestACs)
-				}
-				if total > 0 {
-					if m.Settings.Annotation.Permissive {
-						fmt.Fprintf(os.Stderr, "warn: %d acceptance criterion(s) have no test. settings.annotation.permissive is true, so this does not fail the run\n", total)
-					} else {
-						fmt.Fprintf(os.Stderr, "error: %d acceptance criterion(s) have no test. The tier threshold does not excuse a missing test; set settings.annotation.permissive: true to warn instead\n", total)
+				if total := coverage.AnnotationRuleVerdict(report); total > 0 {
+					fmt.Fprintln(os.Stderr, coverage.AnnotationRuleMessage(total, m.Settings.Annotation.Permissive))
+					if !m.Settings.Annotation.Permissive {
 						os.Exit(2)
 					}
 				}
@@ -1418,7 +1412,9 @@ func syncCmd() *cobra.Command {
 				CheckOpts:            checkOpts,
 				OnlyPhase:            onlyPhase,
 				Results:              results,
-				Strictness:           effectiveStrictness,         // spec-sync C-06: route coverage phase per strictness
+				Strictness:           effectiveStrictness,          // spec-sync C-06: route coverage phase per strictness
+				AnnotationDeclared:   m.Settings.Annotation != nil, // spec-sync C-11
+				AnnotationPermissive: m.Settings.Annotation != nil && m.Settings.Annotation.Permissive,
 				CheckTestAnnotations: strict || m.Settings.Strict, // spec-check C-09/AC-12: sync --strict (or settings.strict) routes through
 			})
 
@@ -1428,6 +1424,12 @@ func syncCmd() *cobra.Command {
 			// Called after output is emitted so machine consumers see the
 			// structured state before the exit (spec-coverage C-29 pattern).
 			zeroToleranceExit := func() {
+				// spec-sync C-11: rule 1 maps to exit 2, matching `coverage`.
+				// Checked first because sync evaluates it first.
+				if result.AnnotationRuleViolations > 0 && !result.AnnotationPermissive {
+					fmt.Fprintln(os.Stderr, coverage.AnnotationRuleMessage(result.AnnotationRuleViolations, false))
+					os.Exit(2)
+				}
 				if result.ZeroToleranceNonPassed > 0 {
 					fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d annotated AC(s) did not pass\n", result.ZeroToleranceNonPassed)
 					os.Exit(2)

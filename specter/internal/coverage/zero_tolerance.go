@@ -8,7 +8,41 @@
 // @spec spec-coverage
 package coverage
 
-import "github.com/Hanalyx/specter/internal/schema"
+import (
+	"fmt"
+
+	"github.com/Hanalyx/specter/internal/schema"
+)
+
+// AnnotationRuleVerdict reports how many acceptance criteria across a report
+// have no test at all, which is rule 1 of the SSRB-104 model.
+//
+// It lives here rather than in the CLI so every caller reaches the same answer.
+// bugs/SP-SP-058 is what happens otherwise: roadmap item 1D-b wired this
+// decision into the coverage command alone, so sync returned a different exit
+// code and named a different cause for the same workspace. That is the eighth
+// instance of a documented pattern in this repository, and roadmap item 1C
+// exists to stop the ninth.
+func AnnotationRuleVerdict(report *CoverageReport) int {
+	if report == nil {
+		return 0
+	}
+	total := 0
+	for _, e := range report.Entries {
+		total += len(e.NoTestACs)
+	}
+	return total
+}
+
+// AnnotationRuleMessage returns the stderr line for a rule-1 verdict, so the
+// wording cannot drift between callers either. spec-sync C-11 binds the cause
+// line and not only the integer.
+func AnnotationRuleMessage(total int, permissive bool) string {
+	if permissive {
+		return fmt.Sprintf("warn: %d acceptance criterion(s) have no test. settings.annotation.permissive is true, so this does not fail the run", total)
+	}
+	return fmt.Sprintf("error: %d acceptance criterion(s) have no test. The tier threshold does not excuse a missing test; set settings.annotation.permissive: true to warn instead", total)
+}
 
 // CountNonPassed returns the number of distinct (spec_id, ac_id) pairs whose
 // resolved status is not "passed". Under zero-tolerance, a non-zero count
