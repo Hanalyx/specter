@@ -1,6 +1,6 @@
 spec:
   id: spec-diff
-  version: "2.3.0"
+  version: "2.4.0"
   status: draft
   tier: 2
   context:
@@ -90,7 +90,7 @@ spec:
       enforcement: error
 
     - id: C-13
-      description: "The acceptance-criterion comparator MUST compare the fields that make a criterion concrete, not only its id and description. Those fields are `inputs`, `expected_output`, `error_cases`, `references_constraints` and `approval_gate`. A change to any of them MUST be reported and MUST classify the overall change as breaking, because each changes the contract the criterion's tests were written against. Rationale: comparing id and description alone is what C-03 and C-06 asked for, so the blindness was spec-compliant rather than a bug, which is why this is an amendment and not a defect fix. Measured 2026-08-24 on a two-criterion fixture: inverting `expected_output` from [1, 2, 3] to [3, 2, 1], flipping `approval_gate` from true to false, downgrading `priority` from high to low, rewriting `inputs`, and rewriting `error_cases` each produced `no changes` and exit 0. Inverting an expected output is the goalpost move a freeze comparator exists to catch, and flipping `approval_gate` deletes a human approval requirement."
+      description: "The acceptance-criterion comparator MUST compare the fields that make a criterion concrete, not only its id and description. Those fields are `inputs`, `expected_output`, `error_cases`, `references_constraints`, `approval_gate` and `priority`. A change to any of them MUST be reported and MUST classify the overall change as breaking, because each changes the contract the criterion's tests were written against. Rationale: comparing id and description alone is what C-03 and C-06 asked for, so the blindness was spec-compliant rather than a bug, which is why this is an amendment and not a defect fix. Measured 2026-08-24 on a two-criterion fixture: inverting `expected_output` from [1, 2, 3] to [3, 2, 1], flipping `approval_gate` from true to false, downgrading `priority` from high to low, rewriting `inputs`, and rewriting `error_cases` each produced `no changes` and exit 0. Inverting an expected output is the goalpost move a freeze comparator exists to catch, and flipping `approval_gate` deletes a human approval requirement. **`priority` is included, and any change to it counts, not only an upgrade.** C-06 has named a priority upgrade as breaking since 2.0.0 and says nothing about a downgrade. A downgrade is the same kind of move in the other direction: it says this criterion matters less than it did, which weakens the contract without touching a word of the criterion. A comparator that catches the upgrade and not the downgrade catches the honest edit and misses the convenient one."
       type: technical
       enforcement: error
 
@@ -218,12 +218,13 @@ spec:
       priority: high
 
     - id: AC-18
-      description: "A priority upgrade classifies breaking, which C-06 has required since 2.0.0 and no code has ever implemented. `internal/diff` contains no reference to priority at all."
+      description: "A priority change classifies breaking in either direction. An upgrade is what C-06 has required since 2.0.0 with no implementation; `internal/diff` contains no reference to priority at all. A downgrade is breaking under C-13, which is broader than C-06 on purpose."
       inputs:
-        before: "AC-01 priority low"
-        after: "AC-01 priority high"
+        upgrade: "AC-01 priority low to high"
+        downgrade: "AC-01 priority high to low"
       expected_output:
-        classification: "breaking"
+        upgrade_classification: "breaking"
+        downgrade_classification: "breaking"
       references_constraints: ["C-06", "C-13"]
       priority: high
 
@@ -240,6 +241,11 @@ spec:
 
 
   changelog:
+    - version: "2.4.0"
+      date: "2026-08-24"
+      author: "specter-team"
+      type: minor
+      description: "C-13 gains `priority`, and any change to it is breaking rather than only an upgrade. C-06 has named the upgrade since 2.0.0 and is silent on the downgrade, which is the same move in the other direction: it says a criterion matters less without touching a word of it. Caught while implementing 2B2, when the fingerprint made a downgrade breaking and neither constraint said it should."
     - version: "2.3.0"
       date: "2026-08-24"
       author: "specter-team"

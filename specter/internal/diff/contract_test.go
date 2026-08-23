@@ -104,21 +104,32 @@ func TestDiff_EveryContractFieldIsBreaking(t *testing.T) {
 }
 
 // @ac AC-18
-// C-06 has required a priority upgrade to classify breaking since 2.0.0, and
-// internal/diff contains no reference to priority at all.
-func TestDiff_PriorityUpgradeIsBreaking(t *testing.T) {
-	t.Run("spec-diff/AC-18 priority upgrade is breaking", func(t *testing.T) {
-		before := baseSpec()
-		before.AcceptanceCriteria[0].Priority = "low"
-		after := baseSpec()
-		after.AcceptanceCriteria[0].Priority = "high"
+// A priority change is breaking in either direction.
+//
+// The upgrade is what C-06 has required since 2.0.0 with no implementation.
+// The downgrade is C-13 being deliberately broader: it says a criterion matters
+// less than it did, which weakens the contract without touching a word of the
+// criterion. A comparator that catches the upgrade and not the downgrade
+// catches the honest edit and misses the convenient one.
+func TestDiff_PriorityChangeIsBreakingBothWays(t *testing.T) {
+	cases := []struct{ name, from, to string }{
+		{"upgrade", "low", "high"},
+		{"downgrade", "high", "low"},
+	}
+	for _, c := range cases {
+		t.Run("spec-diff/AC-18 priority "+c.name+" is breaking", func(t *testing.T) {
+			before := baseSpec()
+			before.AcceptanceCriteria[0].Priority = c.from
+			after := baseSpec()
+			after.AcceptanceCriteria[0].Priority = c.to
 
-		d := DiffSpecs(before, after)
-		if d.Class != ChangeBreaking {
-			t.Errorf("a priority upgrade classified %q, want %q; C-06 has required this since 2.0.0",
-				d.Class, ChangeBreaking)
-		}
-	})
+			d := DiffSpecs(before, after)
+			if d.Class != ChangeBreaking {
+				t.Errorf("priority %s to %s classified %q, want %q",
+					c.from, c.to, d.Class, ChangeBreaking)
+			}
+		})
+	}
 }
 
 // @ac AC-16
