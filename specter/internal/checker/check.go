@@ -271,7 +271,8 @@ func checkOrphanConstraints(spec *schema.SpecAST) []CheckDiagnostic {
 func checkStructuralConflicts(graph *resolver.SpecGraph) []CheckDiagnostic {
 	var diagnostics []CheckDiagnostic
 
-	absenceKeywords := []string{"absent", "missing", "not provided", "not present", "is empty", "is null", "without"}
+	// C-21: the absence vocabulary moved into the attachment scanner, which
+	// needs it split into predicates and heads rather than as one flat list.
 	// C-19: only ` MUST` is here, because it is the only keyword extraction can
 	// turn into a subject. `required`, `MUST be present`, `MUST exist` and
 	// `mandatory` used to sit in this list, set the required flag, and then
@@ -314,35 +315,43 @@ func checkStructuralConflicts(graph *resolver.SpecGraph) []CheckDiagnostic {
 			}
 
 			for _, ac := range downstream.Spec.AcceptanceCriteria {
-				acDesc := strings.ToLower(ac.Description)
-				if !strings.Contains(acDesc, strings.ToLower(subject)) {
-					continue
-				}
-				for _, kw := range absenceKeywords {
-					if strings.Contains(acDesc, strings.ToLower(kw)) {
-						// C-15(a): always info. The upstream constraint's
-						// `enforcement` field says how strictly the constraint
-						// binds the system, not how much to trust a lexical
-						// match on a sentence. Reading it here let a Tier 1
-						// constraint make a heuristic fail a build.
-						severity := "info"
-						diagnostics = append(diagnostics, CheckDiagnostic{
-							Kind:     "structural_conflict",
-							Severity: severity,
-							Message:  fmt.Sprintf("Structural conflict: %q constraint %s requires %q but %q %s handles it as absent", upstream.Spec.ID, constraint.ID, subject, downstream.Spec.ID, ac.ID),
-							SpecID:   downstream.Spec.ID,
-							// C-18: qualified with the spec that owns it. The
-							// header renders as "<SpecID> <ConstraintID>", and
-							// SpecID is the downstream spec, so a bare upstream
-							// id here reads as one of the downstream spec's own
-							// constraints. A reader looking it up finds nothing,
-							// or finds a different constraint sharing the id.
-							ConstraintID:   upstream.Spec.ID + "/" + constraint.ID,
-							ConstraintType: constraint.Type,
-							Details:        fmt.Sprintf("Upstream: %s | Downstream AC: %s", desc, ac.Description),
-						})
-						break
-					}
+				// C-21: attachment, not co-occurrence. The absence expression
+				// has to predicate the subject.
+				//
+				// There is no substring pre-filter above this. There used to
+				// be, asking whether the lowercased subject appeared anywhere
+				// in the criterion, and it is the co-occurrence test C-21
+				// replaces. Keeping it would also have re-broken the article
+				// case: a subject of "The audit record" is not a substring of
+				// "without an audit record", so the criterion never reached
+				// the scanner that strips the article.
+				if AbsenceAttachesToSubject(subject, ac.Description) {
+					// C-15(a): always info. The upstream constraint's
+					// `enforcement` field says how strictly the constraint
+					// binds the system, not how much to trust a lexical
+					// match on a sentence. Reading it here let a Tier 1
+					// constraint make a heuristic fail a build.
+					severity := "info"
+					diagnostics = append(diagnostics, CheckDiagnostic{
+						Kind:     "structural_conflict",
+						Severity: severity,
+						Message:  fmt.Sprintf("Structural conflict: %q constraint %s requires %q but %q %s handles it as absent", upstream.Spec.ID, constraint.ID, subject, downstream.Spec.ID, ac.ID),
+						SpecID:   downstream.Spec.ID,
+						// C-18: qualified with the spec that owns it. The
+						// header renders as "<SpecID> <ConstraintID>", and
+						// SpecID is the downstream spec, so a bare upstream
+						// id here reads as one of the downstream spec's own
+						// constraints. A reader looking it up finds nothing,
+						// or finds a different constraint sharing the id.
+						ConstraintID:   upstream.Spec.ID + "/" + constraint.ID,
+						ConstraintType: constraint.Type,
+						Details:        fmt.Sprintf("Upstream: %s | Downstream AC: %s", desc, ac.Description),
+					})
+					// No break. Every criterion that conflicts with this
+					// constraint is reported. The old code broke out of the
+					// keyword loop here, which left the criterion loop running;
+					// a bare break in this position would instead stop after
+					// the first criterion and silently drop the rest.
 				}
 			}
 		}

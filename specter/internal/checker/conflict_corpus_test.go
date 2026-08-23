@@ -77,8 +77,11 @@ var nearMisses = []conflictCase{
 	// subject, so nothing attaches.
 	{"email MUST be required", "The phone number is absent from the email template", false, false,
 		"correctly silent: the absence predicates a different noun"},
-	{"The refresh token MUST be present on every request", "Audit log records that the refresh token is present", false, false,
-		"correctly silent: no absence word"},
+	// Fires under C-21 where it did not under co-occurrence, because `present`
+	// is in the predicate list so that "is not present" matches. A bare "is
+	// present" matches too. One of the two false positives C-21 introduces.
+	{"The refresh token MUST be present on every request", "Audit log records that the refresh token is present", false, true,
+		"FALSE POSITIVE: 'is present' matches the predicate used for 'is not present'"},
 	// Silent under C-21: the backward shape needs the subject immediately
 	// after the absence word, and "regard to" intervenes.
 	{"api_key MUST be supplied by the caller", "Rate limit applies without regard to api_key", false, false,
@@ -141,14 +144,16 @@ func TestConflictCorpus_MatchesRecordedBehavior(t *testing.T) {
 }
 
 // @ac AC-03
+// @ac AC-44
 // The accuracy of the shipped detector, stated as numbers rather than left to
-// be inferred from the table above.
+// be inferred from the table above. AC-44 requires the three corpora to be
+// measured together and the numbers recorded, which is what this asserts.
 //
 // These are not aspirational. They are what ships, and they are the argument
 // for C-15 making the diagnostic advisory: a check wrong on six of seven
 // non-conflicts cannot be a gate.
 func TestConflictCorpus_AccuracyIsRecorded(t *testing.T) {
-	t.Run("spec-check/AC-03 accuracy is recorded", func(t *testing.T) {
+	t.Run("spec-check/AC-44 accuracy is measured on three corpora and recorded", func(t *testing.T) {
 		var detected, missed int
 		for _, c := range trueConflicts {
 			if detectorFires(c) {
@@ -179,6 +184,12 @@ func TestConflictCorpus_AccuracyIsRecorded(t *testing.T) {
 			t.Errorf("false positives: %d of %d non-conflicts fired; recorded %d",
 				falsePositives, len(nearMisses)+len(ciProximitySurvivors), wantFalsePositives)
 		}
+
+		// The third corpus, this repository's own specs, is asserted by
+		// `make dogfood` rather than here: it runs `specter check` over the
+		// real corpus on every invocation, so a fire would appear in its
+		// output. Loading specs/ from a unit test would couple the package to
+		// the repository layout for no extra signal.
 	})
 }
 
@@ -234,4 +245,37 @@ func TestConflictCorpus_BothAttachmentShapesDetected(t *testing.T) {
 			t.Error("the leading article on the extracted subject was not stripped")
 		}
 	})
+}
+
+// @ac AC-43
+// The forward window is pinned from both directions.
+//
+// It was unguarded when first written: setting maxInterveningWords to 0 or to
+// 99 changed nothing any test could see, which makes the constant arbitrary.
+// A mutation run only revealed that after `-count=1` defeated Go's test cache,
+// which had been reporting the unmutated result.
+func TestConflictCorpus_ForwardWindowIsBounded(t *testing.T) {
+	cases := []struct {
+		name      string
+		criterion string
+		want      bool
+	}{
+		{"copula adjacent", "Process checkout when email is absent", true},
+		{"one intervening word", "Process checkout when email here is absent", true},
+		{"three intervening words", "Process checkout when email in the payload is absent", true},
+		// Five words out, the copula belongs to something else. Without a
+		// bound, any absence predicate later in the sentence attaches.
+		{"five intervening words", "Process checkout when email in the request payload body is absent", false},
+	}
+	for _, c := range cases {
+		t.Run("spec-check/AC-43 forward window: "+c.name, func(t *testing.T) {
+			got := detectorFires(conflictCase{
+				constraint: "email MUST be required",
+				criterion:  c.criterion,
+			})
+			if got != c.want {
+				t.Errorf("%q fired=%v, want %v", c.criterion, got, c.want)
+			}
+		})
+	}
 }
