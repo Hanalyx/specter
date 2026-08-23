@@ -1,6 +1,6 @@
 spec:
   id: spec-sync
-  version: "1.5.0"
+  version: "1.6.0"
   status: approved
   tier: 2
 
@@ -88,6 +88,16 @@ spec:
       type: technical
       enforcement: error
 
+
+    - id: C-11
+      description: "Exit codes MUST propagate from `coverage` to `sync` identically. For any workspace, the code `specter sync` returns for a coverage-contract failure MUST equal the code `specter coverage` returns on the same workspace, and the stderr line naming the cause MUST name the same cause. `sync` is the CI entry point, so a code that fires on `coverage` and not on `sync` means CI is told a different story from the developer who ran `coverage` locally. Rationale, per roadmap item 1A3 and `docs/EXIT_CODES.md`: a gate is fully wired only when it appears in the check, the phase result, the exit mapping, AND its ordering relative to gates that already exist. A gate wired into `coverage` alone has the first three and fails here, and the build still fails, so nothing in a normal review notices. It fails with the wrong number and the wrong sentence."
+      type: technical
+      enforcement: error
+
+    - id: C-12
+      description: "Every exit code the binary can emit MUST appear in `docs/EXIT_CODES.md`, and no code may be emitted from a band the document does not allocate to that purpose. This is a registry-parity rule, not a behavior rule: it fails when the code and the document disagree, in either direction. Rationale, per roadmap item 1A: three design tracks began allocating exit codes independently, which is the mechanism that double-books them. A registry nobody checks is a document, not an authority."
+      type: technical
+      enforcement: error
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -239,7 +249,34 @@ spec:
       references_constraints: ["C-10"]
       priority: high
 
+
+    - id: AC-15
+      description: "A coverage-contract exit code fires identically on `sync` and on `coverage`. The assertion runs both commands on one workspace and compares the integer AND the stderr line naming the cause, for each condition that produces a code above 1. Conditions covered: under `settings.strictness: zero-tolerance`, an annotated criterion whose result is not `passed`, which is code 2; and under a declared `settings.annotation` block with `permissive: false`, a criterion with no test at all, which is also code 2 with a different cause. Comparing the integer alone is not sufficient and the criterion says so: two different causes share code 2, so an implementation that returns the right number for the wrong reason passes an integer check. This is what `bugs/SP-SP-058` records: the annotation rule returned 2 on `coverage` and 1 on `sync` for the same workspace."
+      inputs:
+        workspace: "one spec, one annotated criterion with a failing result, one criterion with no test"
+        conditions: ["strictness: zero-tolerance", "annotation block with permissive: false"]
+      expected_output:
+        sync_code_equals_coverage_code: true
+        sync_cause_line_equals_coverage_cause_line: true
+      references_constraints: ["C-11"]
+      priority: critical
+
+    - id: AC-16
+      description: "Every exit code the binary can emit is registered. The assertion scans `cmd/specter/` for literal `os.Exit(N)` calls, collects the distinct N, and asserts each appears as a row in `docs/EXIT_CODES.md`. It also asserts the converse for the codes the document marks Stable: each must be reachable from some `os.Exit` in the tree. The scan's scope is stated here because it is a static scan: it reads `cmd/specter/*.go` excluding `_test.go` files, which is where every exit in this binary is made. A code emitted from `internal/` would not be found, and that is a known limit rather than an oversight; if one is ever added there, this criterion must widen with it."
+      inputs:
+        scan_scope: "cmd/specter/*.go excluding _test.go, literal os.Exit(N)"
+        registry: "docs/EXIT_CODES.md rows"
+      expected_output:
+        every_emitted_code_is_registered: true
+        every_stable_registered_code_is_emitted: true
+      references_constraints: ["C-12"]
+      priority: high
   changelog:
+    - version: "1.6.0"
+      date: "2026-08-22"
+      author: "specter-team"
+      type: minor
+      description: "Roadmap item 1A4, the exit-code parity test. C-11 states the propagation contract 1A3 recorded: a coverage-contract code fires identically on sync and on coverage, cause line included. C-12 states the registry-parity rule: every code the binary emits appears in docs/EXIT_CODES.md, and every Stable row is reachable. AC-15 compares the cause line and not only the integer, because two conditions now share code 2 and an integer check would pass an implementation returning the right number for the wrong reason. AC-16 states its scan scope in its own text, since it is a static scan and its blind spot is a property of that scope. AC-15 is red on arrival: bugs/SP-SP-058 records that the annotation rule returns 2 on coverage and 1 on sync for the same workspace, which is the eighth instance of the un-swept fix pattern and was found by running this criterion before writing it."
     - version: "1.5.0"
       date: "2026-06-11"
       author: "specter-team"
