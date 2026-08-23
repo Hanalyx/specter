@@ -1,6 +1,6 @@
 spec:
   id: spec-reverse
-  version: "1.4.0"
+  version: "1.5.0"
   status: draft
   tier: 2
 
@@ -127,6 +127,11 @@ spec:
 
     - id: C-15
       description: "Every constraint `specter reverse` writes MUST omit the `enforcement` key, so the tier default applies. This covers both the constraints extracted from source and the placeholder constraint synthesized when extraction found none (the schema requires `minItems: 1`). Rationale: `enforcement` overrides the tier-based severity `spec-check` assigns to a diagnostic about that constraint, and the schema documents it as opt-in (\"Omit to use the tier default\"). Generated specs are `status: draft` and `tier: 3`, both of which say the spec is not yet load-bearing; stamping `enforcement: error` contradicts that and makes every unreferenced generated constraint fail `check` at error severity. A constraint that no acceptance criterion references is an expected state of a draft, not a build failure. An author who later decides a specific constraint is always-error sets the key themselves."
+      type: technical
+      enforcement: error
+
+    - id: C-16
+      description: "Spec ids MUST be unique within a single `specter reverse` run. When two groups produce the same id, every member of the colliding set is disambiguated by prepending parent directory segments of its source path, adding one segment at a time until the set is distinct, and skipping any segment the id already carries so a generic-filename id is not doubled. A path with no segments left takes a numeric suffix instead. Disambiguation MUST be deterministic: the same set of files produces the same ids regardless of the order they were supplied in. Each id that changes MUST produce an `id_collision` diagnostic at warning severity naming the original id and the files involved, because the operator's id no longer matches the obvious basename and nothing else would tell them."
       type: technical
       enforcement: error
 
@@ -346,12 +351,50 @@ spec:
       references_constraints: ["C-15"]
       priority: high
 
+    - id: AC-21
+      description: "Two source files with the same basename in different directories produce two distinct spec ids, and the resulting set of specs contains no duplicate id."
+      inputs:
+        source_files: ["internal/coverage/coverage.go", "internal/diff/coverage.go"]
+        both_yield_basename: "coverage"
+      expected_output:
+        distinct_ids: true
+        duplicate_ids_in_result: 0
+        ids_derive_from_path_segments: true
+      references_constraints: ["C-16"]
+      priority: high
+
+    - id: AC-22
+      description: "Disambiguation is deterministic. The same set of files supplied in a different order produces the same id for the same file, so a second run over an unchanged tree does not rename anything."
+      inputs:
+        run_a_order: ["internal/coverage/coverage.go", "internal/diff/coverage.go"]
+        run_b_order: ["internal/diff/coverage.go", "internal/coverage/coverage.go"]
+      expected_output:
+        id_per_source_file_is_identical_across_runs: true
+      references_constraints: ["C-16"]
+      priority: high
+
+    - id: AC-23
+      description: "Every id changed by disambiguation produces an `id_collision` diagnostic at warning severity, naming the id that collided. Without it the operator has no way to learn that the generated id is not the basename."
+      inputs:
+        source_files: ["internal/coverage/coverage.go", "internal/diff/coverage.go"]
+      expected_output:
+        diagnostic_kind: "id_collision"
+        diagnostic_severity: "warning"
+        diagnostic_names_original_id: "coverage"
+      references_constraints: ["C-16"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
       relationship: requires
 
   changelog:
+    - version: "1.5.0"
+      date: "2026-08-23"
+      author: "specter-team"
+      type: minor
+      description: "Add C-16/AC-21..23: spec ids are unique within a run, disambiguated deterministically by path, and each rename is reported. Closes SP-060. Ids came from the file basename, with the parent directory prepended only for basenames on a hardcoded allowlist of generic names. Collisions come from domain vocabulary the allowlist cannot anticipate. Measured on the 12-repo real-world corpus: 10 of 12 repositories produced a workspace `resolve` rejected, 422 colliding ids in one of them."
     - version: "1.4.0"
       date: "2026-08-23"
       author: "specter-team"
