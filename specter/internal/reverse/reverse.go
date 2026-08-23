@@ -28,6 +28,11 @@ type Adapter interface {
 	Name() string
 	Detect(path, content string) bool
 	IsTestFile(path string) bool
+	// SourceKeyForTest returns the path of the source file a test file covers,
+	// or "" when the adapter cannot name it. C-17: the caller folds the test
+	// into that source's group, but only when the named source is actually
+	// present, so a wrong guess degrades to the test keeping its own group.
+	SourceKeyForTest(path string) string
 	ExtractRoutes(path, content string) []ExtractedRoute
 	ExtractConstraints(path, content string) []ExtractedConstraint
 	ExtractAssertions(path, content string) []ExtractedAssertion
@@ -174,7 +179,7 @@ func Reverse(input ReverseInput, adapters []Adapter) *ReverseResult {
 	result.Summary.AssertionsFound = totalAssertions
 
 	// Group files
-	groups := groupFiles(input.GroupBy, sourceFiles, testFiles)
+	groups := groupFiles(adapter, input.GroupBy, sourceFiles, testFiles)
 
 	// Infer system name
 	systemName := adapter.InferSystemName(input.Files)
@@ -340,12 +345,20 @@ type fileGroup struct {
 	TestFiles   []SourceFile
 }
 
-func groupFiles(groupBy string, sourceFiles, testFiles []SourceFile) map[string]*fileGroup {
+func groupFiles(adapter Adapter, groupBy string, sourceFiles, testFiles []SourceFile) map[string]*fileGroup {
 	groups := make(map[string]*fileGroup)
 
 	keyFn := fileGroupKey
 	if groupBy == "directory" {
 		keyFn = dirGroupKey
+	}
+
+	// C-17: the set of source paths actually supplied. A test folds onto its
+	// source only if that source is here. Under directory grouping the two
+	// already share a key, so the fold is a no-op there.
+	present := make(map[string]bool, len(sourceFiles))
+	for _, f := range sourceFiles {
+		present[f.Path] = true
 	}
 
 	for _, f := range sourceFiles {
@@ -357,6 +370,9 @@ func groupFiles(groupBy string, sourceFiles, testFiles []SourceFile) map[string]
 	}
 	for _, f := range testFiles {
 		key := keyFn(f.Path)
+		if src := adapter.SourceKeyForTest(f.Path); src != "" && present[src] {
+			key = keyFn(src)
+		}
 		if groups[key] == nil {
 			groups[key] = &fileGroup{}
 		}
