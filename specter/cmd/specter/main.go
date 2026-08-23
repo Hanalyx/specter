@@ -874,6 +874,49 @@ func checkCmd() *cobra.Command {
 	return cmd
 }
 
+// coverageExitGates runs the coverage exit gates in the order C-38(b)
+// requires, rule 1 before the tier arithmetic, and returns the error the
+// command should return. Codes other than 1 exit the process directly, which
+// is how they stay distinct for CI.
+//
+// There is one copy on purpose. The --json branch and the text path used to
+// carry a gate sequence each, and the JSON one was missing the annotation
+// rule: a workspace whose tier threshold was met exited 2 in text mode and 0
+// under --json, so a CI consumer reading JSON got a green build on a workspace
+// `coverage` fails (bugs/SP-SP-066). The JSON copy even carried a comment
+// saying it mirrored the text checks, which was true when it was written.
+func coverageExitGates(report *coverage.CoverageReport, specs []schema.SpecAST,
+	results *coverage.ResultsFile, m *manifest.Manifest, effectiveStrictness string) error {
+
+	// C-38(a) to (d): rule 1 is evaluated before the tier arithmetic, because
+	// the threshold does not excuse a criterion with no test. permissive
+	// decides severity and nothing else, per SSRB-104 section 7.4.
+	if m != nil && m.Settings.Annotation != nil {
+		if total := coverage.AnnotationRuleVerdict(report); total > 0 {
+			fmt.Fprintln(os.Stderr, coverage.AnnotationRuleMessage(total, m.Settings.Annotation.Permissive))
+			if !m.Settings.Annotation.Permissive {
+				os.Exit(2)
+			}
+		}
+	}
+
+	if effectiveStrictness == "zero-tolerance" {
+		if nonPassed := coverage.CountNonPassed(results); nonPassed > 0 {
+			fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness \u2014 %d annotated AC(s) did not pass\n", nonPassed)
+			os.Exit(2)
+		}
+		if gateViolations := coverage.CountApprovalGateViolations(specs); gateViolations > 0 {
+			fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness \u2014 %d AC(s) carry approval_gate=true with unset approval_date\n", gateViolations)
+			os.Exit(3)
+		}
+	}
+
+	if report.Summary.Failing > 0 {
+		return errSilent
+	}
+	return nil
+}
+
 func coverageCmd() *cobra.Command {
 	var jsonOutput bool
 	var testsGlob string
@@ -1137,24 +1180,9 @@ func coverageCmd() *cobra.Command {
 				if hasErrors {
 					return errSilent
 				}
-				// Mirror the text-mode exit checks. The os.Exit calls
-				// preserve their distinct exit codes (2 and 3) for
-				// downstream CI consumers that distinguish violation
-				// classes.
-				if effectiveStrictness == "zero-tolerance" {
-					if nonPassed := coverage.CountNonPassed(results); nonPassed > 0 {
-						fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d annotated AC(s) did not pass\n", nonPassed)
-						os.Exit(2)
-					}
-					if gateViolations := coverage.CountApprovalGateViolations(specs); gateViolations > 0 {
-						fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d AC(s) carry approval_gate=true with unset approval_date\n", gateViolations)
-						os.Exit(3)
-					}
-				}
-				if report.Summary.Failing > 0 {
-					return errSilent
-				}
-				return nil
+				// Same gates as the text path, because it is the same
+				// function. This branch used to carry its own copy.
+				return coverageExitGates(report, specs, results, m, effectiveStrictness)
 			}
 
 			if hasErrors {
@@ -1270,30 +1298,7 @@ func coverageCmd() *cobra.Command {
 			// is evaluated before the tier arithmetic, because the threshold
 			// does not excuse a criterion with no test. permissive decides
 			// severity and nothing else, per SSRB-104 section 7.4.
-			if m.Settings.Annotation != nil {
-				if total := coverage.AnnotationRuleVerdict(report); total > 0 {
-					fmt.Fprintln(os.Stderr, coverage.AnnotationRuleMessage(total, m.Settings.Annotation.Permissive))
-					if !m.Settings.Annotation.Permissive {
-						os.Exit(2)
-					}
-				}
-			}
-
-			if effectiveStrictness == "zero-tolerance" {
-				if nonPassed := coverage.CountNonPassed(results); nonPassed > 0 {
-					fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d annotated AC(s) did not pass\n", nonPassed)
-					os.Exit(2)
-				}
-				if gateViolations := coverage.CountApprovalGateViolations(specs); gateViolations > 0 {
-					fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d AC(s) carry approval_gate=true with unset approval_date\n", gateViolations)
-					os.Exit(3)
-				}
-			}
-
-			if report.Summary.Failing > 0 {
-				return errSilent
-			}
-			return nil
+			return coverageExitGates(report, specs, results, m, effectiveStrictness)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
