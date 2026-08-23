@@ -4,6 +4,7 @@
 package checker
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Hanalyx/specter/internal/resolver"
@@ -135,4 +136,68 @@ func TestAdvisoryDoesNotWeakenOtherChecks(t *testing.T) {
 			t.Errorf("structural conflict should still be reported at info alongside the failure; got %+v", found)
 		}
 	})
+}
+
+// @ac AC-39
+// The header must not pair the downstream spec with the upstream spec's
+// constraint id. A reader looking that id up in the named spec finds nothing.
+func TestStructuralConflictHeaderAttributesTheConstraint(t *testing.T) {
+	t.Run("spec-check/AC-39 header attributes the constraint to its owner", func(t *testing.T) {
+		result := CheckSpecs(conflictGraph(""), nil)
+		found := structuralConflicts(result)
+		if len(found) != 1 {
+			t.Fatalf("expected one structural_conflict, got %d", len(found))
+		}
+		d := found[0]
+		// The header renders as "<SpecID> <ConstraintID>". SpecID is the
+		// downstream spec, so a bare upstream constraint id beside it is the
+		// defect.
+		if d.SpecID == "guest" && d.ConstraintID == "C-01" {
+			t.Errorf("header pairs downstream spec %q with upstream constraint id %q as though "+
+				"they belonged together; the id must be qualified with its owner",
+				d.SpecID, d.ConstraintID)
+		}
+		if !strings.Contains(d.ConstraintID, "user-reg") {
+			t.Errorf("constraint id %q does not name its owning spec", d.ConstraintID)
+		}
+	})
+}
+
+// @ac AC-40
+// A constraint using `required` or `mandatory` produces nothing. The behavior
+// is unchanged; what changes is that the keyword is gone from the list rather
+// than matching and then being discarded for an empty subject.
+func TestStructuralConflictDeadKeywordsProduceNothing(t *testing.T) {
+	for _, text := range []string{
+		"The system required to log every request",
+		"Logging by the system is mandatory",
+		"The system is required",
+	} {
+		t.Run("spec-check/AC-40 dead keyword produces nothing", func(t *testing.T) {
+			g := conflictGraph("")
+			up := g.Nodes["user-reg"].Spec
+			up.Constraints = []schema.Constraint{{ID: "C-01", Description: text}}
+			g.Nodes["user-reg"].Spec = up
+
+			if found := structuralConflicts(CheckSpecs(g, nil)); len(found) != 0 {
+				t.Errorf("%q produced %d diagnostic(s), want 0", text, len(found))
+			}
+		})
+	}
+}
+
+// @ac AC-41
+// Every dependency edge is scanned, not only `requires`. A conflicts_with edge
+// is where a contradiction check has the strongest reason to look.
+func TestStructuralConflictScansEveryEdgeRelationship(t *testing.T) {
+	for _, rel := range []string{"requires", "extends", "conflicts_with"} {
+		t.Run("spec-check/AC-41 scans "+rel, func(t *testing.T) {
+			g := conflictGraph("")
+			g.Edges = []resolver.SpecEdge{{From: "guest", To: "user-reg", Relationship: rel}}
+
+			if found := structuralConflicts(CheckSpecs(g, nil)); len(found) != 1 {
+				t.Errorf("relationship %q produced %d diagnostic(s), want 1", rel, len(found))
+			}
+		})
+	}
 }
