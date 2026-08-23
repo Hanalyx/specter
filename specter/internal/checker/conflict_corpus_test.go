@@ -1,7 +1,7 @@
 // conflict_corpus_test.go -- roadmap 2A3. The three corpora structural-conflict
 // detection is measured against, committed as data.
 //
-// `bugs/doing/SP-SP-004` records why these are the deliverable rather than any
+// `bugs/done/SP-SP-004` records why these are the deliverable rather than any
 // particular matcher: every pass on that bug measured false positives and true
 // positives, reported a rule that looked good, and missed the class that only
 // appears once you write down the sentences that must NOT fire.
@@ -62,8 +62,11 @@ var trueConflicts = []conflictCase{
 }
 
 // nearMisses: the subject and an absence word both appear and there is no
-// conflict. Six of seven fire. This is the corpus that refuted the bound-rule
-// fix, and it is the reason `structural_conflict` is advisory under C-15.
+// conflict. Six of seven fired under co-occurrence; five of seven fire under
+// C-21. Add the two ciProximitySurvivors below and the totals are eight of nine
+// then five of nine, which is the pair C-22 and AC-44 state. This is the corpus
+// that refuted the bound-rule fix, and it is the reason `structural_conflict`
+// is advisory under C-15.
 var nearMisses = []conflictCase{
 	{"email MUST be required", "Registration fails when email is absent", false, true,
 		"FALSE POSITIVE: the criterion ENFORCES the constraint. Lexically identical to the first true conflict; only the outcome verb differs"},

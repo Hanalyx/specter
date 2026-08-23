@@ -273,7 +273,7 @@ spec:
       priority: high
   changelog:
     - version: "1.7.0"
-      date: "2026-08-24"
+      date: "2026-08-23"
       author: "specter-team"
       type: patch
       description: "C-09(b) cited `spec-coverage GH #94 semantics` for a rule spec-coverage did not state. spec-coverage 1.19.0 states it as C-39, and the reference now points there. No behavior change; the dangling citation is the defect."

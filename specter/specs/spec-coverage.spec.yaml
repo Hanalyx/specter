@@ -995,12 +995,12 @@ spec:
 
   changelog:
     - version: "1.19.1"
-      date: "2026-08-24"
+      date: "2026-08-23"
       author: "specter-team"
       type: patch
       description: "C-35(a) named `DemoteApprovalGateViolations` as a second producer of coverage_pct. C-39 removed that pass, so the clause referenced a function that no longer exists. There is one producer now and the exception is gone. Text only."
     - version: "1.19.0"
-      date: "2026-08-24"
+      date: "2026-08-23"
       author: "specter-team"
       type: minor
       description: "Add C-39/AC-64..66: the zero-tolerance approval-gate demotion is part of classifying a criterion rather than a second pass over a finished report. Roadmap item 1C. The behavior shipped as the GH #94 fix and was stated only in spec-sync C-09(b), which cited spec-coverage semantics spec-coverage never wrote down. Stating it here also pins two things the second pass got wrong: a demoted criterion was appended to the uncovered list rather than placed in declaration order, and an entry whose every covered criterion was demoted marshaled covered_acs as null (bugs/SP-SP-067)."

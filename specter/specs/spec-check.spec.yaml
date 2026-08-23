@@ -1,6 +1,6 @@
 spec:
   id: spec-check
-  version: "1.11.0"
+  version: "1.11.1"
   status: approved
   tier: 1
 
@@ -66,7 +66,7 @@ spec:
       enforcement: error
 
     - id: C-05
-      description: "Orphan-constraint, duplicate-id, dangling-reference, version-mismatch and duplicate-AC-id detection MUST NOT produce false positives on valid specs. Structural-conflict detection is excluded from that promise and carries the weaker one stated in C-15, because the promise is unsatisfiable for it. Two reasons, each sufficient. C-03 in this spec requires the check to detect conflicts at all, and the only implementation literally producing zero false positives emits nothing, so C-05 as originally written contradicted C-03. And no lexical rule can separate a conflict from an enforcement: `Process checkout when email is absent` and `Registration fails when email is absent` share subject, absence expression and clause structure, and differ only in the polarity of the outcome verb, which lies outside everything the rule examines. Measured 2026-08-24: 40 of this repository 408 acceptance criteria are enforcement-shaped, carrying both an absence keyword and a failure verb. Rationale: the original text promised zero and the shipped scan produced false positives that failed builds (`bugs/doing/SP-SP-004`, P0). A promise no implementation can keep is not a constraint."
+      description: "Orphan-constraint, duplicate-id, dangling-reference, version-mismatch and duplicate-AC-id detection MUST NOT produce false positives on valid specs. Structural-conflict detection is excluded from that promise and carries the weaker one stated in C-15, because the promise is unsatisfiable for it. Two reasons, each sufficient. C-03 in this spec requires the check to detect conflicts at all, and the only implementation literally producing zero false positives emits nothing, so C-05 as originally written contradicted C-03. And no lexical rule can separate a conflict from an enforcement: `Process checkout when email is absent` and `Registration fails when email is absent` share subject, absence expression and clause structure, and differ only in the polarity of the outcome verb, which lies outside everything the rule examines. Measured 2026-08-23: 40 of this repository's 408 acceptance criteria are enforcement-shaped, carrying both an absence keyword and a failure verb. Rationale: the original text promised zero and the shipped scan produced false positives that failed builds (`SP-SP-004`, P0). A promise no implementation can keep is not a constraint."
       type: technical
       enforcement: error
 
@@ -126,13 +126,13 @@ spec:
       enforcement: error
 
     - id: C-17
-      description: "The concreteness rule of C-16 MUST be opt-in and MUST NOT run without `--concrete`. Rationale, and it is the whole of the design. `inputs` and `expected_output` are optional in the canonical schema, whose `required` list for an acceptance criterion is `id` and `description`. A criterion carrying neither is therefore valid, and failing a build on it is a gate failing on correct input, which is the priority framework's P0 row and the defect `bugs/doing/SP-SP-004` spent this cycle removing. The tier gradient makes the rule survivable for **this** repository, whose Tier 1 gaps were backfilled before the rule shipped; it says nothing about an adopter whose Tier 1 specs have the same gaps and who upgrades. The precedent is `settings.annotation` in this same cycle, which introduced a comparable new demand on previously valid workspaces and shipped opt-in for the same reason. A flag rather than a manifest key because a manifest key is a schema change and would need its own brief, and the flag costs nothing the key would have bought. Reconsideration trigger: a v0.18 pre-lock pass that makes concreteness unconditional, which is where the roadmap already places enforcement across all tiers."
+      description: "The concreteness rule of C-16 MUST be opt-in and MUST NOT run without `--concrete`. Rationale, and it is the whole of the design. `inputs` and `expected_output` are optional in the canonical schema, whose `required` list for an acceptance criterion is `id` and `description`. A criterion carrying neither is therefore valid, and failing a build on it is a gate failing on correct input, which is the priority framework's P0 row and the defect `SP-SP-004` spent this cycle removing. The tier gradient makes the rule survivable for **this** repository, whose Tier 1 gaps were backfilled before the rule shipped; it says nothing about an adopter whose Tier 1 specs have the same gaps and who upgrades. The precedent is `settings.annotation` in this same cycle, which introduced a comparable new demand on previously valid workspaces and shipped opt-in for the same reason. A flag rather than a manifest key because a manifest key is a schema change and would need its own brief, and the flag costs nothing the key would have bought. Reconsideration trigger: a v0.18 pre-lock pass that makes concreteness unconditional, which is where the roadmap already places enforcement across all tiers."
       type: business
       enforcement: error
 
 
     - id: C-18
-      description: "A `structural_conflict` diagnostic MUST NOT present the downstream spec id beside the upstream spec's constraint id as though the two belonged together. The header line reads `<spec> <constraint-id>`, and today the spec is the downstream one while the constraint id belongs to the upstream spec, so a reader looking up that id in the named spec finds nothing, or finds a different constraint that happens to share it. The constraint id MUST therefore be qualified with its owning spec wherever the two appear together. Rationale: the header is what a terminal scan and an editor problem list show, and both truncate the message body that names the specs correctly (`bugs/doing/SP-SP-014`)."
+      description: "A `structural_conflict` diagnostic MUST NOT present the downstream spec id beside the upstream spec's constraint id as though the two belonged together. The header line reads `<spec> <constraint-id>`, and today the spec is the downstream one while the constraint id belongs to the upstream spec, so a reader looking up that id in the named spec finds nothing, or finds a different constraint that happens to share it. The constraint id MUST therefore be qualified with its owning spec wherever the two appear together. Rationale: the header is what a terminal scan and an editor problem list show, and both truncate the message body that names the specs correctly (`SP-SP-014`)."
       type: technical
       enforcement: error
 
@@ -153,7 +153,7 @@ spec:
       enforcement: error
 
     - id: C-22
-      description: "C-21 MUST NOT be described as eliminating false positives, and any measurement of it MUST be taken against three corpora rather than two: genuine conflicts, criteria that must not fire, and this repository's own specs. Rationale: the rule reaches zero fires on this repository and keeps every genuine conflict, and it still fires on five of seven written-down non-conflicts, because a conflict and an enforcement are lexically identical. `Process checkout when email is absent` and `Registration fails when email is absent` share subject, absence expression and clause structure and differ only in the polarity of the outcome verb, which the rule never reads. Roughly one criterion in ten in this repository is enforcement-shaped. The zero is a property of this corpus, not of the rule, which is why C-15 keeps the diagnostic advisory and C-05 declines to promise zero."
+      description: "C-21 MUST NOT be described as eliminating false positives, and any measurement of it MUST be taken against three corpora rather than two: genuine conflicts, criteria that must not fire, and this repository's own specs. Rationale: the rule reaches zero fires on this repository and keeps every genuine conflict, and it still fires on five of the nine written-down non-conflicts, counting both the near-miss set and the proximity survivors as AC-44 does, because a conflict and an enforcement are lexically identical. `Process checkout when email is absent` and `Registration fails when email is absent` share subject, absence expression and clause structure and differ only in the polarity of the outcome verb, which the rule never reads. Roughly one criterion in ten in this repository is enforcement-shaped. The zero is a property of this corpus, not of the rule, which is why C-15 keeps the diagnostic advisory and C-05 declines to promise zero."
       type: business
       enforcement: error
 
@@ -701,23 +701,28 @@ spec:
 
 
   changelog:
+    - version: "1.11.1"
+      date: "2026-08-23"
+      author: "specter-team"
+      type: patch
+      description: "Correct two records, no behavior change. C-22 said the rule fires on five of seven written-down non-conflicts while AC-44 said five of nine, using the same phrase for two different sets: seven counts the near-miss table alone, nine adds the two proximity survivors. C-22 now states nine and names what it counts. And C-05's measurement was stamped 2026-08-24, a day after the commit that took it; every amendment in this cycle carried the same wrong date and all are corrected in place, because a bump would record a fake amendment to fix a typo in a real one. Bug citations drop their lifecycle folder: a spec is permanent and `bugs/doing/` changes every time an item moves, so a pathed citation is broken by design."
     - version: "1.11.0"
-      date: "2026-08-24"
+      date: "2026-08-23"
       author: "specter-team"
       type: minor
       description: "Add C-21/C-22 and AC-42..44, roadmap 2A2. Structural-conflict detection binds the absence expression to the required subject rather than testing co-occurrence, in two shapes, on whole-token boundaries, with a leading article stripped from the extracted subject. C-22 records that Go's RE2 has no lookaround so the implementation is a token scanner. C-22 forbids describing the rule as eliminating false positives and requires three corpora for any measurement, because the zero it reaches on this repository is a property of the corpus rather than of the rule."
     - version: "1.10.0"
-      date: "2026-08-24"
+      date: "2026-08-23"
       author: "specter-team"
       type: minor
-      description: "Add C-18/C-19/C-20 and AC-39..41, roadmap 2A4. The structural-conflict header stops attributing the upstream constraint id to the downstream spec (bugs/doing/SP-SP-014). The dead required-keywords are removed rather than activated, because activating them widens a false-positive surface C-05 declines to bound on a check that is advisory under C-15. And detection scans every dependency edge rather than only `requires`, because a conflicts_with edge is where a contradiction check has the strongest reason to look and the one place it did not."
+      description: "Add C-18/C-19/C-20 and AC-39..41, roadmap 2A4. The structural-conflict header stops attributing the upstream constraint id to the downstream spec (SP-SP-014). The dead required-keywords are removed rather than activated, because activating them widens a false-positive surface C-05 declines to bound on a check that is advisory under C-15. And detection scans every dependency edge rather than only `requires`, because a conflicts_with edge is where a contradiction check has the strongest reason to look and the one place it did not."
     - version: "1.9.0"
-      date: "2026-08-24"
+      date: "2026-08-23"
       author: "specter-team"
       type: minor
       description: "Add C-16/C-17 and AC-37/AC-38: `check --concrete` reports criteria carrying neither inputs nor expected_output, severity by tier. Roadmap 2C2. The rule is opt-in, and C-17 records why: both fields are optional in the canonical schema, so erroring on their absence by default would fail a build on a valid spec, which is the P0 row this cycle spent itself removing. The tier gradient protects this repository, whose Tier 1 gaps were backfilled first; it does not protect an adopter upgrading."
     - version: "1.8.0"
-      date: "2026-08-24"
+      date: "2026-08-23"
       author: "specter-team"
       type: minor
       description: "Add C-15/AC-34..36 and amend C-03, C-05 and C-07: `structural_conflict` becomes advisory. Always info, `--strict` does not upgrade it, the upstream enforcement field does not raise it, and it never contributes to a non-zero exit. C-05 no longer promises zero false positives for it, because that promise contradicted C-03 and because no lexical rule separates a conflict from an enforcement. Roadmap 2A1, closing the build-failure half of bugs/SP-SP-004."

@@ -90,7 +90,7 @@ spec:
       enforcement: error
 
     - id: C-13
-      description: "The acceptance-criterion comparator MUST compare the fields that make a criterion concrete, not only its id and description. Those fields are `inputs`, `expected_output`, `error_cases`, `references_constraints`, `approval_gate` and `priority`. A change to any of them MUST be reported and MUST classify the overall change as breaking, because each changes the contract the criterion's tests were written against. Rationale: comparing id and description alone is what C-03 and C-06 asked for, so the blindness was spec-compliant rather than a bug, which is why this is an amendment and not a defect fix. Measured 2026-08-24 on a two-criterion fixture: inverting `expected_output` from [1, 2, 3] to [3, 2, 1], flipping `approval_gate` from true to false, downgrading `priority` from high to low, rewriting `inputs`, and rewriting `error_cases` each produced `no changes` and exit 0. Inverting an expected output is the goalpost move a freeze comparator exists to catch, and flipping `approval_gate` deletes a human approval requirement. **`priority` is included, and any change to it counts, not only an upgrade.** C-06 has named a priority upgrade as breaking since 2.0.0 and says nothing about a downgrade. A downgrade is the same kind of move in the other direction: it says this criterion matters less than it did, which weakens the contract without touching a word of the criterion. A comparator that catches the upgrade and not the downgrade catches the honest edit and misses the convenient one."
+      description: "The acceptance-criterion comparator MUST compare the fields that make a criterion concrete, not only its id and description. Those fields are `inputs`, `expected_output`, `error_cases`, `references_constraints`, `approval_gate` and `priority`. A change to any of them MUST be reported and MUST classify the overall change as breaking, because each changes the contract the criterion's tests were written against. Rationale: comparing id and description alone is what C-03 and C-06 asked for, so the blindness was spec-compliant rather than a bug, which is why this is an amendment and not a defect fix. Measured 2026-08-23 on a two-criterion fixture: inverting `expected_output` from [1, 2, 3] to [3, 2, 1], flipping `approval_gate` from true to false, downgrading `priority` from high to low, rewriting `inputs`, and rewriting `error_cases` each produced `no changes` and exit 0. Inverting an expected output is the goalpost move a freeze comparator exists to catch, and flipping `approval_gate` deletes a human approval requirement. **`priority` is included, and any change to it counts, not only an upgrade.** C-06 has named a priority upgrade as breaking since 2.0.0 and says nothing about a downgrade. A downgrade is the same kind of move in the other direction: it says this criterion matters less than it did, which weakens the contract without touching a word of the criterion. A comparator that catches the upgrade and not the downgrade catches the honest edit and misses the convenient one."
       type: technical
       enforcement: error
 
@@ -253,17 +253,17 @@ spec:
 
   changelog:
     - version: "2.5.0"
-      date: "2026-08-24"
+      date: "2026-08-23"
       author: "specter-team"
       type: minor
       description: "C-03 gains the rule for reporting a contract-only change, and AC-20 asserts it. 2.3.0 widened the comparator without widening the report, so an inverted expected_output printed `~AC-01: same text -> same text` under a [breaking] header. The classification was right and the line was useless. Found while implementing 2B3."
     - version: "2.4.0"
-      date: "2026-08-24"
+      date: "2026-08-23"
       author: "specter-team"
       type: minor
       description: "C-13 gains `priority`, and any change to it is breaking rather than only an upgrade. C-06 has named the upgrade since 2.0.0 and is silent on the downgrade, which is the same move in the other direction: it says a criterion matters less without touching a word of it. Caught while implementing 2B2, when the fingerprint made a downgrade breaking and neither constraint said it should."
     - version: "2.3.0"
-      date: "2026-08-24"
+      date: "2026-08-23"
       author: "specter-team"
       type: minor
       description: "Add C-13/C-14 and AC-16..19: the criterion comparator widens to inputs, expected_output, error_cases, references_constraints and approval_gate, all classifying breaking; `--exit-code` opts into a failing exit from the orchestration band;. C-14 records that it depends on C-13 landing first, because an exit code over the old comparator is a gate that passes while the goalposts move. Roadmap 2B. AC-18 also covers the priority upgrade C-06 has required since 2.0.0 with no implementation."

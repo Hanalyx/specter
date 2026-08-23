@@ -261,7 +261,7 @@ spec:
 
   changelog:
     - version: "1.4.0"
-      date: "2026-08-24"
+      date: "2026-08-23"
       author: "specter-team"
       type: minor
       description: "Backfill inputs and expected_output on the eight criteria that carried neither: AC-01 to AC-05, AC-07, AC-08 and AC-10. Every block is derived from the criterion's own description, which already stated its inputs and outputs in prose. Prerequisite for roadmap 2C2, which makes concreteness an error at Tier 1; spec-ingest held all eight of Tier 1's gaps, so this is what lets the gate ship green."

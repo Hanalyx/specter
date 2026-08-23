@@ -546,7 +546,7 @@ are armed after demotion." **The second sentence is false.** They share the
 report path, and zero-tolerance additionally applies a demotion that threshold
 does not: an approval-gate violation moves from covered to uncovered.
 
-The demotion applies only under zero-tolerance. **Updated 2026-08-24:** it is
+The demotion applies only under zero-tolerance. **Updated 2026-08-23:** it is
 now part of classifying a criterion rather than a pass over the finished report.
 `ClassifyMode.ZeroTolerance` reaches `CriterionVerdict.Covered` in
 `internal/coverage/verdict.go`, and `DemoteApprovalGateViolations` is deleted.
@@ -575,7 +575,7 @@ spec-coverage C-39: v0.11.0 emitted the exit code while leaving the report
 identical to threshold mode, so an operator saw PASS on a run that exited 3.
 GH #94 was filed against that.
 
-**The behavior was stated nowhere in spec-coverage until 2026-08-24.** It was
+**The behavior was stated nowhere in spec-coverage until 2026-08-23.** It was
 required only by spec-sync C-09(b), which cited "spec-coverage GH #94
 semantics" for a rule spec-coverage did not contain. C-39 states it, and
 C-09(b) now cites C-39.
@@ -1368,7 +1368,7 @@ and a downstream criterion handles that field being absent.
 
 **Surfaces.** Detected by `check` across the dependency graph.
 
-**Rewritten 2026-08-24.** Everything below the meaning changed in v0.15, in two
+**Rewritten 2026-08-23.** Everything below the meaning changed in v0.15, in two
 separate items. The entry is rewritten rather than annotated, because a reader
 correcting for three superseded paragraphs is worse served than one reading the
 current state.
