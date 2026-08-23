@@ -1,6 +1,6 @@
 spec:
   id: spec-reverse
-  version: "1.5.0"
+  version: "1.6.0"
   status: draft
   tier: 2
 
@@ -56,7 +56,7 @@ spec:
 
   constraints:
     - id: C-01
-      description: "MUST define an Adapter interface with methods: Name, Detect, IsTestFile, ExtractRoutes, ExtractConstraints, ExtractAssertions, ExtractImports, InferSystemName"
+      description: "MUST define an Adapter interface with methods: Name, Detect, IsTestFile, SourceKeyForTest, ExtractRoutes, ExtractConstraints, ExtractAssertions, ExtractImports, InferSystemName"
       type: technical
       enforcement: error
 
@@ -132,6 +132,11 @@ spec:
 
     - id: C-16
       description: "Spec ids MUST be unique within a single `specter reverse` run. When two groups produce the same id, every member of the colliding set is disambiguated by prepending parent directory segments of its source path, adding one segment at a time until the set is distinct, and skipping any segment the id already carries so a generic-filename id is not doubled. A path with no segments left takes a numeric suffix instead. Disambiguation MUST be deterministic: the same set of files produces the same ids regardless of the order they were supplied in. Each id that changes MUST produce an `id_collision` diagnostic at warning severity naming the original id and the files involved, because the operator's id no longer matches the obvious basename and nothing else would tell them."
+      type: technical
+      enforcement: error
+
+    - id: C-17
+      description: "Under file grouping, a test file MUST be grouped with the source file it tests, when the adapter can name that source and that source is present in the input. The adapter names it through `SourceKeyForTest`, which returns the source path, or an empty string when it cannot map the test. A test file whose mapping is unknown, or whose named source is absent from the input, forms its own group as it does today. Rationale: gap detection (C-04) runs over one group, so a source file grouped apart from its test is compared against zero assertions and every constraint it carries is reported UNTESTED even when a test for it exists in the tree. Directory grouping already places colocated files in one group and is unchanged. A test file held in a separate `__tests__` or `tests` directory is out of scope for this constraint, because directory grouping puts it in a group of its own."
       type: technical
       enforcement: error
 
@@ -384,12 +389,40 @@ spec:
       references_constraints: ["C-16"]
       priority: high
 
+    - id: AC-24
+      description: "A source file and its test produce one spec, not two, and that spec carries both the constraints extracted from the source and the acceptance criteria derived from the test's assertions. A test file whose source is absent from the input still produces its own spec."
+      inputs:
+        source_files: ["user.go with two validate tags"]
+        test_files: ["user_test.go asserting one of them", "orphan_test.go whose source is not supplied"]
+      expected_output:
+        spec_count: 2
+        merged_spec_has_constraints: true
+        merged_spec_has_test_derived_criteria: true
+        orphan_test_still_produces_a_spec: true
+      references_constraints: ["C-17"]
+      priority: high
+
+    - id: AC-25
+      description: "A constraint whose test is present in the input is not reported as a gap. Grouped apart from its assertions, gap detection compares the constraint against an empty assertion list and marks it UNTESTED, which is a false gap rather than a missing one."
+      inputs:
+        source_file: "user.go declaring Name as required"
+        test_file: "user_test.go with a case asserting a missing name is rejected"
+      expected_output:
+        gap_count_for_the_tested_constraint: 0
+      references_constraints: ["C-17", "C-04"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
       relationship: requires
 
   changelog:
+    - version: "1.6.0"
+      date: "2026-08-23"
+      author: "specter-team"
+      type: minor
+      description: "Add C-17/AC-24/AC-25 and extend C-01 with SourceKeyForTest: under file grouping a test file joins the source it tests. Closes SP-063. Every file was its own group, so a source file's constraints were compared against zero assertions and all of them were reported UNTESTED. Measured on the 12-repo corpus: go-playground/validator reported 86 constraints, 105 assertions and 86 gaps, every constraint flagged untested in a repository that tests them."
     - version: "1.5.0"
       date: "2026-08-23"
       author: "specter-team"
