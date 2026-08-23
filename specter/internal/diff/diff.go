@@ -5,7 +5,11 @@
 // @spec spec-diff
 package diff
 
-import "github.com/Hanalyx/specter/internal/schema"
+import (
+	"encoding/json"
+
+	"github.com/Hanalyx/specter/internal/schema"
+)
 
 // ItemChange represents a change to a single AC or constraint.
 type ItemChange struct {
@@ -13,6 +17,10 @@ type ItemChange struct {
 	ID          string
 	Description string // new description (for added/changed), old for removed
 	OldDesc     string // for "changed" only
+	// ContractChanged is true when a criterion's inputs, expected_output,
+	// error_cases, references_constraints, priority or approval_gate changed.
+	// C-13: that is a breaking change even when the description is identical.
+	ContractChanged bool
 }
 
 // DepChange represents a version_range change in depends_on.
@@ -63,12 +71,49 @@ func DiffSpecs(v1, v2 schema.SpecAST) *SpecDiff {
 type namedItem struct {
 	ID   string
 	Desc string
+	// Contract fingerprints the fields that make an acceptance criterion
+	// concrete. Two criteria with the same id and description but different
+	// contracts are a changed criterion and a breaking change, per C-13.
+	// Empty for constraints, which have no contract fields.
+	Contract string
+}
+
+// contractOf fingerprints the fields C-13 names, plus priority per C-06.
+//
+// json.Marshal is the serializer rather than fmt because it sorts map keys.
+// `inputs` and `expected_output` are Go maps, and a fingerprint built by
+// ranging one would differ between two runs over identical input, which would
+// report a change between a spec and itself.
+func contractOf(ac schema.AcceptanceCriterion) string {
+	payload := struct {
+		Inputs                map[string]interface{} `json:"inputs,omitempty"`
+		ExpectedOutput        map[string]interface{} `json:"expected_output,omitempty"`
+		ErrorCases            []schema.ErrorCase     `json:"error_cases,omitempty"`
+		ReferencesConstraints []string               `json:"references_constraints,omitempty"`
+		Priority              string                 `json:"priority,omitempty"`
+		ApprovalGate          bool                   `json:"approval_gate,omitempty"`
+	}{
+		Inputs:                ac.Inputs,
+		ExpectedOutput:        ac.ExpectedOutput,
+		ErrorCases:            ac.ErrorCases,
+		ReferencesConstraints: ac.ReferencesConstraints,
+		Priority:              ac.Priority,
+		ApprovalGate:          ac.ApprovalGate,
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		// A criterion that cannot be serialized is treated as its own
+		// contract, so the comparison degrades to reporting a change rather
+		// than to silently reporting none.
+		return "unserializable:" + ac.ID
+	}
+	return string(b)
 }
 
 func acItems(s schema.SpecAST) []namedItem {
 	out := make([]namedItem, len(s.AcceptanceCriteria))
 	for i, ac := range s.AcceptanceCriteria {
-		out[i] = namedItem{ac.ID, ac.Description}
+		out[i] = namedItem{ID: ac.ID, Desc: ac.Description, Contract: contractOf(ac)}
 	}
 	return out
 }
@@ -76,28 +121,45 @@ func acItems(s schema.SpecAST) []namedItem {
 func constraintItems(s schema.SpecAST) []namedItem {
 	out := make([]namedItem, len(s.Constraints))
 	for i, c := range s.Constraints {
-		out[i] = namedItem{c.ID, c.Description}
+		out[i] = namedItem{ID: c.ID, Desc: c.Description}
 	}
 	return out
 }
 
 func diffItems(old, new []namedItem) []ItemChange {
-	oldMap := make(map[string]string)
+	oldMap := make(map[string]namedItem)
 	for _, item := range old {
-		oldMap[item.ID] = item.Desc
+		oldMap[item.ID] = item
 	}
-	newMap := make(map[string]string)
+	newMap := make(map[string]namedItem)
 	for _, item := range new {
-		newMap[item.ID] = item.Desc
+		newMap[item.ID] = item
 	}
 
 	var changes []ItemChange
 	// Removed or changed
 	for _, item := range old {
-		if newDesc, ok := newMap[item.ID]; !ok {
+		next, ok := newMap[item.ID]
+		if !ok {
 			changes = append(changes, ItemChange{Kind: "removed", ID: item.ID, Description: item.Desc})
-		} else if newDesc != item.Desc {
-			changes = append(changes, ItemChange{Kind: "changed", ID: item.ID, Description: newDesc, OldDesc: item.Desc})
+			continue
+		}
+		// C-13: a criterion changes when its description changes OR when the
+		// fields that make it concrete change. The two are recorded
+		// separately, because only the second is breaking: a reworded
+		// description leaves the contract its tests were written against
+		// intact, and promoting every edit to breaking would empty the
+		// classification of meaning.
+		descChanged := next.Desc != item.Desc
+		contractChanged := next.Contract != item.Contract
+		if descChanged || contractChanged {
+			changes = append(changes, ItemChange{
+				Kind:            "changed",
+				ID:              item.ID,
+				Description:     next.Desc,
+				OldDesc:         item.Desc,
+				ContractChanged: contractChanged,
+			})
 		}
 	}
 	// Added
@@ -131,6 +193,11 @@ func diffDeps(old, new []schema.DependencyRef) []DepChange {
 func classify(d *SpecDiff) ChangeClass {
 	for _, c := range d.ACChanges {
 		if c.Kind == "removed" {
+			return ChangeBreaking
+		}
+		// C-13 / C-06: the contract a criterion's tests were written against
+		// changed, which includes a priority upgrade.
+		if c.ContractChanged {
 			return ChangeBreaking
 		}
 	}
