@@ -1,6 +1,6 @@
 spec:
   id: spec-check
-  version: "1.7.0"
+  version: "1.8.0"
   status: approved
   tier: 1
 
@@ -56,7 +56,7 @@ spec:
       enforcement: error
 
     - id: C-03
-      description: "MUST detect structural conflicts where a downstream spec contradicts an upstream constraint"
+      description: "MUST detect structural conflicts where a downstream spec contradicts an upstream constraint, and MUST report them advisorily per C-15 rather than as a build failure"
       type: technical
       enforcement: error
 
@@ -66,7 +66,7 @@ spec:
       enforcement: error
 
     - id: C-05
-      description: "MUST NOT produce false positives on valid specs (zero false positive rate for structural checks)"
+      description: "Orphan-constraint, duplicate-id, dangling-reference, version-mismatch and duplicate-AC-id detection MUST NOT produce false positives on valid specs. Structural-conflict detection is excluded from that promise and carries the weaker one stated in C-15, because the promise is unsatisfiable for it. Two reasons, each sufficient. C-03 in this spec requires the check to detect conflicts at all, and the only implementation literally producing zero false positives emits nothing, so C-05 as originally written contradicted C-03. And no lexical rule can separate a conflict from an enforcement: `Process checkout when email is absent` and `Registration fails when email is absent` share subject, absence expression and clause structure, and differ only in the polarity of the outcome verb, which lies outside everything the rule examines. Measured 2026-08-24: 40 of this repository 408 acceptance criteria are enforcement-shaped, carrying both an absence keyword and a failure verb. Rationale: the original text promised zero and the shipped scan produced false positives that failed builds (`bugs/doing/SP-SP-004`, P0). A promise no implementation can keep is not a constraint."
       type: technical
       enforcement: error
 
@@ -76,7 +76,7 @@ spec:
       enforcement: error
 
     - id: C-07
-      description: "MUST support strict mode (CheckOptions.Strict=true) that upgrades all warning-severity diagnostics to error severity"
+      description: "MUST support strict mode (CheckOptions.Strict=true) that upgrades all warning-severity and info-severity diagnostics to error severity, with one exemption: `structural_conflict` is not upgraded, per C-15. Without the exemption the advisory posture would hold only until someone passed --strict, which is what CI passes."
       type: technical
       enforcement: error
 
@@ -112,6 +112,11 @@ spec:
 
     - id: C-14
       description: "`specter check --json` MUST exit with the same process exit code that `specter check` produces for the same workspace, the same flags, and the same manifest settings. The exit code is a function of the diagnostics the run produced, not of how they are rendered. Per the documented check contract, the code is 1 when the run reports one or more error-severity diagnostics, counted after tier routing (C-02) and after any `--strict` upgrade (C-07), and 0 otherwise. A run whose worst severity is warning or info therefore exits 0 in both formats, and a `--strict` run that upgrades those warnings to errors exits 1 in both. No diagnostic kind is exempt, including kinds added later. The JSON document MUST be written to stdout in full before the exit-code decision runs, and stdout MUST carry that document alone, so one invocation gives a caller both the diagnostics and a usable verdict. Human-readable notices stay on stderr. This is the `check` instance of the parity rule spec-coverage C-29 states for `coverage`, where the same defect was found in the v0.13 D3 audit. Rationale: a CI job that uses `--json` to capture structured diagnostics has a check gate that never fails, at any severity, for any kind. The document is correct and the exit code, which is the one thing an automated caller reads, reports a passing run."
+      type: business
+      enforcement: error
+
+    - id: C-15
+      description: "`structural_conflict` MUST be advisory. Three parts, and all three are required for the posture to hold. (a) Its severity is always `info`, whatever the upstream constraint's `enforcement` field says. That field expresses how strictly the constraint binds the system, not how confident this scan is about a sentence, and reading it here let a Tier 1 constraint make a heuristic match fail a build. (b) `--strict` does not upgrade it, exempting it from C-07. (c) It never contributes to a non-zero exit code from `specter check`. Rationale: the detector is a lexical heuristic and cannot be made sound, per C-05. An unsound gate that fails builds is worse than no gate, because the failure lands on correct work and the operator's only recourse is to reword a criterion until the tool stops complaining. The diagnostic still names a real tension worth a human glance, which is why it is retained rather than removed. Reconsideration trigger: an implementation that distinguishes a conflict from an enforcement, which needs the outcome clause and is therefore semantic analysis rather than a lexical rule."
       type: business
       enforcement: error
 
@@ -536,7 +541,45 @@ spec:
       references_constraints: ["C-14"]
       priority: critical
 
+    - id: AC-34
+      description: "A workspace whose only finding is a structural conflict exits 0, and exits 0 under `--strict` as well. The diagnostic is present in both runs at info severity."
+      inputs:
+        workspace: "upstream constraint requiring a subject, downstream criterion mentioning it beside an absence word, joined by a requires edge"
+        commands: ["check", "check --strict"]
+      expected_output:
+        exit_code: 0
+        diagnostic_present: true
+        diagnostic_severity: "info"
+      references_constraints: ["C-15"]
+      priority: high
+
+    - id: AC-35
+      description: "An upstream constraint carrying `enforcement: error` does not raise the severity of a structural conflict it produces. The enforcement field says how strictly the constraint binds the system, not how much to trust a lexical match."
+      inputs:
+        upstream_constraint_enforcement: "error"
+      expected_output:
+        diagnostic_severity: "info"
+        exit_code: 0
+      references_constraints: ["C-15"]
+      priority: high
+
+    - id: AC-36
+      description: "The advisory posture does not weaken the other structural checks. A workspace carrying an orphan constraint on a Tier 1 spec still fails, and `--strict` still upgrades a Tier 3 orphan to an error, in the same run that reports a structural conflict at info."
+      inputs:
+        workspace: "one Tier 1 orphan constraint and one structural conflict"
+      expected_output:
+        exit_code_nonzero: true
+        failing_diagnostic_kind: "orphan_constraint"
+        structural_conflict_severity: "info"
+      references_constraints: ["C-15", "C-07"]
+      priority: high
+
   changelog:
+    - version: "1.8.0"
+      date: "2026-08-24"
+      author: "specter-team"
+      type: minor
+      description: "Add C-15/AC-34..36 and amend C-03, C-05 and C-07: `structural_conflict` becomes advisory. Always info, `--strict` does not upgrade it, the upstream enforcement field does not raise it, and it never contributes to a non-zero exit. C-05 no longer promises zero false positives for it, because that promise contradicted C-03 and because no lexical rule separates a conflict from an enforcement. Roadmap 2A1, closing the build-failure half of bugs/SP-SP-004."
     - version: "1.7.0"
       date: "2026-08-16"
       author: "specter-team"
