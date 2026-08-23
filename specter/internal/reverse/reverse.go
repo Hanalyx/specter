@@ -359,7 +359,9 @@ func assembleSpec(groupKey string, group *fileGroup, adapter Adapter, systemName
 			ID:          fmt.Sprintf("C-%02d", i+1),
 			Description: desc,
 			Type:        "technical",
-			Enforcement: "error",
+			// C-15: no Enforcement. The field overrides the tier-based
+			// severity spec-check gives a diagnostic about this constraint,
+			// and the schema says to omit it unless the author means to.
 		}
 		if c.Field != "" && c.Rule != "" && c.Value != nil {
 			rule := normalizeValidationRule(c.Rule)
@@ -413,7 +415,9 @@ func assembleSpec(groupKey string, group *fileGroup, adapter Adapter, systemName
 			ID:          "C-01",
 			Description: "MUST implement the behavior defined in this module (auto-generated placeholder)",
 			Type:        "technical",
-			Enforcement: "error",
+			// C-15: no Enforcement. This constraint exists only because the
+			// schema requires minItems 1, and nothing references it, so it is
+			// an orphan the moment it is written. At tier 3 that is info.
 		}}
 	}
 	if len(specACs) == 0 {
