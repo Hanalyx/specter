@@ -118,9 +118,9 @@ trigger never depended on the ladder.
 
 ### Code 2, the zero-tolerance non-passed gate
 
-Emitted by `coverage` at `main.go:1104` (JSON) and `main.go:1222` (text), and by
-`sync` at `main.go:1358`. All three print the same sentence to stderr before
-exiting:
+Emitted by `coverage` from `coverageExitGates` at `main.go:888`, which both the
+text path and the `--json` branch call, and by `sync`. Both print the same
+sentence to stderr before exiting:
 
 ```
 error: zero-tolerance strictness — %d annotated AC(s) did not pass
@@ -149,8 +149,8 @@ status the runtime produces in that case is not verified here.
 
 ### Code 3, the approval-gate violation
 
-Emitted by `coverage` at `main.go:1108` (JSON) and `main.go:1226` (text), and by
-`sync` at `main.go:1362`. All three print:
+Emitted by `coverage` from the same `coverageExitGates`, and by `sync`. Both
+print:
 
 ```
 error: zero-tolerance strictness — %d AC(s) carry approval_gate=true with unset approval_date
@@ -183,9 +183,25 @@ another. They are recorded as current behavior, not as allocations.
 | A rejected `specter.yaml` | `check`, `coverage`, `sync`, `doctor`, and `watch` exit 1. `parse`, `resolve`, `resolve dependents`, and `explain` warn on stderr and exit 0, through `warnManifestRejected()` at `main.go:422`, `:476`, `:618`, and `:2612`. | `bugs/SP-SP-017`, open |
 
 `check --json` was the same defect until this cycle. It was fixed by
-`checkExitVerdict` at `main.go:668-672`, which both the text branch and the JSON
-branch now end on, so the verdict cannot differ by rendering. That function is
-the pattern to copy.
+`checkExitVerdict`, which both the text branch and the JSON branch now end on,
+so the verdict cannot differ by rendering.
+
+**`coverage` followed, and the second case is the sharper lesson.** Its `--json`
+branch carried a private copy of the gate sequence plus a comment saying it
+mirrored the text checks. That was true when written. `settings.annotation`
+shipped later in the same cycle, went into the text path, and the comment
+stayed, so a workspace whose tier threshold was met exited 2 in text and **0**
+under `--json`. A CI job reading JSON got a green build on a workspace
+`coverage` fails (`bugs/done/SP-SP-066`).
+
+It was fixed by deleting the private copy rather than by adding the missing
+check, and by a table test asserting the two surfaces agree across every
+gate-relevant state. The three per-gate tests that preceded it all passed
+throughout. **A per-gate test cannot fail when a new gate is added to one
+surface; a table can.**
+
+Those two functions are the pattern to copy. `parse`, `resolve` and `reverse`
+still carry their own `--json` branches.
 
 Two rules follow for anyone adding a gate:
 
@@ -263,9 +279,15 @@ return, identical in text and JSON mode:
 3. Unknown `--scope` domain. Code 1. `main.go:976-984`.
 4. Missing results file under a strict mode. Code 1. `main.go:1013-1024`.
 5. Spec parse errors. Code 1. `main.go:1094` in JSON mode, `main.go:1117` in text mode.
-6. Zero-tolerance non-passed. Code 2. `main.go:1102`, `main.go:1220`.
-7. Approval gate. Code 3. `main.go:1106`, `main.go:1224`.
-8. Coverage threshold. Code 1. `main.go:1111`, `main.go:1230`.
+6. Zero-tolerance non-passed. Code 2.
+7. Approval gate. Code 3.
+8. Coverage threshold. Code 1.
+
+Items 6 through 8 no longer carry a line reference per output mode, because
+there is no longer one per mode. All three are in `coverageExitGates` at
+`main.go:888`, which the text path and the `--json` branch both call. The pairs
+this list used to name were the two copies that diverged in
+`bugs/done/SP-SP-066`.
 
 Steps 1 through 5 are workspace and invocation preconditions. All of them return
 code 1, and all of them run before the two gates that have codes of their own. A

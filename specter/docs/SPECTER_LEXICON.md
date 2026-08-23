@@ -546,11 +546,16 @@ are armed after demotion." **The second sentence is false.** They share the
 report path, and zero-tolerance additionally applies a demotion that threshold
 does not: an approval-gate violation moves from covered to uncovered.
 
-`DemoteApprovalGateViolations` runs only under zero-tolerance, gated at
-`cmd/specter/main.go:1074-1076` and implemented at
-`internal/coverage/zero_tolerance.go:71`. Measured on one fixture, one results
-file marking all three criteria `passed`, with `AC-01` carrying
-`approval_gate: true` and no `approval_date`:
+The demotion applies only under zero-tolerance. **Updated 2026-08-24:** it is
+now part of classifying a criterion rather than a pass over the finished report.
+`ClassifyMode.ZeroTolerance` reaches `CriterionVerdict.Covered` in
+`internal/coverage/verdict.go`, and `DemoteApprovalGateViolations` is deleted.
+The observable behavior below is unchanged; three things about it that were
+wrong are not (`bugs/done/SP-SP-067`, `bugs/done/SP-SP-068`, and the ordering
+defect recorded in spec-coverage AC-64).
+
+Measured on one fixture, one results file marking all three criteria `passed`,
+with `AC-01` carrying `approval_gate: true` and no `approval_date`:
 
 ```
 $ bin/specter coverage
@@ -565,15 +570,22 @@ exit 3
 ```
 
 Same inputs, different coverage percentage. So **both** what demotes and which
-gates arm differ between the two levels. The comment at
-`zero_tolerance.go:65-70` records why: v0.11.0 emitted the exit code while
-leaving the report identical to threshold mode, so an operator saw PASS on a run
-that exited 3. GH #94 was filed against that, and this function is the fix.
+gates arm differ between the two levels. The reason is recorded in
+spec-coverage C-39: v0.11.0 emitted the exit code while leaving the report
+identical to threshold mode, so an operator saw PASS on a run that exited 3.
+GH #94 was filed against that.
+
+**The behavior was stated nowhere in spec-coverage until 2026-08-24.** It was
+required only by spec-sync C-09(b), which cited "spec-coverage GH #94
+semantics" for a rule spec-coverage did not contain. C-39 states it, and
+C-09(b) now cites C-39.
 
 ## the strict path
 
-**Meaning.** The internal routing that `BuildCoverageReportStrict` represents, as
-distinct from the weaker `BuildCoverageReportWithResults`. On the strict path, a
+**Meaning.** The internal routing that `ClassifyMode.Strict` selects, as distinct
+from the weaker default. `BuildCoverageReportStrict` and
+`BuildCoverageReportWithResults` remain as wrappers over
+`BuildCoverageReportMode`, which is the entry point that carries the whole mode. On the strict path, a
 missing results file is fatal, annotated criteria without a passing entry demote
 across all tiers, and the strict diagnostics apply.
 
