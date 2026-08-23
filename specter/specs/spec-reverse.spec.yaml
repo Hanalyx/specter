@@ -1,6 +1,6 @@
 spec:
   id: spec-reverse
-  version: "1.6.0"
+  version: "1.7.0"
   status: draft
   tier: 2
 
@@ -137,6 +137,11 @@ spec:
 
     - id: C-17
       description: "Under file grouping, a test file MUST be grouped with the source file it tests, when the adapter can name that source and that source is present in the input. The adapter names it through `SourceKeyForTest`, which returns the source path, or an empty string when it cannot map the test. A test file whose mapping is unknown, or whose named source is absent from the input, forms its own group as it does today. Rationale: gap detection (C-04) runs over one group, so a source file grouped apart from its test is compared against zero assertions and every constraint it carries is reported UNTESTED even when a test for it exists in the tree. Directory grouping already places colocated files in one group and is unchanged. A test file held in a separate `__tests__` or `tests` directory is out of scope for this constraint, because directory grouping puts it in a group of its own."
+      type: technical
+      enforcement: error
+
+    - id: C-18
+      description: "`--json` selects the report format and MUST NOT decide whether files are written. Only `--dry-run` suppresses writing. `specter reverse --json` therefore writes generated specs to the output directory exactly as a non-JSON run does, including the default output directory when `-o` is not given, and honors the existing skip-on-exists rule. `--json --dry-run` writes nothing and still reports. Under `--json`, stdout MUST carry exactly one JSON document and no other bytes: the per-spec GENERATED and SKIPPED lines go to stderr, which extends AC-19's pure machine-readable output to the write path. A write error is reported on stderr and exits non-zero with no JSON on stdout, matching what the non-JSON path does when a write fails mid-loop. Rationale: `-o` was accepted and silently ignored under `--json`, so the command reported specs generated and left the directory empty, at exit 0."
       type: technical
       enforcement: error
 
@@ -412,12 +417,51 @@ spec:
       references_constraints: ["C-17", "C-04"]
       priority: high
 
+    - id: AC-26
+      description: "`specter reverse --json -o DIR` writes the generated spec files to DIR, and stdout parses as exactly one JSON document with no other bytes preceding or following it."
+      inputs:
+        flags: ["--json", "-o DIR"]
+        source_files: ["a source file the adapter can extract from"]
+      expected_output:
+        files_written_to_dir: true
+        stdout_is_exactly_one_json_document: true
+        per_spec_lines_on_stdout: false
+      references_constraints: ["C-18"]
+      priority: high
+
+    - id: AC-27
+      description: "`specter reverse --json --dry-run -o DIR` writes nothing and still emits the JSON report. `--dry-run` is the only flag that suppresses writing."
+      inputs:
+        flags: ["--json", "--dry-run", "-o DIR"]
+      expected_output:
+        files_written_to_dir: false
+        json_report_emitted: true
+      references_constraints: ["C-18"]
+      priority: high
+
+    - id: AC-28
+      description: "When a write fails under `--json`, the error goes to stderr and the command exits non-zero with no JSON document on stdout, so a consumer cannot read a partial run as a successful one."
+      inputs:
+        flags: ["--json", "-o DIR"]
+        condition: "DIR cannot be created, because a plain file occupies its path"
+      expected_output:
+        exit_code_nonzero: true
+        stdout_empty: true
+        error_on_stderr: true
+      references_constraints: ["C-18"]
+      priority: medium
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
       relationship: requires
 
   changelog:
+    - version: "1.7.0"
+      date: "2026-08-23"
+      author: "specter-team"
+      type: minor
+      description: "Add C-18/AC-26..28: `--json` selects the report format and does not suppress writing; only `--dry-run` does. Closes SP-061. `--json` returned above the write loop, so `reverse --json -o DIR` reported SpecsGenerated and wrote nothing, at exit 0. Stdout stays a single JSON document because the per-spec lines move to stderr."
     - version: "1.6.0"
       date: "2026-08-23"
       author: "specter-team"
