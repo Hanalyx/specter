@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -99,32 +98,19 @@ func TestExitCodeParity_SyncMatchesCoverage(t *testing.T) {
 // widen with it.
 func TestExitCodeParity_EveryEmittedCodeIsRegistered(t *testing.T) {
 	t.Run("spec-sync/AC-16 every emitted exit code is registered", func(t *testing.T) {
-		entries, err := os.ReadDir(".")
+		scanned, err := exitScanFiles(".")
 		if err != nil {
 			t.Fatal(err)
 		}
-		emitted := map[string]bool{}
-		exitRe := regexp.MustCompile(`os\.Exit\((\d+)\)`)
-		scanned := 0
-		for _, e := range entries {
-			name := e.Name()
-			if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-				continue
-			}
-			src, err := os.ReadFile(name)
-			if err != nil {
-				t.Fatal(err)
-			}
-			scanned++
-			for _, m := range exitRe.FindAllStringSubmatch(string(src), -1) {
-				emitted[m[1]] = true
-			}
+		emitted, _, _, err := exitScan(".")
+		if err != nil {
+			t.Fatalf("the scan refused: %v", err)
 		}
 		if scanned == 0 {
 			t.Fatal("scanned no source files; the scan scope is wrong and a pass here would be meaningless")
 		}
 		if len(emitted) == 0 {
-			t.Fatal("found no os.Exit calls; the regex is wrong and a pass here would be meaningless")
+			t.Fatal("found no os.Exit calls; the scan is wrong and a pass here would be meaningless")
 		}
 
 		doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "EXIT_CODES.md"))
