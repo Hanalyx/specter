@@ -10,8 +10,8 @@ reading `cmd/specter/main.go` or by running `bin/specter`, and
 [Appendix A](#appendix-a-how-each-claim-was-checked) says which.
 
 **Claims added after that sweep name their own verification, in the section that
-makes them.** Code 10's behavior was measured on 2026-08-24. The SP-069
-enforcement claims were verified against `195933a` on 2026-08-25. Neither is
+makes them.** Code 10's behavior was measured on 2026-08-24. The SP-069 and
+SP-070 enforcement claims were verified against `515e6df` on 2026-08-25. Neither is
 covered by the `6c82473` sweep, and the header does not pretend otherwise: a
 document that re-dates its whole verification on every edit stops recording when
 anything was actually checked.
@@ -206,9 +206,21 @@ it cannot read reports the same result as a scan with nothing to drop.
 left the check green, because it matched the code cell anywhere in the file and
 the measurement table above holds `10` in its second column. A registry row now
 has to start the line. Verified by mutation rather than by reading: renaming the
-row for 1, 2, 3, or 10 now fails the test. Code 0 still survives, correctly. It
-is registered and it is not an `os.Exit` call, so only AC-16's converse could
-reach it. No test implements that converse, which is `bugs/SP-SP-070`.
+row for 1, 2, 3, or 10 now fails the test. Code 0 still survives a rename, correctly.
+It is registered and it is not an `os.Exit` call, so only AC-16's converse could
+reach it, and the converse exempts it for that reason.
+
+**Both directions are enforced as of 2026-08-25**, the converse as
+`bugs/done/SP-SP-070`. `spec-sync` AC-18 states the three rules it needs. Stable
+is an exact match on the Standing cell, because `Shipped, overloaded, frozen` and
+`Accidental collision` are the other values in use and neither is a weaker form
+of stable. A code is required to be reachable when any one of its rows is Stable,
+because standing belongs to a row while the claim is about a code, and code 2
+carries three rows of differing standing. Code 0 is exempt, and the exemption is
+guarded: the assertion fails if anything ever calls `os.Exit(0)`.
+
+Adding a Stable row here for a code nothing emits now fails the build. That was
+verified by doing it, not by reading the assertion.
 
 ### Commands that can only emit 0 or 1
 
