@@ -184,12 +184,24 @@ The five were repaired on 2026-08-24.** Section 3 named the allocation when
 SP-SP-012 closed. The count opening Section 1, the table in Section 1, the 0-or-1
 list below, the Section 2 row for `diff`, and the "nothing occupies 10 to 29"
 line in Section 3 all kept describing a binary that no longer existed. `spec-sync` C-12 is the rule
-this broke. The parity test meant to enforce it cannot see this site: it matches
-`os.Exit(` followed by literal digits (`exit_code_parity_test.go:107`), and this
-site returns a named constant. A registry that a fix updates in one place while
-contradicting it in five is the failure C-12 exists to prevent, so the test needs
-the constant case before the registry can be called enforced. Filed as
-`bugs/SP-SP-069`.
+this broke, and it was unenforced here. The parity test matched `os.Exit(`
+followed by literal digits, and this site returns a named constant, so the test
+stayed green over a registry contradicting the binary in five places.
+
+**Enforced 2026-08-25**, as `bugs/done/SP-SP-069`. The scan now reads the syntax
+tree, resolves a named constant through the `const` declarations in scope, and
+refuses an argument it cannot resolve instead of skipping it. `spec-sync` AC-17
+states the rule and pins the property that matters: the number of sites resolved
+must equal the number of `os.Exit` calls in scope, because a scan that drops what
+it cannot read reports the same result as a scan with nothing to drop.
+
+**A second defect, and this document was the cause.** Renaming the code 10 row
+left the check green, because it matched the code cell anywhere in the file and
+the measurement table above holds `10` in its second column. A registry row now
+has to start the line. Verified by mutation rather than by reading: renaming the
+row for 1, 2, 3, or 10 now fails the test. Code 0 still survives, correctly. It
+is registered and it is not an `os.Exit` call, so only AC-16's converse could
+reach it, and no test implements that converse yet.
 
 ### Commands that can only emit 0 or 1
 
