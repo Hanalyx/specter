@@ -1,8 +1,20 @@
 # SSRB-103: multi-stream evidence in ingest and coverage
 
-Status: NEEDS-DESIGN
-Decided: TBD
+Status: ACCEPT for the foundation; policies NEEDS-DESIGN.
+Decided: 2026-08-24 for the foundation.
 Source: `features/SP-002-ingest-live-host-verification` (Kensa, 2026-07-01), plus an unfiled OpenWatch request drafted 2026-08-14
+
+**Decision summary.** The shared foundation is accepted: Specter results may
+carry labeled evidence streams, with unlabeled legacy entries reading as the
+`default` stream. `stream` is a label only. The artifact does not carry kind,
+role, baseline/current, unit/live, mutation, or policy meaning. Producers set the
+label, for example through `ingest --stream`, and consumers may choose roles by
+invocation in later policy commands.
+
+Conjunction policy and red-first differential policy remain NEEDS-DESIGN. This
+brief accepts the multi-valued result model they both need; it does not decide
+whether coverage may require a conjunction of streams or whether Specter may
+compute a red-first verdict between streams.
 
 ## 1. Request
 
@@ -55,17 +67,22 @@ looks like one project's domain leaking into the tool.
 
 The generalization beyond both is immediate. Unit, integration, and end-to-end
 are distinct evidence streams that most projects already produce and none can
-currently describe to Specter. Specter itself ingests Go and JavaScript runner
-output in its own dogfood gate and flattens both into one stream, not by design
-but because one stream is all there is.
+currently describe to Specter.
+
+Specter's own dogfood gate, which flattens Go and JavaScript runner output into
+one stream, is the natural first test but not an independent universality vote.
+The stronger in-product argument is orchestration: roadmap Phase 4 expects the
+orchestrator to run `ingest` per mutation without new Specter code, and that is
+not true while global duplicate collapse turns many runs into one
+indistinguishable body of evidence. Per-run ingest needs the stream foundation.
 
 This is the first of the currently open briefs whose section 3 is satisfied
 rather than pending. SSRB-101 and SSRB-102 both wait on a second requester. This
-one has one.
+one has two for the foundation.
 
 The policies are a different matter. Conjunction has one requester and
 differential has one requester, and each should meet the bar on its own before it
-ships.
+ships. Accepting the foundation does not accept either policy.
 
 ## 4. Cost of acceptance
 
@@ -74,6 +91,7 @@ ships.
 | Canonical spec schema | None for the foundation. The differential policy separately proposes per-AC exemption fields, which is an AC shape change and needs its own decision. |
 | In-memory type model | The result entry gains a stream label. The merge rule becomes per-stream rather than global. |
 | JSON contract | The results file is a published artifact that consumers write. A label must be optional, with unlabeled entries reading as the default stream, or every existing producer breaks. |
+| CLI surface | `ingest` gains `--stream` to label the entries one invocation produces, and `--merge` to build an output from only the named inputs. `--merge` is an exception to the accumulate rule `spec-ingest` C-11 requires today, so that constraint needs an amendment. |
 | Manifest schema | Only if a policy ships. Requiring a stream, or adding a strictness value, is where enum pressure lands. The foundation alone needs no manifest change. |
 | Reference documentation | The annotation and ingest references both describe a single evidence path throughout. |
 | Existing user specs | None. |
@@ -127,7 +145,7 @@ keyed `(spec_id, ac_id)` with a status per entry. Command-line labeling decides
 which stream a file belongs to. It does not teach `ingest` to read a shape it has
 no adapter for, so that ledger needs a translation step under either fork.
 
-Two consequences, and the second is what unblocks this brief.
+Two consequences, and the second is what unblocked this brief.
 
 The alternative is still the strongest one, but on its own merits rather than on
 zero cost to this requester. What it buys is no artifact change and no producer
@@ -138,8 +156,25 @@ That trigger, and the first of the two questions put to them on 2026-08-15, both
 turn on whether their records map one to one onto `(spec_id, ac_id)` pairs. They
 do not, and the answer is the same under both branches, so it does not
 discriminate. The fork is a Specter-internal question about whether a results
-file must be self-describing, and it should be decided here rather than held open
-pending a reply.
+file must be self-describing, and it is decided here.
+
+**Accepted 2026-08-24: self-describing artifact plus producer flag.** Result
+entries may carry `stream`; missing `stream` means `default`. `ingest --stream`
+writes that label when producing results. This keeps the artifact
+self-describing without making the label a policy role. `stream` names a body of
+evidence, not whether it is baseline, current, unit, live, mutation, or any other
+kind.
+
+**Where `--merge` comes from.** Neither request asked for it, and it appears in
+section 7 as part of the accepted shape, so its origin belongs here.
+`spec-ingest` C-11 requires repeated `--junit` and `--go-test` flags to
+accumulate into an existing output. That is correct for assembling one run from
+several files and wrong across runs. A criterion that passed in the previous run
+and produced no entry in this one keeps its stale passing entry, which hides the
+absence this foundation exists to make visible. `--merge` builds the output from
+only the named inputs, so a re-run replaces a stream rather than layering on top
+of it. It is a new CLI flag and an amendment to C-11, not a free consequence of
+the label.
 
 **Consumers gate separately, as today.** Kensa's current position. The ledger is
 maintained and enforced outside Specter. Trade-off: the evidence never reaches
@@ -161,34 +196,61 @@ reason the foundation is posed separately from the policies.
 
 ## 7. Decision
 
-**NEEDS-DESIGN**, with section 3 satisfied for the foundation and open for both
-policies.
+**ACCEPT for the foundation. Policies remain NEEDS-DESIGN.**
 
-Section 3 is met in a way the other open briefs are not. Two unrelated projects
-independently require a multi-valued result model, and the generalization to
-unit, integration, and end-to-end reaches most projects, including Specter's own
-dogfood gate. Section 5 confirms nothing in the toolchain expresses this, and
-that the existing merge rule actively destroys the distinction. Section 4 keeps
-this from being an immediate accept: the shared foundation is cheap, but it sits
-under a published artifact that consumers produce, and the design must define
-what an absent stream means before any gate depends on one.
+Section 3 is satisfied for the foundation. Two unrelated projects independently
+require a multi-valued result model, and the generalization to unit,
+integration, and end-to-end reaches most projects. Section 5 confirms nothing in
+the toolchain expresses this, and that the existing merge rule actively destroys
+the distinction.
 
-The design call should settle the foundation only. Whether coverage may require a
-conjunction of streams, and whether it may compute a differential between them,
-are separate questions with one requester each, and each should clear the
-universality bar on its own terms. Deciding a policy here would repeat the error
-recorded in SSRB-098, where a trigger written from one requester's shape could
-never fire for the need underneath it.
+The accepted foundation has this shape:
+
+- Result entries MAY carry optional `stream`.
+- Missing `stream` means `default`.
+- The merge key becomes `(spec_id, ac_id, stream)`.
+- The results artifact carries a top-level `streams` array so a stream that ran and
+  produced zero results is distinguishable from one that never ran.
+- `ingest --stream <name>` writes one stream label into produced entries.
+- `ingest --merge <file>...` builds a new results file only from the named
+  inputs and does not accumulate into an existing output.
+- `stream` is a label only. The artifact MUST NOT encode a policy role or kind,
+  such as baseline, current, unit, live, or mutation.
+- Validation belongs in shared pure code so `coverage` and `sync` inherit the
+  same failures.
+
+**The verdict does not change in this cycle.** Section 5 objects that collapsing
+to the worst status across two streams destroys two facts. The foundation fixes
+the artifact and not the verdict. Entries keep both facts, because the merge key
+is per stream, while coverage still fails a criterion when any stream that
+reported on it reports a non-passing status. Splitting one body of evidence into
+labeled streams must leave the report identical field for field. Deciding what
+the verdict should do with two facts is the conjunction and differential work,
+and it stays undecided here.
+
+Absence is part of the accepted foundation. A criterion is covered only when at
+least one stream reports an entry and every stream reporting an entry reports
+`passed`. A criterion no stream reported on is not covered. A declared stream
+with zero entries is visible in the `streams` array rather than disappearing into the
+same shape as a stream that never ran.
+
+Whether coverage may require a conjunction of streams, and whether Specter may
+compute a red-first differential between streams, are separate questions with one
+requester each. Each should clear the universality bar and amend the relevant
+specs on its own terms. Deciding a policy here would repeat the error recorded in
+SSRB-098, where a trigger written from one requester's shape could never fire for
+the need underneath it.
 
 ## 8. Reconsideration triggers
 
-- The command-line labeling alternative in section 6 proves sufficient for both
-  requesters, in which case the foundation ships with no artifact change and this
-  brief closes as resolved by a non-schema path.
-- A third project requests a stream distinction, most likely integration versus
-  unit, which would move the foundation from needs-design to accept.
-- Either policy accumulates a second independent requester, which would let that
+- Evidence that self-describing stream labels in the artifact break existing
+  producers or consumers in a way command-line labeling would not.
+- A policy tries to encode role or kind into the `stream` field, which would make
+  the accepted foundation carry policy meaning it deliberately excludes.
+- Conjunction accumulates a second independent requester, which would let that
   policy be scoped on its own.
+- Differential/red-first accumulates a second independent requester, which would
+  let that policy be scoped on its own.
 - The dogfood gate is converted to two streams and reveals a foundation
   requirement neither request anticipated.
 
@@ -198,6 +260,8 @@ never fire for the need underneath it.
   and reframed on 2026-08-15 pending this brief.
 - The OpenWatch request is drafted but not yet filed, so it carries no id. Its
   first ask, red-first as a second ingest, is the differential policy named here.
+- `docs/design/2026-08-24-phase-3-consensus.md`, the panel recommendation that
+  accepted the foundation shape and deferred both policy layers.
 - Related SSRBs: SSRB-098 on posing a question from the need rather than from one
   requester's shape; SSRB-102 on configuration that makes a report mean different
   things in different projects.
