@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -124,4 +125,66 @@ func TestExitCodeParity_EveryEmittedCodeIsRegistered(t *testing.T) {
 			}
 		}
 	})
+}
+
+// @spec spec-sync
+// @ac AC-17
+//
+// C-12: the scan resolves a named-constant argument and refuses one it cannot
+// resolve. Skipping is the defect this criterion exists to prevent, because a
+// scan that drops what it cannot read reports the same result as a scan with
+// nothing to drop. bugs/SP-SP-069.
+func TestExitScan_ResolvesConstantsAndRefusesTheUnresolvable(t *testing.T) {
+	t.Run("spec-sync/AC-17 every exit site resolves or the scan refuses", func(t *testing.T) {
+		// Against the real binary sources. Every os.Exit call must resolve to a
+		// code, so the two counts agree.
+		_, sites, calls, err := exitScan(".")
+		if err != nil {
+			t.Fatalf("the scan refused on cmd/specter: %v", err)
+		}
+		if calls == 0 {
+			t.Fatal("found no os.Exit calls; a pass here would be meaningless")
+		}
+		if sites != calls {
+			t.Errorf("AC-17: the scan resolved %d of %d os.Exit sites in cmd/specter. The %d it could not read were dropped silently, so C-12 is unenforced for whatever they emit",
+				sites, calls, calls-sites)
+		}
+
+		// A named constant resolves to its value.
+		constDir := t.TempDir()
+		writeScanFixture(t, constDir, "probe.go",
+			"package probe\n\nimport \"os\"\n\nconst probeCode = 42\n\nfunc run() { os.Exit(probeCode) }\n")
+		codes, sites, calls, err := exitScan(constDir)
+		if err != nil {
+			t.Fatalf("the scan refused a resolvable constant: %v", err)
+		}
+		if !codes["42"] {
+			t.Errorf("AC-17: os.Exit(probeCode) with const probeCode = 42 did not resolve to 42. Found %v across %d of %d sites", sortedCodes(codes), sites, calls)
+		}
+
+		// An argument the scan cannot resolve fails the scan. It is never
+		// skipped, because a skipped site is invisible in the result.
+		badDir := t.TempDir()
+		writeScanFixture(t, badDir, "probe.go",
+			"package probe\n\nimport \"os\"\n\nfunc run(n int) { os.Exit(n + 1) }\n")
+		if _, _, _, err := exitScan(badDir); err == nil {
+			t.Error("AC-17: the scan accepted os.Exit(n + 1) without an error. An argument it cannot resolve must fail the scan, not vanish from it")
+		}
+	})
+}
+
+func writeScanFixture(t *testing.T, dir, name, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func sortedCodes(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
