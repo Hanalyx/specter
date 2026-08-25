@@ -4,10 +4,17 @@ This document is the single allocation authority for Specter process exit codes.
 No command may emit a code that is not allocated here, and no design track may
 pick a number without adding it here first.
 
-Verified against `release/v0.15.0` at `6c82473`, using a binary built with
-`make build` from `specter/`. Every claim about current behavior below was
-checked by reading `cmd/specter/main.go` or by running `bin/specter`, and
+Verified runtime behavior against `release/v0.15.0` at `6c82473`, using a binary
+built with `make build` from `specter/`. Every claim in that sweep was checked by
+reading `cmd/specter/main.go` or by running `bin/specter`, and
 [Appendix A](#appendix-a-how-each-claim-was-checked) says which.
+
+**Claims added after that sweep name their own verification, in the section that
+makes them.** Code 10's behavior was measured on 2026-08-24. The SP-069
+enforcement claims were verified against `195933a` on 2026-08-25. Neither is
+covered by the `6c82473` sweep, and the header does not pretend otherwise: a
+document that re-dates its whole verification on every edit stops recording when
+anything was actually checked.
 
 ## Why this document exists
 
@@ -201,7 +208,7 @@ the measurement table above holds `10` in its second column. A registry row now
 has to start the line. Verified by mutation rather than by reading: renaming the
 row for 1, 2, 3, or 10 now fails the test. Code 0 still survives, correctly. It
 is registered and it is not an `os.Exit` call, so only AC-16's converse could
-reach it, and no test implements that converse yet.
+reach it. No test implements that converse, which is `bugs/SP-SP-070`.
 
 ### Commands that can only emit 0 or 1
 

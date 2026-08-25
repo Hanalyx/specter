@@ -100,8 +100,9 @@ func TestExitCodeParity_SyncMatchesCoverage(t *testing.T) {
 //
 // This checks one direction only. AC-16 also claims the converse, that every
 // code the document marks Stable is reachable from some os.Exit, and no test
-// implements it. Exit 0 is why that matters: it is registered and it is not an
-// os.Exit call at all, so renaming its row leaves this assertion green.
+// implements it. Filed as bugs/SP-SP-070. Exit 0 is why that matters: it is
+// registered and it is not an os.Exit call at all, so renaming its row leaves
+// this assertion green, and that survivor is correct.
 func TestExitCodeParity_EveryEmittedCodeIsRegistered(t *testing.T) {
 	t.Run("spec-sync/AC-16 every emitted exit code is registered", func(t *testing.T) {
 		scanned, err := exitScanFiles(".")
