@@ -290,46 +290,42 @@ func RunSync(input SyncInput) *SyncResult {
 	// spec-sync C-11 / spec-coverage C-38: rule 1 runs before the tier
 	// arithmetic and before the zero-tolerance gates, in the same order
 	// `coverage` uses, because the threshold does not excuse a missing test.
+	// Every count first, then one verdict. This used to return at the first
+	// violation, which left the later counts at zero and made it impossible
+	// for the CLI to name more than one cause. spec-coverage C-40(e) requires
+	// both to be named in a single run.
+	zeroTolerance := effectiveStrictness == "zero-tolerance"
 	if input.AnnotationDeclared {
-		if total := coverage.AnnotationRuleVerdict(coverageReport); total > 0 {
-			result.AnnotationRuleViolations = total
-			result.AnnotationPermissive = input.AnnotationPermissive
-			if !input.AnnotationPermissive {
-				result.Phases = append(result.Phases, PhaseResult{
-					Phase: "coverage", Passed: false,
-					Message: coverage.AnnotationRuleMessage(total, false),
-				})
-				result.StoppedAt = "coverage"
-				return result
-			}
-		}
+		result.AnnotationRuleViolations = coverage.AnnotationRuleVerdict(coverageReport)
+		result.AnnotationPermissive = input.AnnotationPermissive
+	}
+	if zeroTolerance {
+		result.ZeroToleranceNonPassed = coverage.CountNonPassed(input.Results)
+	}
+	// spec-coverage C-40: the approval gate fires under both models. Counting
+	// it inside the zero-tolerance branch alone is what made it silent for a
+	// workspace declaring settings.annotation (bugs/SP-SP-071).
+	if input.AnnotationDeclared || zeroTolerance {
+		result.ApprovalGateViolations = coverage.CountApprovalGateViolations(specs)
 	}
 
-	if effectiveStrictness == "zero-tolerance" {
-		if nonPassed := coverage.CountNonPassed(input.Results); nonPassed > 0 {
-			result.ZeroToleranceNonPassed = nonPassed
-			result.Phases = append(result.Phases, PhaseResult{
-				Phase: "coverage", Passed: false,
-				Message: fmt.Sprintf("zero-tolerance strictness — %d annotated AC(s) did not pass", nonPassed),
-			})
-			result.StoppedAt = "coverage"
-			return result
-		}
-		if gateViolations := coverage.CountApprovalGateViolations(specs); gateViolations > 0 {
-			result.ApprovalGateViolations = gateViolations
-			result.Phases = append(result.Phases, PhaseResult{
-				Phase: "coverage", Passed: false,
-				Message: fmt.Sprintf("zero-tolerance strictness — %d AC(s) carry approval_gate=true with unset approval_date", gateViolations),
-			})
-			result.StoppedAt = "coverage"
-			return result
-		}
-	}
-
-	if coverageReport.Summary.Failing > 0 {
+	// The ordering, the messages, and the codes all come from the shared
+	// verdict. sync used to carry its own copy of each, which is the shape of
+	// bugs/done/SP-SP-058 and bugs/done/SP-SP-066: a private sequence that was
+	// right when written and went stale when a gate was added beside it.
+	violations, code := coverage.GateVerdict(coverage.GateInputs{
+		AnnotationDeclared:       input.AnnotationDeclared,
+		AnnotationPermissive:     input.AnnotationPermissive,
+		AnnotationRuleViolations: result.AnnotationRuleViolations,
+		ZeroTolerance:            zeroTolerance,
+		ZeroToleranceNonPassed:   result.ZeroToleranceNonPassed,
+		ApprovalGateViolations:   result.ApprovalGateViolations,
+		ThresholdFailing:         coverageReport.Summary.Failing,
+	})
+	if code != 0 {
 		result.Phases = append(result.Phases, PhaseResult{
 			Phase: "coverage", Passed: false,
-			Message: fmt.Sprintf("%d spec(s) below coverage threshold", coverageReport.Summary.Failing),
+			Message: coverage.FirstFailing(violations).Phase,
 		})
 		result.StoppedAt = "coverage"
 		return result

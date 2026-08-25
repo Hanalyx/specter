@@ -53,6 +53,16 @@ const watchDebounce = 150 * time.Millisecond
 
 const maxDescLen = 50
 
+// The coverage-contract exit codes, registered in docs/EXIT_CODES.md section 1.
+// Named rather than computed at the call site: `spec-sync` AC-17 refuses an
+// os.Exit argument it cannot resolve, so a computed code makes the set of codes
+// the binary can emit unknowable to the registry scan and C-12 unenforceable.
+// The refusal is the point. It fired on the first draft of this change.
+const (
+	exitCoverageNoTest       = 2
+	exitCoverageApprovalGate = 3
+)
+
 // exitDiffBreaking is the code `specter diff --exit-code` returns on a breaking
 // change. It sits in the orchestration band, 10 to 19, per docs/EXIT_CODES.md,
 // and is the first code allocated from it. spec-diff C-14.
@@ -908,31 +918,46 @@ func checkCmd() *cobra.Command {
 func coverageExitGates(report *coverage.CoverageReport, specs []schema.SpecAST,
 	results *coverage.ResultsFile, m *manifest.Manifest, effectiveStrictness string) error {
 
-	// C-38(a) to (d): rule 1 is evaluated before the tier arithmetic, because
-	// the threshold does not excuse a criterion with no test. permissive
-	// decides severity and nothing else, per SSRB-104 section 7.4.
-	if m != nil && m.Settings.Annotation != nil {
-		if total := coverage.AnnotationRuleVerdict(report); total > 0 {
-			fmt.Fprintln(os.Stderr, coverage.AnnotationRuleMessage(total, m.Settings.Annotation.Permissive))
-			if !m.Settings.Annotation.Permissive {
-				os.Exit(2)
-			}
-		}
+	annotationDeclared := m != nil && m.Settings.Annotation != nil
+	zeroTolerance := effectiveStrictness == "zero-tolerance"
+
+	in := coverage.GateInputs{
+		AnnotationDeclared: annotationDeclared,
+		ZeroTolerance:      zeroTolerance,
+		ThresholdFailing:   report.Summary.Failing,
+	}
+	if annotationDeclared {
+		in.AnnotationPermissive = m.Settings.Annotation.Permissive
+		in.AnnotationRuleViolations = coverage.AnnotationRuleVerdict(report)
+	}
+	if zeroTolerance {
+		in.ZeroToleranceNonPassed = coverage.CountNonPassed(results)
+	}
+	// C-40: the approval gate fires under both models, so it is counted under
+	// both. It used to be counted inside the zero-tolerance branch alone, which
+	// is why it went silent when a workspace declared settings.annotation
+	// (bugs/SP-SP-071).
+	if annotationDeclared || zeroTolerance {
+		in.ApprovalGateViolations = coverage.CountApprovalGateViolations(specs)
 	}
 
-	if effectiveStrictness == "zero-tolerance" {
-		if nonPassed := coverage.CountNonPassed(results); nonPassed > 0 {
-			fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness \u2014 %d annotated AC(s) did not pass\n", nonPassed)
-			os.Exit(2)
-		}
-		if gateViolations := coverage.CountApprovalGateViolations(specs); gateViolations > 0 {
-			fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness \u2014 %d AC(s) carry approval_gate=true with unset approval_date\n", gateViolations)
-			os.Exit(3)
-		}
+	// C-40(e): every violation is named before the process leaves, so one run
+	// tells the operator everything that failed.
+	violations, code := coverage.GateVerdict(in)
+	for _, v := range violations {
+		fmt.Fprintln(os.Stderr, v.Stderr)
 	}
-
-	if report.Summary.Failing > 0 {
+	switch code {
+	case 0:
+		return nil
+	case 1:
+		// Code 1 is the command's own failure exit, returned rather than
+		// raised so cobra reports it the way it reports every other one.
 		return errSilent
+	case exitCoverageNoTest:
+		os.Exit(exitCoverageNoTest)
+	case exitCoverageApprovalGate:
+		os.Exit(exitCoverageApprovalGate)
 	}
 	return nil
 }
@@ -1442,20 +1467,33 @@ func syncCmd() *cobra.Command {
 			// 3 = approval_gate violation), in text and --json modes alike.
 			// Called after output is emitted so machine consumers see the
 			// structured state before the exit (spec-coverage C-29 pattern).
-			zeroToleranceExit := func() {
-				// spec-sync C-11: rule 1 maps to exit 2, matching `coverage`.
-				// Checked first because sync evaluates it first.
-				if result.AnnotationRuleViolations > 0 && !result.AnnotationPermissive {
-					fmt.Fprintln(os.Stderr, coverage.AnnotationRuleMessage(result.AnnotationRuleViolations, false))
-					os.Exit(2)
+			// One verdict, shared with `coverage`. This used to carry its own
+			// ordering, messages and codes, which is what let the approval gate
+			// go silent under settings.annotation while the ladder still fired
+			// (bugs/SP-SP-071). Renamed from zeroToleranceExit because the
+			// gates it reports are no longer the ladder's alone.
+			gateExit := func() {
+				violations, code := coverage.GateVerdict(coverage.GateInputs{
+					AnnotationDeclared:       m != nil && m.Settings.Annotation != nil,
+					AnnotationPermissive:     result.AnnotationPermissive,
+					AnnotationRuleViolations: result.AnnotationRuleViolations,
+					ZeroTolerance:            effectiveStrictness == "zero-tolerance",
+					ZeroToleranceNonPassed:   result.ZeroToleranceNonPassed,
+					ApprovalGateViolations:   result.ApprovalGateViolations,
+				})
+				// spec-coverage C-40(e): every violation is named before the
+				// process leaves, so one run tells the operator everything.
+				for _, v := range violations {
+					fmt.Fprintln(os.Stderr, v.Stderr)
 				}
-				if result.ZeroToleranceNonPassed > 0 {
-					fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d annotated AC(s) did not pass\n", result.ZeroToleranceNonPassed)
-					os.Exit(2)
-				}
-				if result.ApprovalGateViolations > 0 {
-					fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d AC(s) carry approval_gate=true with unset approval_date\n", result.ApprovalGateViolations)
-					os.Exit(3)
+				// Code 1 stays with errSilent at the call site, exactly as
+				// before, so the threshold path is unchanged. The codes above
+				// it are named, not computed, so the registry scan can see them.
+				switch code {
+				case exitCoverageNoTest:
+					os.Exit(exitCoverageNoTest)
+				case exitCoverageApprovalGate:
+					os.Exit(exitCoverageApprovalGate)
 				}
 			}
 
@@ -1468,7 +1506,7 @@ func syncCmd() *cobra.Command {
 					"stopped_at": result.StoppedAt,
 				})
 				if !result.Passed {
-					zeroToleranceExit()
+					gateExit()
 					return errSilent
 				}
 				return nil
@@ -1495,7 +1533,7 @@ func syncCmd() *cobra.Command {
 				fmt.Println("All checks passed.")
 			} else {
 				fmt.Printf("Pipeline failed at %s phase.\n", result.StoppedAt)
-				zeroToleranceExit()
+				gateExit()
 				return errSilent
 			}
 			return nil
