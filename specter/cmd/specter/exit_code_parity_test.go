@@ -98,11 +98,10 @@ func TestExitCodeParity_SyncMatchesCoverage(t *testing.T) {
 // emitted from internal/ would not be found. That is a known limit; if one is
 // ever added there this criterion must widen with it.
 //
-// This checks one direction only. AC-16 also claims the converse, that every
-// code the document marks Stable is reachable from some os.Exit, and no test
-// implements it. Filed as bugs/SP-SP-070. Exit 0 is why that matters: it is
-// registered and it is not an os.Exit call at all, so renaming its row leaves
-// this assertion green, and that survivor is correct.
+// Both directions. Emitted codes must be registered, and every code the document
+// marks Stable must be reachable. The rules the second direction needs, including
+// why code 0 is exempt, are AC-18's. bugs/SP-SP-070 is where the converse was
+// missing.
 func TestExitCodeParity_EveryEmittedCodeIsRegistered(t *testing.T) {
 	t.Run("spec-sync/AC-16 every emitted exit code is registered", func(t *testing.T) {
 		scanned, err := exitScanFiles(".")
@@ -134,6 +133,69 @@ func TestExitCodeParity_EveryEmittedCodeIsRegistered(t *testing.T) {
 			if !registryHasRow(string(doc), code) {
 				t.Errorf("C-12: the binary can exit %s and docs/EXIT_CODES.md has no row for it", code)
 			}
+		}
+
+		// The converse, which AC-16's expected_output has always claimed. AC-18
+		// carries the rules and the control case that proves this can fail.
+		unreachable, err := unreachableStableCodes(string(doc), emitted)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, code := range unreachable {
+			t.Errorf("C-12: docs/EXIT_CODES.md marks %s Stable and no os.Exit in cmd/specter can produce it", code)
+		}
+	})
+}
+
+// @spec spec-sync
+// @ac AC-18
+//
+// C-12: the rules the converse needs, and the control case that proves it can
+// fail. The converse is green against a correct registry and this tree's
+// registry is correct, so without the control this assertion would be
+// indistinguishable from one that checks nothing. bugs/SP-SP-070.
+func TestExitScan_TheConverseCanFail(t *testing.T) {
+	t.Run("spec-sync/AC-18 the Stable-reachability rules and their control", func(t *testing.T) {
+		// Differential precondition. A registry holding a Stable row nothing
+		// emits must be reported, and the three rules must each show in the
+		// answer: 0 exempt, 88 not Stable, 99 Stable on one of its two rows.
+		control := registryHeader + "\n|---|---|---|---|\n" +
+			"| `0` | all | success, never through os.Exit | Stable |\n" +
+			"| `77` | probe | nothing emits this | Stable |\n" +
+			"| `88` | probe | nothing emits this either | Accidental collision |\n" +
+			"| `99` | probe | one row of two is Stable | Shipped, overloaded, frozen |\n" +
+			"| `99` | probe | the other row | Stable |\n"
+		got, err := unreachableStableCodes(control, map[string]bool{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"77", "99"}
+		if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+			t.Fatalf("AC-18 control: expected %v and got %v. Until the control fires, the assertion on the real registry proves nothing", want, got)
+		}
+
+		// The real registry. Preconditions first, so an empty answer cannot pass
+		// for a clean one.
+		doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "EXIT_CODES.md"))
+		if err != nil {
+			t.Fatalf("cannot read the registry: %v", err)
+		}
+		stable, rows, err := registryStableCodes(string(doc))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rows == 0 || len(stable) == 0 {
+			t.Fatalf("parsed %d rows and %d Stable codes from Section 1; a pass here would be meaningless", rows, len(stable))
+		}
+
+		// AC-18(c): the exemption is guarded rather than assumed.
+		emitted, _, _, err := exitScan(".")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if emitted[exitCodeSuccess] {
+			t.Errorf("AC-18: something calls os.Exit(%s). Code %s is exempt from the converse only because success never goes through os.Exit, and that is no longer true",
+				exitCodeSuccess, exitCodeSuccess)
 		}
 	})
 }

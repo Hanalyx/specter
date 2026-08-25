@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -191,4 +192,96 @@ func registryHasRow(registry, code string) bool {
 		}
 	}
 	return false
+}
+
+// The registry-parity converse, spec-sync AC-18. AC-16 claims that every code
+// the document marks Stable is reachable from some os.Exit, and the rules that
+// claim needs are AC-18's, not this file's. They are restated here only so the
+// code reads without the spec open.
+
+// exitCodeSuccess is exempt from the converse. Success is returned by RunE
+// returning nil and never through os.Exit, so no scan of exit calls can reach
+// it. AC-18(c) requires the exemption to be guarded rather than assumed, and the
+// guard lives in the assertion: if anything ever calls os.Exit(0), the exemption
+// is wrong and the test says so.
+const exitCodeSuccess = "0"
+
+const registryHeader = "| Code | Commands | Condition | Standing |"
+
+// registryStableCodes reads Section 1 of docs/EXIT_CODES.md and reports which
+// codes carry at least one Stable row, along with how many rows it parsed.
+//
+// A code is required-reachable when ANY of its rows is Stable, per AC-18(b).
+// Standing belongs to a row and the converse is a claim about a code: code 2 has
+// three rows, two Stable and one an accidental collision, and requiring every
+// row to be Stable would exempt a code that is emitted and must be required.
+//
+// Stable is an exact match, per AC-18(a). The other values in use are
+// "Shipped, overloaded, frozen" and "Accidental collision", and a substring
+// match over either would be a different assertion than the document makes.
+func registryStableCodes(registry string) (stable map[string]bool, rows int, err error) {
+	lines := strings.Split(registry, "\n")
+	start := -1
+	for i, l := range lines {
+		if strings.TrimSpace(l) == registryHeader {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return nil, 0, fmt.Errorf("no Section 1 registry table: expected a line reading %q", registryHeader)
+	}
+
+	stable = map[string]bool{}
+	for _, l := range lines[start+1:] {
+		t := strings.TrimSpace(l)
+		if !strings.HasPrefix(t, "|") {
+			break
+		}
+		cells := registryCells(t)
+		if len(cells) != 4 {
+			continue
+		}
+		code := strings.Trim(cells[0], "`")
+		if code == "" || strings.Trim(code, "-") == "" {
+			continue // the header separator row
+		}
+		rows++
+		if cells[3] == "Stable" {
+			stable[code] = true
+		}
+	}
+	return stable, rows, nil
+}
+
+func registryCells(row string) []string {
+	parts := strings.Split(strings.Trim(row, "|"), "|")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		out = append(out, strings.TrimSpace(p))
+	}
+	return out
+}
+
+// unreachableStableCodes reports every code the registry marks Stable that
+// nothing in emitted can produce. Empty is the passing answer.
+func unreachableStableCodes(registry string, emitted map[string]bool) ([]string, error) {
+	stable, rows, err := registryStableCodes(registry)
+	if err != nil {
+		return nil, err
+	}
+	if rows == 0 {
+		return nil, fmt.Errorf("parsed the registry table and found no rows; an empty answer here would be vacuous")
+	}
+	var out []string
+	for code := range stable {
+		if code == exitCodeSuccess {
+			continue
+		}
+		if !emitted[code] {
+			out = append(out, code)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
 }
