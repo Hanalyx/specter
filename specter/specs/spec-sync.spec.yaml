@@ -1,6 +1,6 @@
 spec:
   id: spec-sync
-  version: "1.7.0"
+  version: "2.0.0"
   status: approved
   tier: 2
 
@@ -262,16 +262,33 @@ spec:
       priority: critical
 
     - id: AC-16
-      description: "Every exit code the binary can emit is registered. The assertion scans `cmd/specter/` for literal `os.Exit(N)` calls, collects the distinct N, and asserts each appears as a row in `docs/EXIT_CODES.md`. It also asserts the converse for the codes the document marks Stable: each must be reachable from some `os.Exit` in the tree. The scan's scope is stated here because it is a static scan: it reads `cmd/specter/*.go` excluding `_test.go` files, which is where every exit in this binary is made. A code emitted from `internal/` would not be found, and that is a known limit rather than an oversight; if one is ever added there, this criterion must widen with it."
+      description: "Every exit code the binary can emit is registered. The assertion scans `cmd/specter/` for `os.Exit` calls, resolves each argument to an integer per AC-17, collects the distinct values, and asserts each appears as a row in `docs/EXIT_CODES.md`. It also asserts the converse for the codes the document marks Stable: each must be reachable from some `os.Exit` in the tree. The scan's scope is stated here because it is a static scan: it reads `cmd/specter/*.go` excluding `_test.go` files, which is where every exit in this binary is made. A code emitted from `internal/` would not be found, and that is a known limit rather than an oversight; if one is ever added there, this criterion must widen with it."
       inputs:
-        scan_scope: "cmd/specter/*.go excluding _test.go, literal os.Exit(N)"
+        scan_scope: "cmd/specter/*.go excluding _test.go, every os.Exit call with its argument resolved per AC-17"
         registry: "docs/EXIT_CODES.md rows"
       expected_output:
         every_emitted_code_is_registered: true
         every_stable_registered_code_is_emitted: true
       references_constraints: ["C-12"]
       priority: high
+
+    - id: AC-17
+      description: "The scan resolves an `os.Exit` argument that is a named constant, and refuses one it cannot resolve. An argument that is a bare identifier is looked up among the `const` declarations in the scan scope and contributes that constant's value. An argument the scan cannot resolve to an integer fails the scan with an error naming the site, and is never skipped. The scan also reports how many exit sites it resolved, and that count MUST equal the number of `os.Exit(` calls in scope, so a site that matched nothing cannot pass as a site that was checked. Rationale, per `bugs/SP-SP-069`: the first implementation matched `os.Exit(` followed by literal digits only. `specter diff --exit-code` returns the named constant `exitDiffBreaking`, so that site was invisible, C-12 went unenforced for it, and `docs/EXIT_CODES.md` came to contradict the binary in five places while this criterion reported green. A scan that skips what it cannot read is indistinguishable from a scan that found nothing to skip, which is why refusal rather than omission is the rule."
+      inputs:
+        exit_argument_kinds: ["integer literal", "named constant declared in scope", "unresolvable expression"]
+        scan_scope: "cmd/specter/*.go excluding _test.go"
+      expected_output:
+        named_constant_resolves_to_its_value: true
+        unresolvable_argument_fails_the_scan: true
+        resolved_site_count_equals_exit_call_count: true
+      references_constraints: ["C-12"]
+      priority: high
   changelog:
+    - version: "2.0.0"
+      date: "2026-08-25"
+      author: "specter-team"
+      type: major
+      description: "AC-17 states how an `os.Exit` argument that is not an integer literal is handled: a bare identifier resolves through the `const` declarations in scope, an argument that cannot be resolved fails the scan rather than being skipped, and the resolved site count MUST equal the number of `os.Exit(` calls in scope. Major rather than minor because of one field: AC-16's `inputs.scan_scope` read `literal os.Exit(N)`, and a test conforming to that input contract does not conform to the new one. `specter diff` classifies the change as breaking on that field alone; the same edit to the description classifies as patch, and AC-17 on its own classifies as additive. Filed as `bugs/SP-SP-069`: the literal-only scan could not see `os.Exit(exitDiffBreaking)`, so C-12 went unenforced for code 10 and `docs/EXIT_CODES.md` came to contradict the binary in five places while AC-16 reported green. AC-16's `every_stable_registered_code_is_emitted` claim is deliberately left untouched. No test implements it, which is a separate defect and not this one."
     - version: "1.7.0"
       date: "2026-08-23"
       author: "specter-team"

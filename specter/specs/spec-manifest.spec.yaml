@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "1.19.0"
+  version: "1.19.1"
   status: draft
   tier: 2
 
@@ -935,10 +935,15 @@ spec:
       version_range: "^1.0.0"
       relationship: requires
     - spec_id: spec-sync
-      version_range: "^1.0.0"
+      version_range: ">=1.0.0 <3.0.0"
       relationship: requires
 
   changelog:
+    - version: "1.19.1"
+      date: "2026-08-25"
+      author: "specter-team"
+      type: patch
+      description: "Widen the `spec-sync` dependency range to `>=1.0.0 <3.0.0`. spec-sync went to 2.0.0 for AC-17 and an `inputs` correction on AC-16, both internal to its exit-code registry scan, and nothing this spec depends on changed. Mechanical, and the same form spec-vscode already uses for its `spec-diff` range. Recorded rather than done silently, because a widened range is the one edit that makes a real future break invisible."
     - version: "1.19.0"
       date: "2026-08-22"
       author: "specter-team"
