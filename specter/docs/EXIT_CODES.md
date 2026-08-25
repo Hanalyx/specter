@@ -238,7 +238,6 @@ another. They are recorded as current behavior, not as allocations.
 
 | Case | Behavior | Bug |
 |---|---|---|
-| `parse --json` on a spec that fails to parse | Errors appear in the document. Exit 0. Text mode exits 1. | `bugs/SP-SP-022`, open |
 | `resolve --json` on a dependency error | The `dangling_reference` diagnostic appears in the document. Exit 0. Text mode exits 1. | Not filed as of 2026-08-17 |
 | `diff` on a change it labels `[breaking]`, without `--exit-code` | The classification is printed and correct. Exit 0. Intended, per `spec-diff` C-10. With `--exit-code` the same run exits 10. | `bugs/done/SP-SP-012`, resolved in v0.15.0 |
 | `diff coverage` on any delta | Exit 0 by design. Documented as a diagnostic surface, not a gate. | Intended |
@@ -250,6 +249,15 @@ another. They are recorded as current behavior, not as allocations.
 `check --json` was the same defect until this cycle. It was fixed by
 `checkExitVerdict`, which both the text branch and the JSON branch now end on,
 so the verdict cannot differ by rendering.
+
+**`parse --json` was the third and last of the group, fixed 2026-08-25 as
+`bugs/done/SP-SP-022`.** Its row is gone from the table above rather than marked
+resolved, because Section 2 lists cases where the code and the output disagree
+today. `hasErrors` was set inside the text branch and the JSON branch hit
+`continue` above it, so the verdict now comes off the parse result before the
+rendering branch. `spec-parse` C-11 states the rule and AC-19 pins both
+directions, the failing workspace at 1 in both modes and the clean one at 0, so
+parity cannot be reached by failing everything.
 
 **`coverage` followed, and the second case is the sharper lesson.** Its `--json`
 branch carried a private copy of the gate sequence plus a comment saying it
