@@ -1,6 +1,6 @@
 spec:
   id: spec-sync
-  version: "2.0.0"
+  version: "2.1.0"
   status: approved
   tier: 2
 
@@ -283,7 +283,25 @@ spec:
         resolved_site_count_equals_exit_call_count: true
       references_constraints: ["C-12"]
       priority: high
+
+    - id: AC-18
+      description: "The registry-parity converse is decidable, and the rules it needs are stated here rather than left to the test that runs them. Three rules. (a) A row counts as Stable when its Standing cell is exactly `Stable`. A substring match is wrong: `Shipped, overloaded, frozen` and `Accidental collision` are the other values in use, and neither is a weaker form of stable. (b) A code is required to be reachable when at least one of its rows is Stable. Standing is a property of a row while the converse is a claim about a code, and code 2 carries three rows of which two are Stable and one is an accidental collision. Requiring every row to be Stable would exempt code 2, which is emitted and must be required. (c) Code 0 is exempt, because success is returned by `RunE` returning nil and never through `os.Exit`, so no scan of exit calls can reach it. The exemption MUST be guarded: the assertion fails if code 0 ever appears in the scanned set, because an `os.Exit(0)` would make the exemption wrong and nothing else would say so. The converse is green against a correct registry, so it MUST carry a differential precondition: the same check, run against a registry holding a Stable row that no scan can reach, MUST report that row, and the assertion MUST fail loudly rather than skip when the control does not fire. Rationale, per `bugs/SP-SP-070`: AC-16 claimed this direction in its expected_output and no test implemented it, so the pair read as enforced while half of it was not."
+      inputs:
+        registry_table: "docs/EXIT_CODES.md Section 1, the Code/Commands/Condition/Standing rows"
+        emitted_codes: "the set the AC-17 scan produces"
+      expected_output:
+        stable_is_an_exact_match: true
+        any_stable_row_requires_reachability: true
+        code_zero_exempt_and_the_exemption_guarded: true
+        control_case_reports_an_unreachable_stable_row: true
+      references_constraints: ["C-12"]
+      priority: high
   changelog:
+    - version: "2.1.0"
+      date: "2026-08-25"
+      author: "specter-team"
+      type: minor
+      description: "AC-18 states the three rules the registry-parity converse needs, so the test that runs it is not the place they are decided. Stable is an exact match on the Standing cell, any Stable row makes its code required-reachable, and code 0 is exempt with the exemption guarded by an assertion that fails if anything ever emits it. The converse is green against a correct registry, which is why the criterion also requires a differential precondition: a control registry holding an unreachable Stable row must be reported, and the assertion must fail loudly rather than skip when the control does not fire. Per `bugs/SP-SP-070`: AC-16 claimed this direction and nothing implemented it. AC-16 is untouched, so this is additive rather than another major."
     - version: "2.0.0"
       date: "2026-08-25"
       author: "specter-team"
