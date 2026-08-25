@@ -273,8 +273,10 @@ gate-relevant state. The three per-gate tests that preceded it all passed
 throughout. **A per-gate test cannot fail when a new gate is added to one
 surface; a table can.**
 
-Those two functions are the pattern to copy. `parse`, `resolve` and `reverse`
-still carry their own `--json` branches.
+Those two functions are the pattern to copy. `parse` reaches the same result by
+the other route: it still renders in a branch, but the verdict is taken off the
+parse result above it, so the branch decides only the format. `resolve` and
+`reverse` still decide inside theirs.
 
 Two rules follow for anyone adding a gate:
 

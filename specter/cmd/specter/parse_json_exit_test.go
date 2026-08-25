@@ -15,6 +15,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -89,12 +90,13 @@ func TestParseJSONExitParity(t *testing.T) {
 			t.Errorf("AC-19: `parse` exited %d and `parse --json` exited %d on the same workspace. C-11 makes the code a function of the parse result, not of the rendering", textCode, jsonCode)
 		}
 
-		// The document is still written, and still reports the failure. The fix
-		// is to the verdict, not to the output.
+		// The document is still written, and still reports the same errors the
+		// text run wrote. The fix is to the verdict, not to the output.
 		var doc struct {
 			OK     bool `json:"ok"`
 			Errors []struct {
 				Type    string `json:"type"`
+				Path    string `json:"path"`
 				Message string `json:"message"`
 			} `json:"errors"`
 		}
@@ -104,8 +106,25 @@ func TestParseJSONExitParity(t *testing.T) {
 		if doc.OK {
 			t.Error("AC-19: the document reports ok: true for a spec that does not parse")
 		}
-		if len(doc.Errors) == 0 {
-			t.Error("AC-19: the document carries no errors for a spec that does not parse")
+
+		// Compared against the text run rather than pinned to literals, so the
+		// assertion is about the two modes agreeing and does not have to be
+		// rewritten when a validator message changes. Counting alone is not
+		// enough either: two errors of different types could be swapped for two
+		// copies of one and the count would still match.
+		textErrors := countTextParseErrors(textErr)
+		if textErrors == 0 {
+			t.Fatalf("the text run named no errors, so there is nothing to compare the document against.\nstderr:\n%s", textErr)
+		}
+		if len(doc.Errors) != textErrors {
+			t.Errorf("AC-19: the document carries %d error(s) and the text run named %d. The two modes must report the same errors, not merely both fail.\nstdout:\n%s\nstderr:\n%s",
+				len(doc.Errors), textErrors, jsonOut, textErr)
+		}
+		for _, e := range doc.Errors {
+			want := fmt.Sprintf("error [%s] %s: %s", e.Type, e.Path, e.Message)
+			if !strings.Contains(textErr, want) {
+				t.Errorf("AC-19: the document carries an error the text run never printed.\n  document: %s\n  stderr:\n%s", want, textErr)
+			}
 		}
 
 		// The clean workspace. Both modes must exit 0, so parity cannot be
@@ -117,4 +136,17 @@ func TestParseJSONExitParity(t *testing.T) {
 			t.Errorf("AC-19: the clean workspace exited %d under `parse` and %d under `parse --json`, expected 0 for both.\nstderr:\n%s", goodText, goodJSON, goodErr)
 		}
 	})
+}
+
+// countTextParseErrors counts the error lines `parse` writes to stderr, which
+// is the set the JSON document has to match. The FAIL line naming the file is
+// not one of them.
+func countTextParseErrors(stderr string) int {
+	n := 0
+	for _, l := range strings.Split(stderr, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), "error [") {
+			n++
+		}
+	}
+	return n
 }
