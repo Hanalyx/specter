@@ -94,9 +94,14 @@ func TestExitCodeParity_SyncMatchesCoverage(t *testing.T) {
 // docs/EXIT_CODES.md.
 //
 // Scan scope, stated because this is a static scan: cmd/specter/*.go excluding
-// _test.go, literal os.Exit(N) calls. A code emitted from internal/ would not be
-// found. That is a known limit; if one is ever added there this criterion must
-// widen with it.
+// _test.go, every os.Exit call with its argument resolved per AC-17. A code
+// emitted from internal/ would not be found. That is a known limit; if one is
+// ever added there this criterion must widen with it.
+//
+// This checks one direction only. AC-16 also claims the converse, that every
+// code the document marks Stable is reachable from some os.Exit, and no test
+// implements it. Exit 0 is why that matters: it is registered and it is not an
+// os.Exit call at all, so renaming its row leaves this assertion green.
 func TestExitCodeParity_EveryEmittedCodeIsRegistered(t *testing.T) {
 	t.Run("spec-sync/AC-16 every emitted exit code is registered", func(t *testing.T) {
 		scanned, err := exitScanFiles(".")
@@ -118,9 +123,14 @@ func TestExitCodeParity_EveryEmittedCodeIsRegistered(t *testing.T) {
 		if err != nil {
 			t.Fatalf("cannot read the registry: %v", err)
 		}
-		registry := string(doc)
+		// A registry row starts the line with the code cell. Matching the
+		// substring anywhere in the document is not the same assertion: the
+		// Code 10 section carries a measurement table whose second column holds
+		// the code, and that cell satisfied a substring check while the row it
+		// was supposed to prove was absent. Found by renaming the row and
+		// watching this assertion stay green.
 		for code := range emitted {
-			if !strings.Contains(registry, "| `"+code+"` |") {
+			if !registryHasRow(string(doc), code) {
 				t.Errorf("C-12: the binary can exit %s and docs/EXIT_CODES.md has no row for it", code)
 			}
 		}
