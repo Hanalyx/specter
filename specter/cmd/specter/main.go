@@ -442,6 +442,15 @@ func parseCmd() *cobra.Command {
 				}
 
 				result := parser.ParseSpec(string(data))
+
+				// C-11: the verdict is taken before the rendering branch, so
+				// the two modes cannot disagree about it. It used to be set
+				// inside the text branch only, and the JSON branch continued
+				// past it (`bugs/SP-SP-022`).
+				if !result.OK {
+					hasErrors = true
+				}
+
 				if jsonOutput {
 					enc := json.NewEncoder(os.Stdout)
 					enc.SetIndent("", "  ")
@@ -452,7 +461,6 @@ func parseCmd() *cobra.Command {
 				if result.OK {
 					fmt.Printf("PASS %s — %s@%s\n", file, result.Value.ID, result.Value.Version)
 				} else {
-					hasErrors = true
 					fmt.Fprintf(os.Stderr, "FAIL %s\n", file)
 					for _, e := range result.Errors {
 						fmt.Fprintf(os.Stderr, "  error [%s] %s: %s\n", e.Type, e.Path, e.Message)
