@@ -16,6 +16,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -107,24 +108,29 @@ func TestParseJSONExitParity(t *testing.T) {
 			t.Error("AC-19: the document reports ok: true for a spec that does not parse")
 		}
 
+		// Multiset equality against the text run, not count plus containment.
+		// Containment does not consume: with text printing A and B, a document
+		// reporting A twice matches the count and every entry is found in
+		// stderr, so both weaker checks pass on two different sets of errors.
+		// Decrementing catches that, because the second A drives A's count
+		// negative while B is left over.
+		//
 		// Compared against the text run rather than pinned to literals, so the
-		// assertion is about the two modes agreeing and does not have to be
-		// rewritten when a validator message changes. Counting alone is not
-		// enough either: two errors of different types could be swapped for two
-		// copies of one and the count would still match.
-		textErrors := countTextParseErrors(textErr)
-		if textErrors == 0 {
+		// assertion is about the two modes agreeing and survives a validator
+		// message change.
+		remaining := textParseErrorCounts(textErr)
+		if len(remaining) == 0 {
 			t.Fatalf("the text run named no errors, so there is nothing to compare the document against.\nstderr:\n%s", textErr)
 		}
-		if len(doc.Errors) != textErrors {
-			t.Errorf("AC-19: the document carries %d error(s) and the text run named %d. The two modes must report the same errors, not merely both fail.\nstdout:\n%s\nstderr:\n%s",
-				len(doc.Errors), textErrors, jsonOut, textErr)
-		}
 		for _, e := range doc.Errors {
-			want := fmt.Sprintf("error [%s] %s: %s", e.Type, e.Path, e.Message)
-			if !strings.Contains(textErr, want) {
-				t.Errorf("AC-19: the document carries an error the text run never printed.\n  document: %s\n  stderr:\n%s", want, textErr)
+			line := fmt.Sprintf("error [%s] %s: %s", e.Type, e.Path, e.Message)
+			remaining[line]--
+			if remaining[line] < 0 {
+				t.Errorf("AC-19: the document reports an error the text run did not print, or prints it more often than the text run did.\n  document: %s\n  stderr:\n%s", line, textErr)
 			}
+		}
+		for _, line := range sortedRemaining(remaining) {
+			t.Errorf("AC-19: the text run printed an error the document does not report %d more time(s).\n  stderr line: %s\n  stdout:\n%s", remaining[line], line, jsonOut)
 		}
 
 		// The clean workspace. Both modes must exit 0, so parity cannot be
@@ -138,15 +144,30 @@ func TestParseJSONExitParity(t *testing.T) {
 	})
 }
 
-// countTextParseErrors counts the error lines `parse` writes to stderr, which
-// is the set the JSON document has to match. The FAIL line naming the file is
-// not one of them.
-func countTextParseErrors(stderr string) int {
-	n := 0
+// textParseErrorCounts returns the multiset of error lines `parse` writes to
+// stderr, keyed by the exact line. A multiset rather than a set or a count,
+// because the document has to match what the text run printed and not merely
+// overlap with it. The FAIL line naming the file is not one of them.
+func textParseErrorCounts(stderr string) map[string]int {
+	out := map[string]int{}
 	for _, l := range strings.Split(stderr, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(l), "error [") {
-			n++
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "error [") {
+			out[t]++
 		}
 	}
-	return n
+	return out
+}
+
+// sortedRemaining returns the lines still owed by the document, in a stable
+// order so a failure reads the same way twice.
+func sortedRemaining(counts map[string]int) []string {
+	var out []string
+	for line, n := range counts {
+		if n > 0 {
+			out = append(out, line)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
