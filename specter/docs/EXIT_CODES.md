@@ -43,7 +43,7 @@ that any number in it is in use.
 
 ## Section 1: the codes Specter emits today
 
-Specter emits four codes. There is no fifth.
+Specter emits five codes. There is no sixth.
 
 | Code | Commands | Condition | Standing |
 |---|---|---|---|
@@ -53,6 +53,7 @@ Specter emits four codes. There is no fifth.
 | `2` | `coverage`, `sync` | A `settings.annotation` block is declared with `permissive: false`, and at least one acceptance criterion has no test at all. | Stable |
 | `2` | all | The process recovered a panic on the main goroutine. | Accidental collision |
 | `3` | `coverage`, `sync` | Effective strictness `zero-tolerance`, and at least one acceptance criterion carries `approval_gate: true` with an unset `approval_date`. | Stable |
+| `10` | `diff` | `--exit-code` was passed and the change class is `breaking`. Without the flag, `diff` exits 0. | Stable |
 
 ### Code 0
 
@@ -158,12 +159,45 @@ error: zero-tolerance strictness — %d AC(s) carry approval_gate=true with unse
 
 This is the second golden value for 1A4.
 
+### Code 10, the breaking-diff gate
+
+Emitted by `diff` at `main.go:3233`, from a deferred call so the report prints
+before the process leaves. Two conditions, both required: `--exit-code` was
+passed, and the change class is `breaking`.
+
+Without the flag, `diff` exits 0 on a breaking change, and that is deliberate.
+`spec-diff` C-10 calls the command a diagnostic surface rather than a gate, and
+changing a shipped exit code silently breaks every caller, so the failing exit
+arrived as an opt-in flag on git's own pattern. `spec-diff` C-14 states the rule
+and AC-19 asserts it. The history is `bugs/done/SP-SP-012`.
+
+Measured on `release/v0.15.0`:
+
+| Invocation | Code |
+|---|---|
+| breaking, with `--exit-code` | `10` |
+| breaking, without the flag | `0` |
+| unchanged, with `--exit-code` | `0` |
+
+**This document registered code 10 in one place and contradicted it in five.
+The five were repaired on 2026-08-24.** Section 3 named the allocation when
+SP-SP-012 closed. The count opening Section 1, the table in Section 1, the 0-or-1
+list below, the Section 2 row for `diff`, and the "nothing occupies 10 to 29"
+line in Section 3 all kept describing a binary that no longer existed. `spec-sync` C-12 is the rule
+this broke. The parity test meant to enforce it cannot see this site: it matches
+`os.Exit(` followed by literal digits (`exit_code_parity_test.go:107`), and this
+site returns a named constant. A registry that a fix updates in one place while
+contradicting it in five is the failure C-12 exists to prevent, so the test needs
+the constant case before the registry can be called enforced. Filed as
+`bugs/SP-SP-069`.
+
 ### Commands that can only emit 0 or 1
 
 `parse`, `resolve`, `resolve dependents`, `check`, `reverse`, `init`, `doctor`,
-`explain`, `watch`, `diff`, `diff coverage`, `ingest`, `feedback`, and
-`pre-push-check`. `grep -rn "os.Exit" --include="*.go" cmd/ internal/` finds exit
-sites in `main.go` only, and no package under `internal/` calls `os.Exit`.
+`explain`, `watch`, `diff coverage`, `ingest`, `feedback`, and `pre-push-check`.
+`diff` is not on this list: it emits 10 under `--exit-code`, per the section
+above. `grep -rn "os.Exit" --include="*.go" cmd/ internal/` finds exit sites in
+`main.go` only, and no package under `internal/` calls `os.Exit`.
 
 ## Section 2: where the code and the output disagree
 
@@ -175,7 +209,7 @@ another. They are recorded as current behavior, not as allocations.
 |---|---|---|
 | `parse --json` on a spec that fails to parse | Errors appear in the document. Exit 0. Text mode exits 1. | `bugs/SP-SP-022`, open |
 | `resolve --json` on a dependency error | The `dangling_reference` diagnostic appears in the document. Exit 0. Text mode exits 1. | Not filed as of 2026-08-17 |
-| `diff` on a change it labels `[breaking]` | The classification is printed and correct. Exit 0. | `bugs/SP-SP-012`, open |
+| `diff` on a change it labels `[breaking]`, without `--exit-code` | The classification is printed and correct. Exit 0. Intended, per `spec-diff` C-10. With `--exit-code` the same run exits 10. | `bugs/done/SP-SP-012`, resolved in v0.15.0 |
 | `diff coverage` on any delta | Exit 0 by design. Documented as a diagnostic surface, not a gate. | Intended |
 | `check` and `coverage` on an unreadable specs directory | Reported as a clean workspace with zero specs. Exit 0. `sync` exits 1, but names the wrong cause. | `bugs/SP-SP-026`, open |
 | `check --json` when a spec fails to parse, the resolver errors, or the manifest is rejected | Exit 1 with an empty stdout. No document at all. | `bugs/SP-SP-032`, open |
@@ -247,8 +281,9 @@ executable, 127 for a command not found, and 128 plus the signal number for a
 process killed by a signal. A binary that returns those numbers is
 indistinguishable from a failure to run it at all.
 
-**A band is not a promise.** Nothing occupies 10 to 29 today. Anyone reading a
-code in that range from a released binary has found a bug or a stale build.
+**A band is not a promise.** Only 10 is occupied today, by `diff --exit-code`.
+Nothing occupies 11 to 29. Anyone reading a code in that range from a released
+binary has found a bug or a stale build.
 
 ### Where the planned gates belong
 
@@ -455,7 +490,8 @@ in `internal/`. Every one carries a `file:line` above.
 **Run against a built binary.** Verified on `release/v0.15.0` at `6c82473` with
 `bin/specter`:
 
-- The four codes, on a fixture workspace with one valid spec and one annotated test.
+- The codes 0, 1, 2, and 3, on a fixture workspace with one valid spec and one
+  annotated test.
 - `parse --json` returning 0 on a spec that fails to parse.
 - `resolve --json` returning 0 on a dangling `depends_on` reference.
 - `check --json` returning 1 with zero bytes on stdout, on a parse error and on a
@@ -469,6 +505,12 @@ in `internal/`. Every one carries a `file:line` above.
   captured for each of the four commands that continue.
 - `watch` returning 0 on SIGINT in a clean workspace, and 1 on a rejected
   manifest before it enters the loop.
+
+**Code 10, added to this document 2026-08-24**, verified on the same branch with
+a rebuilt `bin/specter`. A spec pair differing by one removed acceptance
+criterion and a major version bump returns 10 with `--exit-code`, 0 without the
+flag, and 0 when the two files are identical. The earlier sweep predates the
+code, which is why it says four.
 
 **Not verified.** The status the Go runtime produces when a goroutine other than
 the main one panics. It is stated as unverified in Section 1 rather than claimed.
