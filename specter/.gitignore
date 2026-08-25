@@ -43,5 +43,9 @@ docs/roadmap/
 # Design records, local-only as of 2026-08-16
 docs/design/
 
+# Reviewer proposals, local-only as of 2026-08-24. Same category as
+# docs/design/: they critique in-flight work and name open defects.
+docs/reviewer/
+
 # Planning surface — local-only as of 2026-05-07
 BACKLOG.md
