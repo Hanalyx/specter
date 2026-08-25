@@ -1,6 +1,6 @@
 spec:
   id: spec-parse
-  version: "1.2.0"
+  version: "1.3.0"
   status: approved
   tier: 1
 
@@ -85,6 +85,11 @@ spec:
     - id: C-10
       description: "MUST validate, at parse time, that every entry in `acceptance_criteria[].references_constraints[]` names a constraint id declared in the same spec's `constraints[]` block. Dangling references (e.g., `references_constraints: [\"C-99\"]` when no `C-99` constraint exists) MUST produce a `dangling_reference` ParseError naming the AC id and the offending constraint id. Rationale: a spec whose AC claims to reference a constraint that doesn't exist is internally inconsistent; catching this at parse time prevents the contradiction from reaching the coverage pipeline. JSON Schema cannot express the cross-reference (it sees `references_constraints` as a string array, not as ids that must match siblings), so the parser enforces it after schema validation succeeds."
       type: technical
+      enforcement: error
+
+    - id: C-11
+      description: "`specter parse --json` MUST exit with the same process exit code that `specter parse` produces for the same files. The exit code is a function of the parse result and not of how it is rendered: non-zero when any file failed to parse or could not be read, and 0 otherwise. The JSON document for each file MUST be written to stdout in full before the exit-code decision runs, so one invocation gives a caller both the diagnostics and a usable verdict. This is the `parse` instance of the parity rule `spec-coverage` C-29 states for `coverage` and `spec-check` C-15 states for `check`. Rationale, per `bugs/SP-SP-022`: the JSON branch encoded its document and continued the loop without recording the failure, so the accumulator the exit code reads was never set. The document was correct and only the code was wrong, which is the worst shape this defect takes, because a caller inspecting the output sees the errors and a caller reading the code sees success. `parse` is the validation entry point, so a CI job collecting structured errors from it passed on a workspace that does not parse, and every later phase then ran against a workspace the gate had declared good. The same fix landed in `coverage` in v0.13 and in `check` as `bugs/done/SP-SP-021`, and was not swept here either time."
+      type: business
       enforcement: error
 
   acceptance_criteria:
@@ -273,7 +278,25 @@ spec:
       references_constraints: ["C-01"]
       priority: high
 
+    - id: AC-19
+      description: "Exit-code parity between `parse` and `parse --json`. A workspace holding one spec that is missing `status` and `tier` and carries an unknown field exits 1 under `specter parse` and 1 under `specter parse --json`. The JSON run MUST still write its document to stdout, reporting `ok: false` and the same errors the text run wrote to stderr, so the change is to the verdict and not to the output. A workspace whose specs all parse exits 0 in both modes, so the parity is not satisfied by failing everything. Measured before the fix on `release/v0.15.0`: text exited 1, JSON exited 0, and the JSON document already carried `ok: false` with both errors."
+      inputs:
+        invalid_workspace: "one spec missing status and tier and carrying an unknown field"
+        valid_workspace: "one spec that parses cleanly"
+      expected_output:
+        invalid_text_exit_code: 1
+        invalid_json_exit_code: 1
+        invalid_json_document_reports_not_ok: true
+        valid_exit_code_in_both_modes: 0
+      references_constraints: ["C-11"]
+      priority: critical
+
   changelog:
+    - version: "1.3.0"
+      date: "2026-08-25"
+      author: "specter-team"
+      type: minor
+      description: "C-11 and AC-19 state exit-code parity between `parse` and `parse --json`, per `bugs/SP-SP-022`. The rule already existed for `coverage` as C-29 and for `check` as C-15, and `parse` is the third instance of one defect: the JSON branch renders the document and returns without carrying the verdict. AC-19 also pins the clean workspace at 0 in both modes, so parity cannot be satisfied by failing everything."
     - version: "1.2.0"
       date: "2026-05-16"
       author: "specter-team"
