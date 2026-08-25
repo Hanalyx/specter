@@ -1,6 +1,6 @@
 spec:
   id: spec-coverage
-  version: "1.19.1"
+  version: "1.20.0"
   status: approved
   tier: 2
 
@@ -230,6 +230,11 @@ spec:
       enforcement: error
     - id: C-39
       description: "Under an effective strictness of `zero-tolerance`, an acceptance criterion carrying `approval_gate: true` with an unset `approval_date` MUST be reported as uncovered, and the entry's coverage percentage, threshold verdict, and the report summary MUST reflect that. The demotion is part of classifying the criterion, not an edit applied to a finished report, so every surface that reports coverage sees the same verdict for the same criterion: `coverage`, `coverage --json`, and `sync` alike. Two consequences follow and are observable. A demoted criterion appears in the uncovered list in acceptance-criterion declaration order, alongside criteria uncovered for any other reason, because there is one list built once rather than a list edited afterward. And an entry whose every covered criterion is demoted reports an empty covered list, never a null one, which is the same JSON-shape guarantee C-14 makes for every other entry. Rationale: this behavior shipped as the GH #94 fix and was required only by spec-sync C-09(b), which cited `spec-coverage GH #94 semantics` for a rule spec-coverage never stated. It was implemented as a second pass over the report, which is what let its output diverge from the builder's own invariants."
+      type: business
+      enforcement: error
+
+    - id: C-40
+      description: "When `settings.annotation` is declared, `specter coverage` MUST exit 3 when any acceptance criterion carries `approval_gate: true` with an unset `approval_date`, and `settings.annotation.permissive` MUST NOT change that. Six parts. (a) The rule is unconditional on `permissive`. That key was introduced for rule 1, the annotation rule, whose subject is whether evidence exists at all, and SSRB-104 section 7.4 scopes it there and nowhere else. An unmet approval gate is not an evidence-presence failure. It is a human sign-off the spec author chose on that criterion, so a switch that exists to ease adoption of a missing-test rule must not silently downgrade it. Read the other way, `permissive: true` would mean ignore human approval gates rather than warn on missing tests, which is a far broader bypass than the key was given. (b) The code is 3, per SSRB-104 section 7.5, which assigns `approval gate unmet` to 3 and states that the trigger does not depend on the ladder and survives its retirement. The run MUST also name the cause on stderr. A silent 3 is not the contract: the measured defect was exit 0 with nothing on stderr, and an operator who gets a bare integer has to guess which of the coverage gates fired. `spec-sync` C-11 requires `sync` to name the same cause `coverage` names, and that rule is vacuous when neither names one. (c) The gate applies identically on every surface that reports coverage: `coverage`, `coverage --json`, `sync`, and `sync --json` alike, in exit code and in cause line. This is C-39's surface clause applied to the exit signal rather than to the report. It is stated rather than left to inheritance because `spec-coverage` C-29 binds `coverage --json` and nothing binds `sync --json` for a gate outside the ladder: `spec-sync` C-09's `--json` clause is scoped to `zero-tolerance`. Five recorded instances of the `--json` family, `bugs/done/SP-SP-021`, `bugs/done/SP-SP-022`, `bugs/SP-SP-044`, `bugs/done/SP-SP-061` and `bugs/done/SP-SP-066`, all have one cause: `--json` written as a branch that returns early rather than as a rendering choice over one verdict, so a gate added beside the branch never reached it. A text-only fix for this gate would be the sixth. (d) Order: rule 1 is evaluated before this gate, so a workspace carrying both a criterion with no test and an unmet approval gate exits 2 rather than 3, matching the ladder's code-2-before-code-3 precedence where both ladder gates exist. Rule 1 is not itself a ladder gate, so the match is to the precedence and not to the gate set. Two reasons for that order, and both matter. The gates are checked in ascending code order today, and an order that varied by strictness model would let `coverage` and `sync` disagree on one workspace, which is the failure `spec-sync` C-11 exists to prevent. (e) Both diagnostics MUST be written to stderr before the process exits, so a workspace carrying both violations names both in one run. This is a requirement and not a description: no surface does it today, because each gate prints its own line and exits inside its own branch, so an operator fixes the missing test, re-runs, and only then learns about the approval gate. It is stated as MUST because part (d) rests on it. The argument for ascending-code order over semantic directness is that the integer is not the whole report, and that argument holds only if the report is complete. If both diagnostics cannot be emitted, the precedence in (d) has to be re-decided rather than kept. (f) C-26 is unchanged and stays true while the ladder ships. It scopes the gate to `zero-tolerance` and makes `approval_gate` metadata-only under `threshold`, and `GoverningStrictness()` maps a declared annotation block to `threshold`, so the pre-amendment code was faithful to the spec rather than defective. This constraint is what was missing. Rationale, per `bugs/SP-SP-071`: SSRB-104 section 7.5 decided the mapping on 2026-08-22 and roadmap item 1D-b shipped its code-2 row and not its code-3 row, so an adopter moving to the model the docs steer them toward lost a checkpoint with nothing on stderr to say so."
       type: business
       enforcement: error
 
@@ -993,7 +998,33 @@ spec:
       references_constraints: ["C-39"]
       priority: high
 
+    - id: AC-67
+      description: "The approval gate fires under the annotation model, and `permissive` does not soften it. A workspace declaring `settings.annotation` with one acceptance criterion carrying `approval_gate: true` and no `approval_date` exits 3 under `specter coverage`, with `permissive: true` and with `permissive: false` alike. The same workspace under `settings.strictness: zero-tolerance` also exits 3, so the amendment adds a path rather than moving one. A workspace carrying both an unmet approval gate and a criterion with no test exits 2 under `permissive: false`, because rule 1 is evaluated first per C-40(d), and names BOTH violations on stderr in that one run per C-40(e). Asserting the code alone would be satisfied by an implementation that exits inside the rule-1 branch and never reaches the gate, which is what every surface does today. Measured before the amendment on `release/v0.15.0`, on two workspaces identical but for the manifest: the ladder exited 3 with its error line, and the annotation model exited 0 with nothing on stderr. Every case is asserted under `--json` as well as in text mode, per C-40(c), and asserts the cause line and not only the integer, because the defect measured was a silent zero and a silent 3 would satisfy a code-only assertion."
+      inputs:
+        annotation_permissive_true: "settings.annotation.permissive: true, one AC with approval_gate: true and no approval_date"
+        annotation_permissive_false: "the same workspace with permissive: false"
+        ladder: "the same workspace under settings.strictness: zero-tolerance"
+        both_violations: "permissive: false, one unmet approval gate and one criterion with no test"
+        both_violations_stderr: "the run's stderr, which must name both"
+      expected_output:
+        annotation_permissive_true_exit_code: 3
+        annotation_permissive_false_exit_code: 3
+        ladder_exit_code: 3
+        both_violations_exit_code: 2
+        both_violations_name_rule_1_on_stderr: true
+        both_violations_name_the_approval_gate_on_stderr: true
+        single_gate_names_the_cause_on_stderr: true
+        coverage_json_exit_code: 3
+        coverage_json_names_the_cause_on_stderr: true
+      references_constraints: ["C-40"]
+      priority: critical
+
   changelog:
+    - version: "1.20.0"
+      date: "2026-08-25"
+      author: "specter-team"
+      type: minor
+      description: "C-40 and AC-67 state the approval gate under `settings.annotation`, per `bugs/SP-SP-071`. SSRB-104 section 7.5 decided `approval gate unmet` maps to code 3 and that the trigger survives the ladder's retirement; roadmap item 1D-b shipped that table's code-2 row and not its code-3 row. C-26 is untouched and still true, which is the point: `GoverningStrictness()` returns `threshold` for a declared annotation block and C-26 makes `approval_gate` metadata-only under `threshold`, so the code was faithful to the spec and the spec was what never covered the model. `permissive` does not govern this gate. It was introduced for rule 1, whose subject is whether evidence exists, and an unmet approval gate is a human sign-off rather than missing evidence, so letting `permissive: true` downgrade it would turn an adoption switch into a blanket bypass. C-40(c) fixes the order at rule 1 first, matching the ladder's code-2-before-code-3 precedence and keeping ascending-code order, so `coverage` and `sync` cannot diverge on a workspace carrying both. C-40(d) requires both diagnostics to be written before the exit. That is a new requirement rather than a description: today each gate prints and exits inside its own branch, so a workspace with both violations names one. It is a MUST because (c) depends on it, the case for ascending-code order being that the integer is not the whole report."
     - version: "1.19.1"
       date: "2026-08-23"
       author: "specter-team"

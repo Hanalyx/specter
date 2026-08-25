@@ -1,6 +1,6 @@
 spec:
   id: spec-sync
-  version: "2.1.0"
+  version: "2.2.0"
   status: approved
   tier: 2
 
@@ -296,7 +296,30 @@ spec:
         control_case_reports_an_unreachable_stable_row: true
       references_constraints: ["C-12"]
       priority: high
+    - id: AC-19
+      description: "The annotation-model approval gate propagates to `sync`, report included. A workspace declaring `settings.annotation` with one acceptance criterion carrying `approval_gate: true` and no `approval_date` exits 3 under `specter sync`, matching `specter coverage` on the same workspace per C-11, with `permissive: true` and with `permissive: false` alike. A workspace carrying both that gate and a criterion with no test exits 2 on `sync`, per `spec-coverage` C-40(c), and names BOTH violations on stderr in the one run, per `spec-coverage` C-40(d). The reporting half is asserted and not left implicit, because an implementation that exits inside the rule-1 branch satisfies the exit code and never reaches the gate, which is what `sync` does today. Every case is asserted under `--json` as well as in text mode, per `spec-coverage` C-40(c). Nothing else binds `sync --json` for this gate: C-09's `--json` clause is scoped to `zero-tolerance` and does not reach a gate outside the ladder, so a text-only fix would pass every other criterion in this spec. The cause line is asserted too, because the defect measured was a silent exit 0 and a silent 3 would satisfy an assertion on the integer alone. Asserted here and not left to `spec-coverage` AC-67, because `sync` carries its own gate sequence rather than calling the one `coverage` uses. A fix applied to one surface can therefore miss the other, which is the shape of `bugs/done/SP-SP-066`: a private copy of a gate sequence that was correct when written and went stale when a gate was added beside it."
+      inputs:
+        workspace: "settings.annotation declared, one AC with approval_gate: true and no approval_date"
+        permissive_values: [true, false]
+        both_violations: "the same workspace with a second criterion carrying no test, permissive: false"
+      expected_output:
+        sync_exit_code: 3
+        sync_code_equals_coverage_code: true
+        both_violations_exit_code: 2
+        both_violations_name_rule_1_on_stderr: true
+        both_violations_name_the_approval_gate_on_stderr: true
+        single_gate_names_the_cause_on_stderr: true
+        sync_json_exit_code: 3
+        sync_json_names_the_cause_on_stderr: true
+      references_constraints: ["C-11"]
+      priority: critical
+
   changelog:
+    - version: "2.2.0"
+      date: "2026-08-25"
+      author: "specter-team"
+      type: minor
+      description: "AC-19 pins the annotation-model approval gate on `sync`, alongside AC-13 which pins the ladder's version. Per `bugs/SP-SP-071` and `spec-coverage` C-40. Stated on `sync` rather than inherited from `spec-coverage` AC-67 because `sync` carries its own gate sequence instead of calling the one `coverage` uses, so the two surfaces can drift. That is `bugs/done/SP-SP-066` exactly, and C-11 is the rule the drift would break. AC-19 also pins the reporting half of `spec-coverage` C-40(d) on `sync`: a workspace with both violations names both. Asserting the exit code alone would be met by an implementation that exits inside the rule-1 branch and never reaches the gate, which is what `sync` does today. AC-19 covers `sync --json` as well, because C-09's `--json` clause is scoped to `zero-tolerance` and nothing else binds this gate on that surface."
     - version: "2.1.0"
       date: "2026-08-25"
       author: "specter-team"
