@@ -139,6 +139,12 @@ func TestStreamValidationRules(t *testing.T) {
 				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"}]}`, true, "extracted_below_entries", "go"},
 			{"empty block beside a label", `{"streams":[],
 				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"}]}`, true, "undeclared_stream", "go"},
+			// The third shape. A producer that wrote the key made a claim, and
+			// the Go decoder hands an absent key and an explicit null to the
+			// reader as the same nil slice, so an implementation that reads
+			// presence off the decoded value cannot tell this from legacy.
+			{"null block beside a label", `{"streams":null,
+				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"}]}`, true, "undeclared_stream", "go"},
 			{"default declared and undercounted", `{"streams":[{"name":"default","scanned":2,"extracted":1}],
 				"results":[` + twoPassed + `]}`, true, "extracted_below_entries", "default"},
 
