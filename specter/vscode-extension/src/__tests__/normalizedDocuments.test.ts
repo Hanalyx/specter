@@ -14,8 +14,9 @@
 //     array-field list passed all 286 tests, and so did moving normalization
 //     into the per-command key converters, which leaves the parse path with no
 //     converter to move it into.
-//   - AC-75: all five coverage array fields C-31 names are arrays, in one
-//     document where three arrive `null` and two are absent.
+//   - AC-75: all six coverage array fields C-31 names are arrays, in one
+//     document where three arrive `null` and three are absent, plus a second
+//     populated document and a read of the declarations themselves.
 //   - AC-76: a static scan of `client.ts` alone, asserting that every `--json`
 //     invocation in that file hands stdout to the same one function.
 //   - AC-77: all four check key-map entries, values under camelCase and no
@@ -288,7 +289,7 @@ const PARSE_DOC_CLEAN = `{"errors": null, "file": "specs/a.spec.yaml", "ok": tru
 
 /**
  * AC-75. `coverage --json` on a workspace where no spec parsed and no parse
- * error repeated. Three array fields arrive `null` and two are dropped, which
+ * error repeated. Three array fields arrive `null` and three are dropped, which
  * is what Go does with a nil slice and with `omitempty`.
  */
 const COVERAGE_DOC_EVERY_ARRAY_EMPTY = `{"entries": null,
@@ -1160,10 +1161,26 @@ function arrayElementTypeName(node: ts.TypeNode | undefined): string | undefined
   return ts.isTypeReferenceNode(el) && ts.isIdentifier(el.typeName) ? el.typeName.text : undefined;
 }
 
+/**
+ * One property of a union branch. Optionality is carried, not discarded: AC-75
+ * says a branch *requires* its coordinate, and `resultIndex?: number` declares
+ * a branch that permits none. A parser that records only names cannot tell the
+ * two apart, and the assertion built on it accepts the invalid one.
+ */
+interface Prop {
+  name: string;
+  optional: boolean;
+  isNumber: boolean;
+}
+
 /** One branch of the element union, reduced to what AC-75 asserts about it. */
 interface Branch {
   kind?: string;
-  props: string[];
+  props: Prop[];
+}
+
+function propOf(b: Branch, name: string): Prop | undefined {
+  return b.props.find((p) => p.name === name);
 }
 
 /** The branches of `export type <name> = {...} | {...}`, or undefined. */
@@ -1178,13 +1195,17 @@ function unionBranches(src: ts.SourceFile, name: string): Branch[] | undefined {
     return undefined;
   }
   return alias.type.types.filter(ts.isTypeLiteralNode).map((lit) => {
-    const props = lit.members
-      .filter(ts.isPropertySignature)
+    const signatures = lit.members.filter(ts.isPropertySignature);
+    const props: Prop[] = signatures
       .filter((p) => p.name && ts.isIdentifier(p.name))
-      .map((p) => (p.name as ts.Identifier).text);
-    const kindProp = lit.members
-      .filter(ts.isPropertySignature)
-      .find((p) => p.name && ts.isIdentifier(p.name) && p.name.text === 'kind');
+      .map((p) => ({
+        name: (p.name as ts.Identifier).text,
+        optional: p.questionToken !== undefined,
+        isNumber: p.type?.kind === ts.SyntaxKind.NumberKeyword,
+      }));
+    const kindProp = signatures.find(
+      (p) => p.name && ts.isIdentifier(p.name) && p.name.text === 'kind',
+    );
     let kind: string | undefined;
     if (kindProp?.type && ts.isLiteralTypeNode(kindProp.type)) {
       const lt = kindProp.type.literal;
@@ -1195,6 +1216,15 @@ function unionBranches(src: ts.SourceFile, name: string): Branch[] | undefined {
     return { kind, props };
   });
 }
+
+/** The five kinds C-44 names. spec-coverage pins every one of these strings. */
+const C44_KINDS = [
+  'duplicate_stream',
+  'empty_stream_name',
+  'extracted_below_entries',
+  'negative_count',
+  'undeclared_stream',
+];
 
 describe('C-31 the validation error type is declared once and shared', () => {
   // @spec spec-vscode
@@ -1237,42 +1267,58 @@ describe('C-31 the validation error type is declared once and shared', () => {
       );
     }
 
+    // The union covers every kind C-44 names, and no others. A two-branch
+    // union satisfied the earlier version of this test while omitting
+    // duplicate_stream, empty_stream_name, negative_count and
+    // extracted_below_entries, so the branch rules below ran over a fraction
+    // of the type and reported nothing.
+    expect(branches.map((b) => b.kind).sort()).toEqual([...C44_KINDS]);
+
     // Every branch discriminates on a string literal kind and names the two
-    // fields C-44(c) requires of every violation.
+    // fields C-44(c) requires of every violation. Required, not merely
+    // declared: an optional message is a violation that need not say anything.
     expect(
       branches.map((b) => ({
-        kind: typeof b.kind === 'string',
-        stream: b.props.includes('stream'),
-        message: b.props.includes('message'),
+        kind: b.kind,
+        kindIsLiteral: typeof b.kind === 'string',
+        stream: propOf(b, 'stream')?.optional === false,
+        message: propOf(b, 'message')?.optional === false,
       })),
-    ).toEqual(branches.map(() => ({ kind: true, stream: true, message: true })));
+    ).toEqual(
+      branches.map((b) => ({ kind: b.kind, kindIsLiteral: true, stream: true, message: true })),
+    );
 
-    // Exactly one coordinate per branch, and the right one for the kind.
-    // A branch declaring both, or neither, is the shape C-44 forbids.
-    const coordinates = branches.map((b) => ({
-      kind: b.kind,
-      streamIndex: b.props.includes('streamIndex'),
-      resultIndex: b.props.includes('resultIndex'),
-    }));
+    // Exactly one coordinate per branch, required, numeric, and the right one
+    // for the kind. The other must be absent rather than optional: an optional
+    // coordinate on the wrong branch is a value the type still permits.
     expect(
-      coordinates.map((c) => ({
-        kind: c.kind,
-        exactlyOne: c.streamIndex !== c.resultIndex,
-        correctForKind:
-          c.kind === 'undeclared_stream'
-            ? c.resultIndex && !c.streamIndex
-            : c.streamIndex && !c.resultIndex,
+      branches.map((b) => {
+        const wanted = b.kind === 'undeclared_stream' ? 'resultIndex' : 'streamIndex';
+        const forbidden = b.kind === 'undeclared_stream' ? 'streamIndex' : 'resultIndex';
+        const coordinate = propOf(b, wanted);
+        return {
+          kind: b.kind,
+          requiredCoordinate: coordinate !== undefined && !coordinate.optional,
+          coordinateIsNumber: coordinate?.isNumber === true,
+          otherAbsent: propOf(b, forbidden) === undefined,
+        };
+      }),
+    ).toEqual(
+      branches.map((b) => ({
+        kind: b.kind,
+        requiredCoordinate: true,
+        coordinateIsNumber: true,
+        otherAbsent: true,
       })),
-    ).toEqual(coordinates.map((c) => ({ kind: c.kind, exactlyOne: true, correctForKind: true })));
+    );
 
-    // Positive control: the union actually covers the undeclared_stream kind,
-    // so the branch rule above was exercised rather than vacuous.
+    // Positive control. The set assertion above pins the kinds, and this pins
+    // that both coordinate names appear somewhere in the union, which is what
+    // AC-75 asks for across it rather than per branch.
     expect({
-      declares_undeclared_stream: branches.some((b) => b.kind === 'undeclared_stream'),
-      declares_a_stream_index_kind: branches.some(
-        (b) => b.kind !== undefined && b.kind !== 'undeclared_stream',
-      ),
-    }).toEqual({ declares_undeclared_stream: true, declares_a_stream_index_kind: true });
+      some_branch_carries_resultIndex: branches.some((b) => propOf(b, 'resultIndex')),
+      some_branch_carries_streamIndex: branches.some((b) => propOf(b, 'streamIndex')),
+    }).toEqual({ some_branch_carries_resultIndex: true, some_branch_carries_streamIndex: true });
   });
 
   // @spec spec-vscode

@@ -106,47 +106,51 @@ func TestStreamValidationRules(t *testing.T) {
 	t.Run("spec-coverage/AC-72 an inconsistent streams block is refused", func(t *testing.T) {
 		twoPassed := `{"spec_id":"s","ac_id":"AC-01","status":"passed"},{"spec_id":"s","ac_id":"AC-02","status":"passed"}`
 
+		// stream is the stream each refusal must name. Without it a validator
+		// returning a placeholder for every violation satisfies the non-empty
+		// check below, and four of the five kinds would go unbound.
 		cases := []struct {
 			name    string
 			results string
 			refuse  bool
 			kind    string
+			stream  string
 		}{
 			{"undeclared stream", `{"streams":[{"name":"go","scanned":2,"extracted":2}],
-				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"js"}]}`, true, "undeclared_stream"},
+				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"js"}]}`, true, "undeclared_stream", "js"},
 			{"duplicate name", `{"streams":[{"name":"go","scanned":1,"extracted":1},{"name":"go","scanned":1,"extracted":1}],
-				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"}]}`, true, "duplicate_stream"},
+				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"}]}`, true, "duplicate_stream", "go"},
 			{"empty name", `{"streams":[{"name":"","scanned":1,"extracted":1}],
-				"results":[` + twoPassed + `]}`, true, "empty_stream_name"},
+				"results":[` + twoPassed + `]}`, true, "empty_stream_name", ""},
 			{"negative scanned", `{"streams":[{"name":"go","scanned":-1,"extracted":1}],
-				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"}]}`, true, "negative_count"},
+				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"}]}`, true, "negative_count", "go"},
 			{"negative extracted", `{"streams":[{"name":"go","scanned":1,"extracted":-1}],
-				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"}]}`, true, "negative_count"},
+				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"}]}`, true, "negative_count", "go"},
 			{"negative silent packages", `{"streams":[{"name":"go","scanned":1,"extracted":1,"zero_test_event_packages":-1}],
-				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"}]}`, true, "negative_count"},
+				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"}]}`, true, "negative_count", "go"},
 			{"extracted below entries", `{"streams":[{"name":"go","scanned":2,"extracted":1}],
 				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"},
-				           {"spec_id":"s","ac_id":"AC-02","status":"passed","stream":"go"}]}`, true, "extracted_below_entries"},
+				           {"spec_id":"s","ac_id":"AC-02","status":"passed","stream":"go"}]}`, true, "extracted_below_entries", "go"},
 			// A declared count of zero beside one entry. Separated from the
 			// case above because zero is the value an implementation is most
 			// likely to special-case: skipping streams whose counts are zero
 			// looks like a cheap win and silently drops this rule for them.
 			{"extracted zero with an entry", `{"streams":[{"name":"go","scanned":1,"extracted":0}],
-				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"}]}`, true, "extracted_below_entries"},
+				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"}]}`, true, "extracted_below_entries", "go"},
 			{"empty block beside a label", `{"streams":[],
-				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"}]}`, true, "undeclared_stream"},
+				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"}]}`, true, "undeclared_stream", "go"},
 			{"default declared and undercounted", `{"streams":[{"name":"default","scanned":2,"extracted":1}],
-				"results":[` + twoPassed + `]}`, true, "extracted_below_entries"},
+				"results":[` + twoPassed + `]}`, true, "extracted_below_entries", "default"},
 
 			{"extracted above entries", `{"streams":[{"name":"go","scanned":9,"extracted":5}],
-				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"}]}`, false, ""},
-			{"no block at all", `{"results":[` + twoPassed + `]}`, false, ""},
+				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"}]}`, false, "", ""},
+			{"no block at all", `{"results":[` + twoPassed + `]}`, false, "", ""},
 			{"unlabeled beside declared", `{"streams":[{"name":"go","scanned":2,"extracted":1}],
 				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"},
-				           {"spec_id":"s","ac_id":"AC-02","status":"passed"}]}`, false, ""},
+				           {"spec_id":"s","ac_id":"AC-02","status":"passed"}]}`, false, "", ""},
 			{"explicit default undeclared", `{"streams":[{"name":"go","scanned":2,"extracted":1}],
 				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"},
-				           {"spec_id":"s","ac_id":"AC-02","status":"passed","stream":"default"}]}`, false, ""},
+				           {"spec_id":"s","ac_id":"AC-02","status":"passed","stream":"default"}]}`, false, "", ""},
 		}
 
 		for _, c := range cases {
@@ -175,8 +179,13 @@ func TestStreamValidationRules(t *testing.T) {
 				t.Errorf("C-44 (%s): the refusal reported no validation errors in the document. C-10 requires a report in every state and the refusal appears inside it", c.name)
 				continue
 			}
-			if got := doc.ResultsValidationErrors[0].Kind; got != c.kind {
-				t.Errorf("C-44 (%s): first violation is kind %q, want %q", c.name, got, c.kind)
+			// Kind and stream together. Kind alone leaves the stream free, and
+			// a validator naming a placeholder on every violation satisfies
+			// the non-empty check further down while identifying nothing.
+			first := doc.ResultsValidationErrors[0]
+			if first.Kind != c.kind || first.Stream != c.stream {
+				t.Errorf("C-44 (%s): first violation is kind %q naming stream %q, want kind %q naming %q",
+					c.name, first.Kind, first.Stream, c.kind, c.stream)
 			}
 			// Exactly one coordinate, never neither and never both.
 			for i, e := range doc.ResultsValidationErrors {
@@ -434,7 +443,7 @@ func TestStreamValidationPropagatesToSync(t *testing.T) {
 			if b, ok := bodies[mode]; ok {
 				body = b
 			}
-			// Every fixture labels its offending entry go, so the stream the
+			// Every fixture labels its offending entry e2e-webkit, so the stream the
 			// refusal names is known rather than merely non-empty. A generic
 			// "stream validation failed" satisfies a substring check on the
 			// word stream while naming nothing.
