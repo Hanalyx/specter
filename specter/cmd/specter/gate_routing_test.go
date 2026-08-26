@@ -3,6 +3,8 @@ package main
 import (
 	"go/ast"
 	"go/token"
+	"reflect"
+	"sort"
 	"testing"
 )
 
@@ -48,10 +50,17 @@ var gateRoutingCommands = []string{"coverageExitGates", "syncCmd"}
 // schedules the panic path onto the sysexits band. Until it moves, the
 // collision is real and known.
 //
+// Keyed by function AND resolved code. An earlier draft counted per function
+// and nothing else, so moving the panic path from 2 to 3 or to 20 still passed
+// while the comment above claimed the exemption was for 2. A count cannot say
+// which code was exempted, and which code it is was the whole content of the
+// exemption.
+//
 // Compared for equality rather than membership, so this cannot rot quietly: a
-// new foreign site fails, and so does the panic path moving off 2 while this
-// map still claims it is there.
-var documentedForeignGateExits = map[string]int{"main": 1}
+// new foreign site fails, a different code at the same site fails, and so does
+// the panic path moving off the gate codes entirely while this map still claims
+// it is there.
+var documentedForeignGateExits = map[string][]string{"main": {"2"}}
 
 // gateRoutingScan reads `cmd/specter` and reports how exits are raised and
 // where the router is called, keyed by the top-level function containing each.
@@ -150,27 +159,24 @@ func TestGateRoutingHasOneOwner(t *testing.T) {
 		}
 
 		// No other function raises a gate code, except the one site the
-		// registry documents.
-		foreign := map[string]int{}
+		// registry documents, and only with the code it documents.
+		foreign := map[string][]string{}
 		for fn, codes := range exits {
 			if fn == gateRouterName {
 				continue
 			}
 			for _, code := range codes {
 				if gateCodes[code] {
-					foreign[fn]++
+					foreign[fn] = append(foreign[fn], code)
 				}
 			}
 		}
-		if len(foreign) != len(documentedForeignGateExits) {
-			t.Errorf("C-11: gate codes are raised outside %s at %v, want exactly %v. See docs/EXIT_CODES.md section 1 for why the one exemption exists",
+		for fn := range foreign {
+			sort.Strings(foreign[fn])
+		}
+		if !reflect.DeepEqual(foreign, documentedForeignGateExits) {
+			t.Errorf("C-11: gate codes are raised outside %s at %v, want exactly %v. A site or a code that is not in the exemption owns a second route to a gate's exit. See docs/EXIT_CODES.md section 1 for why the one exemption exists",
 				gateRouterName, foreign, documentedForeignGateExits)
-		} else {
-			for fn, want := range documentedForeignGateExits {
-				if foreign[fn] != want {
-					t.Errorf("C-11: %s raises %d gate code(s), want %d. %v", fn, foreign[fn], want, foreign)
-				}
-			}
 		}
 
 		// Both commands call it. Positive and exact: a zero count would pass a
