@@ -163,6 +163,22 @@ func TestStreamLabelIsCarried(t *testing.T) {
 			t.Errorf("C-41: the stream label did not survive a parse and marshal, so an entry cannot carry one.\ngot: %s", got)
 		}
 
+		// C-41's missing-means-default rule, asserted directly on the accessor
+		// that implements it. Found by mutation: breaking StreamOf changed no
+		// test, because the read side's verdict comes from C-33's merge across
+		// every entry and never consults a stream. The accessor is still the
+		// contract a consumer of this package reads, so it is asserted here
+		// rather than deleted, and 3A5's validation will be its first caller.
+		if got := (ResultEntry{}).StreamOf(); got != DefaultStream {
+			t.Errorf("C-41: an entry with no label belongs to %q, want %q. Missing means default, and a legacy entry must not read as its own stream", got, DefaultStream)
+		}
+		if got := (ResultEntry{Stream: "js"}).StreamOf(); got != "js" {
+			t.Errorf("C-41: a labeled entry belongs to %q, want js", got)
+		}
+		if (ResultEntry{}).StreamOf() != (ResultEntry{Stream: DefaultStream}).StreamOf() {
+			t.Error("C-41: an unlabeled entry and one naming default explicitly resolve to different streams, so the same facts split into two")
+		}
+
 		// Opaque, per C-41. These are the names the requests behind SSRB-103
 		// use, and reserving them would make the foundation unusable for them.
 		for _, label := range []string{"unit", "live", "mutation", "baseline"} {

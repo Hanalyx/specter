@@ -11,6 +11,7 @@ package coverage
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 )
 
 // ResultEntry records the outcome of a single AC in a specific spec.
@@ -20,11 +21,44 @@ type ResultEntry struct {
 	ACID   string `json:"ac_id"`
 	Status string `json:"status,omitempty"`
 	Passed bool   `json:"passed"`
+
+	// Stream names the body of evidence this entry came from. Optional, and
+	// an empty one reads as DefaultStream, so every file written before the
+	// field existed keeps its exact meaning. C-41: the label is opaque.
+	// Specter never branches on its value, and no sibling field carries a
+	// role instead.
+	Stream string `json:"stream,omitempty"`
+}
+
+// DefaultStream is what an entry with no stream label belongs to. C-41.
+const DefaultStream = "default"
+
+// StreamInfo records that a stream ran and what it observed. C-42: a stream
+// that ran and found nothing and one that never ran both leave zero entries,
+// so only this block tells them apart. Absent from the array means never ran.
+type StreamInfo struct {
+	Name      string `json:"name"`
+	Scanned   int    `json:"scanned"`
+	Extracted int    `json:"extracted"`
 }
 
 // ResultsFile is the parsed .specter-results.json structure.
 type ResultsFile struct {
+	// Streams is emitted in ascending name order, per C-42, so two runs over
+	// an unchanged workspace produce identical bytes.
+	Streams []StreamInfo  `json:"streams,omitempty"`
 	Results []ResultEntry `json:"results"`
+}
+
+// StreamOf returns the stream an entry belongs to, resolving the empty label
+// to DefaultStream. C-41: missing means default, and callers must go through
+// here rather than comparing the raw field, or a legacy entry and an entry
+// naming default explicitly would read as two streams.
+func (e ResultEntry) StreamOf() string {
+	if e.Stream == "" {
+		return DefaultStream
+	}
+	return e.Stream
 }
 
 // ParseResultsFile parses .specter-results.json content. Normalizes the
@@ -63,6 +97,12 @@ func ParseResultsFile(data []byte) (*ResultsFile, error) {
 			r.Status = "failed"
 		}
 	}
+	// C-42: the streams array carries a total order, ascending by name, so two
+	// producers writing the same facts write the same bytes. Sorted on read as
+	// well as on write, because a file a consumer hand-assembled is still an
+	// artifact Specter re-emits, and an order that depended on who wrote it
+	// would make a diff of two runs show churn that is not a change.
+	sort.Slice(rf.Streams, func(i, j int) bool { return rf.Streams[i].Name < rf.Streams[j].Name })
 	return &rf, nil
 }
 
