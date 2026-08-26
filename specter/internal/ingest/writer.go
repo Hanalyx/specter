@@ -14,14 +14,21 @@ import (
 // internal/coverage consumes via ParseResultsFile.
 type resultsFile struct {
 	// Streams is emitted ascending by name, spec-coverage C-42.
-	Streams []streamInfo  `json:"streams,omitempty"`
+	Streams []StreamInfo  `json:"streams,omitempty"`
 	Results []resultEntry `json:"results"`
 }
 
-type streamInfo struct {
+// StreamInfo records what one stream's run observed. Mirrors the shape
+// internal/coverage reads, spec-coverage C-42.
+type StreamInfo struct {
 	Name      string `json:"name"`
 	Scanned   int    `json:"scanned"`
 	Extracted int    `json:"extracted"`
+	// ZeroTestEventPackages is named for what was observed. C-16 forbids
+	// calling it a build failure here, in the summary line, or in this name,
+	// because ingest cannot tell a build failure from a filtered-out package
+	// or one with no tests.
+	ZeroTestEventPackages int `json:"zero_test_event_packages,omitempty"`
 }
 
 type resultEntry struct {
@@ -33,8 +40,17 @@ type resultEntry struct {
 }
 
 // WriteResultsFile merges, sorts, and writes results to path. Existing content
-// is overwritten.
+// is overwritten. No streams block, which is what an unlabeled run writes:
+// spec-ingest C-14 promises such a run produces exactly the file it produced
+// before the field existed, and even an empty array would break that.
 func WriteResultsFile(path string, results []TestResult) error {
+	return WriteResultsFileWithStreams(path, results, nil)
+}
+
+// WriteResultsFileWithStreams is WriteResultsFile with the top-level streams
+// block C-16 requires when a run names a stream. A nil or empty slice writes
+// no block at all rather than an empty array.
+func WriteResultsFileWithStreams(path string, results []TestResult, streams []StreamInfo) error {
 	merged := MergeResults(results)
 
 	out := resultsFile{Results: make([]resultEntry, 0, len(merged))}
@@ -52,6 +68,13 @@ func WriteResultsFile(path string, results []TestResult) error {
 			entry.Stream = r.Stream
 		}
 		out.Results = append(out.Results, entry)
+	}
+
+	// C-42: ascending by name, so two producers writing the same facts write
+	// the same bytes.
+	if len(streams) > 0 {
+		out.Streams = append([]StreamInfo(nil), streams...)
+		sort.Slice(out.Streams, func(i, j int) bool { return out.Streams[i].Name < out.Streams[j].Name })
 	}
 
 	data, err := json.MarshalIndent(out, "", "  ")

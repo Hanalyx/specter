@@ -40,6 +40,13 @@ type StreamInfo struct {
 	Name      string `json:"name"`
 	Scanned   int    `json:"scanned"`
 	Extracted int    `json:"extracted"`
+
+	// ZeroTestEventPackages counts packages the runner reported on that
+	// produced no test event at all. Named for what was observed rather than
+	// diagnosed: a package may have failed to build, may have had every test
+	// filtered out, or may have no tests, and runner output cannot tell those
+	// apart. C-42.
+	ZeroTestEventPackages int `json:"zero_test_event_packages,omitempty"`
 }
 
 // ResultsFile is the parsed .specter-results.json structure.

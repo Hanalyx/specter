@@ -925,10 +925,11 @@ Convert CI-native test output (JUnit XML, `go test -json`) into `.specter-result
 **Synopsis:**
 
 ```
-specter ingest [--junit <path>] [--go-test <path>] [--output <path>] [--verbose]
+specter ingest [--junit <path>] [--go-test <path>] [--stream <name>] [--output <path>] [--verbose]
+specter ingest --merge <path> [--merge <path>...] [--output <path>]
 ```
 
-At least one of `--junit` or `--go-test` is required. Both flags accept glob patterns and may be repeated. Multiple sources can be combined in one invocation; results are merged by the worst-status-wins rule.
+At least one of `--junit`, `--go-test` or `--merge` is required. Both flags accept glob patterns and may be repeated. Multiple sources can be combined in one invocation; results are merged by the worst-status-wins rule.
 
 **Options:**
 
@@ -938,6 +939,25 @@ At least one of `--junit` or `--go-test` is required. Both flags accept glob pat
 | `--go-test <path>` | none | Newline-delimited JSON from `go test -json`. Accepts glob patterns; may be repeated. |
 | `--output <path>` | `.specter-results.json` | Where to write the merged results. |
 | `--verbose` | none | Emit one stderr line per dropped testcase (testcases without a recognizable `(spec_id, ac_id)` annotation). Off by default; the summary line is always emitted. |
+| `--stream <name>` | none | Label every entry this run produces with a stream name, and record what the run observed in a top-level `streams` block. Any non-empty name is valid; an empty one is refused. Omit the flag for an unlabeled file, which reads as the `default` stream and is byte-identical to what earlier versions wrote. |
+| `--merge <path>` | none | Build the output from the named results files alone. May be repeated. Cannot be combined with `--junit`, `--go-test` or `--stream`. |
+
+**`--stream` and `--merge` are how a project splits evidence across jobs.** One
+invocation writes one stream, because a CI job knows its own name and nothing
+about its siblings, and `--merge` combines the files those jobs produced.
+
+`--merge` does not read the existing output first, and that is the whole
+difference from repeating `--junit`. Repeating a runner flag accumulates, which
+is right when one run assembles one stream from several files. Accumulating
+across runs is wrong: a criterion that passed in the previous run and produced
+no entry in this one would keep its stale passing entry. So a stream re-run
+replaces that stream rather than layering on top of it.
+
+The `streams` block records inputs scanned, results extracted, and packages that
+produced zero test events. That third count is named for what was observed, not
+diagnosed. A package that emitted no test event may have failed to build, may
+have had every test filtered out, or may have no tests, and `ingest` cannot tell
+those apart from runner output.
 
 **Diagnostics:** every run writes to stderr a summary line:
 
