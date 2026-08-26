@@ -11,10 +11,14 @@ reading `cmd/specter/main.go` or by running `bin/specter`, and
 
 **Claims added after that sweep name their own verification, in the section that
 makes them.** Code 10's behavior was measured on 2026-08-24. The SP-069 and
-SP-070 enforcement claims were verified against `515e6df` on 2026-08-25. Neither is
-covered by the `6c82473` sweep, and the header does not pretend otherwise: a
-document that re-dates its whole verification on every edit stops recording when
-anything was actually checked.
+SP-070 enforcement claims were verified against `515e6df` on 2026-08-25. Code 20's
+row, its band entry, and the precedence claim about it were measured against
+`622a172` on 2026-08-26: a workspace carrying an inconsistent `streams` block and
+nothing else exits 20 on `coverage`, `sync` and `sync --json`, and the same
+workspace also below its tier threshold exits 1 on all three with the stream
+violations still named. None of these is covered by the `6c82473` sweep, and the
+header does not pretend otherwise: a document that re-dates its whole
+verification on every edit stops recording when anything was actually checked.
 
 ## Why this document exists
 
@@ -50,7 +54,13 @@ that any number in it is in use.
 
 ## Section 1: the codes Specter emits today
 
-Specter emits five codes. There is no sixth.
+Specter emits six codes. There is no seventh.
+
+The count was five until code 20 shipped. It is stated as a number rather than
+left to the table because a reader who skims the table and miscounts is exactly
+who this document is for, and `spec-sync` AC-16 and AC-18 make the two agree in
+both directions: every code the binary can emit has a row, and every code with a
+Stable row is reachable.
 
 | Code | Commands | Condition | Standing |
 |---|---|---|---|
