@@ -1259,32 +1259,59 @@ function branchesOf(element: ts.Type): Branch[] | undefined {
   });
 }
 
-/** Whether a type admits `undefined` or `null`, directly or in a union arm. */
-function admitsNullish(t: ts.Type): boolean {
+/**
+ * Flags that stop a field from guaranteeing a value.
+ *
+ * Undefined and Null admit absence outright. Any and Unknown admit it too,
+ * because every value is one of them, undefined included. Void is undefined
+ * under another name. Never goes in for the opposite reason: a field typed
+ * never can never be supplied, so a violation could not carry one.
+ *
+ * Checking only Undefined and Null, which an earlier draft did, lets
+ * `stream: unknown` and `message: any` through.
+ */
+const NOT_A_GUARANTEED_VALUE =
+  ts.TypeFlags.Undefined |
+  ts.TypeFlags.Null |
+  ts.TypeFlags.Void |
+  ts.TypeFlags.Any |
+  ts.TypeFlags.Unknown |
+  ts.TypeFlags.Never;
+
+function admitsAbsent(t: ts.Type): boolean {
   const parts = t.isUnion() ? t.types : [t];
-  return parts.some((x) => (x.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Null)) !== 0);
+  return parts.some((x) => (x.flags & NOT_A_GUARANTEED_VALUE) !== 0);
 }
 
 /**
- * Present, not optional, and not nullable.
+ * Present, not optional, and carrying a value.
  *
  * The three are separate holes and only the first two are syntactic.
  * `resultIndex: number | undefined` carries no question mark, so it is required
  * by the declaration and still permits a coordinate that vanishes from the
- * JSON. An earlier draft stripped nullish before testing the type, which made
- * exactly that shape pass twice over.
+ * JSON.
  */
 function isSolid(p: PropInfo | undefined): boolean {
-  return p !== undefined && !p.optional && !admitsNullish(p.type);
+  return p !== undefined && !p.optional && !admitsAbsent(p.type);
 }
 
-/** Solid, and every arm of it is numeric. */
-function isNumberOnly(p: PropInfo | undefined): boolean {
+/**
+ * Solid, and assignable to the given primitive.
+ *
+ * Assignability rather than a flag test. A flag test asks how the type was
+ * spelled, so it refuses a branded coordinate such as
+ * `number & { readonly brand: unique symbol }`, which carries Intersection and
+ * not NumberLike and is an ordinary way to keep two index types apart. That is
+ * the same representation policy this file has already had to remove twice.
+ *
+ * Safe only because isSolid runs first: any and never are assignable to
+ * everything, and both are refused before this is asked.
+ */
+function isAssignableTo(p: PropInfo | undefined, target: ts.Type): boolean {
   if (!isSolid(p) || p === undefined) {
     return false;
   }
-  const parts = p.type.isUnion() ? p.type.types : [p.type];
-  return parts.length > 0 && parts.every((x) => (x.flags & ts.TypeFlags.NumberLike) !== 0);
+  return typesWorld().checker.isTypeAssignableTo(p.type, target);
 }
 
 /** The five kinds C-44 names. spec-coverage pins every one of these strings. */
@@ -1345,14 +1372,17 @@ describe('C-31 the validation error type is declared once and shared', () => {
     // The union covers every kind C-44 names, and no others.
     expect(branches.map((b) => b.kind).sort()).toEqual([...C44_KINDS]);
 
-    // kind, stream and message are present, required and non-nullable on every
-    // branch. An optional discriminant permits an element with no kind, which
-    // is not a discriminated union whatever the branches say, and a nullable
-    // stream is a violation that need not identify one.
+    // kind, stream and message are present, required, carry a value, and are
+    // assignable to string on every branch. An optional discriminant permits an
+    // element with no kind, which is not a discriminated union whatever the
+    // branches say, and a stream typed unknown is a violation that need not
+    // identify one.
     expect(
       branches.map((b) => ({
         kind: b.kind,
-        solid: REQUIRED_FIELDS.filter((f) => isSolid(b.props[f])),
+        solid: REQUIRED_FIELDS.filter((f) =>
+          isAssignableTo(b.props[f], typesWorld().checker.getStringType()),
+        ),
       })),
     ).toEqual(branches.map((b) => ({ kind: b.kind, solid: [...REQUIRED_FIELDS] })));
 
@@ -1366,7 +1396,10 @@ describe('C-31 the validation error type is declared once and shared', () => {
         return {
           kind: b.kind,
           requiredCoordinate: isSolid(b.props[wanted]),
-          coordinateIsNumber: isNumberOnly(b.props[wanted]),
+          coordinateIsNumber: isAssignableTo(
+            b.props[wanted],
+            typesWorld().checker.getNumberType(),
+          ),
           otherAbsent: b.props[forbidden] === undefined,
         };
       }),
