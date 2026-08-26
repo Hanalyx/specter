@@ -1118,11 +1118,14 @@ describe('C-32 a coverage parse error carrying a line', () => {
 // coverage() could keep returning CoverageResult, and extension.ts could keep
 // bridging the two with `as unknown as`. So these read the declarations.
 //
-// A structural AST read rather than the type checker. `ts.createProgram` over
-// the extension needs the full tsconfig and resolves every import, which is
-// slow here and fails for reasons unrelated to the criterion. The properties
-// AC-75 names are syntactic: which file declares the type, which interface
-// carries it, and which coordinate each union branch permits.
+// Read through the type checker, over a Program containing `types.ts` alone.
+// Two earlier drafts walked the syntax tree and both constrained how the union
+// is written rather than what it denotes, refusing interface heritage, an
+// intersection, an alias chain and an element alias pointing at another union.
+// The checker resolves every one of those the way the compiler does. A Program
+// over the whole extension would resolve every import and fail for reasons
+// unrelated to this criterion, which is why the scope is the one file, and
+// `types.ts` imports nothing.
 // ---------------------------------------------------------------------------
 
 const TYPES_PATH = path.resolve(__dirname, '..', 'types.ts');
@@ -1256,9 +1259,32 @@ function branchesOf(element: ts.Type): Branch[] | undefined {
   });
 }
 
-function isNumber(p: PropInfo | undefined): boolean {
-  const { checker } = typesWorld();
-  return p !== undefined && (checker.getNonNullableType(p.type).flags & ts.TypeFlags.NumberLike) !== 0;
+/** Whether a type admits `undefined` or `null`, directly or in a union arm. */
+function admitsNullish(t: ts.Type): boolean {
+  const parts = t.isUnion() ? t.types : [t];
+  return parts.some((x) => (x.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Null)) !== 0);
+}
+
+/**
+ * Present, not optional, and not nullable.
+ *
+ * The three are separate holes and only the first two are syntactic.
+ * `resultIndex: number | undefined` carries no question mark, so it is required
+ * by the declaration and still permits a coordinate that vanishes from the
+ * JSON. An earlier draft stripped nullish before testing the type, which made
+ * exactly that shape pass twice over.
+ */
+function isSolid(p: PropInfo | undefined): boolean {
+  return p !== undefined && !p.optional && !admitsNullish(p.type);
+}
+
+/** Solid, and every arm of it is numeric. */
+function isNumberOnly(p: PropInfo | undefined): boolean {
+  if (!isSolid(p) || p === undefined) {
+    return false;
+  }
+  const parts = p.type.isUnion() ? p.type.types : [p.type];
+  return parts.length > 0 && parts.every((x) => (x.flags & ts.TypeFlags.NumberLike) !== 0);
 }
 
 /** The five kinds C-44 names. spec-coverage pins every one of these strings. */
@@ -1319,15 +1345,16 @@ describe('C-31 the validation error type is declared once and shared', () => {
     // The union covers every kind C-44 names, and no others.
     expect(branches.map((b) => b.kind).sort()).toEqual([...C44_KINDS]);
 
-    // kind, stream and message are present and required on every branch. An
-    // optional discriminant permits an element with no kind, which is not a
-    // discriminated union whatever the branches say.
+    // kind, stream and message are present, required and non-nullable on every
+    // branch. An optional discriminant permits an element with no kind, which
+    // is not a discriminated union whatever the branches say, and a nullable
+    // stream is a violation that need not identify one.
     expect(
       branches.map((b) => ({
         kind: b.kind,
-        required: REQUIRED_FIELDS.filter((f) => b.props[f]?.optional === false),
+        solid: REQUIRED_FIELDS.filter((f) => isSolid(b.props[f])),
       })),
-    ).toEqual(branches.map((b) => ({ kind: b.kind, required: [...REQUIRED_FIELDS] })));
+    ).toEqual(branches.map((b) => ({ kind: b.kind, solid: [...REQUIRED_FIELDS] })));
 
     // Exactly one coordinate per branch, required, numeric, and the right one
     // for the kind. The other must be absent rather than optional: an optional
@@ -1338,8 +1365,8 @@ describe('C-31 the validation error type is declared once and shared', () => {
         const forbidden = b.kind === 'undeclared_stream' ? 'streamIndex' : 'resultIndex';
         return {
           kind: b.kind,
-          requiredCoordinate: b.props[wanted]?.optional === false,
-          coordinateIsNumber: isNumber(b.props[wanted]),
+          requiredCoordinate: isSolid(b.props[wanted]),
+          coordinateIsNumber: isNumberOnly(b.props[wanted]),
           otherAbsent: b.props[forbidden] === undefined,
         };
       }),
