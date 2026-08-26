@@ -74,11 +74,14 @@ type ResultsFile struct {
 
 // StreamsBlockPresent reports whether C-44's rules apply to this artifact.
 //
-// True when the document carried the key at all, `null` included. Also true
-// for a ResultsFile assembled in memory with rows, since a caller that built
-// rows declared a block. A hand-built file with no rows cannot express the
-// difference between absent and empty and is read as absent, which is the
-// safe direction: it is the shape a legacy file has.
+// True when the document carried the key at all, `null` included.
+//
+// Also true for a ResultsFile assembled in memory whose Streams is non-nil,
+// which an allocated empty slice is: `[]StreamInfo{}` reads as a present block
+// declaring nothing, the same answer the parser gives for `streams: []`. Only
+// a nil Streams on a file that was never parsed is ambiguous, and it is read
+// as absent, which is the safe direction: nil is the shape a legacy file has
+// and the zero value a caller gets without deciding anything.
 func (rf *ResultsFile) StreamsBlockPresent() bool {
 	return rf.streamsPresent || rf.Streams != nil
 }
