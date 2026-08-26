@@ -9,6 +9,13 @@ import (
 	"os"
 )
 
+// MaxResultsFileBytes caps a --merge input, C-17. The same figure
+// internal/coverage applies to the file it reads: one artifact shape, and two
+// readers that capped differently would disagree about which files are
+// readable. A test asserts the two are equal rather than a comment asking the
+// next editor to remember.
+const MaxResultsFileBytes = 16 << 20 // 16 MiB
+
 // ReadResultsFile parses a written .specter-results.json back into the results
 // and stream metadata it carries, so `--merge` can build an output from files
 // rather than from runner output.
