@@ -63,6 +63,24 @@ type ResultsFile struct {
 	// an unchanged workspace produce identical bytes.
 	Streams []StreamInfo  `json:"streams,omitempty"`
 	Results []ResultEntry `json:"results"`
+
+	// streamsPresent records whether the document carried a `streams` key,
+	// which C-44 makes the whole test of presence. It cannot be read off
+	// Streams: encoding/json decodes an absent key and an explicit
+	// `streams: null` to the same nil slice, and C-44 refuses the second and
+	// exempts the first.
+	streamsPresent bool
+}
+
+// StreamsBlockPresent reports whether C-44's rules apply to this artifact.
+//
+// True when the document carried the key at all, `null` included. Also true
+// for a ResultsFile assembled in memory with rows, since a caller that built
+// rows declared a block. A hand-built file with no rows cannot express the
+// difference between absent and empty and is read as absent, which is the
+// safe direction: it is the shape a legacy file has.
+func (rf *ResultsFile) StreamsBlockPresent() bool {
+	return rf.streamsPresent || rf.Streams != nil
 }
 
 // StreamOf returns the stream an entry belongs to, resolving the empty label
@@ -95,9 +113,25 @@ func ParseResultsFile(data []byte) (*ResultsFile, error) {
 	if len(data) > MaxResultsFileBytes {
 		return nil, fmt.Errorf(".specter-results.json exceeds %d byte limit (got %d bytes)", MaxResultsFileBytes, len(data))
 	}
-	var rf ResultsFile
-	if err := json.Unmarshal(data, &rf); err != nil {
+	// Decoded through a wire struct so the `streams` key's presence survives.
+	// A json.RawMessage stays nil for an absent key and holds the four bytes
+	// of `null` for an explicit one, which is the only place those two are
+	// still distinguishable. Decoding straight into ResultsFile collapses
+	// them, and C-44 turns on telling them apart.
+	var wire struct {
+		Streams json.RawMessage `json:"streams"`
+		Results []ResultEntry   `json:"results"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
 		return nil, err
+	}
+	var rf ResultsFile
+	rf.Results = wire.Results
+	rf.streamsPresent = wire.Streams != nil
+	if len(wire.Streams) > 0 && string(wire.Streams) != "null" {
+		if err := json.Unmarshal(wire.Streams, &rf.Streams); err != nil {
+			return nil, err
+		}
 	}
 	for i := range rf.Results {
 		r := &rf.Results[i]

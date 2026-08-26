@@ -65,10 +65,27 @@ func streamsInSourceOrder(streams []StreamInfo) []StreamInfo {
 	seen := make([]bool, len(streams))
 	for _, s := range streams {
 		if s.sourceIndex < 0 || s.sourceIndex >= len(streams) || seen[s.sourceIndex] {
-			return streams
+			return positionsFrom(streams)
 		}
 		seen[s.sourceIndex] = true
 		out[s.sourceIndex] = s
+	}
+	return out
+}
+
+// positionsFrom is the fallback: keep the given order and make each row's
+// position its own index.
+//
+// Returning the slice unchanged is not enough. Every row would carry the zero
+// value it was built with, so two rows would report position 0 and produce
+// violations sharing a full sort key, which AC-72 forbids because the total
+// order cannot break that tie. The copy is what stops the caller's slice being
+// rewritten underneath it.
+func positionsFrom(streams []StreamInfo) []StreamInfo {
+	out := make([]StreamInfo, len(streams))
+	copy(out, streams)
+	for i := range out {
+		out[i].sourceIndex = i
 	}
 	return out
 }
@@ -86,7 +103,7 @@ func streamsInSourceOrder(streams []StreamInfo) []StreamInfo {
 // map, so a file just under the spec-ingest C-17 cap cannot buy an operator's
 // CPU with a shape no runner would produce.
 func ValidateStreams(rf *ResultsFile) []ResultsValidationError {
-	if rf == nil || rf.Streams == nil {
+	if rf == nil || !rf.StreamsBlockPresent() {
 		return nil
 	}
 
