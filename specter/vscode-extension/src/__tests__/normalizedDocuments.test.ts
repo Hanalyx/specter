@@ -527,7 +527,7 @@ describe('C-31 parse --json for a spec that passes validation', () => {
 // @ac AC-75
 describe('C-31 coverage --json with three null array fields and three absent', () => {
   it('[spec-vscode/AC-75] all six array fields the constraint names come back as empty arrays', async () => {
-    // Preconditions. Three null and two absent are different inputs, and the
+    // Preconditions. Three null and three absent are different inputs, and the
     // document has to carry both branches for one criterion to cover both.
     const raw = JSON.parse(COVERAGE_DOC_EVERY_ARRAY_EMPTY);
     expect({
@@ -1128,162 +1128,137 @@ describe('C-32 a coverage parse error carrying a line', () => {
 const TYPES_PATH = path.resolve(__dirname, '..', 'types.ts');
 const EXTENSION_PATH = path.resolve(__dirname, '..', 'extension.ts');
 
-function sourceOf(file: string): ts.SourceFile {
-  return ts.createSourceFile(
-    file,
-    fs.readFileSync(file, 'utf-8'),
-    ts.ScriptTarget.Latest,
-    true,
-  );
+/**
+ * A Program over `types.ts` alone, so the type checker answers these questions
+ * rather than a syntactic approximation of them.
+ *
+ * Two earlier drafts walked the AST. Both imposed policy on how the union is
+ * written rather than on what it denotes: the first silently dropped any
+ * member that was not an inline object literal, the second refused them. Each
+ * fix uncovered another valid spelling, heritage, an intersection, an alias
+ * chain, an element alias pointing at another union. The checker resolves all
+ * of them, and it is the same resolution the compiler performs, so the test
+ * cannot disagree with the build.
+ *
+ * `types.ts` imports nothing, which is what makes a one-file Program honest
+ * here. A Program over the whole extension would resolve every import and fail
+ * for reasons unrelated to this criterion.
+ */
+let typesProgram: ts.Program | undefined;
+function typesWorld(): { checker: ts.TypeChecker; src: ts.SourceFile } {
+  if (!typesProgram) {
+    typesProgram = ts.createProgram([TYPES_PATH], {
+      target: ts.ScriptTarget.ES2020,
+      strict: true,
+    });
+  }
+  const src = typesProgram.getSourceFile(TYPES_PATH);
+  if (!src) {
+    throw new Error(`types.ts did not load as a program source: ${TYPES_PATH}`);
+  }
+  return { checker: typesProgram.getTypeChecker(), src };
 }
 
-/** The property signatures of a named interface, or undefined if absent. */
-function interfaceProps(src: ts.SourceFile, name: string): ts.PropertySignature[] | undefined {
-  let found: ts.PropertySignature[] | undefined;
+/** The declared type of a named interface in `types.ts`, or undefined. */
+function declaredInterface(name: string): ts.Type | undefined {
+  const { checker, src } = typesWorld();
+  let found: ts.Type | undefined;
   ts.forEachChild(src, (n) => {
     if (ts.isInterfaceDeclaration(n) && n.name.text === name) {
-      found = n.members.filter(ts.isPropertySignature);
+      const sym = checker.getSymbolAtLocation(n.name);
+      if (sym) {
+        found = checker.getDeclaredTypeOfSymbol(sym);
+      }
     }
   });
   return found;
 }
 
-function propNamed(props: ts.PropertySignature[], name: string): ts.PropertySignature | undefined {
-  return props.find((p) => p.name && ts.isIdentifier(p.name) && p.name.text === name);
+interface PropInfo {
+  optional: boolean;
+  type: ts.Type;
 }
 
-/** `Foo[]` -> `Foo`. Anything else -> undefined. */
-function arrayElementTypeName(node: ts.TypeNode | undefined): string | undefined {
-  if (!node || !ts.isArrayTypeNode(node)) {
+function propertyOf(t: ts.Type, name: string): PropInfo | undefined {
+  const { checker } = typesWorld();
+  const sym = checker.getPropertyOfType(t, name);
+  if (!sym) {
     return undefined;
   }
-  const el = node.elementType;
-  return ts.isTypeReferenceNode(el) && ts.isIdentifier(el.typeName) ? el.typeName.text : undefined;
+  const decl = sym.declarations?.[0];
+  return {
+    optional: (sym.flags & ts.SymbolFlags.Optional) !== 0,
+    type: decl ? checker.getTypeOfSymbolAtLocation(sym, decl) : checker.getDeclaredTypeOfSymbol(sym),
+  };
 }
 
-/**
- * One property of a union branch. Optionality is carried, not discarded: AC-75
- * says a branch *requires* its coordinate, and `resultIndex?: number` declares
- * a branch that permits none. A parser that records only names cannot tell the
- * two apart, and the assertion built on it accepts the invalid one.
- */
-interface Prop {
-  name: string;
-  optional: boolean;
-  isNumber: boolean;
+/** `T[]` -> `T`, after stripping an optional property's undefined. */
+function arrayElement(t: ts.Type): ts.Type | undefined {
+  const { checker } = typesWorld();
+  const solid = checker.getNonNullableType(t);
+  if (!checker.isArrayType(solid)) {
+    return undefined;
+  }
+  return checker.getTypeArguments(solid as ts.TypeReference)[0];
 }
 
 /** One branch of the element union, reduced to what AC-75 asserts about it. */
 interface Branch {
   kind?: string;
-  props: Prop[];
-}
-
-function propOf(b: Branch, name: string): Prop | undefined {
-  return b.props.find((p) => p.name === name);
-}
-
-/**
- * A union alias reduced to what AC-75 asserts about it.
- *
- * unresolved counts members that do not resolve to an object shape. They are
- * counted rather than filtered away: `A | B | C | D | E | undefined` yields the
- * five kinds a filtering parser expects and still declares a type whose values
- * may carry no discriminant and no coordinate.
- */
-interface Union {
-  branches: Branch[];
-  unresolved: number;
+  isObject: boolean;
+  declaredInTypesTs: boolean;
+  props: Record<string, PropInfo | undefined>;
 }
 
 /**
- * Every object shape a type node denotes, or undefined if it denotes something
- * else.
+ * Flags a union constituent must carry none of to count as an object shape.
  *
- * A branch written as a named type is resolved rather than refused. AC-75
- * constrains the union the element type denotes, not whether its author spelled
- * each branch inline, and `UndeclaredStreamError | NegativeCountError` is an
- * ordinary way to write one. Refusing it would make this test a private policy
- * on representation and would force the declarations to be duplicated inline.
- *
- * What stays refused is a member that denotes no object at all: `undefined`,
- * `null`, a primitive, or a reference this file cannot resolve. Local
- * resolution only, which is the whole scope AC-75 names.
+ * Stated as what it is not. An intersection is an object semantically and
+ * carries `TypeFlags.Intersection` rather than `Object`, so a positive test for
+ * `Object` refuses `CommonError & { kind: ... }`, which is the representation
+ * policy this test exists to avoid imposing.
  */
-function shapesOf(src: ts.SourceFile, node: ts.TypeNode, depth = 0): ts.TypeLiteralNode[] | undefined {
-  if (depth > 4) {
+const NOT_AN_OBJECT =
+  ts.TypeFlags.Undefined |
+  ts.TypeFlags.Null |
+  ts.TypeFlags.Void |
+  ts.TypeFlags.StringLike |
+  ts.TypeFlags.NumberLike |
+  ts.TypeFlags.BooleanLike |
+  ts.TypeFlags.BigIntLike |
+  ts.TypeFlags.ESSymbolLike |
+  ts.TypeFlags.Any |
+  ts.TypeFlags.Unknown |
+  ts.TypeFlags.Never;
+
+const COORDINATES = ['streamIndex', 'resultIndex'];
+const REQUIRED_FIELDS = ['kind', 'stream', 'message'];
+
+function branchesOf(element: ts.Type): Branch[] | undefined {
+  const { checker } = typesWorld();
+  if (!element.isUnion()) {
     return undefined;
   }
-  if (ts.isTypeLiteralNode(node)) {
-    return [node];
-  }
-  if (ts.isParenthesizedTypeNode(node)) {
-    return shapesOf(src, node.type, depth + 1);
-  }
-  if (ts.isUnionTypeNode(node)) {
-    const parts = node.types.map((t) => shapesOf(src, t, depth + 1));
-    return parts.some((r) => r === undefined)
-      ? undefined
-      : parts.flatMap((r) => r as ts.TypeLiteralNode[]);
-  }
-  if (ts.isTypeReferenceNode(node) && ts.isIdentifier(node.typeName)) {
-    const target = node.typeName.text;
-    let found: ts.TypeLiteralNode[] | undefined;
-    ts.forEachChild(src, (n) => {
-      if (found) {
-        return;
-      }
-      if (ts.isInterfaceDeclaration(n) && n.name.text === target) {
-        // An interface is an object shape by construction. Build a literal
-        // node carrying its members so both spellings read the same way.
-        found = [ts.factory.createTypeLiteralNode(n.members) as ts.TypeLiteralNode];
-      } else if (ts.isTypeAliasDeclaration(n) && n.name.text === target) {
-        found = shapesOf(src, n.type, depth + 1);
-      }
-    });
-    return found;
-  }
-  return undefined;
-}
-
-function branchOf(lit: ts.TypeLiteralNode): Branch {
-  const signatures = lit.members.filter(ts.isPropertySignature);
-  const props: Prop[] = signatures
-    .filter((p) => p.name && ts.isIdentifier(p.name))
-    .map((p) => ({
-      name: (p.name as ts.Identifier).text,
-      optional: p.questionToken !== undefined,
-      isNumber: p.type?.kind === ts.SyntaxKind.NumberKeyword,
-    }));
-  const kindProp = signatures.find(
-    (p) => p.name && ts.isIdentifier(p.name) && p.name.text === 'kind',
-  );
-  let kind: string | undefined;
-  if (kindProp?.type && ts.isLiteralTypeNode(kindProp.type)) {
-    const lt = kindProp.type.literal;
-    if (ts.isStringLiteral(lt)) {
-      kind = lt.text;
+  return element.types.map((c) => {
+    const props: Record<string, PropInfo | undefined> = {};
+    for (const name of [...REQUIRED_FIELDS, ...COORDINATES]) {
+      props[name] = propertyOf(c, name);
     }
-  }
-  return { kind, props };
-}
-
-/** `export type <name> = A | B` parsed, or undefined if not a union. */
-function unionOf(src: ts.SourceFile, name: string): Union | undefined {
-  let alias: ts.TypeAliasDeclaration | undefined;
-  ts.forEachChild(src, (n) => {
-    if (ts.isTypeAliasDeclaration(n) && n.name.text === name) {
-      alias = n;
-    }
+    const kindType = props.kind?.type;
+    const decls = c.getSymbol()?.declarations ?? c.aliasSymbol?.declarations ?? [];
+    return {
+      kind: kindType && kindType.isStringLiteral() ? kindType.value : undefined,
+      isObject: (c.flags & NOT_AN_OBJECT) === 0,
+      declaredInTypesTs:
+        decls.length > 0 && decls.every((d) => d.getSourceFile().fileName === TYPES_PATH),
+      props,
+    };
   });
-  if (!alias || !ts.isUnionTypeNode(alias.type)) {
-    return undefined;
-  }
-  const resolved = alias.type.types.map((m) => shapesOf(src, m));
-  return {
-    branches: resolved.flatMap((r) => r ?? []).map(branchOf),
-    unresolved: resolved.filter((r) => r === undefined).length,
-  };
+}
+
+function isNumber(p: PropInfo | undefined): boolean {
+  const { checker } = typesWorld();
+  return p !== undefined && (checker.getNonNullableType(p.type).flags & ts.TypeFlags.NumberLike) !== 0;
 }
 
 /** The five kinds C-44 names. spec-coverage pins every one of these strings. */
@@ -1299,81 +1274,60 @@ describe('C-31 the validation error type is declared once and shared', () => {
   // @spec spec-vscode
   // @ac AC-75
   it('[spec-vscode/AC-75] CoverageReport carries the array and types.ts declares the element', () => {
-    const types = sourceOf(TYPES_PATH);
-    const props = interfaceProps(types, 'CoverageReport');
-    if (!props) {
+    const report = declaredInterface('CoverageReport');
+    if (!report) {
       throw new Error('types.ts declares no CoverageReport interface');
     }
 
-    const field = propNamed(props, 'resultsValidationErrors');
-    // Reported rather than thrown, so the next assertion still runs and one
-    // failure names everything that is missing.
+    const field = propertyOf(report, 'resultsValidationErrors');
     expect({
       CoverageReport_carries_the_array: field !== undefined,
     }).toEqual({ CoverageReport_carries_the_array: true });
 
-    const elementName = arrayElementTypeName(field?.type);
+    const element = field ? arrayElement(field.type) : undefined;
     expect({
-      field_is_an_array_of_a_named_type: elementName !== undefined,
+      field_is_an_array_of_a_named_type: element !== undefined,
     }).toEqual({ field_is_an_array_of_a_named_type: true });
 
+    const branches = element ? branchesOf(element) : undefined;
     expect({
-      the_element_type_is_declared_in_types_ts:
-        elementName !== undefined && unionOf(types, elementName) !== undefined,
-    }).toEqual({ the_element_type_is_declared_in_types_ts: true });
+      the_element_type_is_a_union_declared_in_types_ts:
+        branches !== undefined && branches.length > 0 && branches.every((b) => b.declaredInTypesTs),
+    }).toEqual({ the_element_type_is_a_union_declared_in_types_ts: true });
   });
 
   // @spec spec-vscode
   // @ac AC-75
   it('[spec-vscode/AC-75] the element type is a discriminated union permitting exactly one coordinate', () => {
-    const types = sourceOf(TYPES_PATH);
-    const props = interfaceProps(types, 'CoverageReport');
-    const elementName = arrayElementTypeName(propNamed(props ?? [], 'resultsValidationErrors')?.type);
-    const union = elementName ? unionOf(types, elementName) : undefined;
-    if (!union || union.branches.length === 0) {
+    const report = declaredInterface('CoverageReport');
+    const field = report ? propertyOf(report, 'resultsValidationErrors') : undefined;
+    const element = field ? arrayElement(field.type) : undefined;
+    const branches = element ? branchesOf(element) : undefined;
+    if (!branches || branches.length === 0) {
       throw new Error(
-        `no discriminated union to inspect: CoverageReport.resultsValidationErrors resolves to ${String(elementName)}`,
+        'no discriminated union to inspect: CoverageReport.resultsValidationErrors does not resolve to a union of object types',
       );
     }
-    const branches = union.branches;
 
-    // Every member resolves to an object shape, inline or named. A member that
-    // resolves to nothing contributes no kind, so it cannot break the set
-    // assertion below while still widening the type to values carrying neither
-    // discriminant nor coordinate.
-    expect({ union_members_that_are_not_object_shapes: union.unresolved }).toEqual({
-      union_members_that_are_not_object_shapes: 0,
-    });
+    // Every constituent is an object type. A union carrying `undefined`, a
+    // primitive, or anything else contributes no kind, so it cannot break the
+    // set assertion below while still widening the type to values that carry
+    // neither discriminant nor coordinate.
+    expect({ constituents_that_are_not_object_types: branches.filter((b) => !b.isObject).length })
+      .toEqual({ constituents_that_are_not_object_types: 0 });
 
-    // The union covers every kind C-44 names, and no others. A two-branch
-    // union satisfied the earlier version of this test while omitting
-    // duplicate_stream, empty_stream_name, negative_count and
-    // extracted_below_entries, so the branch rules below ran over a fraction
-    // of the type and reported nothing.
+    // The union covers every kind C-44 names, and no others.
     expect(branches.map((b) => b.kind).sort()).toEqual([...C44_KINDS]);
 
-    // Every branch discriminates on a string literal kind and names the two
-    // fields C-44(c) requires of every violation. Required, not merely
-    // declared: an optional message is a violation that need not say anything.
+    // kind, stream and message are present and required on every branch. An
+    // optional discriminant permits an element with no kind, which is not a
+    // discriminated union whatever the branches say.
     expect(
       branches.map((b) => ({
         kind: b.kind,
-        kindIsLiteral: typeof b.kind === 'string',
-        // Required. An optional discriminant permits an element with no kind,
-        // which is not a discriminated union whatever the branches say.
-        kindIsRequired: propOf(b, 'kind')?.optional === false,
-        stream: propOf(b, 'stream')?.optional === false,
-        message: propOf(b, 'message')?.optional === false,
+        required: REQUIRED_FIELDS.filter((f) => b.props[f]?.optional === false),
       })),
-    ).toEqual(
-      branches.map((b) => ({
-        kind: b.kind,
-        kindIsLiteral: true,
-        kindIsRequired: true,
-        stream: true,
-        message: true,
-      })),
-    );
+    ).toEqual(branches.map((b) => ({ kind: b.kind, required: [...REQUIRED_FIELDS] })));
 
     // Exactly one coordinate per branch, required, numeric, and the right one
     // for the kind. The other must be absent rather than optional: an optional
@@ -1382,12 +1336,11 @@ describe('C-31 the validation error type is declared once and shared', () => {
       branches.map((b) => {
         const wanted = b.kind === 'undeclared_stream' ? 'resultIndex' : 'streamIndex';
         const forbidden = b.kind === 'undeclared_stream' ? 'streamIndex' : 'resultIndex';
-        const coordinate = propOf(b, wanted);
         return {
           kind: b.kind,
-          requiredCoordinate: coordinate !== undefined && !coordinate.optional,
-          coordinateIsNumber: coordinate?.isNumber === true,
-          otherAbsent: propOf(b, forbidden) === undefined,
+          requiredCoordinate: b.props[wanted]?.optional === false,
+          coordinateIsNumber: isNumber(b.props[wanted]),
+          otherAbsent: b.props[forbidden] === undefined,
         };
       }),
     ).toEqual(
@@ -1399,12 +1352,11 @@ describe('C-31 the validation error type is declared once and shared', () => {
       })),
     );
 
-    // Positive control. The set assertion above pins the kinds, and this pins
-    // that both coordinate names appear somewhere in the union, which is what
-    // AC-75 asks for across it rather than per branch.
+    // Positive control. Both coordinate names appear somewhere in the union,
+    // which is what AC-75 asks for across it rather than per branch.
     expect({
-      some_branch_carries_resultIndex: branches.some((b) => propOf(b, 'resultIndex')),
-      some_branch_carries_streamIndex: branches.some((b) => propOf(b, 'streamIndex')),
+      some_branch_carries_resultIndex: branches.some((b) => b.props.resultIndex),
+      some_branch_carries_streamIndex: branches.some((b) => b.props.streamIndex),
     }).toEqual({ some_branch_carries_resultIndex: true, some_branch_carries_streamIndex: true });
   });
 
