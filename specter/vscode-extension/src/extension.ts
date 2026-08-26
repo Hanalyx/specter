@@ -500,7 +500,11 @@ async function runCoverageForFolder(key: string, client: SpecterClient): Promise
     const result = await client.coverage();
     // AC-54: store under the folder key; AC-33: normalize CLI-relative
     // paths against the owning folder's CLI cwd at ingestion time.
-    coverageReports.set(key, result as unknown as CoverageReport, client.cliCwd);
+    //
+    // No cast. coverage() returns CoverageReport, the same declaration the
+    // store holds, so the two cannot drift. The `as unknown as` that used to
+    // sit here erased the compiler's ability to notice when they did.
+    coverageReports.set(key, result, client.cliCwd);
     const report = coverageReports.get(key)!;
     updateSpecIndex(report);
 

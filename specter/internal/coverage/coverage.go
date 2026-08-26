@@ -110,6 +110,14 @@ type CoverageReport struct {
 	// ResultsFile.InvalidStatuses() — the builder is pure and doesn't
 	// own the results-file lifecycle.
 	InvalidStatusWarnings []InvalidStatusWarning `json:"invalid_status_warnings,omitempty"`
+	// ResultsValidationErrors carries every spec-coverage C-44 violation the
+	// results file's streams block produced. Absent when the block is absent
+	// or consistent, which is why it is omitempty: a legacy artifact must
+	// marshal exactly as it did before this field existed.
+	//
+	// Validation records here rather than aborting, so C-10's document still
+	// exists in a refusal and the gates still have something to run on.
+	ResultsValidationErrors []ResultsValidationError `json:"results_validation_errors,omitempty"`
 }
 
 // MaxCoverageReportBytes caps the on-disk size of a CoverageReport JSON
@@ -619,6 +627,14 @@ func buildCoverageReportCore(specs []schema.SpecAST, annotations []AnnotationMat
 	}
 
 	report.Summary.TotalSpecs = len(specs)
+
+	// C-44, in the core rather than in a constructor. The annotation path
+	// reaches the builder through a different constructor than the two ladder
+	// paths, so a rule added one level up would reach two modes of three while
+	// a surface count still read four. That is bugs/done/SP-SP-058 one layer
+	// down, and spec-sync AC-20 exists to keep it from happening again.
+	report.ResultsValidationErrors = ValidateStreams(results)
+
 	return report
 }
 

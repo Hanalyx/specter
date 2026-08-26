@@ -33,6 +33,14 @@ type SyncResult struct {
 	CoverageReport      *coverage.CoverageReport             `json:"coverage_report,omitempty"`
 	DepCoverageWarnings []coverage.DependencyCoverageWarning `json:"dep_coverage_warnings,omitempty"`
 
+	// GateViolations and GateCode are the verdict this run computed, carried
+	// so the CLI reports and exits on the same decision rather than building a
+	// second one from a different set of inputs (bugs/SP-SP-073). Not
+	// serialized: the JSON document's shape is a published contract and the
+	// codes already reach a consumer through the process exit.
+	GateViolations []coverage.GateViolation `json:"-"`
+	GateCode       int                      `json:"-"`
+
 	// spec-sync C-09: zero-tolerance violation counts, mirrored from
 	// spec-coverage C-25/C-26. The CLI maps a non-zero
 	// ZeroToleranceNonPassed to exit code 2 and a non-zero
@@ -321,7 +329,15 @@ func RunSync(input SyncInput) *SyncResult {
 		ZeroToleranceNonPassed:   result.ZeroToleranceNonPassed,
 		ApprovalGateViolations:   result.ApprovalGateViolations,
 		ThresholdFailing:         coverageReport.Summary.Failing,
+		StreamValidationErrors:   coverageReport.ResultsValidationErrors,
 	})
+	// Carried on the result rather than recomputed at the exit site. The CLI
+	// used to build a second verdict of its own and omit ThresholdFailing from
+	// it, so the two disagreed the moment a gate ordered after the threshold
+	// existed. That is bugs/SP-SP-073, and stream validation is exactly the
+	// gate that would have exposed it.
+	result.GateViolations = violations
+	result.GateCode = code
 	if code != 0 {
 		result.Phases = append(result.Phases, PhaseResult{
 			Phase: "coverage", Passed: false,

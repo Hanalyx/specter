@@ -68,6 +68,15 @@ const (
 // and is the first code allocated from it. spec-diff C-14.
 const exitDiffBreaking = 10
 
+// exitStreamValidation is the code a streams-block refusal returns. It is the
+// first allocation from the evidence-stream band, 20 to 29, per
+// docs/EXIT_CODES.md. spec-coverage C-44.
+//
+// It never preempts a gate that shipped before it. The shared verdict orders
+// it last, so a workspace that also fails an older gate exits with that gate's
+// code and the stream violations are still reported.
+const exitStreamValidation = 20
+
 // noSpecsMessage is used by parse/resolve/sync when discovery turns up
 // nothing. Explains where specter looked and what to try next — users often
 // keep specs in a non-default directory and need the hint.
@@ -925,6 +934,10 @@ func coverageExitGates(report *coverage.CoverageReport, specs []schema.SpecAST,
 		AnnotationDeclared: annotationDeclared,
 		ZeroTolerance:      zeroTolerance,
 		ThresholdFailing:   report.Summary.Failing,
+		// C-44: taken off the report the builder produced, never recomputed
+		// here. `sync` reads the same field, so the two surfaces cannot reach
+		// different answers about one workspace.
+		StreamValidationErrors: report.ResultsValidationErrors,
 	}
 	if annotationDeclared {
 		in.AnnotationPermissive = m.Settings.Annotation.Permissive
@@ -957,6 +970,8 @@ func coverageExitGates(report *coverage.CoverageReport, specs []schema.SpecAST,
 		os.Exit(exitCoverageNoTest)
 	case exitCoverageApprovalGate:
 		os.Exit(exitCoverageApprovalGate)
+	case exitStreamValidation:
+		os.Exit(exitStreamValidation)
 	}
 	return nil
 }
@@ -1484,14 +1499,14 @@ func syncCmd() *cobra.Command {
 			// (bugs/SP-SP-071). Renamed from zeroToleranceExit because the
 			// gates it reports are no longer the ladder's alone.
 			gateExit := func() {
-				violations, code := coverage.GateVerdict(coverage.GateInputs{
-					AnnotationDeclared:       m != nil && m.Settings.Annotation != nil,
-					AnnotationPermissive:     result.AnnotationPermissive,
-					AnnotationRuleViolations: result.AnnotationRuleViolations,
-					ZeroTolerance:            effectiveStrictness == "zero-tolerance",
-					ZeroToleranceNonPassed:   result.ZeroToleranceNonPassed,
-					ApprovalGateViolations:   result.ApprovalGateViolations,
-				})
+				// One verdict, computed once inside RunSync and carried here.
+				// This closure used to build a second one and omit
+				// ThresholdFailing from it, so the two agreed only while the
+				// threshold was the last gate and its code matched the silent
+				// fallback. Stream validation is ordered after the threshold,
+				// which is exactly the shape that would have made them
+				// disagree (bugs/SP-SP-073).
+				violations, code := result.GateViolations, result.GateCode
 				// spec-coverage C-40(e): every violation is named before the
 				// process leaves, so one run tells the operator everything.
 				printGateViolations(violations)
@@ -1503,6 +1518,8 @@ func syncCmd() *cobra.Command {
 					os.Exit(exitCoverageNoTest)
 				case exitCoverageApprovalGate:
 					os.Exit(exitCoverageApprovalGate)
+				case exitStreamValidation:
+					os.Exit(exitStreamValidation)
 				}
 			}
 

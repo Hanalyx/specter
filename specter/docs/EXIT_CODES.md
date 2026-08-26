@@ -61,6 +61,7 @@ Specter emits five codes. There is no sixth.
 | `2` | all | The process recovered a panic on the main goroutine. | Accidental collision |
 | `3` | `coverage`, `sync` | Effective strictness `zero-tolerance`, and at least one acceptance criterion carries `approval_gate: true` with an unset `approval_date`. | Stable |
 | `10` | `diff` | `--exit-code` was passed and the change class is `breaking`. Without the flag, `diff` exits 0. | Stable |
+| `20` | `coverage`, `sync` | The results file carries a `streams` block that breaks one of `spec-coverage` C-44's five consistency rules, and no gate that shipped earlier also failed. | Stable |
 
 ### Code 0
 
@@ -300,7 +301,7 @@ reachable, which `spec-sync` AC-18 enforces.
 | `1` | Unclassified failure. Frozen. | Shipped |
 | `2` to `9` | Spec and coverage contract | `2` and `3` shipped. `4` to `9` free. |
 | `10` to `19` | Orchestration gates | `10` shipped (`diff --exit-code`). `11` to `19` free. |
-| `20` to `29` | Evidence stream validation | `20` and `21` planned, none emitted yet |
+| `20` to `29` | Evidence stream validation | `20` shipped (stream validation). `21` planned. `22` to `29` free. |
 | `30` to `63` | Unallocated | Reserved for a future track |
 | `64` to `78` | Usage, internal, and configuration errors, per `sysexits.h` | None allocated |
 | `79` to `125` | Do not use | Reserved |
@@ -310,7 +311,8 @@ The band edges are the roadmap's proposal, and the shipped codes fit them withou
 change. Codes 2 and 3 both gate the spec and coverage contract, and both sit
 inside `2` to `9`. Code 10 is the first allocation from the
 orchestration band, taken by `specter diff --exit-code` on a breaking change.
-No shipped code lands in the evidence band, so it is uncontended.
+Code 20 is the first allocation from the evidence band, taken by the
+streams-block refusal `spec-coverage` C-44 defines.
 
 ### Three constraints on any number picked from a band
 
@@ -325,12 +327,12 @@ executable, 127 for a command not found, and 128 plus the signal number for a
 process killed by a signal. A binary that returns those numbers is
 indistinguishable from a failure to run it at all.
 
-**A band is not a promise, and a planned number is not an occupied one.** Only 10
-is occupied today, by `diff --exit-code`. Nothing occupies 11 to 29. Codes 20 and
-21 are planned in the table below and emitted by nothing, which is why neither
-has a Section 1 row: that row asserts a code is reachable and `spec-sync` AC-18
-fails the build when it is not. Anyone reading a code in that range from a released
-binary has found a bug or a stale build.
+**A band is not a promise, and a planned number is not an occupied one.** Two are
+occupied today: 10 by `diff --exit-code` and 20 by the streams-block refusal.
+Nothing occupies 11 to 19 or 21 to 29. Code 21 is planned in the table below and
+emitted by nothing, which is why it has no Section 1 row: that row asserts a code
+is reachable and `spec-sync` AC-18 fails the build when it is not. Anyone reading
+21 from a released binary has found a bug or a stale build.
 
 ### Where the planned gates belong
 
@@ -338,19 +340,19 @@ Named here so no track has to guess. A number is recorded in this table during
 the spec cycle that scopes its gate, and takes a Section 1 row only in the commit
 that makes it reachable.
 
-**The evidence band's two numbers are allocated, not yet emitted.** Code 20 is
-`spec-coverage` C-44, the artifact-consistency refusal, and 21 is reserved for
-the differential refusal when 3B ships. Neither appears in Section 1 yet, and
-that is the rule this section states rather than an oversight: a Section 1 row
-marked Stable asserts the code is reachable, and `spec-sync` AC-18 fails the
-build when it is not. Each row lands in the commit that makes its code
-reachable, so both directions of C-12 hold at every commit rather than only at
-the end of a cycle.
+**The evidence band's first number is now emitted and its second is not.** Code 20
+is `spec-coverage` C-44, the artifact-consistency refusal, and it took its
+Section 1 row in the commit that made it reachable, which is the rule this
+section states. Code 21 is reserved for the differential refusal when 3B ships
+and has no Section 1 row yet, for the same reason: a row marked Stable asserts
+the code is reachable, and `spec-sync` AC-18 fails the build when it is not.
+Each row lands in the commit that makes its code reachable, so both directions
+of C-12 hold at every commit rather than only at the end of a cycle.
 
 | Planned gate | Roadmap | Band |
 |---|---|---|
 | Failing exit for `diff` on a breaking change | 2B3 | **Shipped as `10`** |
-| Stream validation refusing an inconsistent artifact | 3A5 | Evidence stream, **`20`** |
+| Stream validation refusing an inconsistent artifact | 3A5 | **Shipped as `20`** |
 | Stream validation refusing a differential | 3B4 | Evidence stream, **`21`** |
 | The panic path, once it moves off 2 | Not scheduled | `sysexits.h`, `70` |
 | Configuration errors, once they move off 1 | v1.0, per `bugs/SP-SP-020` | `sysexits.h`, `78` |

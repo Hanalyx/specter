@@ -47,6 +47,14 @@ type StreamInfo struct {
 	// filtered out, or may have no tests, and runner output cannot tell those
 	// apart. C-42.
 	ZeroTestEventPackages int `json:"zero_test_event_packages,omitempty"`
+
+	// sourceIndex is the row's position in the file as written, recorded by
+	// ParseResultsFile before the C-42 sort moves it. C-44 requires a
+	// violation to point at the file the operator can open, not at the array
+	// after a sort they never see. Unexported, so the JSON contract is
+	// unchanged and a hand-built ResultsFile simply carries zeroes, which
+	// ValidateStreams detects and falls back from.
+	sourceIndex int
 }
 
 // ResultsFile is the parsed .specter-results.json structure.
@@ -109,6 +117,12 @@ func ParseResultsFile(data []byte) (*ResultsFile, error) {
 	// well as on write, because a file a consumer hand-assembled is still an
 	// artifact Specter re-emits, and an order that depended on who wrote it
 	// would make a diff of two runs show churn that is not a change.
+	//
+	// The source position is recorded first, because the sort is what destroys
+	// it and C-44's coordinates are stated against the file as written.
+	for i := range rf.Streams {
+		rf.Streams[i].sourceIndex = i
+	}
 	sort.Slice(rf.Streams, func(i, j int) bool { return rf.Streams[i].Name < rf.Streams[j].Name })
 	return &rf, nil
 }

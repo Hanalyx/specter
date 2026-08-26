@@ -3,7 +3,7 @@
 import { execFile } from 'child_process';
 import * as path from 'path';
 
-import type { SpecterParseError, SpecterCheckDiagnostic } from './types';
+import type { SpecterParseError, SpecterCheckDiagnostic, CoverageReport } from './types';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -35,43 +35,6 @@ export interface CheckResult {
     errors: number;
     warnings: number;
   };
-}
-
-export interface CoverageResult {
-  entries: Array<{
-    specID: string;
-    tier: number;
-    totalACs: number;
-    coveredACs: string[];
-    uncoveredACs: string[];
-    coveragePct: number;
-    threshold: number;
-    passesThreshold: boolean;
-    testFiles: string[];
-    specFile?: string;
-  }>;
-  summary: {
-    totalSpecs: number;
-    passing: number;
-    failing: number;
-    fullyCovered: number;
-    partiallyCovered: number;
-    uncovered: number;
-  };
-  /**
-   * v0.9.0+: per-file parse errors from `specter coverage --json`. Present
-   * (often as []) whenever the CLI emitted a JSON report. See spec-coverage
-   * 1.5.0 C-10 / AC-10 — coverage --json emits JSON in every state; the
-   * exit code separately signals pass/fail.
-   */
-  parseErrors?: Array<{
-    file: string;
-    path?: string;
-    type?: string;
-    message: string;
-    line?: number;
-    column?: number;
-  }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,7 +128,7 @@ export class SpecterClient {
    * etc. silently read `undefined` — a latent bug that would have become
    * a crash the moment any code iterated `coveredACs`.
    */
-  coverage(): Promise<CoverageResult> {
+  coverage(): Promise<CoverageReport> {
     // The CLI has no per-spec filter — coverage() always returns the
     // whole-workspace report. Callers filter the result if they need a
     // single spec's entry (see findEntryBySpecFile, AC-55).
@@ -178,7 +141,7 @@ export class SpecterClient {
     // including Tier-1 pass-awareness when a results file exists).
     return this.enqueue(signal =>
       this.runAllowingNonZero(['coverage', '--json', '--strictness', 'annotation'], signal).then(
-        ({ stdout }) => snakeToCamelCoverage(jsonDocumentFrom('coverage', stdout)) as CoverageResult,
+        ({ stdout }) => snakeToCamelCoverage(jsonDocumentFrom('coverage', stdout)) as CoverageReport,
       ),
     );
   }
@@ -287,6 +250,7 @@ const ARRAY_FIELDS: Record<string, string[]> = {
     'parse_error_patterns',
     'diagnostic_hints',
     'invalid_status_warnings',
+    'results_validation_errors',
   ],
 };
 
@@ -356,6 +320,12 @@ const FIELD_MAP: Record<string, string> = {
   fully_covered: 'fullyCovered',
   partially_covered: 'partiallyCovered',
   parse_errors: 'parseErrors',
+  // C-44's document. The outer key and both coordinate names, because
+  // convertKeys rewrites at every depth and an element's own keys are as much
+  // the CLI's spelling as the document's.
+  results_validation_errors: 'resultsValidationErrors',
+  stream_index: 'streamIndex',
+  result_index: 'resultIndex',
 };
 
 /**

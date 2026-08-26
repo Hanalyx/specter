@@ -1,6 +1,9 @@
 package coverage
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // The coverage exit gates, decided in one place.
 //
@@ -13,10 +16,16 @@ import "fmt"
 // This function is pure. It takes counts and returns violations, so the
 // package keeps its no-I/O rule and the callers keep the printing.
 
-// GateInputs is every count the gates decide on. Counts rather than the report,
-// the specs, and the results, because `sync` has already reduced those to
-// counts by the time it needs a verdict and passing raw inputs would mean
-// keeping them alive across the phase boundary for no gain.
+// GateInputs is what the gates decide on. Counts, mostly: `sync` has already
+// reduced the report, the specs and the results to counts by the time it needs
+// a verdict, and passing raw inputs would mean keeping them alive across the
+// phase boundary for no gain.
+//
+// Stream validation is the exception and is passed whole. spec-sync AC-20
+// binds the cause line on all four surfaces, and a count cannot name the
+// stream a refusal concerns. Both callers take it from the same field of the
+// report they already hold, so the two cannot derive it differently. Deriving
+// one input two ways is bugs/SP-SP-073.
 type GateInputs struct {
 	// AnnotationDeclared reports whether settings.annotation is declared.
 	// Under it, GoverningStrictness resolves to threshold, so ZeroTolerance
@@ -41,6 +50,11 @@ type GateInputs struct {
 
 	// ThresholdFailing counts specs below their tier threshold.
 	ThresholdFailing int
+
+	// StreamValidationErrors carries the C-44 violations the shared builder
+	// recorded on the report. Take it from CoverageReport.ResultsValidationErrors
+	// and nowhere else.
+	StreamValidationErrors []ResultsValidationError
 }
 
 // GateViolation is one gate's finding.
@@ -129,6 +143,25 @@ func GateVerdict(in GateInputs) (violations []GateViolation, code int) {
 		violations = append(violations, GateViolation{
 			Phase: fmt.Sprintf("%d spec(s) below coverage threshold", in.ThresholdFailing),
 			Code:  1,
+		})
+	}
+
+	// Stream validation, last. spec-coverage C-44 makes its precedence
+	// conditional, and ordering it after every gate that shipped before it is
+	// what makes both halves true at once: the loop below returns the first
+	// non-zero code, so a coexisting older gate wins and a violation standing
+	// alone gets the band's own code. The violations are reported either way,
+	// because they are appended whichever gate decides.
+	//
+	// docs/EXIT_CODES.md section 4 forbids a new gate preempting a shipped
+	// one. Appending here is that rule expressed as position rather than as a
+	// comparison nobody would re-check.
+	if len(in.StreamValidationErrors) > 0 {
+		msg := StreamValidationMessage(in.StreamValidationErrors)
+		violations = append(violations, GateViolation{
+			Stderr: msg,
+			Phase:  strings.TrimPrefix(msg, "error: "),
+			Code:   20,
 		})
 	}
 

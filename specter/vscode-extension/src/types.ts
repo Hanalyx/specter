@@ -66,6 +66,63 @@ export interface SpecCoverageEntry {
   specFile?: string;
 }
 
+/**
+ * What every spec-coverage C-44 violation carries, whatever kind it is.
+ *
+ * A violation must identify the stream it concerns. `stream` is the empty
+ * string only for `empty_stream_name`, where there is no name to print and the
+ * array position identifies the row instead.
+ */
+export interface StreamViolation {
+  stream: string;
+  message: string;
+}
+
+/** An entry names a stream the block does not declare. C-44(a). */
+export interface UndeclaredStreamError extends StreamViolation {
+  kind: 'undeclared_stream';
+  resultIndex: number;
+}
+
+/** A non-empty stream name appears twice in the block. C-44(b). */
+export interface DuplicateStreamError extends StreamViolation {
+  kind: 'duplicate_stream';
+  streamIndex: number;
+}
+
+/** A declared row carries an empty name. C-44(b). */
+export interface EmptyStreamNameError extends StreamViolation {
+  kind: 'empty_stream_name';
+  streamIndex: number;
+}
+
+/** A declared row carries a count below zero. C-44(d). */
+export interface NegativeCountError extends StreamViolation {
+  kind: 'negative_count';
+  streamIndex: number;
+}
+
+/** A row declares fewer extracted than the entries carrying its label. C-44(e). */
+export interface ExtractedBelowEntriesError extends StreamViolation {
+  kind: 'extracted_below_entries';
+  streamIndex: number;
+}
+
+/**
+ * One streams-block violation, discriminated on `kind`.
+ *
+ * Each branch permits exactly one coordinate. `undeclared_stream` is about an
+ * entry and carries `resultIndex`; every other kind is about a declared row and
+ * carries `streamIndex`. The union is what makes the wrong one a compile error
+ * rather than an undefined a renderer has to guard.
+ */
+export type StreamValidationError =
+  | UndeclaredStreamError
+  | DuplicateStreamError
+  | EmptyStreamNameError
+  | NegativeCountError
+  | ExtractedBelowEntriesError;
+
 export interface CoverageReport {
   entries: SpecCoverageEntry[];
   summary: SpecSummary;
@@ -79,6 +136,20 @@ export interface CoverageReport {
    * empty).
    */
   parseErrors?: CoverageParseError[];
+  /**
+   * spec-coverage C-44 violations from the results file's `streams` block.
+   * The CLI omits the key when the block is absent or consistent, and
+   * `SpecterClient` normalizes that absence to `[]`, so a consumer reading a
+   * report the client returned can iterate it without a guard (C-31).
+   *
+   * Optional for the same reason `parseErrors` is: `merged()` reassembles a
+   * multi-root report field by field and this one has no coherent multi-root
+   * value. Each violation's coordinate points into one results file, so
+   * concatenating two roots would hand a reader indexes into a file the
+   * element does not name. C-31 binds what a `SpecterClient` method returns,
+   * which is where the guarantee is real.
+   */
+  resultsValidationErrors?: StreamValidationError[];
   /**
    * v0.9.0+: number of .spec.yaml files discovered on disk. When > 0 with
    * entries empty, the workspace has specs that didn't parse — tell the
