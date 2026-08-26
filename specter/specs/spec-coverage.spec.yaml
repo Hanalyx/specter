@@ -1,6 +1,6 @@
 spec:
   id: spec-coverage
-  version: "1.21.0"
+  version: "1.22.0"
   status: approved
   tier: 2
 
@@ -244,7 +244,7 @@ spec:
       enforcement: error
 
     - id: C-42
-      description: "A `.specter-results.json` file MAY carry a top-level `streams` array, one object per stream that ran, each naming the stream and the counts the producer observed: how many inputs it scanned and how many results it extracted. A per-entry label alone cannot express this, and the gap it leaves is the one that matters. A stream that ran and found nothing and a stream that never ran both leave zero entries, and the second is a broken pipeline reported as a clean one. The array MUST carry a defined total order, ascending by stream name, for the same reason C-37 orders the coverage document: an array built from a map otherwise keeps map iteration order, and a CI job diffing two runs sees churn that is not a change. A stream present in `streams` with zero entries is visible as such. A stream absent from `streams` never ran. Rationale, per SSRB-103 section 4: a second stream that silently failed to run must not read as success, and the failure direction matters, because a missing stream defaulting to satisfied produces maximum confidence exactly when the evidence is most broken."
+      description: "A `.specter-results.json` file MAY carry a top-level `streams` array, one object per stream that ran, each naming the stream and the counts the producer observed: how many inputs it scanned, how many results it extracted, and how many packages produced zero test events. The third count is worded as observed rather than diagnosed. A runner that emits no test event for a package may have failed to build it, may have had every test filtered out, or may have been handed a package with no tests at all, and the artifact cannot tell those apart from runner output alone, so it reports what it saw and leaves the reading to a human. A per-entry label alone cannot express this, and the gap it leaves is the one that matters. A stream that ran and found nothing and a stream that never ran both leave zero entries, and the second is a broken pipeline reported as a clean one. The array MUST carry a defined total order, ascending by stream name, for the same reason C-37 orders the coverage document: an array built from a map otherwise keeps map iteration order, and a CI job diffing two runs sees churn that is not a change. A stream present in `streams` with zero entries is visible as such. A stream absent from `streams` never ran. Rationale, per SSRB-103 section 4: a second stream that silently failed to run must not read as success, and the failure direction matters, because a missing stream defaulting to satisfied produces maximum confidence exactly when the evidence is most broken."
       type: technical
       enforcement: error
 
@@ -1073,7 +1073,24 @@ spec:
       references_constraints: ["C-43"]
       priority: critical
 
+    - id: AC-71
+      description: "The streams object reports packages that produced zero test events. A results file whose stream declares that count carries it through a parse and a marshal, and the count is independent of the extracted count: a stream can extract results and still hold packages that emitted nothing. A stream declaring zero for it and a stream omitting it are the same state, because the count is a number and zero is its absence. The field is named for what was observed and the criterion says so: the assertion is on the count reaching the artifact, not on any claim about why a package was silent."
+      inputs:
+        stream_with_silent_packages: "streams: [{name: go, scanned: 40, extracted: 3, zero_test_event_packages: 2}]"
+        stream_with_none: "the same stream with the count at zero"
+      expected_output:
+        count_survives_the_round_trip: true
+        count_is_independent_of_extracted: true
+        zero_and_omitted_are_the_same_state: true
+      references_constraints: ["C-42"]
+      priority: high
+
   changelog:
+    - version: "1.22.0"
+      date: "2026-08-25"
+      author: "specter-team"
+      type: minor
+      description: "C-42's streams object gains a third count, packages that produced zero test events, rehomed from roadmap item 3B5 because it belongs with the metadata that makes stream absence observable. Worded as observed rather than diagnosed: a runner emitting no test event for a package may have failed to build it, may have filtered every test out, or may have been handed a package with no tests, and `ingest` cannot tell those apart from runner output alone. Calling it a build failure would be a diagnosis the artifact cannot support. AC-71 asserts it, and binds that a zero count and an omitted one are the same state rather than only the round trip. Minor, not patch. The C-42 edit alone is description-only, but AC-71 is a new criterion and `spec-diff` C-05 classifies a new AC as additive. An earlier draft read the C-42 edit and called the whole change patch, which is overriding the classifier with a reading of one half of the diff."
     - version: "1.21.0"
       date: "2026-08-25"
       author: "specter-team"

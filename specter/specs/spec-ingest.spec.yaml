@@ -1,6 +1,6 @@
 spec:
   id: spec-ingest
-  version: "1.5.0"
+  version: "1.6.0"
   status: approved
   tier: 1
 
@@ -50,7 +50,7 @@ spec:
       enforcement: error
 
     - id: C-02
-      description: "MUST parse go test -json newline-delimited output — each line is a JSON object with at least {Action, Package, Test}. Actions pass/fail/skip map to passed/failed/skipped; actions run/output/pause/cont are non-terminal and ignored for status determination."
+      description: "MUST parse go test -json newline-delimited output — each line is a JSON object with at least {Action, Package, Test}. Actions pass/fail/skip map to passed/failed/skipped; actions run/output/pause/cont are non-terminal and ignored for status determination. An event with an empty `Test` field is package-level rather than malformed, and from 1.6.0 it is read rather than discarded. A package whose terminal event arrives with no test event before it produced zero test events, which is the count C-16 records. Discarding these events is why that signal was unavailable: they are the only place a runner says anything about a package that emitted no test at all."
       type: technical
       enforcement: error
 
@@ -109,9 +109,24 @@ spec:
       type: technical
       enforcement: error
 
+    - id: C-14
+      description: "`specter ingest --stream <name>` MUST label every entry the invocation produces with that name, and MUST reject an empty one. One invocation writes one stream, which is what matches CI: streams run as separate jobs, and a job knows its own name and nothing about its siblings. Without the flag, entries carry no label and read as `default` per `spec-coverage` C-41, so an existing pipeline that never learns the flag exists keeps writing exactly the file it wrote before. The name is opaque and is not validated against a list: `unit`, `live` and `mutation` are ordinary values, and reserving them would make the foundation unusable for the requests that motivated SSRB-103. Rationale: the label has to come from somewhere, and the producer is the only party that knows which body of evidence a run represents. A consumer labeling files at read time is the alternative SSRB-103 section 6 weighed and set aside, because it leaves a results file that is not self-describing and lets two invocations disagree about what one file means."
+      type: technical
+      enforcement: error
+
+    - id: C-15
+      description: "`specter ingest --merge <file>...` MUST build its output from the named results files alone and MUST NOT read the existing output first. This is the opposite of the accumulation C-11 requires for `--junit` and `--go-test`, and both are correct for their case. Accumulating is right when one run assembles one stream from several runner files. It is wrong across runs, because a criterion that passed in the previous run and produced no entry in this one keeps its stale passing entry, which hides exactly the absence the stream foundation exists to make visible. `--merge` therefore replaces rather than layers, and a stream re-run is a stream replaced. Entries from the named files merge on `(spec_id, ac_id, stream)` per C-08, so two files carrying different streams both survive and two files carrying the same stream collapse worst-status-wins. The `streams` blocks of the named files merge by name, and a stream declared in more than one input sums its counts. `--merge` combined with `--junit`, `--go-test` or `--stream` in one invocation MUST be refused rather than given a precedence rule, because the two modes disagree about what the output is built from and a silent winner would make the artifact depend on flag order."
+      type: technical
+      enforcement: error
+
+    - id: C-16
+      description: "`ingest` MUST write a `streams` entry when the run names a stream, carrying the counts `spec-coverage` C-42 defines: inputs scanned, results extracted, and packages that produced zero test events. The entry is written even when extraction found nothing, which is the whole point: a stream that ran and found nothing and a stream that never ran both leave zero result entries, and only this block separates them. `--merge` carries the `streams` blocks of its named inputs through to the output per C-15, so a merged file keeps the metadata its inputs recorded. **A run that names no stream MUST NOT write the block**, and that is a deliberate trade rather than an oversight. C-14 promises an unlabeled run writes exactly the file it wrote before, and a top-level block appearing in a pipeline that never asked for one would break that promise and make this cycle non-additive for every existing producer. The cost is real and belongs in the open: an unlabeled run forgoes the silent-package signal, so a package that produced no test events goes unrecorded there exactly as it did before. Passing `--stream` is what buys the signal, and any wording that offers it to an unlabeled run is claiming something this constraint refuses. The zero-test-event count comes from go test -json package-level events per C-02, and it is named for what was observed. `ingest` cannot tell a package that failed to build from one whose tests were all filtered out or one that has no tests, so the count MUST NOT be reported as a build failure in the artifact, in the summary line, or in the field name. Rationale, roadmap item 3B5 rehomed into 3A: a package that fails to build emits no test event, so every criterion it would have covered silently disappears from the results, and a coverage run over that file reports the remaining criteria as the whole truth."
+      type: technical
+      enforcement: error
+
   depends_on:
     - spec_id: spec-coverage
-      version_range: "^1.21.0"
+      version_range: "^1.22.0"
       relationship: requires
 
   acceptance_criteria:
@@ -278,7 +293,56 @@ spec:
       references_constraints: ["C-13"]
       priority: high
 
+    - id: AC-14
+      description: "`ingest --stream go` labels every entry it writes with `go`, and the same inputs without the flag write no label at all. The two files differ only in that field: parsed and compared, every other value matches, so the flag adds a label and changes no result. An empty value for `--stream` is refused with a non-zero exit rather than writing an unlabeled file, because a producer that meant to name a stream and named nothing should learn that from the run and not from a coverage report weeks later."
+      inputs:
+        with_flag: "ingest --go-test out.json --stream go"
+        without_flag: "ingest --go-test out.json"
+        empty_flag: "ingest --go-test out.json with an empty --stream value"
+      expected_output:
+        every_entry_labeled: true
+        unlabeled_file_matches_except_for_the_label: true
+        empty_stream_exits_non_zero: true
+      references_constraints: ["C-14"]
+      priority: critical
+
+    - id: AC-15
+      description: "`ingest --merge a.json b.json` writes an output built from a and b alone. Given an existing output holding a criterion that neither input mentions, that criterion is absent afterward, which is the behavior that separates `--merge` from accumulation and the reason it exists: a re-run of a stream replaces it rather than layering on a stale pass. Two inputs carrying different streams both survive. Two inputs carrying the same stream and the same criterion collapse to the worst status. `--merge` passed alongside `--junit`, `--go-test` or `--stream` exits non-zero."
+      inputs:
+        stale_output: "an existing .specter-results.json holding s/AC-99"
+        inputs_to_merge: "a.json carrying stream go, b.json carrying stream js"
+        conflicting_flags: "--merge a.json --go-test out.json"
+      expected_output:
+        stale_criterion_is_absent: true
+        both_streams_survive: true
+        same_stream_collapses_worst_status: true
+        conflicting_flags_exit_non_zero: true
+      references_constraints: ["C-15"]
+      priority: critical
+
+    - id: AC-16
+      description: "`ingest --stream go` writes a streams entry, and writes it even when nothing was extracted. The same inputs with no `--stream` write no block at all, per C-16 and C-14's back-compat promise, and that case is asserted rather than assumed: an unconditional block would make this cycle non-additive for every existing producer. A run whose inputs yield no results still declares its stream with a scanned count above zero and an extracted count of zero, which is what distinguishes it from a stream that never ran. A go test -json input holding a package whose terminal event arrives with no test event contributes to the zero-test-event count. Neither the artifact nor the summary line calls that a build failure, because `ingest` cannot tell a build failure from a filtered-out package or a package with no tests."
+      inputs:
+        empty_extraction: "ingest --stream go over a runner file scanning 12 cases and matching no annotation"
+        no_stream_flag: "the same inputs with no --stream"
+        silent_package: "go test -json output with a package-level terminal event and no test event"
+      expected_output:
+        stream_entry_written_when_extraction_is_empty: true
+        no_stream_flag_writes_no_streams_block: true
+        zero_test_event_package_counted: true
+        artifact_does_not_claim_a_build_failure: true
+        summary_line_does_not_claim_a_build_failure: true
+        field_name_does_not_claim_a_build_failure: true
+      references_constraints: ["C-16"]
+      priority: critical
+
   changelog:
+    - version: "1.6.0"
+      date: "2026-08-25"
+      author: "specter-team"
+      type: minor
+      description: "Roadmap 3A4, plus item 3B5 rehomed into it. C-14 adds `--stream`, which labels one invocation's entries, because a CI job knows its own name and nothing about its siblings. C-15 adds `--merge`, which builds from the named files alone and is deliberately the opposite of C-11's accumulation: accumulating is right within one run and wrong across runs, where a criterion that passed before and produced no entry now keeps a stale pass. C-16 requires the streams entry to be written even when extraction found nothing, since that is the only thing separating a stream that ran and found nothing from one that never ran. C-02 stops discarding package-level events: an event with an empty Test field is where a runner says a package produced no test at all, and discarding it is why that signal was unavailable. The count is named for what was observed and MUST NOT be called a build failure anywhere, because a silent package may equally have had every test filtered out or have no tests. AC-16 binds all three places the constraint names: the artifact, the summary line, and the field. C-16 binds to a run that names a stream, and an unlabeled run writes no block, because C-14 promises such a run writes exactly the file it wrote before and an unconditional block would make this cycle non-additive for every existing producer. The trade is stated in C-16 rather than left to be discovered: an unlabeled run forgoes the silent-package signal. The `spec-coverage` floor rises to 1.22.0, the version that added the third count C-16 relies on. That version is a minor rather than the patch an earlier draft assigned it: the C-42 edit is description-only, but the same change adds AC-71, and `spec-diff` C-05 classifies a new AC as additive."
+
     - version: "1.5.0"
       date: "2026-08-25"
       author: "specter-team"
