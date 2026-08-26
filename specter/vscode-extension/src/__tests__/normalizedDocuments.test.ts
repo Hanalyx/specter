@@ -1183,8 +1183,21 @@ function propOf(b: Branch, name: string): Prop | undefined {
   return b.props.find((p) => p.name === name);
 }
 
-/** The branches of `export type <name> = {...} | {...}`, or undefined. */
-function unionBranches(src: ts.SourceFile, name: string): Branch[] | undefined {
+/**
+ * A union alias reduced to what AC-75 asserts about it.
+ *
+ * nonLiteral counts members that are not object literals. They are counted
+ * rather than filtered away: `A | B | C | D | E | undefined` yields the five
+ * kinds a filtering parser expects and still declares a type whose values may
+ * carry no discriminant and no coordinate.
+ */
+interface Union {
+  branches: Branch[];
+  nonLiteral: number;
+}
+
+/** `export type <name> = {...} | {...}` parsed, or undefined if not a union. */
+function unionOf(src: ts.SourceFile, name: string): Union | undefined {
   let alias: ts.TypeAliasDeclaration | undefined;
   ts.forEachChild(src, (n) => {
     if (ts.isTypeAliasDeclaration(n) && n.name.text === name) {
@@ -1194,7 +1207,8 @@ function unionBranches(src: ts.SourceFile, name: string): Branch[] | undefined {
   if (!alias || !ts.isUnionTypeNode(alias.type)) {
     return undefined;
   }
-  return alias.type.types.filter(ts.isTypeLiteralNode).map((lit) => {
+  const members = alias.type.types;
+  const branches = members.filter(ts.isTypeLiteralNode).map((lit) => {
     const signatures = lit.members.filter(ts.isPropertySignature);
     const props: Prop[] = signatures
       .filter((p) => p.name && ts.isIdentifier(p.name))
@@ -1215,6 +1229,7 @@ function unionBranches(src: ts.SourceFile, name: string): Branch[] | undefined {
     }
     return { kind, props };
   });
+  return { branches, nonLiteral: members.length - branches.length };
 }
 
 /** The five kinds C-44 names. spec-coverage pins every one of these strings. */
@@ -1250,7 +1265,7 @@ describe('C-31 the validation error type is declared once and shared', () => {
 
     expect({
       the_element_type_is_declared_in_types_ts:
-        elementName !== undefined && unionBranches(types, elementName) !== undefined,
+        elementName !== undefined && unionOf(types, elementName) !== undefined,
     }).toEqual({ the_element_type_is_declared_in_types_ts: true });
   });
 
@@ -1260,12 +1275,20 @@ describe('C-31 the validation error type is declared once and shared', () => {
     const types = sourceOf(TYPES_PATH);
     const props = interfaceProps(types, 'CoverageReport');
     const elementName = arrayElementTypeName(propNamed(props ?? [], 'resultsValidationErrors')?.type);
-    const branches = elementName ? unionBranches(types, elementName) : undefined;
-    if (!branches || branches.length === 0) {
+    const union = elementName ? unionOf(types, elementName) : undefined;
+    if (!union || union.branches.length === 0) {
       throw new Error(
         `no discriminated union to inspect: CoverageReport.resultsValidationErrors resolves to ${String(elementName)}`,
       );
     }
+    const branches = union.branches;
+
+    // Every member is an object literal. A member that is not one contributes
+    // no kind, so it cannot break the set assertion below while still widening
+    // the type to values carrying neither discriminant nor coordinate.
+    expect({ members_that_are_not_object_literals: union.nonLiteral }).toEqual({
+      members_that_are_not_object_literals: 0,
+    });
 
     // The union covers every kind C-44 names, and no others. A two-branch
     // union satisfied the earlier version of this test while omitting
@@ -1281,11 +1304,20 @@ describe('C-31 the validation error type is declared once and shared', () => {
       branches.map((b) => ({
         kind: b.kind,
         kindIsLiteral: typeof b.kind === 'string',
+        // Required. An optional discriminant permits an element with no kind,
+        // which is not a discriminated union whatever the branches say.
+        kindIsRequired: propOf(b, 'kind')?.optional === false,
         stream: propOf(b, 'stream')?.optional === false,
         message: propOf(b, 'message')?.optional === false,
       })),
     ).toEqual(
-      branches.map((b) => ({ kind: b.kind, kindIsLiteral: true, stream: true, message: true })),
+      branches.map((b) => ({
+        kind: b.kind,
+        kindIsLiteral: true,
+        kindIsRequired: true,
+        stream: true,
+        message: true,
+      })),
     );
 
     // Exactly one coordinate per branch, required, numeric, and the right one
