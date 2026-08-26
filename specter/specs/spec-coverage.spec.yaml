@@ -1,6 +1,6 @@
 spec:
   id: spec-coverage
-  version: "1.20.0"
+  version: "1.21.0"
   status: approved
   tier: 2
 
@@ -235,6 +235,21 @@ spec:
 
     - id: C-40
       description: "When `settings.annotation` is declared, `specter coverage` MUST exit 3 when any acceptance criterion carries `approval_gate: true` with an unset `approval_date`, and `settings.annotation.permissive` MUST NOT change that. Six parts. (a) The rule is unconditional on `permissive`. That key was introduced for rule 1, the annotation rule, whose subject is whether evidence exists at all, and SSRB-104 section 7.4 scopes it there and nowhere else. An unmet approval gate is not an evidence-presence failure. It is a human sign-off the spec author chose on that criterion, so a switch that exists to ease adoption of a missing-test rule must not silently downgrade it. Read the other way, `permissive: true` would mean ignore human approval gates rather than warn on missing tests, which is a far broader bypass than the key was given. (b) The code is 3, per SSRB-104 section 7.5, which assigns `approval gate unmet` to 3 and states that the trigger does not depend on the ladder and survives its retirement. The run MUST also name the cause on stderr. A silent 3 is not the contract: the measured defect was exit 0 with nothing on stderr, and an operator who gets a bare integer has to guess which of the coverage gates fired. `spec-sync` C-11 requires `sync` to name the same cause `coverage` names, and that rule is vacuous when neither names one. (c) The gate applies identically on every surface that reports coverage: `coverage`, `coverage --json`, `sync`, and `sync --json` alike, in exit code and in cause line. This is C-39's surface clause applied to the exit signal rather than to the report. It is stated rather than left to inheritance because `spec-coverage` C-29 binds `coverage --json` and nothing binds `sync --json` for a gate outside the ladder: `spec-sync` C-09's `--json` clause is scoped to `zero-tolerance`. Five recorded instances of the `--json` family, `bugs/done/SP-SP-021`, `bugs/done/SP-SP-022`, `bugs/SP-SP-044`, `bugs/done/SP-SP-061` and `bugs/done/SP-SP-066`, all have one cause: `--json` written as a branch that returns early rather than as a rendering choice over one verdict, so a gate added beside the branch never reached it. A text-only fix for this gate would be the sixth. (d) Order: rule 1 is evaluated before this gate, so a workspace carrying both a criterion with no test and an unmet approval gate exits 2 rather than 3, matching the ladder's code-2-before-code-3 precedence where both ladder gates exist. Rule 1 is not itself a ladder gate, so the match is to the precedence and not to the gate set. Two reasons for that order, and both matter. The gates are checked in ascending code order today, and an order that varied by strictness model would let `coverage` and `sync` disagree on one workspace, which is the failure `spec-sync` C-11 exists to prevent. (e) Both diagnostics MUST be written to stderr before the process exits, so a workspace carrying both violations names both in one run. This is a requirement and not a description: no surface does it today, because each gate prints its own line and exits inside its own branch, so an operator fixes the missing test, re-runs, and only then learns about the approval gate. It is stated as MUST because part (d) rests on it. The argument for ascending-code order over semantic directness is that the integer is not the whole report, and that argument holds only if the report is complete. If both diagnostics cannot be emitted, the precedence in (d) has to be re-decided rather than kept. (f) C-26 is unchanged and stays true while the ladder ships. It scopes the gate to `zero-tolerance` and makes `approval_gate` metadata-only under `threshold`, and `GoverningStrictness()` maps a declared annotation block to `threshold`, so the pre-amendment code was faithful to the spec rather than defective. This constraint is what was missing. Rationale, per `bugs/SP-SP-071`: SSRB-104 section 7.5 decided the mapping on 2026-08-22 and roadmap item 1D-b shipped its code-2 row and not its code-3 row, so an adopter moving to the model the docs steer them toward lost a checkpoint with nothing on stderr to say so."
+      type: business
+      enforcement: error
+
+    - id: C-41
+      description: "A `.specter-results.json` entry MAY carry an optional `stream` field, a non-empty string naming the body of evidence it came from. An entry with no `stream` reads as the stream named `default`, so every file written before this field existed keeps its exact meaning and no producer breaks. `stream` is an opaque label. Any non-empty string is valid, `unit` and `live` and `mutation` included, because those are the names operators actually reach for and forbidding them would make the foundation unusable for the requests that motivated it. What is forbidden is meaning, in two directions. Specter MUST NOT interpret a label: no value may cause different handling, so `baseline` is a stream named baseline and not a baseline, and a tool that special-cased it would be reading a policy out of a string a producer chose. And the artifact MUST NOT gain a sibling field that carries the role instead, whether spelled `role`, `kind`, `baseline`, `current` or anything equivalent. Those are decisions a consumer makes by invocation, and an artifact asserting one would commit the tool to a policy it has not adopted, per SSRB-103 section 7. The merge key becomes `(spec_id, ac_id, stream)`, so `ingest` collapses duplicates within a stream and keeps one entry per stream. C-33 is deliberately unchanged and stays exactly true. It resolves a pair across every matching entry and returns the worst status, and two entries from two streams both match, so the worst-status rule already spans them. That is why splitting one body of evidence into two labeled streams cannot move the coverage number: over criteria that have entries the multi-stream rule IS the existing merge. Rationale, per SSRB-103: the results model records one status per pair, so no policy over more than one body of evidence can be expressed until a pair can carry more than one labeled result."
+      type: technical
+      enforcement: error
+
+    - id: C-42
+      description: "A `.specter-results.json` file MAY carry a top-level `streams` array, one object per stream that ran, each naming the stream and the counts the producer observed: how many inputs it scanned and how many results it extracted. A per-entry label alone cannot express this, and the gap it leaves is the one that matters. A stream that ran and found nothing and a stream that never ran both leave zero entries, and the second is a broken pipeline reported as a clean one. The array MUST carry a defined total order, ascending by stream name, for the same reason C-37 orders the coverage document: an array built from a map otherwise keeps map iteration order, and a CI job diffing two runs sees churn that is not a change. A stream present in `streams` with zero entries is visible as such. A stream absent from `streams` never ran. Rationale, per SSRB-103 section 4: a second stream that silently failed to run must not read as success, and the failure direction matters, because a missing stream defaulting to satisfied produces maximum confidence exactly when the evidence is most broken."
+      type: technical
+      enforcement: error
+
+    - id: C-43
+      description: "A criterion is covered when at least one stream holds an entry for it AND every stream holding an entry reports `passed`. A criterion no stream reported on is NOT covered. Both clauses are load-bearing and the first is the one that is easy to drop. Written as `every stream holding an entry reports passed` alone, the condition is vacuously true over an empty set, so a criterion nothing reported on becomes covered and the outcome-verified path collapses toward annotation counting. Over criteria that have entries this rule is the existing worst-status merge of C-33, which is why the coverage number does not move when a project splits one stream into two. Over criteria with no entries it is not a merge at all: it is the absent-entry rule the strict path already applies, generalized. This constraint states the rule once for every strictness model rather than per model, because the rule does not depend on one: C-38(e) states the pass-rate arithmetic under the annotation model and C-07 states it for the tier path, and both consume this definition of covered rather than restating it."
       type: business
       enforcement: error
 
@@ -1019,7 +1034,51 @@ spec:
       references_constraints: ["C-40"]
       priority: critical
 
+    - id: AC-68
+      description: "The stream label is optional and back-compatible. A results file whose entries carry no `stream` field produces exactly the report it produces today, field for field. A file whose entries all carry `stream: default` produces the same report as that file with the field removed, because missing means `default`. A file split into two labeled streams, holding the same facts, produces the same coverage verdict as the unsplit file, per C-41: the worst-status resolution of C-33 already spans streams. The split file and the unsplit file are compared field for field rather than by percentage, because a percentage can agree by accident."
+      inputs:
+        legacy_file: "entries with no stream field"
+        explicit_default: "the same entries carrying stream: default"
+        split_file: "the same facts split across two labeled streams"
+      expected_output:
+        legacy_matches_today: true
+        explicit_default_matches_legacy: true
+        split_matches_unsplit_field_for_field: true
+      references_constraints: ["C-41"]
+      priority: critical
+
+    - id: AC-69
+      description: "A stream that ran and produced nothing is distinguishable from one that never ran. A results file declaring a stream in `streams` with a scanned count above zero and an extracted count of zero reports that stream as present and empty. A results file that never names the stream reports it as absent. The two MUST NOT resolve to the same state, because they are a stream that found nothing and a pipeline that did not execute, and reading the second as the first is the failure direction SSRB-103 section 4 names. The `streams` array is emitted in ascending name order, and two runs over an unchanged workspace produce byte-identical arrays."
+      inputs:
+        ran_and_empty: "streams: [{name: js, scanned: 12, extracted: 0}], no entries for js"
+        never_ran: "streams omits js entirely"
+        two_runs: "the same workspace, twice"
+      expected_output:
+        ran_and_empty_is_visible: true
+        never_ran_is_distinguishable_from_ran_and_empty: true
+        streams_array_is_byte_identical_across_runs: true
+      references_constraints: ["C-42"]
+      priority: critical
+
+    - id: AC-70
+      description: "The covered rule, in both directions. A criterion with one entry reporting `passed` in one stream and one entry reporting `failed` in another is NOT covered, because every stream holding an entry must report passed. A criterion with entries reporting `passed` in two streams IS covered. A criterion that no stream reported on is NOT covered, and this is the case that a rule written without C-43's first clause gets wrong: it would be vacuously covered over an empty set. Asserted directly rather than through a percentage, because the vacuous-truth failure changes a verdict and can leave a percentage looking plausible."
+      inputs:
+        mixed: "passed in stream a, failed in stream b"
+        both_passed: "passed in stream a, passed in stream b"
+        unreported: "declared criterion, no entry in any stream"
+      expected_output:
+        mixed_is_covered: false
+        both_passed_is_covered: true
+        unreported_is_covered: false
+      references_constraints: ["C-43"]
+      priority: critical
+
   changelog:
+    - version: "1.21.0"
+      date: "2026-08-25"
+      author: "specter-team"
+      type: minor
+      description: "Roadmap 3A1 to 3A3, the multi-stream evidence foundation, per SSRB-103. C-41 adds the optional `stream` opaque label with missing-means-default and fixes the merge key at `(spec_id, ac_id, stream)`. C-42 adds the top-level `streams` array, which is what separates a stream that ran and found nothing from one that never ran; a per-entry label cannot, because both leave zero entries. C-43 states the covered rule once for every strictness model. Additive rather than a rewrite, and that is a finding rather than a convenience: C-33 already resolves a pair across every matching entry with worst-status-wins, and two entries from two streams both match, so the multi-stream verdict IS the existing merge over criteria that have entries. That is why a split cannot move the number, and why C-21 and C-33 are untouched. What is genuinely new is the absent-entry half of C-43 and the stream metadata of C-42."
     - version: "1.20.0"
       date: "2026-08-25"
       author: "specter-team"

@@ -1,6 +1,6 @@
 spec:
   id: spec-ingest
-  version: "1.4.0"
+  version: "1.5.0"
   status: approved
   tier: 1
 
@@ -80,7 +80,7 @@ spec:
       enforcement: error
 
     - id: C-08
-      description: "When the same (spec_id, ac_id) pair appears across multiple test results, the emitted entry MUST use the worst status in order errored > failed > skipped > passed. Rationale: one failing test covering AC-07 is sufficient to demote AC-07; a passing test does not heal a failing sibling."
+      description: "When the same (spec_id, ac_id, stream) key appears across multiple test results, the emitted entry MUST use the worst status in order errored > failed > skipped > passed. Rationale: one failing test covering AC-07 is sufficient to demote AC-07; a passing test does not heal a failing sibling. The key gained `stream` in 1.5.0, per `spec-coverage` C-41. Collapsing is per stream, so one run of one stream still emits one entry per pair and a file carrying no `stream` field behaves exactly as it did. Two streams reporting on one criterion emit two entries, which is the point: they are two facts rather than a contradiction to resolve, and collapsing them here would destroy the distinction the foundation exists to record. The verdict over those two entries is unchanged and lives in `spec-coverage` C-33 and C-43."
       type: business
       enforcement: error
 
@@ -104,9 +104,14 @@ spec:
       type: technical
       enforcement: error
 
+    - id: C-13
+      description: "When a criterion carries entries from more than one stream, the writer MUST emit them worst-status-first, ranked errored, failed, skipped, passed. This is a rule about the order of rows in the file, not about their content, and it exists for one reader: a consumer that resolves a pair by first match rather than across every entry. Specter itself does not, per `spec-coverage` C-33, but the results file is a published artifact that other tools read, and a first-match reader over a best-first file reports the optimistic answer. Measured on the roadmap's constructed fixture at item 3A3: worst-first and today's single-stream format both report 33 percent, and best-first reports 83 percent on identical facts. The whole file MUST also carry a defined total order so two runs over an unchanged workspace are byte-identical, ascending by spec id, then criterion id, then status rank worst-first, then stream name. Rationale: an artifact assembled from a map otherwise keeps map iteration order, and a CI job diffing two runs sees churn that is not a change. This is the same argument `spec-coverage` C-37 makes for the coverage document, applied to the file this command writes."
+      type: technical
+      enforcement: error
+
   depends_on:
     - spec_id: spec-coverage
-      version_range: "^1.9.0"
+      version_range: "^1.21.0"
       relationship: requires
 
   acceptance_criteria:
@@ -259,7 +264,26 @@ spec:
       references_constraints: ["C-12"]
       priority: critical
 
+    - id: AC-13
+      description: "Row order protects a first-match reader. A results file whose criterion carries a `failed` entry in one stream and a `passed` entry in another emits the failed row first. On the roadmap's constructed fixture the worst-first file and today's single-stream format both report 33 percent to a first-match reader, and a best-first file reports 83 percent on the same facts, so the best-first ordering MUST fail the guard. The fixture is constructed and fixed, so those literals may be asserted; a corpus percentage may not. Two runs of one binary over an unchanged workspace produce byte-identical files."
+      inputs:
+        mixed_criterion: "one criterion with failed in stream a and passed in stream b"
+        fixture: "the roadmap 3A3 fixture"
+        two_runs: "the same workspace, twice"
+      expected_output:
+        failed_row_precedes_passed_row: true
+        worst_first_first_match_percentage: 33
+        best_first_first_match_percentage: 83
+        two_runs_are_byte_identical: true
+      references_constraints: ["C-13"]
+      priority: high
+
   changelog:
+    - version: "1.5.0"
+      date: "2026-08-25"
+      author: "specter-team"
+      type: minor
+      description: "Roadmap 3A1 and 3A3. C-08's merge key gains `stream`, so collapsing is per stream and two streams reporting on one criterion emit two entries rather than one. Collapsing them would destroy exactly the distinction the foundation exists to record: they are two facts, not a contradiction to resolve. A file carrying no `stream` field behaves as it did. C-13 states the writer's row order, worst-status-first within a criterion, plus a total order over the whole file. The row order is not for Specter, which resolves across every entry per `spec-coverage` C-33. It is for a published artifact's other readers: a first-match consumer over a best-first file reports 83 percent where the facts give 33. The `spec-coverage` floor rises to 1.21.0 in the same change, because C-08 now names C-41 and C-43 and a range that admitted 1.9.0 would let this spec resolve against a version where neither exists."
     - version: "1.4.0"
       date: "2026-08-23"
       author: "specter-team"
