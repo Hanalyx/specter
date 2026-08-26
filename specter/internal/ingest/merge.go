@@ -20,6 +20,19 @@ const MaxResultsFileBytes = 16 << 20 // 16 MiB
 // and stream metadata it carries, so `--merge` can build an output from files
 // rather than from runner output.
 func ReadResultsFile(path string) ([]TestResult, []StreamInfo, error) {
+	// C-17: refused by stat, before the read. Checking the length after
+	// os.ReadFile is not a cap, because the allocation has already happened.
+	// That ordering is the mistake spec-diff C-12 records from the v0.13 audit,
+	// so it is stated in the constraint and done here rather than inferred.
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if info.Size() > int64(MaxResultsFileBytes) {
+		return nil, nil, fmt.Errorf("%s exceeds the %d byte limit for a results file (got %d bytes)",
+			path, MaxResultsFileBytes, info.Size())
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, nil, err
