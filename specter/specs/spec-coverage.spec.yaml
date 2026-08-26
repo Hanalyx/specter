@@ -1,6 +1,6 @@
 spec:
   id: spec-coverage
-  version: "1.22.0"
+  version: "1.23.0"
   status: approved
   tier: 2
 
@@ -244,12 +244,31 @@ spec:
       enforcement: error
 
     - id: C-42
-      description: "A `.specter-results.json` file MAY carry a top-level `streams` array, one object per stream that ran, each naming the stream and the counts the producer observed: how many inputs it scanned, how many results it extracted, and how many packages produced zero test events. The third count is worded as observed rather than diagnosed. A runner that emits no test event for a package may have failed to build it, may have had every test filtered out, or may have been handed a package with no tests at all, and the artifact cannot tell those apart from runner output alone, so it reports what it saw and leaves the reading to a human. A per-entry label alone cannot express this, and the gap it leaves is the one that matters. A stream that ran and found nothing and a stream that never ran both leave zero entries, and the second is a broken pipeline reported as a clean one. The array MUST carry a defined total order, ascending by stream name, for the same reason C-37 orders the coverage document: an array built from a map otherwise keeps map iteration order, and a CI job diffing two runs sees churn that is not a change. A stream present in `streams` with zero entries is visible as such. A stream absent from `streams` never ran. Rationale, per SSRB-103 section 4: a second stream that silently failed to run must not read as success, and the failure direction matters, because a missing stream defaulting to satisfied produces maximum confidence exactly when the evidence is most broken."
+      description: "A `.specter-results.json` file MAY carry a top-level `streams` array, one object per **named** stream that ran, each naming the stream and the counts the producer observed: how many inputs it scanned, how many results it extracted, and how many packages produced zero test events. The third count is worded as observed rather than diagnosed. A runner that emits no test event for a package may have failed to build it, may have had every test filtered out, or may have been handed a package with no tests at all, and the artifact cannot tell those apart from runner output alone, so it reports what it saw and leaves the reading to a human. A per-entry label alone cannot express this, and the gap it leaves is the one that matters. A stream that ran and found nothing and a stream that never ran both leave zero entries, and the second is a broken pipeline reported as a clean one. The array MUST carry a defined total order, ascending by stream name, for the same reason C-37 orders the coverage document: an array built from a map otherwise keeps map iteration order, and a CI job diffing two runs sees churn that is not a change. A stream present in `streams` with zero entries is visible as such. A **named** stream absent from `streams` never ran. The implicit `default` stream is the exception and is outside this rule entirely: an unlabeled entry belongs to it and requires no declaration, per C-44(a), so `default` being absent from the block says nothing about whether it ran. That is what keeps a legacy file legal and lets a project adopt `--stream` one job at a time. Rationale, per SSRB-103 section 4: a second stream that silently failed to run must not read as success, and the failure direction matters, because a missing stream defaulting to satisfied produces maximum confidence exactly when the evidence is most broken."
       type: technical
       enforcement: error
 
     - id: C-43
       description: "A criterion is covered when at least one stream holds an entry for it AND every stream holding an entry reports `passed`. A criterion no stream reported on is NOT covered. Both clauses are load-bearing and the first is the one that is easy to drop. Written as `every stream holding an entry reports passed` alone, the condition is vacuously true over an empty set, so a criterion nothing reported on becomes covered and the outcome-verified path collapses toward annotation counting. Over criteria that have entries this rule is the existing worst-status merge of C-33, which is why the coverage number does not move when a project splits one stream into two. Over criteria with no entries it is not a merge at all: it is the absent-entry rule the strict path already applies, generalized. This constraint states the rule once for every strictness model rather than per model, because the rule does not depend on one: C-38(e) states the pass-rate arithmetic under the annotation model and C-07 states it for the tier path, and both consume this definition of covered rather than restating it."
+      type: business
+      enforcement: error
+
+    - id: C-44
+      description: "A results file carrying a `streams` block MUST be internally consistent, and the check MUST live in the shared pure builder that classifies coverage, so every command consuming the artifact as coverage evidence inherits it. That is `coverage` and `sync` today. It deliberately does not reach `ingest --merge`, which reads the same file as a producer assembling a new one rather than as a consumer judging a workspace, and which has its own contract in `spec-ingest` C-15 and C-17. Whether a merge should refuse an inconsistent input is a real question and it is not this one; deciding it here would be scoping a second command from the constraint that governs the first. The block is present when the key is present, which an absent key and an explicit empty array distinguish: Go decodes the first to a nil slice and the second to an empty non-nil one, so `streams: []` with labeled entries is a present block declaring nothing and is refused rather than treated as legacy. Five rules. (a) Every stream an entry names MUST be declared in `streams`, **except `default`**, which never requires declaration whether an entry reaches it by carrying no label or by naming it outright. C-41 makes those two the same stream, so a rule that demanded declaration for one and not the other would split it. An entry labeled from any other undeclared stream is evidence a consumer cannot place, and the block exists precisely so a reader can enumerate what ran. **The `default` exemption is what lets a project adopt `--stream` one job at a time.** Merging a legacy unlabeled file with a labeled one yields unlabeled entries beside declared ones, and without the exemption that artifact would be refused, so `--stream` would be all or nothing across every job at once. The alternative considered and rejected was refusing mixed inputs in `ingest --merge`. It is sound on its own terms, since truthful counts for a synthesized default stream cannot be reconstructed, but it buys that soundness by forbidding the incremental adoption C-14's back-compat promise exists to enable, and it does so for a stream whose counts a legacy file never carried anyway. (b) A stream name MUST NOT be empty and MUST NOT repeat within the block. (c) A violation MUST identify the stream it concerns, and for an empty name, where there is no name to print, it MUST identify the array position and say the name is empty. A repeated name leaves two counts for one stream with no rule for which wins, and an empty one is not a label. (d) No count in the block may be negative. `scanned`, `extracted` and `zero_test_event_packages` each report something a producer observed, and there is no run that scans minus one input. These are untrusted values read from a file Specter did not write, so a shape the domain cannot produce is refused rather than carried into arithmetic that would then be quietly wrong. The kind is `negative_count` and it carries `stream_index`. **One violation per stream row, not one per negative field.** Three negative fields in one row would otherwise produce three elements sharing a kind, a stream and a `stream_index`, which is a tie the total order cannot break, so the element names every negative field in one message, in the fixed order `scanned`, `extracted`, `zero_test_event_packages`. **A negative `extracted` suppresses the `extracted_below_entries` violation for that row**, because the second is derived from the first: a count below zero is below any entry count, and reporting both would tell an operator to fix a consequence beside its cause. (e) A stream's declared `extracted` count MUST NOT be lower than the number of entries carrying that label. It may be higher, because `spec-ingest` C-08 collapses duplicates within a stream and `--merge` sums counts across inputs that may both have reported one criterion, so extraction legitimately exceeds surviving entries. Lower is incoherent: the metadata under-reports the evidence sitting beside it in the same file. A violation selects an exit code **conditionally, and the two halves of that rule are not in tension once stated in order**. When stream validation is the only thing wrong, the run exits with a code from the evidence-stream band. When a gate that shipped before it has also failed, that gate's code wins and the stream violations are still reported. So the band's code is what a workspace exits with in the standalone case and never what it exits with in a coexisting one, which is how a new gate takes a number of its own without preempting one that shipped. Validation runs during report construction and the coverage gates run after, so the naive wiring returns the new code first and takes precedence from codes 2, 3 and 1, which `docs/EXIT_CODES.md` section 4 forbids for exactly this reason: a new gate that preempts a shipped one changes what an existing caller sees for a workspace whose old failure has not gone away.
+
+Three consequences follow, each a requirement rather than an implementation note. **Validation MUST run in time linear in the artifact plus the sort of what it finds.** That is `O(streams + results + violations log violations)`, with no scan of `results` per stream. The obvious nesting, walking every entry to count a stream's own, is `O(streams x results)`, and the artifact is untrusted and may sit just under the 16 MiB cap `spec-ingest` C-17 sets. A size limit bounds memory and not work, so a file that passes the cap can still buy an operator's CPU with a shape no runner would produce. Counting by map costs the same to write and removes the amplification. AC-72 binds this rather than leaving it to review, because every other expected output here is satisfied by a nested implementation: the answers are identical and only the work differs. The binding has to be something a mutation reintroducing the per-stream scan fails, which a behavioral assertion over a small fixture cannot be.
+
+**Validation MUST NOT abort report construction.** It records its findings on the report, so C-10's document still exists and the gates still have something to run on.
+
+**The code MUST be chosen by the same shared verdict the other gates use, ordered last**, after rule 1, after the zero-tolerance gates, after the approval gate and after the tier threshold. A private branch in `coverage` or in `sync` that returned the code directly would reintroduce both the precedence bug and the two-copies bug this constraint exists to prevent. Under `--json` it MUST also appear in the emitted document rather than replacing it: C-10 requires `coverage --json` to emit a report in every state, so a validation refusal that produced an empty stdout would trade one false-confidence failure for the `bugs/SP-SP-032` shape, where a machine consumer gets a code and nothing to read. The document carries a top-level `results_validation_errors` array, present and non-empty exactly when stream validation found one or more violations, and absent otherwise. Tied to the validation and not to the verdict: a run failing only its tier threshold or only an approval gate refuses without any stream violation, and a run whose artifact is inconsistent reports these whichever gate ends up choosing the code.
+
+**Every violation is collected, not the first.** An array that stopped at one would make a caller fix, re-run and discover the next, which is the sequencing C-40(e) already refuses for the coverage gates.
+
+**The order is total and deterministic**, ascending by `kind`, then by `stream`, then by `stream_index`, then by `result_index`, with an absent index sorting before a present one. A criterion asserting only that two runs agree is satisfied by any consistent order, a reversal included, so the exact sequence is what must be pinned. Two runs over one artifact therefore emit identical bytes, which is the same reason C-37 orders the rest of the document.
+
+Each element carries `kind`, one of `undeclared_stream`, `duplicate_stream`, `empty_stream_name`, `negative_count` or `extracted_below_entries`; `stream`, the name, empty for the empty-name kind; `message`; and **exactly one of `stream_index` or `result_index`**, with the other absent. `undeclared_stream` carries `result_index`, because the entry naming an undeclared stream is the thing to look at. The other four kinds carry `stream_index`, because each concerns a row of the block. **Both indexes reference the arrays as they appear in the file on disk, before any normalization Specter applies.** C-42 sorts the `streams` array ascending by name on read, so a row sitting at position 4 in the artifact can be at position 0 by the time a validator sees it, and an index taken after that sort points at a row the operator cannot find. The source position MUST therefore be preserved through parsing, or validation MUST run before the sort. Preserving it is the better of the two, because it keeps the check where C-44 puts it and does not make the order of two unrelated operations load-bearing. The preserved position is not part of the artifact and MUST NOT be serialized: it describes where something was read from, not what the file says. **A coordinate of zero MUST serialize.** A first row and a first entry are ordinary positions, so a field that drops its zero, which `int` with `omitempty` does, would emit an element whose only coordinate has silently vanished, and `exactly one of` would be violated by the encoder rather than by the validator. The field is therefore optional by nullability and not by emptiness. Exactly one rather than at most one: a rule permitting neither would let an element arrive with no coordinate at all, which is the case a consumer cannot act on. Two coordinates rather than one `index`, because the position an `undeclared_stream` violation points at is in `results` while every other kind points into `streams`, and one field meaning two things is a field a consumer has to branch on the kind to read. `empty_stream_name` carries `stream_index`, which is what identifies an entry that has no name to print.
+
+A shape is required rather than left to the implementation because asserting only that a document was emitted is satisfied by a normal report saying nothing about the refusal, and a caller reading the code alone is the failure this whole clause exists to prevent. Rationale, per SSRB-103 section 4: Specter gates on a file it cannot verify was generated by the run it claims to describe, so internal consistency is the only thing it can check. These are integrity checks and not authentication: they catch an artifact that contradicts itself, and they cannot tell whether the run it describes ever happened. The direction that matters is whichever one lets a broken pipeline read as a clean one. Placing this in the command rather than the builder is the defect `bugs/done/SP-SP-058` records: a rule wired into `coverage` alone left `sync` returning a different verdict for the same workspace."
       type: business
       enforcement: error
 
@@ -1085,7 +1104,81 @@ spec:
       references_constraints: ["C-42"]
       priority: high
 
+    - id: AC-72
+      description: "Stream validation refuses an inconsistent artifact and does so identically on every command that reads it. An entry naming a non-default stream absent from the block is refused, while an entry belonging to `default` is accepted whether it carries no label or names `default` outright. The exemption is from declaration and from nothing else: a block that declares `default` with an `extracted` count below the number of default entries is refused exactly as any other stream would be. Without that case an implementation could skip validation for `default` wholesale and pass. A block declaring one name twice is refused, and so is a block declaring an empty name. A stream whose `extracted` count is below the number of entries carrying its label is refused, while one whose count is above is accepted, because collapse and merge both legitimately leave extraction higher than surviving entries. Each refusal names the stream, and an index in a refusal points into the artifact as written rather than into the array after C-42's sort, asserted on a fixture whose offending row is not already at its normalized position. A refusal standing alone exits in the evidence band; a refusal beside a gate that shipped earlier leaves that gate's code in place and is still reported. The threshold case is the one that matters most to assert: the tier threshold is the last shipped gate, so a code inserted anywhere before it passes every other coexistence case here. Whichever code is chosen, it is the same on `coverage`, `coverage --json`, `sync` and `sync --json` alike, per `spec-sync` C-11. A file with no `streams` key at all is untouched by every rule here, because there is nothing to be inconsistent with and C-14 promises such a file behaves as it did. A file carrying `streams: []` is not that file: the key is present and declares nothing, so a labeled entry beside it is undeclared and refused. Under `--json` the refusal appears in the emitted report rather than replacing it, per C-10."
+      inputs:
+        undeclared_stream: "an entry labeled js with no js in the streams block"
+        duplicate_name: "streams declaring go twice"
+        empty_name: "streams declaring an entry whose name is empty"
+        extracted_below_entries: "streams declaring go extracted 1 with two go entries"
+        negative_count_scanned: "streams declaring go with scanned -1"
+        negative_count_extracted: "streams declaring go with extracted -1"
+        negative_count_zero_test_events: "streams declaring go with zero_test_event_packages -1"
+        negative_count_several_fields: "one stream row with all three counts negative"
+        extracted_above_entries: "streams declaring go extracted 5 with two go entries"
+        no_block: "a legacy file with no streams block"
+        empty_block_with_labels: "streams: [] beside an entry labeled go"
+        unlabeled_beside_declared: "a block declaring go only, with go entries and unlabeled entries beside them"
+        explicit_default_undeclared: "an entry naming default with no default in the block"
+        default_declared_and_undercounted: "streams declaring default extracted 1 beside two default entries"
+        multiple_violations: "one artifact reaching every tie-breaker: entries naming undeclared stream alpha at result positions 0 and 3, an entry naming undeclared stream zeta at result position 1, and empty-name rows at stream positions 1 and 2. Same-kind repeats on purpose, because violations of differing kinds sort on kind alone and never compare the later keys"
+        expected_sequence: "empty_stream_name/stream_index 1, empty_stream_name/stream_index 2, undeclared_stream/alpha/result_index 0, undeclared_stream/alpha/result_index 3, undeclared_stream/zeta/result_index 1. Every element carries its one coordinate, zeta included, and the sequence shows stream ordering beating result position: zeta sits last though its entry precedes alpha's second"
+        coordinate_at_zero: "the alpha entry at result position 0, whose coordinate is the value an omitempty encoder drops"
+        unsorted_block: "an artifact whose offending row sits at a position the ascending-by-name sort moves it away from"
+        alongside_rule_1: "an inconsistent artifact in a workspace that also has a criterion with no test"
+        alongside_approval_gate: "an inconsistent artifact in a workspace that also has an unmet approval gate"
+        alongside_zero_tolerance: "an inconsistent artifact in a workspace where an annotated criterion did not pass under zero-tolerance"
+        alongside_threshold: "an inconsistent artifact in a workspace below its tier threshold and failing nothing else"
+        alongside_permissive_warning: "an inconsistent artifact beside a rule-1 warning under permissive true"
+      expected_output:
+        undeclared_stream_refused: true
+        duplicate_name_refused: true
+        empty_name_refused: true
+        extracted_below_entries_refused: true
+        negative_count_refused_for_each_of_the_three_fields: true
+        several_negative_fields_produce_one_violation: true
+        the_message_names_every_negative_field_in_fixed_order: true
+        negative_extracted_suppresses_extracted_below_entries: true
+        extracted_above_entries_accepted: true
+        no_block_accepted: true
+        empty_block_with_labels_refused: true
+        unlabeled_beside_declared_accepted: true
+        explicit_default_undeclared_accepted: true
+        default_declared_and_undercounted_refused: true
+        refusal_names_the_stream: true
+        empty_name_refusal_gives_the_array_position: true
+        json_refusal_still_emits_a_document: true
+        json_document_carries_results_validation_errors: true
+        every_violation_is_collected_not_the_first: true
+        order_is_deterministic_across_runs: true
+        no_two_violations_share_a_full_sort_key: true
+        results_are_counted_once_not_per_stream: true
+        order_matches_the_exact_sequence_c44_states: true
+        ordered_tuples_match_expected_sequence_literally: true
+        stream_tie_breaker_is_exercised_by_same_kind_violations: true
+        result_index_tie_breaker_is_exercised: true
+        stream_index_tie_breaker_is_exercised: true
+        a_zero_coordinate_is_present_in_the_document: true
+        index_points_into_the_file_not_the_sorted_array: true
+        standalone_violation_exits_in_the_evidence_band: true
+        alongside_rule_1_keeps_code_2: true
+        alongside_approval_gate_keeps_code_3: true
+        alongside_zero_tolerance_keeps_code_2: true
+        alongside_threshold_keeps_code_1: true
+        alongside_permissive_warning_exits_in_the_evidence_band: true
+        coexisting_shipped_gate_still_reports_the_stream_error: true
+        each_error_carries_kind_stream_message_and_one_coordinate: true
+        same_code_on_every_surface: true
+      references_constraints: ["C-44"]
+      priority: critical
+
   changelog:
+    - version: "1.23.0"
+      date: "2026-08-26"
+      author: "specter-team"
+      type: minor
+      description: "Roadmap 3A5. C-44 states five consistency rules a `streams` block must satisfy and requires them in the shared pure builder rather than in a command, which is the point of the item: a rule wired into `coverage` alone is `bugs/done/SP-SP-058`, where `sync` returned a different verdict for the same workspace. The `extracted` rule is one-sided on purpose. Collapse within a stream per `spec-ingest` C-08, and `--merge` summing across inputs, both leave extraction legitimately higher than surviving entries, so only the lower direction is incoherent, and a two-sided rule would refuse honest files. A file with no `streams` key is untouched, because C-14 promises such a file behaves as it did; a file carrying `streams: []` is a present block declaring nothing and is not that file. `default` never requires declaration, since C-41 makes an unlabeled entry and one naming `default` the same stream, and that exemption is what lets a project adopt `--stream` one job at a time rather than across every job at once. It exempts declaration and nothing else. A refusal appears in the emitted `--json` document as a `results_validation_errors` array with a defined element shape, because asserting only that a document exists is satisfied by one that says nothing about the refusal."
+
     - version: "1.22.0"
       date: "2026-08-25"
       author: "specter-team"

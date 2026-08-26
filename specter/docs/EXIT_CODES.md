@@ -288,8 +288,11 @@ Two rules follow for anyone adding a gate:
 ## Section 3: band allocation
 
 Bands exist so a track can allocate a number without asking, and without
-colliding. Only shipped behavior gets a specific number. A planned gate gets a
-band and nothing more.
+colliding. A planned gate takes a specific number in the planned-gate table when
+the spec that scopes it lands, and takes a Section 1 row only in the commit that
+makes it reachable. Recording the number early is what stops two tracks picking
+the same one; withholding the Section 1 row is what keeps every Stable code
+reachable, which `spec-sync` AC-18 enforces.
 
 | Band | Purpose | Allocated to |
 |---|---|---|
@@ -297,7 +300,7 @@ band and nothing more.
 | `1` | Unclassified failure. Frozen. | Shipped |
 | `2` to `9` | Spec and coverage contract | `2` and `3` shipped. `4` to `9` free. |
 | `10` to `19` | Orchestration gates | `10` shipped (`diff --exit-code`). `11` to `19` free. |
-| `20` to `29` | Evidence stream validation | None allocated |
+| `20` to `29` | Evidence stream validation | `20` and `21` planned, none emitted yet |
 | `30` to `63` | Unallocated | Reserved for a future track |
 | `64` to `78` | Usage, internal, and configuration errors, per `sysexits.h` | None allocated |
 | `79` to `125` | Do not use | Reserved |
@@ -322,19 +325,33 @@ executable, 127 for a command not found, and 128 plus the signal number for a
 process killed by a signal. A binary that returns those numbers is
 indistinguishable from a failure to run it at all.
 
-**A band is not a promise.** Only 10 is occupied today, by `diff --exit-code`.
-Nothing occupies 11 to 29. Anyone reading a code in that range from a released
+**A band is not a promise, and a planned number is not an occupied one.** Only 10
+is occupied today, by `diff --exit-code`. Nothing occupies 11 to 29. Codes 20 and
+21 are planned in the table below and emitted by nothing, which is why neither
+has a Section 1 row: that row asserts a code is reachable and `spec-sync` AC-18
+fails the build when it is not. Anyone reading a code in that range from a released
 binary has found a bug or a stale build.
 
 ### Where the planned gates belong
 
-Named here so no track has to guess, and no number is assigned until the gate
-ships.
+Named here so no track has to guess. A number is recorded in this table during
+the spec cycle that scopes its gate, and takes a Section 1 row only in the commit
+that makes it reachable.
+
+**The evidence band's two numbers are allocated, not yet emitted.** Code 20 is
+`spec-coverage` C-44, the artifact-consistency refusal, and 21 is reserved for
+the differential refusal when 3B ships. Neither appears in Section 1 yet, and
+that is the rule this section states rather than an oversight: a Section 1 row
+marked Stable asserts the code is reachable, and `spec-sync` AC-18 fails the
+build when it is not. Each row lands in the commit that makes its code
+reachable, so both directions of C-12 hold at every commit rather than only at
+the end of a cycle.
 
 | Planned gate | Roadmap | Band |
 |---|---|---|
 | Failing exit for `diff` on a breaking change | 2B3 | **Shipped as `10`** |
-| Stream validation refusing a differential | 3B4 | Evidence stream, `20` to `29` |
+| Stream validation refusing an inconsistent artifact | 3A5 | Evidence stream, **`20`** |
+| Stream validation refusing a differential | 3B4 | Evidence stream, **`21`** |
 | The panic path, once it moves off 2 | Not scheduled | `sysexits.h`, `70` |
 | Configuration errors, once they move off 1 | v1.0, per `bugs/SP-SP-020` | `sysexits.h`, `78` |
 | Usage errors, once they move off 1 | v1.0, per `bugs/SP-SP-020` | `sysexits.h`, `64` |
@@ -370,9 +387,10 @@ Steps 1 through 5 are workspace and invocation preconditions. All of them return
 code 1, and all of them run before the two gates that have codes of their own. A
 gate added at the end of this list preempts nothing.
 
-`sync` runs the same two zero-tolerance gates in the same relative order, inside
-its coverage phase, at `internal/sync/sync.go:274-293`. The threshold check
-follows them at `:295`.
+`sync` reaches the same gates in the same relative order. It no longer carries
+its own copy of them: `bugs/done/SP-SP-071` deleted that copy and routed both
+commands through `coverage.GateVerdict`, so the order lives in one function and
+`sync` inherits it rather than restating it.
 
 ### What this means for anyone adding a gate
 
@@ -396,15 +414,21 @@ because the integers agreed.
 
 ### The single-verdict rule
 
-The zero-tolerance exit logic exists in three hand-maintained copies today: the
-`coverage` JSON branch, the `coverage` text branch, and the `sync` closure at
-`main.go:1355-1364`. They agree because someone kept them in step, which is not a
-mechanism.
+The zero-tolerance exit logic used to exist in three hand-maintained copies: the
+`coverage` JSON branch, the `coverage` text branch, and a `sync` closure. They
+agreed because someone kept them in step, which is not a mechanism, and twice
+they stopped agreeing: `bugs/done/SP-SP-066` and `bugs/done/SP-SP-071`.
 
-`checkExitVerdict` is the shape to copy: one function, both formats, no restated
-rule. Roadmap item 1C2 does this for the per-criterion verdict, so `sync`
-inherits classification rather than repeating it. **A new gate is written once as
-a pure function and called from every surface.** Do not add a fourth copy.
+**There is one copy now.** `coverage.GateVerdict` is a pure function taking
+counts and returning every violation in order plus the code, and both commands
+build inputs, print what it returns and exit with what it decides. Neither orders
+gates, words messages, or picks codes.
+
+**A new gate is added to that function, not beside it.** `spec-coverage` C-44
+states the rule for the gate 3A5 adds, and states it as a requirement rather than
+a preference, because a private branch returning a code directly reintroduces
+both failures at once: the drift between surfaces, and a new code preempting a
+shipped one by running earlier than the function that orders them.
 
 ## Section 5: propagation
 
@@ -503,8 +527,14 @@ Follow this order.
 1. **Pick a band, not a number.** Orchestration gates take `10` to `19`.
    Evidence stream validation takes `20` to `29`. Spec and coverage contract
    gates take `4` to `9`.
-2. **Add a row to Section 1 before writing the code.** A number in the source and
-   not in this table is the double-booking this document exists to prevent.
+2. **Record the planned number in Section 3 when the spec lands, and add the
+   Section 1 row in the same commit as the `os.Exit` that reaches it.** A number
+   in the source and not in this document is the double-booking this document
+   exists to prevent. A Section 1 row ahead of the code is the opposite failure
+   and is now caught: that row asserts the code is Stable, `spec-sync` AC-18
+   requires every Stable code to be reachable from some `os.Exit`, and the build
+   fails while the gate is still being written. Both directions of `spec-sync`
+   C-12 therefore hold at every commit rather than only at the end of a cycle.
 3. **Write the check as a pure function** in the package that owns the data, so
    `coverage` and `sync` call the same code rather than copies of it.
 4. **Run it after every shipped gate.** Section 4 gives the current order. Insert

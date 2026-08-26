@@ -1,6 +1,6 @@
 spec:
   id: spec-vscode
-  version: "1.10.0"
+  version: "2.0.0"
   status: draft
   tier: 2
 
@@ -223,7 +223,19 @@ spec:
     - id: C-31
       description: >-
         Every array-valued field of a specter `--json` document MUST be an
-        array by the time any consumer in the extension sees it. The CLI is
+        array on the object a `SpecterClient` method returns, and no caller of
+        one of those methods MUST receive `null` or `undefined` in an array
+        position.
+
+        The guarantee is stated at that boundary rather than at "any consumer
+        in the extension", which is where it used to sit and which this spec
+        cannot honestly promise. Code downstream of the client rebuilds
+        documents: `merged()` reconstructs a multi-root report field by field
+        rather than spreading it, so a field it does not name is gone by the
+        time a sidebar renders. Normalization owns the parse boundary. What
+        happens to a document after a consumer starts reassembling one is that
+        consumer's contract, and a rule claiming otherwise would be false at
+        the first aggregation. The CLI is
         written in Go, and Go marshals a nil slice as `null` rather than `[]`
         and drops a field carrying `omitempty` rather than emitting an empty
         one. A workspace with nothing wrong in it therefore produces
@@ -238,8 +250,37 @@ spec:
         `null` or `undefined` where the CLI means empty. The fields are
         `diagnostics` on the check document, `errors` on the parse document,
         and `entries`, `parse_errors`, `parse_error_patterns`,
-        `diagnostic_hints`, and `invalid_status_warnings` on the coverage
-        document. Consumers MUST also tolerate `null` and `undefined` in those
+        `diagnostic_hints`, `invalid_status_warnings`, and
+        `results_validation_errors` on the coverage document. The last arrives
+        with `spec-coverage` 1.23.0 and C-44, which requires a stream-validation
+        refusal to appear inside the emitted document rather than replacing it.
+        It is converted to `resultsValidationErrors` and declared on the one
+        coverage type, not merely preserved as an untyped snake-case field, because a consumer that has to reach for a
+        raw key is a consumer the type does not describe.
+
+        **Declared once, in `types.ts`.** `client.coverage()` returns
+        `CoverageResult` and the extension casts that through `unknown` to
+        `CoverageReport`, a separate declaration of the same document. The
+        defect is compile-time contract drift, not runtime loss: a cast erases
+        type information and no fields, and `normalizeReportPaths` spreads the
+        object, so the value does survive. What does not survive is the
+        guarantee. Two declarations of one document drift, and the `unknown`
+        cast is what lets them, because it silences the compiler that would
+        otherwise report the divergence. A field added to one is invisible to
+        every consumer typed against the other.
+
+        So the error element type and the array MUST be declared in `types.ts`,
+        `CoverageReport` MUST carry the array, the client MUST return that
+        imported type, and `CoverageResult` and the `as unknown as` bridge MUST
+        both go. This is the pattern parse errors already follow.
+
+        This criterion deliberately claims nothing about what a multi-root
+        workspace does with these errors. `merged()` reconstructs the report
+        field by field rather than spreading it, so an aggregated report would
+        drop them, and whether validation errors from several folders should be
+        concatenated, deduplicated or reported per folder is a question 3A5 does
+        not answer. Recorded here so the gap reads as deferred rather than
+        missed. Consumers MUST also tolerate `null` and `undefined` in those
         positions and treat them as empty, so a caller that reaches a builder
         without passing through normalization cannot throw. A document whose
         array fields are `null` is a parseable document, so it takes the C-30
@@ -253,7 +294,7 @@ spec:
         no-op and nothing here changes. The guarantee is observable at one
         place, the document each client method returns. On the parse document
         that is `errors`, on the check document `diagnostics`, and on the
-        coverage document the five fields named above, each under the name it
+        coverage document the six fields named above, each under the name it
         carries after whatever key conversion the method applies. Two of the
         six, `diagnostic_hints` and `invalid_status_warnings`, have no consumer
         in the extension today and are not declared in `types.ts`. They are
@@ -1173,14 +1214,31 @@ spec:
         both branches of the normalizer. `entries`, `parse_errors`, and
         `parse_error_patterns` arrive as `null`, and `diagnostic_hints` and
         `invalid_status_warnings` are absent, because Go marshals a nil slice
-        as `null` and drops a field carrying `omitempty`. All five come back
-        as arrays of length 0. The names to assert on are the names the
+        as `null` and drops a field carrying `omitempty`. All six come back
+        as arrays of length 0, `results_validation_errors` among them, and that
+        one is also asserted to arrive as `resultsValidationErrors` on the
+        returned object and to be typed on the imported `CoverageReport`
+        rather than reached for by its CLI spelling.
+
+        A second document, populated, is required beside the empty one. An
+        empty-array assertion proves normalization and nothing about
+        conversion, and a type assertion proves a declaration exists while the
+        converter still hands back `stream_index` inside each element. So a
+        populated fixture asserts the outer key becomes
+        `resultsValidationErrors`, that `stream_index` and `result_index`
+        become `streamIndex` and `resultIndex` inside the elements, and that
+        neither snake-case spelling survives at either level. The element type
+        is a discriminated union on `kind`: `undeclared_stream` requires
+        `resultIndex` and forbids `streamIndex`, and every other kind requires
+        `streamIndex` and forbids `resultIndex`, so `spec-coverage` C-44's
+        exactly-one-coordinate rule is a thing the compiler enforces rather
+        than a sentence a reviewer checks. The names to assert on are the names the
         document carries after key conversion: `entries`, `parseErrors`, and
         `parseErrorPatterns` are converted, and `diagnostic_hints` and
         `invalid_status_warnings` keep their CLI spelling because the coverage
         key map does not name them. AC-68 and AC-69 cover `entries` and
-        `parse_errors` only, so three of the six fields C-31 names had no
-        criterion. One criterion covers all five rather than five criteria,
+        `parse_errors` only, so four of the six fields C-31 names had no
+        criterion. One criterion covers all six rather than six criteria,
         because the observable behavior is one: the returned coverage document
         is iterable at every position C-31 names.
       inputs:
@@ -1191,15 +1249,40 @@ spec:
            "parse_errors": null,
            "parse_error_patterns": null,
            "spec_candidates_count": 0}
-        absent_fields: "diagnostic_hints and invalid_status_warnings are not present in the document at all"
+        absent_fields: "diagnostic_hints, invalid_status_warnings and results_validation_errors are not present in the document at all"
         cli_exit_code: 1
         client_method: "coverage"
+        populated_stdout: |-
+          {"entries": [],
+           "summary": {"total_specs": 1, "fully_covered": 0, "partially_covered": 0,
+                       "uncovered": 1, "passing": 0, "failing": 1},
+           "results_validation_errors": [
+             {"kind": "empty_stream_name", "stream": "", "stream_index": 0,
+              "message": "streams[0] declares an empty name"},
+             {"kind": "undeclared_stream", "stream": "js", "result_index": 0,
+              "message": "results[0] names stream js, which the block does not declare"}]}
       expected_output:
         entries_is_array_length_0: true
         parseErrors_is_array_length_0: true
         parseErrorPatterns_is_array_length_0: true
         diagnostic_hints_is_array_length_0: true
         invalid_status_warnings_is_array_length_0: true
+        resultsValidationErrors_is_array_length_0: true
+        raw_results_validation_errors_is_absent: true
+        CoverageReport_declares_resultsValidationErrors: true
+        element_type_declares_kind_stream_message_and_both_coordinate_names_across_the_union: true
+        element_type_requires_exactly_one_coordinate: true
+        populated_outer_key_is_resultsValidationErrors: true
+        populated_stream_index_becomes_streamIndex: true
+        populated_result_index_becomes_resultIndex: true
+        no_snake_case_key_survives_at_either_level: true
+        type_is_a_discriminated_union_on_kind: true
+        the_element_type_is_declared_in_types_ts: true
+        CoverageReport_carries_the_array: true
+        client_returns_the_shared_type: true
+        no_unknown_cast_between_client_and_consumer: true
+        undeclared_stream_requires_resultIndex_and_forbids_streamIndex: true
+        other_kinds_require_streamIndex_and_forbid_resultIndex: true
         threw: false
       references_constraints: ["C-31"]
       priority: high
@@ -1301,7 +1384,7 @@ spec:
       version_range: "^1.1.0"
       relationship: requires
     - spec_id: spec-coverage
-      version_range: "^1.5.0"
+      version_range: "^1.23.0"
       relationship: requires
     - spec_id: spec-diff
       version_range: ">=1.0.0 <3.0.0"
@@ -1311,6 +1394,12 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "2.0.0"
+      date: "2026-08-26"
+      author: "specter-team"
+      type: major
+      description: "C-31 and AC-75 gain `results_validation_errors`, the sixth array on the coverage document, arriving with `spec-coverage` 1.23.0 and C-44. The client's array-field table enumerates fields rather than deriving them, so a new top-level array missing from it is normalized wrongly, which is the declared-but-unregistered pattern the parity tests exist to catch. The field is converted to `resultsValidationErrors` and typed on `CoverageReport` rather than preserved as a raw snake-case key, because a consumer reaching for a raw key is one the type does not describe. AC-75 carries a populated document beside the empty one, since an empty-array assertion proves normalization and nothing about conversion, and asserts the nested coordinates convert too. The type is declared in `types.ts` and carried on `CoverageReport`, and `CoverageResult` and the `unknown` cast both go. The defect is compile-time contract drift rather than runtime loss: the cast erases type information and no fields, so the value survives while the guarantee does not, and two declarations of one document drift with the compiler silenced. What a multi-root workspace should do with these errors is deliberately not answered here, because `merged()` reconstructs the report field by field and aggregating them is its own question. The element type is a discriminated union on `kind`, so `spec-coverage` C-44's exactly-one-coordinate rule is enforced by the compiler rather than checked by a reviewer. The obligation is stated here rather than in `spec-coverage` AC-72, where an earlier draft put it: this spec owns the client. The `spec-coverage` floor rises from ^1.5.0 to ^1.23.0, the version that introduces the field. Major rather than minor: AC-75 gains an input, and `specter diff` classifies an inputs change as breaking. Reported as such and followed rather than reasoned around, which is the mistake this cycle already made once on `spec-coverage` 1.22.0. No spec depends on `spec-vscode`, so nothing cascades."
+
     - version: "1.10.0"
       date: "2026-08-16"
       author: "specter-team"

@@ -1,6 +1,6 @@
 spec:
   id: spec-sync
-  version: "2.2.1"
+  version: "2.3.0"
   status: approved
   tier: 2
 
@@ -109,7 +109,7 @@ spec:
       version_range: "^1.0.0"
       relationship: requires
     - spec_id: spec-coverage
-      version_range: "^1.0.0"
+      version_range: "^1.23.0"
       relationship: requires
 
   acceptance_criteria:
@@ -314,7 +314,27 @@ spec:
       references_constraints: ["C-11"]
       priority: critical
 
+    - id: AC-20
+      description: "Stream-validation refusals propagate to `sync`. A workspace whose results file violates any rule of `spec-coverage` C-44 exits from `sync` with the code `coverage` returns on the same workspace, and names the same stream, per C-11. Asserted here rather than inherited from `spec-coverage` AC-72 because the two commands reach the builder by different paths, and the whole reason C-44 puts the check in the builder is that a rule reachable from one path only is `bugs/done/SP-SP-058`. Also asserted under `--json` on both commands, since C-09's `--json` clause is scoped to the ladder and binds nothing outside it. And asserted under `--strictness annotation` as well as the two ladder modes, because `sync` reaches the builder by a different constructor there. The threshold and zero-tolerance paths call the constructor that can return an error and the annotation path calls one that cannot, so a validation rule added to the builder would reach two of three modes and the surface count would still read four. That is the same shape as `bugs/done/SP-SP-058`, one layer down."
+      inputs:
+        invalid_artifact: "a results file whose entry names a stream absent from the block"
+        surfaces: ["coverage", "coverage --json", "sync", "sync --json"]
+        strictness_modes: ["annotation", "threshold", "zero-tolerance"]
+      expected_output:
+        sync_code_equals_coverage_code: true
+        sync_names_the_same_stream: true
+        all_four_surfaces_agree: true
+        annotation_mode_validates_too: true
+      references_constraints: ["C-11"]
+      priority: critical
+
   changelog:
+    - version: "2.3.0"
+      date: "2026-08-26"
+      author: "specter-team"
+      type: minor
+      description: "AC-20 pins stream-validation propagation on `sync`, per roadmap 3A5 and `spec-coverage` C-44. Stated here rather than inherited, because the two commands reach the builder by different paths and a rule reachable from one path only is exactly `bugs/done/SP-SP-058`. Covers `--json` on both commands, since C-09's `--json` clause is scoped to `zero-tolerance` and binds nothing outside the ladder, and covers `--strictness annotation` beside the two ladder modes, because sync reaches the builder by a constructor that cannot return an error there and a rule added to the builder would silently miss that path. The `spec-coverage` floor rises to 1.23.0, because AC-20 names C-44 and the old range admitted versions where it does not exist."
+
     - version: "2.2.1"
       date: "2026-08-25"
       author: "specter-team"
