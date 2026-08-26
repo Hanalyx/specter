@@ -1186,17 +1186,89 @@ function propOf(b: Branch, name: string): Prop | undefined {
 /**
  * A union alias reduced to what AC-75 asserts about it.
  *
- * nonLiteral counts members that are not object literals. They are counted
- * rather than filtered away: `A | B | C | D | E | undefined` yields the five
- * kinds a filtering parser expects and still declares a type whose values may
- * carry no discriminant and no coordinate.
+ * unresolved counts members that do not resolve to an object shape. They are
+ * counted rather than filtered away: `A | B | C | D | E | undefined` yields the
+ * five kinds a filtering parser expects and still declares a type whose values
+ * may carry no discriminant and no coordinate.
  */
 interface Union {
   branches: Branch[];
-  nonLiteral: number;
+  unresolved: number;
 }
 
-/** `export type <name> = {...} | {...}` parsed, or undefined if not a union. */
+/**
+ * Every object shape a type node denotes, or undefined if it denotes something
+ * else.
+ *
+ * A branch written as a named type is resolved rather than refused. AC-75
+ * constrains the union the element type denotes, not whether its author spelled
+ * each branch inline, and `UndeclaredStreamError | NegativeCountError` is an
+ * ordinary way to write one. Refusing it would make this test a private policy
+ * on representation and would force the declarations to be duplicated inline.
+ *
+ * What stays refused is a member that denotes no object at all: `undefined`,
+ * `null`, a primitive, or a reference this file cannot resolve. Local
+ * resolution only, which is the whole scope AC-75 names.
+ */
+function shapesOf(src: ts.SourceFile, node: ts.TypeNode, depth = 0): ts.TypeLiteralNode[] | undefined {
+  if (depth > 4) {
+    return undefined;
+  }
+  if (ts.isTypeLiteralNode(node)) {
+    return [node];
+  }
+  if (ts.isParenthesizedTypeNode(node)) {
+    return shapesOf(src, node.type, depth + 1);
+  }
+  if (ts.isUnionTypeNode(node)) {
+    const parts = node.types.map((t) => shapesOf(src, t, depth + 1));
+    return parts.some((r) => r === undefined)
+      ? undefined
+      : parts.flatMap((r) => r as ts.TypeLiteralNode[]);
+  }
+  if (ts.isTypeReferenceNode(node) && ts.isIdentifier(node.typeName)) {
+    const target = node.typeName.text;
+    let found: ts.TypeLiteralNode[] | undefined;
+    ts.forEachChild(src, (n) => {
+      if (found) {
+        return;
+      }
+      if (ts.isInterfaceDeclaration(n) && n.name.text === target) {
+        // An interface is an object shape by construction. Build a literal
+        // node carrying its members so both spellings read the same way.
+        found = [ts.factory.createTypeLiteralNode(n.members) as ts.TypeLiteralNode];
+      } else if (ts.isTypeAliasDeclaration(n) && n.name.text === target) {
+        found = shapesOf(src, n.type, depth + 1);
+      }
+    });
+    return found;
+  }
+  return undefined;
+}
+
+function branchOf(lit: ts.TypeLiteralNode): Branch {
+  const signatures = lit.members.filter(ts.isPropertySignature);
+  const props: Prop[] = signatures
+    .filter((p) => p.name && ts.isIdentifier(p.name))
+    .map((p) => ({
+      name: (p.name as ts.Identifier).text,
+      optional: p.questionToken !== undefined,
+      isNumber: p.type?.kind === ts.SyntaxKind.NumberKeyword,
+    }));
+  const kindProp = signatures.find(
+    (p) => p.name && ts.isIdentifier(p.name) && p.name.text === 'kind',
+  );
+  let kind: string | undefined;
+  if (kindProp?.type && ts.isLiteralTypeNode(kindProp.type)) {
+    const lt = kindProp.type.literal;
+    if (ts.isStringLiteral(lt)) {
+      kind = lt.text;
+    }
+  }
+  return { kind, props };
+}
+
+/** `export type <name> = A | B` parsed, or undefined if not a union. */
 function unionOf(src: ts.SourceFile, name: string): Union | undefined {
   let alias: ts.TypeAliasDeclaration | undefined;
   ts.forEachChild(src, (n) => {
@@ -1207,29 +1279,11 @@ function unionOf(src: ts.SourceFile, name: string): Union | undefined {
   if (!alias || !ts.isUnionTypeNode(alias.type)) {
     return undefined;
   }
-  const members = alias.type.types;
-  const branches = members.filter(ts.isTypeLiteralNode).map((lit) => {
-    const signatures = lit.members.filter(ts.isPropertySignature);
-    const props: Prop[] = signatures
-      .filter((p) => p.name && ts.isIdentifier(p.name))
-      .map((p) => ({
-        name: (p.name as ts.Identifier).text,
-        optional: p.questionToken !== undefined,
-        isNumber: p.type?.kind === ts.SyntaxKind.NumberKeyword,
-      }));
-    const kindProp = signatures.find(
-      (p) => p.name && ts.isIdentifier(p.name) && p.name.text === 'kind',
-    );
-    let kind: string | undefined;
-    if (kindProp?.type && ts.isLiteralTypeNode(kindProp.type)) {
-      const lt = kindProp.type.literal;
-      if (ts.isStringLiteral(lt)) {
-        kind = lt.text;
-      }
-    }
-    return { kind, props };
-  });
-  return { branches, nonLiteral: members.length - branches.length };
+  const resolved = alias.type.types.map((m) => shapesOf(src, m));
+  return {
+    branches: resolved.flatMap((r) => r ?? []).map(branchOf),
+    unresolved: resolved.filter((r) => r === undefined).length,
+  };
 }
 
 /** The five kinds C-44 names. spec-coverage pins every one of these strings. */
@@ -1283,11 +1337,12 @@ describe('C-31 the validation error type is declared once and shared', () => {
     }
     const branches = union.branches;
 
-    // Every member is an object literal. A member that is not one contributes
-    // no kind, so it cannot break the set assertion below while still widening
-    // the type to values carrying neither discriminant nor coordinate.
-    expect({ members_that_are_not_object_literals: union.nonLiteral }).toEqual({
-      members_that_are_not_object_literals: 0,
+    // Every member resolves to an object shape, inline or named. A member that
+    // resolves to nothing contributes no kind, so it cannot break the set
+    // assertion below while still widening the type to values carrying neither
+    // discriminant nor coordinate.
+    expect({ union_members_that_are_not_object_shapes: union.unresolved }).toEqual({
+      union_members_that_are_not_object_shapes: 0,
     });
 
     // The union covers every kind C-44 names, and no others. A two-branch
