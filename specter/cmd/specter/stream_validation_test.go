@@ -127,6 +127,12 @@ func TestStreamValidationRules(t *testing.T) {
 			{"extracted below entries", `{"streams":[{"name":"go","scanned":2,"extracted":1}],
 				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"},
 				           {"spec_id":"s","ac_id":"AC-02","status":"passed","stream":"go"}]}`, true, "extracted_below_entries"},
+			// A declared count of zero beside one entry. Separated from the
+			// case above because zero is the value an implementation is most
+			// likely to special-case: skipping streams whose counts are zero
+			// looks like a cheap win and silently drops this rule for them.
+			{"extracted zero with an entry", `{"streams":[{"name":"go","scanned":1,"extracted":0}],
+				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"}]}`, true, "extracted_below_entries"},
 			{"empty block beside a label", `{"streams":[],
 				"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"}]}`, true, "undeclared_stream"},
 			{"default declared and undercounted", `{"streams":[{"name":"default","scanned":2,"extracted":1}],
@@ -148,8 +154,12 @@ func TestStreamValidationRules(t *testing.T) {
 			doc, stderr, code := runCoverageJSON(t, dir)
 
 			if !c.refuse {
-				if code == exitStreamValidationPlanned {
-					t.Errorf("C-44 (%s): a legal artifact was refused with code %d.\nstderr:\n%s", c.name, code, stderr)
+				// Exit 0 rather than "anything but 20". These fixtures are
+				// legal in every other way too, so a run that refused them for
+				// some unrelated reason would satisfy a not-20 check while the
+				// artifact was still being rejected.
+				if code != 0 {
+					t.Errorf("C-44 (%s): a legal artifact exited %d, want 0.\nstderr:\n%s", c.name, code, stderr)
 				}
 				if len(doc.ResultsValidationErrors) != 0 {
 					t.Errorf("C-44 (%s): a legal artifact reported %d validation error(s). The array is present exactly when validation found something", c.name, len(doc.ResultsValidationErrors))
@@ -178,6 +188,24 @@ func TestStreamValidationRules(t *testing.T) {
 				if (e.Kind == "undeclared_stream") != hasResult {
 					t.Errorf("C-44 (%s): violation %d is kind %q with result_index present=%v, which is the wrong coordinate for that kind", c.name, i, e.Kind, hasResult)
 				}
+				// C-44(c): a violation must identify the stream it concerns.
+				// Without this, every kind below could emit empty strings and
+				// still satisfy the kind and coordinate checks above.
+				if e.Message == "" {
+					t.Errorf("C-44(c) (%s): violation %d of kind %q carries an empty message, so the refusal names no cause", c.name, i, e.Kind)
+				}
+				if e.Kind == "empty_stream_name" {
+					// The one kind with no name to print. It identifies the
+					// row by position instead, and says the name is empty.
+					if e.Stream != "" {
+						t.Errorf("C-44(c) (%s): violation %d is empty_stream_name carrying stream %q, want the empty string", c.name, i, e.Stream)
+					}
+					if !strings.Contains(e.Message, "empty") {
+						t.Errorf("C-44(c) (%s): violation %d does not say the name is empty.\ngot: %s", c.name, i, e.Message)
+					}
+				} else if e.Stream == "" {
+					t.Errorf("C-44(c) (%s): violation %d of kind %q names no stream. Only empty_stream_name has no name to print", c.name, i, e.Kind)
+				}
 			}
 		}
 	})
@@ -201,10 +229,21 @@ func TestStreamValidationRules(t *testing.T) {
 		if negatives != 1 {
 			t.Errorf("C-44: %d negative_count violations for one row, want 1. Three would share a kind, a stream and a stream_index, which the total order cannot break", negatives)
 		}
+		// Fixed order, not merely present. C-44(d) names the order because the
+		// three fields share a kind, a stream and a stream_index, so the
+		// message is the only thing distinguishing them and a reader comparing
+		// two runs needs it stable.
+		prev := -1
 		for _, field := range []string{"scanned", "extracted", "zero_test_event_packages"} {
-			if !strings.Contains(msg, field) {
-				t.Errorf("C-44: the message does not name %q. One violation per row names every negative field, in fixed order.\ngot: %s", field, msg)
+			at := strings.Index(msg, field)
+			if at < 0 {
+				t.Errorf("C-44(d): the message does not name %q. One violation per row names every negative field.\ngot: %s", field, msg)
+				continue
 			}
+			if at < prev {
+				t.Errorf("C-44(d): %q appears before the field that precedes it. The order is scanned, extracted, zero_test_event_packages.\ngot: %s", field, msg)
+			}
+			prev = at
 		}
 	})
 }
@@ -365,15 +404,18 @@ func TestStreamValidationPrecedence(t *testing.T) {
 // while a surface count still reads four.
 func TestStreamValidationPropagatesToSync(t *testing.T) {
 	t.Run("spec-sync/AC-20 sync returns what coverage returns", func(t *testing.T) {
-		bad := `{"streams":[],"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"},
+		// The stream name is deliberately unusual. Asserting on "go" would
+		// pass on any stderr containing "going" or "algorithm", so the
+		// assertion would hold while the refusal named nothing.
+		bad := `{"streams":[],"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"e2e-webkit"},
 			{"spec_id":"s","ac_id":"AC-02","status":"passed"}]}`
 		// Below the tier threshold and inconsistent at the same time. This is
 		// the case that separates one shared verdict from two, because the
 		// threshold is the gate ordered last: sync builds its verdict with the
 		// threshold input and the exit closure builds a second one without it,
 		// so the two agree on every workspace where the threshold is silent.
-		belowThreshold := `{"streams":[],"results":[{"spec_id":"s","ac_id":"AC-01","status":"failed","stream":"go"},
-			{"spec_id":"s","ac_id":"AC-02","status":"failed","stream":"go"}]}`
+		belowThreshold := `{"streams":[],"results":[{"spec_id":"s","ac_id":"AC-01","status":"failed","stream":"e2e-webkit"},
+			{"spec_id":"s","ac_id":"AC-02","status":"failed","stream":"e2e-webkit"}]}`
 		modes := map[string]string{
 			"annotation":                permissiveSettings,
 			"threshold":                 "  strictness: threshold\n",
@@ -381,23 +423,36 @@ func TestStreamValidationPropagatesToSync(t *testing.T) {
 			"threshold, below the tier": "  strictness: threshold\n",
 		}
 		bodies := map[string]string{"threshold, below the tier": belowThreshold}
+
+		// AC-20 names four surfaces, not two. coverage --json is one of them,
+		// and C-09's --json clause is scoped to the ladder, so nothing else
+		// binds it for this gate.
+		surfaces := [][]string{{"coverage"}, {"coverage", "--json"}, {"sync"}, {"sync", "--json"}}
+
 		for mode, settings := range modes {
 			body := bad
 			if b, ok := bodies[mode]; ok {
 				body = b
 			}
-			covDir := streamWorkspace(t, body, settings)
-			_, covErr, covCode := runCLISplit(t, covDir, "coverage")
-			for _, surface := range [][]string{{"sync"}, {"sync", "--json"}} {
-				syncDir := streamWorkspace(t, body, settings)
-				_, syncErr, syncCode := runCLISplit(t, syncDir, surface...)
+			// Every fixture labels its offending entry go, so the stream the
+			// refusal names is known rather than merely non-empty. A generic
+			// "stream validation failed" satisfies a substring check on the
+			// word stream while naming nothing.
+			const wantStream = "e2e-webkit"
+
+			baseDir := streamWorkspace(t, body, settings)
+			_, baseErr, baseCode := runCLISplit(t, baseDir, "coverage")
+
+			for _, surface := range surfaces {
+				dir := streamWorkspace(t, body, settings)
+				_, stderr, code := runCLISplit(t, dir, surface...)
 				label := mode + "/" + strings.Join(surface, " ")
-				if syncCode != covCode {
-					t.Errorf("AC-20 (%s): coverage exited %d and this exited %d on the same workspace. C-11 requires them to agree, and sync is the CI entry point.\n coverage stderr:\n%s\n stderr:\n%s",
-						label, covCode, syncCode, covErr, syncErr)
+				if code != baseCode {
+					t.Errorf("AC-20 (%s): coverage exited %d and this exited %d on the same workspace. C-11 requires all four surfaces to agree, and sync is the CI entry point.\n coverage stderr:\n%s\n stderr:\n%s",
+						label, baseCode, code, baseErr, stderr)
 				}
-				if !strings.Contains(syncErr, "stream") {
-					t.Errorf("AC-20 (%s): stderr does not name a stream, so the cause C-11 binds is missing.\nstderr:\n%s", label, syncErr)
+				if !strings.Contains(stderr, wantStream) {
+					t.Errorf("AC-20 (%s): stderr never names stream %q, so the surfaces cannot be naming the same one.\nstderr:\n%s", label, wantStream, stderr)
 				}
 			}
 		}

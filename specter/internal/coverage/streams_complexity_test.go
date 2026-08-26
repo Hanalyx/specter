@@ -32,29 +32,42 @@ import (
 // complexityArtifact builds a legal streams block carrying one deliberate
 // violation, with streamCount declared streams and resultCount entries.
 //
-// All entries name the bulk stream, so a nested implementation walks every
-// entry once per declared stream while a map pass walks them once in total.
-// The filler streams declare zero counts and carry no entries, which C-44
-// allows: a stream that ran and found nothing is a state the block exists to
-// record.
+// Every declared stream carries entries and declares counts matching them, and
+// the total number of entries is the same at both sizes. Only the stream count
+// changes. An earlier draft put every entry on one stream and gave the rest
+// zero counts and no entries, which an implementation could skip: a nested scan
+// that visits only streams with a nonzero count would avoid the multiplication
+// this test exists to detect, and would have measured as linear.
+//
+// A nested implementation walks every entry once per declared stream. A map
+// pass walks them once in total and then does one lookup per stream.
 func complexityArtifact(streamCount, resultCount int) string {
+	per := resultCount / streamCount
 	var b strings.Builder
-	b.WriteString(`{"streams":[{"name":"bulk","scanned":`)
-	b.WriteString(strconv.Itoa(resultCount))
-	b.WriteString(`,"extracted":`)
-	b.WriteString(strconv.Itoa(resultCount))
-	b.WriteString(`}`)
-	for i := 1; i < streamCount; i++ {
-		b.WriteString(`,{"name":"filler`)
-		b.WriteString(strconv.Itoa(i))
-		b.WriteString(`","scanned":0,"extracted":0}`)
-	}
-	b.WriteString(`],"results":[`)
-	for i := 0; i < resultCount; i++ {
+	b.WriteString(`{"streams":[`)
+	for i := 0; i < streamCount; i++ {
 		if i > 0 {
 			b.WriteString(",")
 		}
-		b.WriteString(`{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"bulk"}`)
+		b.WriteString(`{"name":"s`)
+		b.WriteString(strconv.Itoa(i))
+		b.WriteString(`","scanned":`)
+		b.WriteString(strconv.Itoa(per))
+		b.WriteString(`,"extracted":`)
+		b.WriteString(strconv.Itoa(per))
+		b.WriteString(`}`)
+	}
+	b.WriteString(`],"results":[`)
+	for i := 0; i < streamCount; i++ {
+		name := "s" + strconv.Itoa(i)
+		for j := 0; j < per; j++ {
+			if i > 0 || j > 0 {
+				b.WriteString(",")
+			}
+			b.WriteString(`{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"`)
+			b.WriteString(name)
+			b.WriteString(`"}`)
+		}
 	}
 	// One entry names a stream the block never declares. C-44(a) refuses it,
 	// which is what proves validation ran over an artifact this large.
@@ -123,29 +136,43 @@ func TestStreamValidationIsLinearInTheArtifact(t *testing.T) {
 		const fewStreams = 50
 		const manyStreams = 2000
 
-		fast, doc := fastestBuild(t, complexityArtifact(fewStreams, results))
-		slow, _ := fastestBuild(t, complexityArtifact(manyStreams, results))
+		fast, fastDoc := fastestBuild(t, complexityArtifact(fewStreams, results))
+		slow, slowDoc := fastestBuild(t, complexityArtifact(manyStreams, results))
 
 		// Red today. Nothing validates the block, so the report carries no
 		// violation array and the timing assertion below would pass on an
 		// implementation that does no work at all.
-		if !strings.Contains(doc, "results_validation_errors") {
-			t.Fatalf("C-44: the report carries no results_validation_errors key, so validation did not run. The timing assertion below cannot mean anything until it does")
-		}
-		if !strings.Contains(doc, "ghost") {
-			t.Errorf("C-44: an entry names the undeclared stream ghost and no violation names it, so validation ran without reaching C-44(a)")
+		//
+		// Both reports, not only the small one. An implementation that
+		// validates small blocks and bails out above some size produces a flat
+		// ratio and would pass a check that only ever read the fast document.
+		for _, d := range []struct {
+			label string
+			doc   string
+		}{{"50 streams", fastDoc}, {"2000 streams", slowDoc}} {
+			if !strings.Contains(d.doc, "results_validation_errors") {
+				t.Fatalf("C-44 (%s): the report carries no results_validation_errors key, so validation did not run. The timing assertion below cannot mean anything until it does", d.label)
+			}
+			if !strings.Contains(d.doc, "ghost") {
+				t.Errorf("C-44 (%s): an entry names the undeclared stream ghost and no violation names it, so validation ran without reaching C-44(a)", d.label)
+			}
 		}
 
 		// A nested scan multiplies work by the stream count, so a 40-fold
 		// increase in streams over an unchanged result array shows up here.
 		// A map pass adds one bucket per stream and stays flat.
 		//
-		// Calibrated by measurement rather than by arithmetic. The builder
-		// costs 1.17 ms at 50 streams and 1.20 ms at 2000 before any
-		// validation, so the constant term is flat and does not hide the
-		// signal. Measured over this fixture shape, the per-stream scan adds
-		// 1.05 ms and 40.5 ms, and a map pass adds 0.34 ms and 0.37 ms. That
-		// puts a correct build near 1.04 and a nested one near 19.
+		// Calibrated by measurement rather than by arithmetic, and
+		// re-measured after the fixture changed shape. The builder costs
+		// 1.19 ms at both sizes before any validation, so the constant term is
+		// flat and does not hide the signal. Over this fixture the per-stream
+		// scan adds 4.13 ms and 119.7 ms, and a map pass adds 0.47 ms and
+		// 0.82 ms. That puts a correct build near 1.21 and a nested one near
+		// 22.7.
+		//
+		// The map pass is not flat here, unlike the one-stream draft this
+		// replaced: 2000 distinct keys cost more to build and probe than one.
+		// That is why the gate is not tighter than 2.5.
 		const allowed = 2.5
 		ratio := float64(slow) / float64(fast)
 		if ratio > allowed {

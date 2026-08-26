@@ -296,7 +296,6 @@ const COVERAGE_DOC_EVERY_ARRAY_EMPTY = `{"entries": null,
              "uncovered": 0, "passing": 0, "failing": 0},
  "parse_errors": null,
  "parse_error_patterns": null,
- "results_validation_errors": null,
  "spec_candidates_count": 0}`;
 
 /**
@@ -309,16 +308,12 @@ const COVERAGE_DOC_EVERY_ARRAY_EMPTY = `{"entries": null,
  */
 const COVERAGE_DOC_VALIDATION_ERRORS_POPULATED = `{"entries": [],
  "summary": {"total_specs": 1, "fully_covered": 0, "partially_covered": 0,
-             "uncovered": 1, "passing": 0, "failing": 0},
- "parse_errors": [],
- "parse_error_patterns": [],
+             "uncovered": 1, "passing": 0, "failing": 1},
  "results_validation_errors": [
-   {"kind": "empty_stream_name", "stream": "",
-    "message": "stream at position 1 has an empty name", "stream_index": 1},
-   {"kind": "undeclared_stream", "stream": "js",
-    "message": "entry at position 0 names undeclared stream js", "result_index": 0}
- ],
- "spec_candidates_count": 1}`;
+   {"kind": "empty_stream_name", "stream": "", "stream_index": 0,
+    "message": "streams[0] declares an empty name"},
+   {"kind": "undeclared_stream", "stream": "js", "result_index": 0,
+    "message": "results[0] names stream js, which the block does not declare"}]}`;
 
 /** AC-77. `check --json` reporting one diagnostic that carries all four convertible keys. */
 const CHECK_DOC_FOUR_CONVERTIBLE_KEYS = `{"diagnostics": [
@@ -538,17 +533,21 @@ describe('C-31 coverage --json with three null array fields and two absent', () 
       entries: raw.entries,
       parse_errors: raw.parse_errors,
       parse_error_patterns: raw.parse_error_patterns,
-      results_validation_errors: raw.results_validation_errors,
-    }).toEqual({
-      entries: null,
-      parse_errors: null,
-      parse_error_patterns: null,
-      results_validation_errors: null,
-    });
+    }).toEqual({ entries: null, parse_errors: null, parse_error_patterns: null });
+    // Three absent, not two. AC-75's absent_fields names
+    // results_validation_errors alongside the other two, and the field is
+    // dropped rather than nulled because it carries omitempty. A converter
+    // that handles null for it but not absence passes a null fixture and
+    // fails on real CLI output.
     expect({
       diagnostic_hints: 'diagnostic_hints' in raw,
       invalid_status_warnings: 'invalid_status_warnings' in raw,
-    }).toEqual({ diagnostic_hints: false, invalid_status_warnings: false });
+      results_validation_errors: 'results_validation_errors' in raw,
+    }).toEqual({
+      diagnostic_hints: false,
+      invalid_status_warnings: false,
+      results_validation_errors: false,
+    });
 
     const client = makeClient();
     // Exit 1, which is what the CLI does when no spec parsed. The document and
@@ -632,7 +631,7 @@ describe('C-31 coverage --json with three null array fields and two absent', () 
         snakeSurvives: 'result_index' in errors[1],
       },
     }).toEqual({
-      emptyName: { kind: 'empty_stream_name', streamIndex: 1, snakeSurvives: false },
+      emptyName: { kind: 'empty_stream_name', streamIndex: 0, snakeSurvives: false },
       undeclared: { kind: 'undeclared_stream', resultIndex: 0, snakeSurvives: false },
     });
 
@@ -1105,5 +1104,199 @@ describe('C-32 a coverage parse error carrying a line', () => {
       character: Number.MAX_SAFE_INTEGER,
     });
     expect(out[0].diagnostics[0].message).toContain('mapping values are not allowed');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-75, the type half. C-31 requires one shared declaration rather than a
+// runtime shape that happens to match.
+//
+// The runtime tests above pass on a converter that renames keys and returns
+// `unknown`. Every type-level output AC-75 names would still be unmet: the
+// union could live in client.ts, CoverageReport could not carry the field,
+// coverage() could keep returning CoverageResult, and extension.ts could keep
+// bridging the two with `as unknown as`. So these read the declarations.
+//
+// A structural AST read rather than the type checker. `ts.createProgram` over
+// the extension needs the full tsconfig and resolves every import, which is
+// slow here and fails for reasons unrelated to the criterion. The properties
+// AC-75 names are syntactic: which file declares the type, which interface
+// carries it, and which coordinate each union branch permits.
+// ---------------------------------------------------------------------------
+
+const TYPES_PATH = path.resolve(__dirname, '..', 'types.ts');
+const EXTENSION_PATH = path.resolve(__dirname, '..', 'extension.ts');
+
+function sourceOf(file: string): ts.SourceFile {
+  return ts.createSourceFile(
+    file,
+    fs.readFileSync(file, 'utf-8'),
+    ts.ScriptTarget.Latest,
+    true,
+  );
+}
+
+/** The property signatures of a named interface, or undefined if absent. */
+function interfaceProps(src: ts.SourceFile, name: string): ts.PropertySignature[] | undefined {
+  let found: ts.PropertySignature[] | undefined;
+  ts.forEachChild(src, (n) => {
+    if (ts.isInterfaceDeclaration(n) && n.name.text === name) {
+      found = n.members.filter(ts.isPropertySignature);
+    }
+  });
+  return found;
+}
+
+function propNamed(props: ts.PropertySignature[], name: string): ts.PropertySignature | undefined {
+  return props.find((p) => p.name && ts.isIdentifier(p.name) && p.name.text === name);
+}
+
+/** `Foo[]` -> `Foo`. Anything else -> undefined. */
+function arrayElementTypeName(node: ts.TypeNode | undefined): string | undefined {
+  if (!node || !ts.isArrayTypeNode(node)) {
+    return undefined;
+  }
+  const el = node.elementType;
+  return ts.isTypeReferenceNode(el) && ts.isIdentifier(el.typeName) ? el.typeName.text : undefined;
+}
+
+/** One branch of the element union, reduced to what AC-75 asserts about it. */
+interface Branch {
+  kind?: string;
+  props: string[];
+}
+
+/** The branches of `export type <name> = {...} | {...}`, or undefined. */
+function unionBranches(src: ts.SourceFile, name: string): Branch[] | undefined {
+  let alias: ts.TypeAliasDeclaration | undefined;
+  ts.forEachChild(src, (n) => {
+    if (ts.isTypeAliasDeclaration(n) && n.name.text === name) {
+      alias = n;
+    }
+  });
+  if (!alias || !ts.isUnionTypeNode(alias.type)) {
+    return undefined;
+  }
+  return alias.type.types.filter(ts.isTypeLiteralNode).map((lit) => {
+    const props = lit.members
+      .filter(ts.isPropertySignature)
+      .filter((p) => p.name && ts.isIdentifier(p.name))
+      .map((p) => (p.name as ts.Identifier).text);
+    const kindProp = lit.members
+      .filter(ts.isPropertySignature)
+      .find((p) => p.name && ts.isIdentifier(p.name) && p.name.text === 'kind');
+    let kind: string | undefined;
+    if (kindProp?.type && ts.isLiteralTypeNode(kindProp.type)) {
+      const lt = kindProp.type.literal;
+      if (ts.isStringLiteral(lt)) {
+        kind = lt.text;
+      }
+    }
+    return { kind, props };
+  });
+}
+
+describe('C-31 the validation error type is declared once and shared', () => {
+  // @spec spec-vscode
+  // @ac AC-75
+  it('[spec-vscode/AC-75] CoverageReport carries the array and types.ts declares the element', () => {
+    const types = sourceOf(TYPES_PATH);
+    const props = interfaceProps(types, 'CoverageReport');
+    if (!props) {
+      throw new Error('types.ts declares no CoverageReport interface');
+    }
+
+    const field = propNamed(props, 'resultsValidationErrors');
+    // Reported rather than thrown, so the next assertion still runs and one
+    // failure names everything that is missing.
+    expect({
+      CoverageReport_carries_the_array: field !== undefined,
+    }).toEqual({ CoverageReport_carries_the_array: true });
+
+    const elementName = arrayElementTypeName(field?.type);
+    expect({
+      field_is_an_array_of_a_named_type: elementName !== undefined,
+    }).toEqual({ field_is_an_array_of_a_named_type: true });
+
+    expect({
+      the_element_type_is_declared_in_types_ts:
+        elementName !== undefined && unionBranches(types, elementName) !== undefined,
+    }).toEqual({ the_element_type_is_declared_in_types_ts: true });
+  });
+
+  // @spec spec-vscode
+  // @ac AC-75
+  it('[spec-vscode/AC-75] the element type is a discriminated union permitting exactly one coordinate', () => {
+    const types = sourceOf(TYPES_PATH);
+    const props = interfaceProps(types, 'CoverageReport');
+    const elementName = arrayElementTypeName(propNamed(props ?? [], 'resultsValidationErrors')?.type);
+    const branches = elementName ? unionBranches(types, elementName) : undefined;
+    if (!branches || branches.length === 0) {
+      throw new Error(
+        `no discriminated union to inspect: CoverageReport.resultsValidationErrors resolves to ${String(elementName)}`,
+      );
+    }
+
+    // Every branch discriminates on a string literal kind and names the two
+    // fields C-44(c) requires of every violation.
+    expect(
+      branches.map((b) => ({
+        kind: typeof b.kind === 'string',
+        stream: b.props.includes('stream'),
+        message: b.props.includes('message'),
+      })),
+    ).toEqual(branches.map(() => ({ kind: true, stream: true, message: true })));
+
+    // Exactly one coordinate per branch, and the right one for the kind.
+    // A branch declaring both, or neither, is the shape C-44 forbids.
+    const coordinates = branches.map((b) => ({
+      kind: b.kind,
+      streamIndex: b.props.includes('streamIndex'),
+      resultIndex: b.props.includes('resultIndex'),
+    }));
+    expect(
+      coordinates.map((c) => ({
+        kind: c.kind,
+        exactlyOne: c.streamIndex !== c.resultIndex,
+        correctForKind:
+          c.kind === 'undeclared_stream'
+            ? c.resultIndex && !c.streamIndex
+            : c.streamIndex && !c.resultIndex,
+      })),
+    ).toEqual(coordinates.map((c) => ({ kind: c.kind, exactlyOne: true, correctForKind: true })));
+
+    // Positive control: the union actually covers the undeclared_stream kind,
+    // so the branch rule above was exercised rather than vacuous.
+    expect({
+      declares_undeclared_stream: branches.some((b) => b.kind === 'undeclared_stream'),
+      declares_a_stream_index_kind: branches.some(
+        (b) => b.kind !== undefined && b.kind !== 'undeclared_stream',
+      ),
+    }).toEqual({ declares_undeclared_stream: true, declares_a_stream_index_kind: true });
+  });
+
+  // @spec spec-vscode
+  // @ac AC-75
+  it('[spec-vscode/AC-75] the client returns the shared type and no unknown cast bridges it', () => {
+    const clientText = fs.readFileSync(CLIENT_PATH, 'utf-8');
+    const extensionText = fs.readFileSync(EXTENSION_PATH, 'utf-8');
+
+    // Scoped to the two files the criterion names. A tree-wide search would
+    // hit historical mentions in comments and fixtures elsewhere.
+    expect({
+      client_declares_CoverageResult: /\binterface\s+CoverageResult\b/.test(clientText),
+      client_returns_the_shared_type: /coverage\(\)\s*:\s*Promise<CoverageReport>/.test(clientText),
+      client_imports_CoverageReport: /import\s[^;]*\bCoverageReport\b[^;]*from\s+'\.\/types'/.test(
+        clientText,
+      ),
+      extension_bridges_with_an_unknown_cast: /as\s+unknown\s+as\s+CoverageReport/.test(
+        extensionText,
+      ),
+    }).toEqual({
+      client_declares_CoverageResult: false,
+      client_returns_the_shared_type: true,
+      client_imports_CoverageReport: true,
+      extension_bridges_with_an_unknown_cast: false,
+    });
   });
 });
