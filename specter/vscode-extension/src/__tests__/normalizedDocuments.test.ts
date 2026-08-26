@@ -296,7 +296,29 @@ const COVERAGE_DOC_EVERY_ARRAY_EMPTY = `{"entries": null,
              "uncovered": 0, "passing": 0, "failing": 0},
  "parse_errors": null,
  "parse_error_patterns": null,
+ "results_validation_errors": null,
  "spec_candidates_count": 0}`;
+
+/**
+ * AC-75, the populated half. An empty-array assertion proves normalization and
+ * nothing about conversion, so this document carries elements whose own keys
+ * have to be converted. Both element kinds appear, because C-44 gives
+ * `undeclared_stream` a `result_index` and every other kind a `stream_index`,
+ * and a converter that handled one spelling would pass on a single-kind
+ * fixture.
+ */
+const COVERAGE_DOC_VALIDATION_ERRORS_POPULATED = `{"entries": [],
+ "summary": {"total_specs": 1, "fully_covered": 0, "partially_covered": 0,
+             "uncovered": 1, "passing": 0, "failing": 0},
+ "parse_errors": [],
+ "parse_error_patterns": [],
+ "results_validation_errors": [
+   {"kind": "empty_stream_name", "stream": "",
+    "message": "stream at position 1 has an empty name", "stream_index": 1},
+   {"kind": "undeclared_stream", "stream": "js",
+    "message": "entry at position 0 names undeclared stream js", "result_index": 0}
+ ],
+ "spec_candidates_count": 1}`;
 
 /** AC-77. `check --json` reporting one diagnostic that carries all four convertible keys. */
 const CHECK_DOC_FOUR_CONVERTIBLE_KEYS = `{"diagnostics": [
@@ -508,7 +530,7 @@ describe('C-31 parse --json for a spec that passes validation', () => {
 // @spec spec-vscode
 // @ac AC-75
 describe('C-31 coverage --json with three null array fields and two absent', () => {
-  it('[spec-vscode/AC-75] all five array fields the constraint names come back as empty arrays', async () => {
+  it('[spec-vscode/AC-75] all six array fields the constraint names come back as empty arrays', async () => {
     // Preconditions. Three null and two absent are different inputs, and the
     // document has to carry both branches for one criterion to cover both.
     const raw = JSON.parse(COVERAGE_DOC_EVERY_ARRAY_EMPTY);
@@ -516,7 +538,13 @@ describe('C-31 coverage --json with three null array fields and two absent', () 
       entries: raw.entries,
       parse_errors: raw.parse_errors,
       parse_error_patterns: raw.parse_error_patterns,
-    }).toEqual({ entries: null, parse_errors: null, parse_error_patterns: null });
+      results_validation_errors: raw.results_validation_errors,
+    }).toEqual({
+      entries: null,
+      parse_errors: null,
+      parse_error_patterns: null,
+      results_validation_errors: null,
+    });
     expect({
       diagnostic_hints: 'diagnostic_hints' in raw,
       invalid_status_warnings: 'invalid_status_warnings' in raw,
@@ -540,12 +568,72 @@ describe('C-31 coverage --json with three null array fields and two absent', () 
       parseErrorPatterns: arrayShape(report.parseErrorPatterns),
       diagnostic_hints: arrayShape(report.diagnostic_hints),
       invalid_status_warnings: arrayShape(report.invalid_status_warnings),
+      resultsValidationErrors: arrayShape(report.resultsValidationErrors),
     }).toEqual({
       entries: 'array(0)',
       parseErrors: 'array(0)',
       parseErrorPatterns: 'array(0)',
       diagnostic_hints: 'array(0)',
       invalid_status_warnings: 'array(0)',
+      resultsValidationErrors: 'array(0)',
+    });
+
+    // Control: the report came from an actual invocation.
+    expect(mockCli.jsonInvocations('coverage')).toHaveLength(1);
+  });
+
+  it('[spec-vscode/AC-75] a populated validation array converts its own element keys', async () => {
+    // Precondition. The CLI spelling is what the document carries, at both
+    // levels, so the assertions below are about conversion rather than about
+    // a fixture that was already camel-case.
+    const raw = JSON.parse(COVERAGE_DOC_VALIDATION_ERRORS_POPULATED);
+    expect({
+      outer: 'results_validation_errors' in raw,
+      streamIndex: 'stream_index' in raw.results_validation_errors[0],
+      resultIndex: 'result_index' in raw.results_validation_errors[1],
+    }).toEqual({ outer: true, streamIndex: true, resultIndex: true });
+
+    const client = makeClient();
+    mockCli.script('coverage', {
+      exitCode: 0,
+      stdout: COVERAGE_DOC_VALIDATION_ERRORS_POPULATED,
+    });
+
+    const outcome = await outcomeOf(client.coverage());
+    expect({ threw: outcome.threw }).toEqual({ threw: false });
+
+    const report = coverageDocOf(outcome.value);
+    const errors = report.resultsValidationErrors as Loose[] | undefined;
+
+    // The outer key converts and the array survives with both elements.
+    expect({
+      shape: arrayShape(report.resultsValidationErrors),
+      snakeSurvives: 'results_validation_errors' in report,
+    }).toEqual({ shape: 'array(2)', snakeSurvives: false });
+
+    if (!errors || errors.length !== 2) {
+      throw new Error(
+        `expected two elements to inspect, got ${JSON.stringify(report.resultsValidationErrors)}`,
+      );
+    }
+
+    // One labeled comparison across both elements, so a failure says which
+    // spelling broke and at which coordinate. A converter that stops at the
+    // outer key leaves every inner reading here in its CLI spelling.
+    expect({
+      emptyName: {
+        kind: errors[0].kind,
+        streamIndex: errors[0].streamIndex,
+        snakeSurvives: 'stream_index' in errors[0],
+      },
+      undeclared: {
+        kind: errors[1].kind,
+        resultIndex: errors[1].resultIndex,
+        snakeSurvives: 'result_index' in errors[1],
+      },
+    }).toEqual({
+      emptyName: { kind: 'empty_stream_name', streamIndex: 1, snakeSurvives: false },
+      undeclared: { kind: 'undeclared_stream', resultIndex: 0, snakeSurvives: false },
     });
 
     // Control: the report came from an actual invocation.
