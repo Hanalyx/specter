@@ -1,6 +1,6 @@
 spec:
   id: spec-ingest
-  version: "1.6.0"
+  version: "1.7.0"
   status: approved
   tier: 1
 
@@ -121,6 +121,11 @@ spec:
 
     - id: C-16
       description: "`ingest` MUST write a `streams` entry when the run names a stream, carrying the counts `spec-coverage` C-42 defines: inputs scanned, results extracted, and packages that produced zero test events. The entry is written even when extraction found nothing, which is the whole point: a stream that ran and found nothing and a stream that never ran both leave zero result entries, and only this block separates them. `--merge` carries the `streams` blocks of its named inputs through to the output per C-15, so a merged file keeps the metadata its inputs recorded. **A run that names no stream MUST NOT write the block**, and that is a deliberate trade rather than an oversight. C-14 promises an unlabeled run writes exactly the file it wrote before, and a top-level block appearing in a pipeline that never asked for one would break that promise and make this cycle non-additive for every existing producer. The cost is real and belongs in the open: an unlabeled run forgoes the silent-package signal, so a package that produced no test events goes unrecorded there exactly as it did before. Passing `--stream` is what buys the signal, and any wording that offers it to an unlabeled run is claiming something this constraint refuses. The zero-test-event count comes from go test -json package-level events per C-02, and it is named for what was observed. `ingest` cannot tell a package that failed to build from one whose tests were all filtered out or one that has no tests, so the count MUST NOT be reported as a build failure in the artifact, in the summary line, or in the field name. Rationale, roadmap item 3B5 rehomed into 3A: a package that fails to build emits no test event, so every criterion it would have covered silently disappears from the results, and a coverage run over that file reports the remaining criteria as the whole truth."
+      type: technical
+      enforcement: error
+
+    - id: C-17
+      description: "`specter ingest --merge` MUST refuse to read an input whose on-disk size exceeds `MaxResultsFileBytes` (16 MiB, the same cap `internal/coverage` applies to the file it reads), and MUST refuse it by stat before `os.ReadFile`, not after. Reading first and checking afterward is not a cap: the allocation has already happened. The stderr message names the file, the size and the limit, matching the wording `spec-diff` C-12 and `spec-check` C-12 use so an operator meets one phrasing across the toolchain. Rationale: a `.specter-results.json` is a CI artifact, and a malicious or merely broken runner can commit a multi-gigabyte one. `internal/coverage` has capped its read of exactly this shape since v0.13's security audit, and `--merge` introduced a second reader of the same artifact with no cap, which reopens the class the first fix closed. Two readers of one file shape must agree on the limit, so the constant is declared once per package and a test fails when the two disagree, per the class-of-bug rule that a load-bearing invariant is enforced in CI rather than remembered."
       type: technical
       enforcement: error
 
@@ -336,7 +341,27 @@ spec:
       references_constraints: ["C-16"]
       priority: critical
 
+    - id: AC-17
+      description: "`ingest --merge` on an input larger than 16 MiB exits non-zero before the file is unmarshaled, with stderr naming the file and containing `exceeds` and `byte limit`. A file exactly at the cap is accepted, so the boundary is a limit rather than an off-by-one. The two declarations of the cap, `internal/ingest` and `internal/coverage`, are asserted equal, because a reader that capped at a different figure would accept a file its sibling refuses and the artifact's meaning would depend on which command read it."
+      inputs:
+        oversize: "a --merge input one byte over 16 MiB"
+        at_cap: "a --merge input of exactly 16 MiB"
+      expected_output:
+        oversize_exit_code_non_zero: true
+        oversize_refused_before_unmarshal: true
+        oversize_stderr_contains: ["exceeds", "byte limit"]
+        at_cap_accepted: true
+        both_packages_declare_the_same_cap: true
+      references_constraints: ["C-17"]
+      priority: high
+
   changelog:
+    - version: "1.7.0"
+      date: "2026-08-26"
+      author: "specter-team"
+      type: minor
+      description: "C-17 caps the size of a `--merge` input at 16 MiB, refused by stat before the read rather than after it, because reading first and checking afterward is not a cap. Found in review of the 1.6.0 implementation. `internal/coverage` has capped its read of this exact artifact since the v0.13 security audit, and `--merge` introduced a second reader with none, reopening the class the first fix closed. The wording of the refusal matches `spec-diff` C-12 and `spec-check` C-12 so an operator meets one phrasing across the toolchain. AC-17 also asserts the two packages declare the same figure, since a reader capping differently would accept what its sibling refuses."
+
     - version: "1.6.0"
       date: "2026-08-25"
       author: "specter-team"
