@@ -300,3 +300,36 @@ func TestCoveredRuleAcrossStreams(t *testing.T) {
 		}
 	})
 }
+
+// @spec spec-coverage
+// @ac AC-71
+//
+// C-42: the streams object carries a count of packages that produced zero test
+// events. Asserted on the round trip, because StreamInfo has no such field yet
+// and naming it would report a build failure rather than a behavioral one.
+func TestStreamZeroTestEventCount(t *testing.T) {
+	t.Run("spec-coverage/AC-71 the streams object records silent packages", func(t *testing.T) {
+		// The count is independent of extracted: this stream extracted three
+		// results and still holds two packages that emitted nothing.
+		const withCount = `{
+			"streams":[{"name":"go","scanned":40,"extracted":3,"zero_test_event_packages":2}],
+			"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"}]}`
+		got := marshalResults(t, withCount)
+		if !strings.Contains(got, `"zero_test_event_packages":2`) {
+			t.Errorf("C-42: the silent-package count did not survive a parse and marshal, so a package that emitted nothing goes unrecorded.\ngot: %s", got)
+		}
+		if !strings.Contains(got, `"extracted":3`) {
+			t.Errorf("C-42: the extracted count did not survive alongside it, so the two are not independent.\ngot: %s", got)
+		}
+
+		// Zero and omitted are the same state, because the field is a number
+		// and zero is its absence. Asserted rather than only claimed.
+		const zero = `{"streams":[{"name":"go","scanned":40,"extracted":3,"zero_test_event_packages":0}],
+			"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"}]}`
+		const omitted = `{"streams":[{"name":"go","scanned":40,"extracted":3}],
+			"results":[{"spec_id":"s","ac_id":"AC-01","status":"passed","stream":"go"}]}`
+		if a, b := marshalResults(t, zero), marshalResults(t, omitted); a != b {
+			t.Errorf("C-42: a zero count and an omitted one marshal differently, so two producers describing the same absence write different bytes.\n zero: %s\n omitted: %s", a, b)
+		}
+	})
+}
