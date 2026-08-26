@@ -1,6 +1,6 @@
 spec:
   id: spec-sync
-  version: "2.3.0"
+  version: "2.4.0"
   status: approved
   tier: 2
 
@@ -90,7 +90,7 @@ spec:
 
 
     - id: C-11
-      description: "Exit codes MUST propagate from `coverage` to `sync` identically. For any workspace, the code `specter sync` returns for a coverage-contract failure MUST equal the code `specter coverage` returns on the same workspace, and the stderr line naming the cause MUST name the same cause. `sync` is the CI entry point, so a code that fires on `coverage` and not on `sync` means CI is told a different story from the developer who ran `coverage` locally. Rationale, per roadmap item 1A3 and `docs/EXIT_CODES.md`: a gate is fully wired only when it appears in the check, the phase result, the exit mapping, AND its ordering relative to gates that already exist. A gate wired into `coverage` alone has the first three and fails here, and the build still fails, so nothing in a normal review notices. It fails with the wrong number and the wrong sentence."
+      description: "Exit codes MUST propagate from `coverage` to `sync` identically. For any workspace, the code `specter sync` returns for a coverage-contract failure MUST equal the code `specter coverage` returns on the same workspace, and the stderr line naming the cause MUST name the same cause. `sync` is the CI entry point, so a code that fires on `coverage` and not on `sync` means CI is told a different story from the developer who ran `coverage` locally. Rationale, per roadmap item 1A3 and `docs/EXIT_CODES.md`: a gate is fully wired only when it appears in the check, the phase result, the exit mapping, AND its ordering relative to gates that already exist. A gate wired into `coverage` alone has the first three and fails here, and the build still fails, so nothing in a normal review notices. It fails with the wrong number and the wrong sentence. **One place MUST own the mapping from a verdict code to a process exit.** Two commands each carrying their own switch over the same codes is how the two diverge: a code the shared verdict can return but a switch does not name falls through to a different answer on each surface, and adding a gate then requires editing both with nothing failing if only one is edited. **A code that reaches the mapping and matches no case MUST report failure**, because the alternative is reporting success for a run that failed a gate, and the surfaces would disagree about that too. This is the propagation half of the same defect the shared verdict fixed on the decision half, recorded in `bugs/done/SP-SP-073`: sharing the decision does not share the routing."
       type: technical
       enforcement: error
 
@@ -328,7 +328,38 @@ spec:
       references_constraints: ["C-11"]
       priority: critical
 
+    - id: AC-21
+      description: >-
+        One function owns the mapping from a coverage-gate verdict code to a
+        process exit, and both `coverage` and `sync` route through it. A code
+        that reaches it and matches no case returns a failure rather than
+        success. Asserted on the mapping directly rather than through a
+        workspace, because every routed non-zero code leaves by `os.Exit` and
+        cannot be exercised in-process, which leaves the unmatched case the
+        only branch a test can reach. Guarding it matters even though no
+        released version can produce an unmatched code: the branch exists so
+        that a gate added to the shared verdict and forgotten at the exit sites
+        is reported instead of being read as a pass, and a defensive branch
+        with no test is how the reporting quietly becomes a return of nil.
+      inputs:
+        unmatched_code: "a non-zero code no case names"
+        success_code: 0
+        unclassified_failure_code: 1
+      expected_output:
+        unmatched_code_returns_an_error: true
+        success_code_returns_nil: true
+        unclassified_failure_code_returns_an_error: true
+        one_routing_owner: true
+      references_constraints: ["C-11"]
+      priority: high
+
   changelog:
+    - version: "2.4.0"
+      date: "2026-08-26"
+      author: "specter-team"
+      type: minor
+      description: "C-11 gains the propagation half of the rule its rationale already described. It required the two commands to return the same code and named the four places a gate must appear, one of which is the exit mapping, and then left the mapping itself unowned: `coverage` and `sync` each carried a switch over the same codes, so adding code 20 meant editing both and nothing would have failed if only one had been edited. A code the shared verdict returns that a switch does not name falls through to 0 on one surface and 1 on the other, which is the disagreement C-11 exists to forbid. The rule now requires one owner and requires an unmatched code to report failure rather than success. AC-21 asserts the mapping directly, because every routed non-zero code leaves by os.Exit and cannot be exercised in-process. Minor: a new criterion, which `spec-diff` C-05 classifies as additive. This is the same defect as `bugs/done/SP-SP-073` on the routing rather than the decision, found in review of the fix for it."
+
     - version: "2.3.0"
       date: "2026-08-26"
       author: "specter-team"
