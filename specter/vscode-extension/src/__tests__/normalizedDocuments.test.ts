@@ -525,7 +525,7 @@ describe('C-31 parse --json for a spec that passes validation', () => {
 
 // @spec spec-vscode
 // @ac AC-75
-describe('C-31 coverage --json with three null array fields and two absent', () => {
+describe('C-31 coverage --json with three null array fields and three absent', () => {
   it('[spec-vscode/AC-75] all six array fields the constraint names come back as empty arrays', async () => {
     // Preconditions. Three null and two absent are different inputs, and the
     // document has to carry both branches for one criterion to cover both.
