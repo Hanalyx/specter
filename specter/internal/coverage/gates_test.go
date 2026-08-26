@@ -21,6 +21,12 @@ func TestGateVerdict(t *testing.T) {
 			wantCount  int
 			wantFirst  int // the code the first violation carries, -1 for none
 			wantSecond int // the code the second carries, -1 when there is none
+			// silent indexes the violations that decide without printing. The
+			// tier threshold is the only one: neither command wrote a stderr
+			// line for it before the gates were shared, and giving it one on
+			// `coverage` alone put the two out of step on spec-sync C-11's
+			// cause line.
+			silent map[int]bool
 		}{
 			{
 				name:       "clean",
@@ -85,15 +91,15 @@ func TestGateVerdict(t *testing.T) {
 				wantSecond: 3,
 			},
 			{
-				// A gate that decided the code does not suppress the threshold
-				// line. Same reasoning as (e): the operator should not have to
-				// re-run to find the next thing.
+				// The threshold is carried so a caller can name it in a report,
+				// and it prints nothing. A gate ahead of it still decides.
 				name:       "gate ahead of a threshold failure",
 				in:         GateInputs{AnnotationDeclared: true, ApprovalGateViolations: 1, ThresholdFailing: 2},
 				wantCode:   3,
 				wantCount:  2,
 				wantFirst:  3,
 				wantSecond: 1,
+				silent:     map[int]bool{1: true},
 			},
 			{
 				name:       "threshold alone",
@@ -102,6 +108,7 @@ func TestGateVerdict(t *testing.T) {
 				wantCount:  1,
 				wantFirst:  1,
 				wantSecond: -1,
+				silent:     map[int]bool{0: true},
 			},
 		}
 
@@ -121,8 +128,14 @@ func TestGateVerdict(t *testing.T) {
 				t.Errorf("%s: second violation carries code %d, want %d", c.name, got[1].Code, c.wantSecond)
 			}
 			for i, v := range got {
-				if v.Stderr == "" || v.Phase == "" {
-					t.Errorf("%s: violation %d has an empty message, so a caller would print a blank line", c.name, i)
+				if v.Phase == "" {
+					t.Errorf("%s: violation %d has no Phase message, so a report would name nothing", c.name, i)
+				}
+				switch {
+				case c.silent[i] && v.Stderr != "":
+					t.Errorf("%s: violation %d prints %q and should be silent. Printing it on one surface and not the other is the C-11 divergence this guards", c.name, i, v.Stderr)
+				case !c.silent[i] && v.Stderr == "":
+					t.Errorf("%s: violation %d has an empty Stderr, so a caller would print a blank line", c.name, i)
 				}
 			}
 		}

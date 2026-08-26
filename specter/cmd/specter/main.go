@@ -915,6 +915,18 @@ func checkCmd() *cobra.Command {
 // under --json, so a CI consumer reading JSON got a green build on a workspace
 // `coverage` fails (bugs/SP-SP-066). The JSON copy even carried a comment
 // saying it mirrored the text checks, which was true when it was written.
+// printGateViolations writes each gate violation that has a line to write.
+// One helper so the two commands cannot drift on whether a silent violation
+// prints a blank line.
+func printGateViolations(violations []coverage.GateViolation) {
+	for _, v := range violations {
+		if v.Stderr == "" {
+			continue
+		}
+		fmt.Fprintln(os.Stderr, v.Stderr)
+	}
+}
+
 func coverageExitGates(report *coverage.CoverageReport, specs []schema.SpecAST,
 	results *coverage.ResultsFile, m *manifest.Manifest, effectiveStrictness string) error {
 
@@ -942,11 +954,10 @@ func coverageExitGates(report *coverage.CoverageReport, specs []schema.SpecAST,
 	}
 
 	// C-40(e): every violation is named before the process leaves, so one run
-	// tells the operator everything that failed.
+	// tells the operator everything that failed. A violation with no Stderr
+	// decides the code without printing, which is the tier threshold.
 	violations, code := coverage.GateVerdict(in)
-	for _, v := range violations {
-		fmt.Fprintln(os.Stderr, v.Stderr)
-	}
+	printGateViolations(violations)
 	switch code {
 	case 0:
 		return nil
@@ -1483,9 +1494,7 @@ func syncCmd() *cobra.Command {
 				})
 				// spec-coverage C-40(e): every violation is named before the
 				// process leaves, so one run tells the operator everything.
-				for _, v := range violations {
-					fmt.Fprintln(os.Stderr, v.Stderr)
-				}
+				printGateViolations(violations)
 				// Code 1 stays with errSilent at the call site, exactly as
 				// before, so the threshold path is unchanged. The codes above
 				// it are named, not computed, so the registry scan can see them.

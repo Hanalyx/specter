@@ -45,7 +45,9 @@ type GateInputs struct {
 
 // GateViolation is one gate's finding.
 type GateViolation struct {
-	// Stderr is the complete line the command writes, prefix included.
+	// Stderr is the complete line the command writes, prefix included. Empty
+	// when the gate decides the code without reporting a line, which the tier
+	// threshold does. Callers MUST skip an empty one rather than print a blank.
 	Stderr string
 	// Phase is the same finding worded for a sync PhaseResult, which carries
 	// its own prefix conventions and must not change.
@@ -116,9 +118,18 @@ func GateVerdict(in GateInputs) (violations []GateViolation, code int) {
 		}
 	}
 
+	// The tier threshold decides the code and prints nothing, which is why its
+	// Stderr is empty. Neither command wrote a stderr line for it before: the
+	// detail is in the report body, and `coverage` returned its failure exit
+	// silently. An earlier draft gave it a line, which changed `coverage` and
+	// not `sync` and so put the two out of step on the cause line that
+	// `spec-sync` C-11 binds. Giving it one on both surfaces is a real
+	// improvement and needs its own criterion, not a side effect of this one.
 	if in.ThresholdFailing > 0 {
-		msg := fmt.Sprintf("%d spec(s) below coverage threshold", in.ThresholdFailing)
-		violations = append(violations, GateViolation{Stderr: "error: " + msg, Phase: msg, Code: 1})
+		violations = append(violations, GateViolation{
+			Phase: fmt.Sprintf("%d spec(s) below coverage threshold", in.ThresholdFailing),
+			Code:  1,
+		})
 	}
 
 	for _, v := range violations {

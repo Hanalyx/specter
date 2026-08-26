@@ -1,6 +1,6 @@
 spec:
   id: spec-sync
-  version: "2.2.0"
+  version: "2.2.1"
   status: approved
   tier: 2
 
@@ -297,7 +297,7 @@ spec:
       references_constraints: ["C-12"]
       priority: high
     - id: AC-19
-      description: "The annotation-model approval gate propagates to `sync`, report included. A workspace declaring `settings.annotation` with one acceptance criterion carrying `approval_gate: true` and no `approval_date` exits 3 under `specter sync`, matching `specter coverage` on the same workspace per C-11, with `permissive: true` and with `permissive: false` alike. A workspace carrying both that gate and a criterion with no test exits 2 on `sync`, per `spec-coverage` C-40(c), and names BOTH violations on stderr in the one run, per `spec-coverage` C-40(d). The reporting half is asserted and not left implicit, because an implementation that exits inside the rule-1 branch satisfies the exit code and never reaches the gate, which is what `sync` does today. Every case is asserted under `--json` as well as in text mode, per `spec-coverage` C-40(c). Nothing else binds `sync --json` for this gate: C-09's `--json` clause is scoped to `zero-tolerance` and does not reach a gate outside the ladder, so a text-only fix would pass every other criterion in this spec. The cause line is asserted too, because the defect measured was a silent exit 0 and a silent 3 would satisfy an assertion on the integer alone. Asserted here and not left to `spec-coverage` AC-67, because `sync` carries its own gate sequence rather than calling the one `coverage` uses. A fix applied to one surface can therefore miss the other, which is the shape of `bugs/done/SP-SP-066`: a private copy of a gate sequence that was correct when written and went stale when a gate was added beside it."
+      description: "The annotation-model approval gate propagates to `sync`, report included. A workspace declaring `settings.annotation` with one acceptance criterion carrying `approval_gate: true` and no `approval_date` exits 3 under `specter sync`, matching `specter coverage` on the same workspace per C-11, with `permissive: true` and with `permissive: false` alike. A workspace carrying both that gate and a criterion with no test exits 2 on `sync`, per `spec-coverage` C-40(c), and names BOTH violations on stderr in the one run, per `spec-coverage` C-40(d). The reporting half is asserted and not left implicit, because an implementation that exits inside the rule-1 branch satisfies the exit code and never reaches the gate, which is what `sync` does today. Every case is asserted under `--json` as well as in text mode, per `spec-coverage` C-40(c). Nothing else binds `sync --json` for this gate: C-09's `--json` clause is scoped to `zero-tolerance` and does not reach a gate outside the ladder, so a text-only fix would pass every other criterion in this spec. The cause line is asserted too, because the defect measured was a silent exit 0 and a silent 3 would satisfy an assertion on the integer alone. Asserted here and not left to `spec-coverage` AC-67, because `sync` carried its own gate sequence rather than calling the one `coverage` used, so a fix applied to one surface could miss the other. That is the shape of `bugs/done/SP-SP-066`: a private copy of a gate sequence that was correct when written and went stale when a gate was added beside it. The copy was deleted by the `bugs/SP-SP-071` fix and both surfaces now share one verdict function. The criterion stays, and stating why matters: what keeps the copy from returning is an assertion that fails when the two surfaces disagree, not the fact that they agree today."
       inputs:
         workspace: "settings.annotation declared, one AC with approval_gate: true and no approval_date"
         permissive_values: [true, false]
@@ -315,6 +315,11 @@ spec:
       priority: critical
 
   changelog:
+    - version: "2.2.1"
+      date: "2026-08-25"
+      author: "specter-team"
+      type: patch
+      description: "AC-19's rationale described `sync` as carrying its own gate sequence, in the present tense. The `bugs/SP-SP-071` fix deleted that copy and routed both surfaces through one verdict function, so the sentence was describing the state the criterion was written to change. Reworded to the past, with the reason the criterion survives the deletion: what keeps a private copy from returning is an assertion that fails when the surfaces disagree, not their agreeing today. Wording only, no change to the expected output."
     - version: "2.2.0"
       date: "2026-08-25"
       author: "specter-team"

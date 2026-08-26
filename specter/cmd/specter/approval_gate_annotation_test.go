@@ -8,9 +8,12 @@
 // asserted separately.
 //
 // `sync` is exercised alongside `coverage` on purpose rather than trusted to
-// inherit. It carries its own gate sequence instead of calling the one
-// `coverage` uses, so a one-sided fix would leave the two disagreeing, which is
-// the shape of bugs/done/SP-SP-066.
+// inherit. It used to carry its own gate sequence instead of calling the one
+// `coverage` uses, which is why these criteria exist: a one-sided fix would
+// have left the two disagreeing, the shape of bugs/done/SP-SP-066. The copy is
+// gone as of the SP-071 fix and both now route through coverage.GateVerdict.
+// The assertions stay, because what stops the copy coming back is a test that
+// fails when the two surfaces disagree, not the absence of the copy today.
 //
 // @spec spec-coverage
 package main
