@@ -348,3 +348,55 @@ func TestIngestStreamMetadata(t *testing.T) {
 		}
 	})
 }
+
+// padResultsTo returns a valid results document padded with spaces to exactly n
+// bytes. Trailing whitespace keeps it parseable, so a file over the cap is
+// refused by the cap rather than by a parse error any oversized file produces.
+func padResultsTo(n int) []byte {
+	body := []byte(`{"results":[{"spec_id":"svc","ac_id":"AC-01","status":"passed"}]}`)
+	out := make([]byte, n)
+	copy(out, body)
+	for i := len(body); i < n; i++ {
+		out[i] = ' '
+	}
+	return out
+}
+
+// @spec spec-ingest
+// @ac AC-17
+//
+// C-17: the cap is a command contract, not only a helper's. The helper test in
+// internal/ingest proves the boundary and the constant parity; this proves the
+// command reaches it. A future change routing --merge around the helper, or
+// swallowing its error, would leave that test green and this one red.
+func TestIngestMergeSizeCapAtTheCommand(t *testing.T) {
+	t.Run("spec-ingest/AC-17 ingest --merge refuses an oversized input", func(t *testing.T) {
+		dir := t.TempDir()
+		const cap16MiB = 16 << 20
+
+		over := filepath.Join(dir, "over.json")
+		if err := os.WriteFile(over, padResultsTo(cap16MiB+1), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, stderr, code := runCLISplit(t, dir, "ingest", "--merge", over, "--output", filepath.Join(dir, "out.json"))
+		if code == 0 {
+			t.Errorf("C-17: ingest --merge accepted a file one byte over the cap. A results file is a CI artifact and an unbounded read of one is the class the v0.13 audit closed for coverage")
+		}
+		for _, want := range []string{"exceeds", "byte limit", "over.json"} {
+			if !strings.Contains(stderr, want) {
+				t.Errorf("C-17: the command's stderr does not contain %q, so an operator merging several files cannot tell which was refused or why.\ngot: %s", want, stderr)
+			}
+		}
+
+		// At the cap the command succeeds, so the boundary is a limit rather
+		// than an off-by-one, and the refusal above is the cap rather than
+		// anything else about a large file.
+		at := filepath.Join(dir, "at.json")
+		if err := os.WriteFile(at, padResultsTo(cap16MiB), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, atErr, atCode := runCLISplit(t, dir, "ingest", "--merge", at, "--output", filepath.Join(dir, "ok.json")); atCode != 0 {
+			t.Errorf("C-17: ingest --merge refused a file of exactly the cap, so the limit is an off-by-one.\nstderr: %s", atErr)
+		}
+	})
+}
