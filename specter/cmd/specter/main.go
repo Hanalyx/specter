@@ -959,12 +959,31 @@ func coverageExitGates(report *coverage.CoverageReport, specs []schema.SpecAST,
 	// decides the code without printing, which is the tier threshold.
 	violations, code := coverage.GateVerdict(in)
 	printGateViolations(violations)
+	return exitOnGateCode(code)
+}
+
+// exitOnGateCode routes a gate verdict's code to the process exit.
+//
+// One enumeration, shared. `coverage` and `sync` each carried their own switch
+// over the same codes, and a code the shared verdict can return but a switch
+// does not name falls through: to 0 on one command and to a bare 1 on the
+// other. That is bugs/done/SP-SP-073's shape one level up. The verdict was
+// shared and the propagation was not.
+//
+// The codes stay named rather than computed. `spec-sync` AC-17 refuses an
+// os.Exit argument it cannot resolve, because a computed one makes the set of
+// codes the binary can emit unknowable to the registry scan and C-12
+// unenforceable. So this is one list of named constants, not `os.Exit(code)`.
+//
+// An unrouted non-zero code is reported rather than swallowed. Silence there
+// would claim a workspace passed a gate that failed it.
+func exitOnGateCode(code int) error {
 	switch code {
 	case 0:
 		return nil
 	case 1:
-		// Code 1 is the command's own failure exit, returned rather than
-		// raised so cobra reports it the way it reports every other one.
+		// The command's own failure exit, returned rather than raised so cobra
+		// reports it the way it reports every other one.
 		return errSilent
 	case exitCoverageNoTest:
 		os.Exit(exitCoverageNoTest)
@@ -973,7 +992,9 @@ func coverageExitGates(report *coverage.CoverageReport, specs []schema.SpecAST,
 	case exitStreamValidation:
 		os.Exit(exitStreamValidation)
 	}
-	return nil
+	fmt.Fprintf(os.Stderr,
+		"internal: the coverage gates returned exit code %d, which no command routes. Reporting failure rather than success. Please file this against docs/EXIT_CODES.md section 6.\n", code)
+	return errSilent
 }
 
 // printGateViolations writes each gate violation that has a line to write.
@@ -1511,16 +1532,9 @@ func syncCmd() *cobra.Command {
 				// process leaves, so one run tells the operator everything.
 				printGateViolations(violations)
 				// Code 1 stays with errSilent at the call site, exactly as
-				// before, so the threshold path is unchanged. The codes above
-				// it are named, not computed, so the registry scan can see them.
-				switch code {
-				case exitCoverageNoTest:
-					os.Exit(exitCoverageNoTest)
-				case exitCoverageApprovalGate:
-					os.Exit(exitCoverageApprovalGate)
-				case exitStreamValidation:
-					os.Exit(exitStreamValidation)
-				}
+				// before, so the threshold path is unchanged. Every other code
+				// is routed by the one helper both commands share.
+				_ = exitOnGateCode(code)
 			}
 
 			if jsonOutput {
