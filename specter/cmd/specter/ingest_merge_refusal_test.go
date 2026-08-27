@@ -5,6 +5,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,6 +86,77 @@ func TestIngestMergeRefusesAnInconsistentArtifact(t *testing.T) {
 		}
 		if string(before) != string(after) {
 			t.Errorf("C-15: a refused merge rewrote the existing output. A destroyed artifact is worse than the one the merge refused.\nbefore:\n%s\nafter:\n%s", before, after)
+		}
+	})
+}
+
+// bigResultsFile writes an input carrying n entries under one declared stream.
+// Each criterion id is distinct so nothing collapses on merge.
+func bigResultsFile(t *testing.T, path, stream string, lo, n int) {
+	t.Helper()
+	var b strings.Builder
+	fmt.Fprintf(&b, `{"streams":[{"name":%q,"scanned":%d,"extracted":%d}],"results":[`, stream, n, n)
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, `{"spec_id":"svc","ac_id":"AC-%07d","status":"passed","stream":%q}`, lo+i, stream)
+	}
+	b.WriteString(`]}`)
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// @spec spec-ingest
+// @ac AC-18
+//
+// C-15: the prospective artifact must also be one `coverage` can read, and the
+// two refusals must be distinguishable in the message. They need different
+// responses: a stream can be declared, a size cannot be edited away.
+//
+// Driven through the command, because that is where AC-18 states the case and
+// where the message a reader sees is produced. A check below the CLI would stay
+// green while the command swallowed or rewrote the diagnostic.
+func TestIngestMergeRefusesAnOversizedArtifact(t *testing.T) {
+	t.Run("spec-ingest/AC-18 an oversized merge names the size, not a stream", func(t *testing.T) {
+		if testing.Short() {
+			t.Skip("writes two multi-megabyte inputs")
+		}
+		dir := t.TempDir()
+		a := filepath.Join(dir, "big-a.json")
+		b := filepath.Join(dir, "big-b.json")
+		// Each input is comfortably under the 16 MiB per-input cap C-17 sets,
+		// and together they pass it. Neither is refusable on its own terms.
+		bigResultsFile(t, a, "go", 0, 115000)
+		bigResultsFile(t, b, "js", 115000, 115000)
+		for _, in := range []string{a, b} {
+			info, err := os.Stat(in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Size() >= 16<<20 {
+				t.Fatalf("C-17: fixture %s is %d bytes, which the per-input cap already refuses. The oversized case has to come from the sum", in, info.Size())
+			}
+		}
+
+		out := filepath.Join(dir, "merged.json")
+		_, stderr, code := runCLISplit(t, dir, "ingest", "--merge", a, "--merge", b, "--output", out)
+
+		if code == 0 {
+			t.Errorf("C-15: a merge past the cap exited 0. `coverage` cannot read the artifact it wrote")
+		}
+		if !strings.Contains(stderr, "too large") {
+			t.Errorf("C-15: the refusal does not say the artifact is too large.\nstderr:\n%s", stderr)
+		}
+		// The artifact is coherent. Calling it inconsistent sends an operator
+		// to look for a stream that is not the problem, which is the
+		// distinction C-15 requires the message to carry.
+		if strings.Contains(stderr, "inconsistent") {
+			t.Errorf("C-15: an oversized merge is reported as an inconsistency.\nstderr:\n%s", stderr)
+		}
+		if _, err := os.Stat(out); !os.IsNotExist(err) {
+			t.Errorf("C-15: the refused oversized merge created %s", out)
 		}
 	})
 }
