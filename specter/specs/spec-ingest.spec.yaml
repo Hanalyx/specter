@@ -1,6 +1,6 @@
 spec:
   id: spec-ingest
-  version: "1.9.0"
+  version: "2.0.0"
   status: approved
   tier: 1
 
@@ -385,11 +385,11 @@ spec:
       priority: high
 
   changelog:
-    - version: "1.9.0"
+    - version: "2.0.0"
       date: "2026-08-27"
       author: "specter-team"
-      type: minor
-      description: "Two corrections to what 1.8.0 shipped, both found in review of the implementation. C-15 required the prospective artifact to satisfy C-44 and said nothing about size, while the implementation validated by reading the artifact back through the consumer's reader, which caps at MaxResultsFileBytes. Measured: two 8.6 MiB inputs, each well under C-17's per-input cap, merge to 30.8 MiB and are refused. That refusal is defensible, since a file the consumer cannot open is the same failure one command later, but it was unspecified and it was reported as an inconsistency. C-15 now binds it and requires the two refusals to be distinguishable, because they need different responses: a stream can be declared, a size cannot be edited away. The `spec-coverage` floor rises from ^1.22.0 to ^1.24.0. C-15 names C-44, which does not exist below 1.23.0 and does not cover the `streams: null` shape below 1.24.0, so the old range admitted versions where this rule cannot be satisfied. `bugs/SP-SP-075`."
+      type: major
+      description: "Two corrections to what 1.8.0 shipped, both found in review of the implementation. C-15 required the prospective artifact to satisfy C-44 and said nothing about size, while the implementation validated by reading the artifact back through the consumer's reader, which caps at MaxResultsFileBytes. Measured: two 8.6 MiB inputs, each well under C-17's per-input cap, merge to 30.8 MiB and are refused. That refusal is defensible, since a file the consumer cannot open is the same failure one command later, but it was unspecified and it was reported as an inconsistency. C-15 now binds it and requires the two refusals to be distinguishable, because they need different responses: a stream can be declared, a size cannot be edited away. The `spec-coverage` floor rises from ^1.22.0 to ^1.24.0. C-15 names C-44, which does not exist below 1.23.0 and does not cover the `streams: null` shape below 1.24.0, so the old range admitted versions where this rule cannot be satisfied. Major, not minor. AC-18 gains an input, and `spec-diff` C-05 classifies an `inputs` change as breaking; running `specter diff` over this change reports `[breaking]`. Reported as such and followed rather than reasoned around, which is the mistake this cycle already made once on `spec-coverage` 1.22.0 and recorded there. Nothing depends on `spec-ingest`, so nothing cascades. `bugs/SP-SP-075`."
 
     - version: "1.8.0"
       date: "2026-08-26"
