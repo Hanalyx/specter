@@ -1,6 +1,6 @@
 spec:
   id: spec-coverage
-  version: "1.24.0"
+  version: "1.25.0"
   status: approved
   tier: 2
 
@@ -119,7 +119,7 @@ spec:
       enforcement: error
 
     - id: C-17
-      description: "`specter coverage --failing` MUST restrict the table to entries whose `passes_threshold == false` OR `coverage_pct < 100` (i.e. everything below 100% coverage, whether it's under threshold or just not complete). The summary header still reflects the full report, not the filtered view. When all entries are 100%, the filter produces an empty table with a single-line confirmation: `All N specs at 100% coverage.`"
+      description: "`specter coverage --failing` MUST restrict the table to entries whose `passes_threshold == false` OR `coverage_pct < 100` (i.e. everything below 100% coverage, whether it's under threshold or just not complete). The summary header still reflects the full report, not the filtered view. When all entries are 100%, the filter produces an empty table with a single-line confirmation: `All N specs at 100% coverage.` **`--failing` MUST change only the table or empty-table presentation. It MUST NOT change which gates are evaluated, their diagnostics, or the exit code.** Stated as a property of the flag rather than as a list of gates, because a list goes stale the next time a gate is added and this one already did: the empty-table path carried its own threshold-only verdict and skipped every gate that reports without moving a coverage percentage. A presentation flag that decides an exit code is a second verdict, and `bugs/SP-SP-073` is what a second verdict costs."
       type: technical
       enforcement: error
 
@@ -435,7 +435,7 @@ A shape is required rather than left to the implementation because asserting onl
       priority: high
 
     - id: AC-17
-      description: "`specter coverage --failing` on a 14-spec workspace where 2 specs are below 100% (1 failing, 1 partial) prints the summary header (reflecting all 14), then a table containing only those 2 entries. On a workspace where all 14 are 100%, the flag produces no table and a single line: `All 14 specs at 100% coverage.` Exit code respects threshold, not the filter."
+      description: "`specter coverage --failing` on a 14-spec workspace where 2 specs are below 100% (1 failing, 1 partial) prints the summary header (reflecting all 14), then a table containing only those 2 entries. On a workspace where all 14 are 100%, the flag produces no table and a single line: `All 14 specs at 100% coverage.` The exit code is whatever the run would return without the flag."
       inputs:
         case_a: "14 specs, 2 below 100% (1 FAIL, 1 partial-PASS)"
         case_b: "14 specs, all 100% covered"
@@ -445,6 +445,34 @@ A shape is required rather than left to the implementation because asserting onl
         case_b_footer_contains: "All 14 specs at 100% coverage"
       references_constraints: ["C-17"]
       priority: high
+
+    - id: AC-73
+      description: >-
+        `specter coverage --failing` returns the same exit code and the same
+        cause line as `specter coverage` on the same workspace, including on the
+        path where the filter leaves no rows. Bound on the gates that report
+        without moving a coverage percentage, because those are the ones an
+        empty-table path can skip while every other gate leaves a row for the
+        filter to keep and so cannot be skipped this way. A control case is
+        required beside them: a workspace with nothing wrong still exits 0 under
+        the flag and still prints the C-17 confirmation line, so the fix cannot
+        be a blanket refusal to return early.
+      inputs:
+        approval_gate: "every spec at 100 percent, a declared settings.annotation block, one criterion carrying approval_gate: true with no approval_date"
+        stream_validation: "every spec at 100 percent, a results file whose streams block names no stream an entry labels"
+        coexisting: "the stream-validation workspace, also below its tier threshold"
+        control: "every spec at 100 percent and nothing else wrong"
+      expected_output:
+        approval_gate_exit_code: 3
+        stream_validation_exit_code: 20
+        coexisting_exit_code: 1
+        control_exit_code: 0
+        codes_match_the_run_without_the_flag: true
+        cause_lines_match_the_run_without_the_flag: true
+        coexisting_still_reports_the_stream_violations: true
+        control_prints_the_confirmation_line: true
+      references_constraints: ["C-17"]
+      priority: critical
 
     - id: AC-18
       description: "A spec ID of 50 characters (e.g. `app-api-admin-appointments-id-service-override`) rendered in the default table is truncated to 40 characters followed by `…` (ellipsis), keeping the Tier column aligned. `specter coverage --json` emits the full ID unchanged. A function TruncateSpecID(id, maxLen) is the pure helper under this AC."
@@ -1175,6 +1203,12 @@ A shape is required rather than left to the implementation because asserting onl
       priority: critical
 
   changelog:
+    - version: "1.25.0"
+      date: "2026-08-26"
+      author: "specter-team"
+      type: minor
+      description: "C-17 states what `--failing` may change. It described the table and the empty-table line and then said nothing about exit codes, and AC-17 closed with `Exit code respects threshold, not the filter`, which is the reading the implementation took: the empty-table path carries its own threshold-only verdict and returns above the shared gates. Measured at 0e3e037: a workspace at 100 percent with an unmet approval gate under a declared annotation block exits 3 plain and 0 under the flag, and one with an inconsistent streams block exits 20 plain and 0 under the flag, both silently. The three gates that hold are the three that either fire on a spec already below 100 percent or demote one to get there, so the filter keeps a row and the early return never fires. The rule is now a property of the flag rather than a list of gates, because a list goes stale the next time a gate is added, which is how this one broke. AC-73 binds the two gates that can be skipped, a coexistence case so precedence and complete reporting survive the path, and a control so the fix cannot be a blanket refusal to return early. `bugs/SP-SP-074`."
+
     - version: "1.24.0"
       date: "2026-08-26"
       author: "specter-team"
