@@ -105,14 +105,43 @@ func TestFailingFlagDoesNotChangeTheVerdict(t *testing.T) {
 					c.name, c.namesInCause, flagErr)
 			}
 
-			// C-17's own presentation rule, on the control. The empty-table
-			// confirmation is what the early return exists to print.
+			// C-17's own presentation rule, on the control.
+			//
+			// Both halves are asserted. The confirmation has to appear, and
+			// the table it replaces has to be gone. Asserting only the
+			// confirmation is a false green: a run that prints the line and
+			// then renders the empty table and its footer satisfies a
+			// contains check while breaking the rule the line exists to
+			// serve, which C-17 states as an empty table with a single-line
+			// confirmation.
 			if c.want == 0 {
-				if !strings.Contains(flagOut, "at 100% coverage.") {
-					t.Errorf("C-17 (%s): --failing printed no empty-table confirmation.\nstdout:\n%s", c.name, flagOut)
+				const tableHeader = "Spec ID"
+				const tableFooter = "specs: "
+				got := map[string]bool{
+					"confirmation": strings.Contains(flagOut, "at 100% coverage."),
+					"table header": strings.Contains(flagOut, tableHeader),
+					"table footer": strings.Contains(flagOut, tableFooter),
 				}
-				if strings.Contains(plainOut, "at 100% coverage.") {
-					t.Errorf("C-17 (%s): the plain run printed the empty-table confirmation, which belongs to the filter", c.name)
+				want := map[string]bool{"confirmation": true, "table header": false, "table footer": false}
+				for k, w := range want {
+					if got[k] != w {
+						t.Errorf("C-17 (%s): under --failing the %s is present=%v, want %v. The filter replaces the table with one line; it does not print the line above the table.\nstdout:\n%s",
+							c.name, k, got[k], w, flagOut)
+					}
+				}
+				// Positive control on the same three, without the flag. If the
+				// plain run stopped printing a table, every assertion above
+				// would pass for the wrong reason.
+				plain := map[string]bool{
+					"confirmation": strings.Contains(plainOut, "at 100% coverage."),
+					"table header": strings.Contains(plainOut, tableHeader),
+					"table footer": strings.Contains(plainOut, tableFooter),
+				}
+				plainWant := map[string]bool{"confirmation": false, "table header": true, "table footer": true}
+				for k, w := range plainWant {
+					if plain[k] != w {
+						t.Errorf("C-17 (%s): without the flag the %s is present=%v, want %v", c.name, k, plain[k], w)
+					}
 				}
 			}
 		}
