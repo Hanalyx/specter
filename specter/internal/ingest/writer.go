@@ -56,33 +56,7 @@ func WriteResultsFile(path string, results []TestResult) error {
 // block C-16 requires when a run names a stream. A nil or empty slice writes
 // no block at all rather than an empty array.
 func WriteResultsFileWithStreams(path string, results []TestResult, streams []StreamInfo) error {
-	merged := MergeResults(results)
-
-	out := resultsFile{Results: make([]resultEntry, 0, len(merged))}
-	for _, r := range merged {
-		entry := resultEntry{
-			SpecID: r.SpecID,
-			ACID:   r.ACID,
-			Status: r.Status,
-			Passed: r.Status == StatusPassed,
-		}
-		// The label is written only when the producer set one, so a
-		// single-stream run emits exactly the file it emitted before this
-		// field existed. spec-coverage C-41: missing means default.
-		if r.Stream != "" && r.Stream != DefaultStream {
-			entry.Stream = r.Stream
-		}
-		out.Results = append(out.Results, entry)
-	}
-
-	// C-42: ascending by name, so two producers writing the same facts write
-	// the same bytes.
-	if len(streams) > 0 {
-		out.Streams = append([]StreamInfo(nil), streams...)
-		sort.Slice(out.Streams, func(i, j int) bool { return out.Streams[i].Name < out.Streams[j].Name })
-	}
-
-	data, err := json.MarshalIndent(out, "", "  ")
+	data, err := serializeResultsFile(results, streams)
 	if err != nil {
 		return err
 	}
@@ -125,7 +99,13 @@ func serializeResultsFile(results []TestResult, streams []StreamInfo) ([]byte, e
 
 // ErrMergeWouldBeRefused is the C-15 refusal: the artifact a merge is about to
 // write is one `coverage` would reject.
-var ErrMergeWouldBeRefused = errors.New("the merged artifact is inconsistent")
+var ErrMergeWouldBeRefused = errors.New("the merge was refused")
+
+// ErrMergeTooLarge is the C-15 size refusal, kept distinct from the
+// consistency one. They need different responses: a missing declaration is
+// added to a block, and a size is not edited away. Reporting one as the other
+// sends an operator looking for a stream that is not the problem.
+var ErrMergeTooLarge = errors.New("the merged artifact is too large to be read back")
 
 // WriteMergedResultsFile writes a `--merge` output, and refuses to write one
 // `coverage` would refuse.
@@ -147,6 +127,12 @@ func WriteMergedResultsFile(path string, results []TestResult, streams []StreamI
 	if err != nil {
 		return err
 	}
+	// C-15: the artifact must also be one `coverage` can read. Two inputs that
+	// each pass C-17's per-input cap can sum past it, and a file the consumer
+	// cannot open is this rule's failure one command later.
+	if len(data) > int(coverage.MaxResultsFileBytes) {
+		return fmt.Errorf("%w: %d bytes exceeds the %d byte limit", ErrMergeTooLarge, len(data), coverage.MaxResultsFileBytes)
+	}
 	rf, err := coverage.ParseResultsFile(data)
 	if err != nil {
 		return fmt.Errorf("%w: the merged artifact does not parse: %v", ErrMergeWouldBeRefused, err)
@@ -157,7 +143,7 @@ func WriteMergedResultsFile(path string, results []TestResult, streams []StreamI
 		// the prefix is trimmed the same way spec-coverage C-40 trims it for a
 		// sync phase message.
 		msg := strings.TrimPrefix(coverage.StreamValidationMessage(violations), "error: ")
-		return fmt.Errorf("%w. %s", ErrMergeWouldBeRefused, msg)
+		return fmt.Errorf("%w: the merged artifact is inconsistent. %s", ErrMergeWouldBeRefused, msg)
 	}
 	return os.WriteFile(path, data, 0644)
 }

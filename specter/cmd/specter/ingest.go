@@ -247,7 +247,7 @@ func runMerge(paths []string, outputPath string) error {
 	// produces one `coverage` refuses and never destroys the output already
 	// there when it declines to.
 	if err := ingest.WriteMergedResultsFile(outputPath, results, merged); err != nil {
-		if errors.Is(err, ingest.ErrMergeWouldBeRefused) {
+		if errors.Is(err, ingest.ErrMergeWouldBeRefused) || errors.Is(err, ingest.ErrMergeTooLarge) {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			fmt.Fprintf(os.Stderr, "       %s was not written, and any existing file at that path is unchanged.\n", outputPath)
 			return errSilent
