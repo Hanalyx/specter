@@ -78,7 +78,7 @@ Stable row is reachable.
 Returned when `RunE` returns `nil`. `--help` and `--version` also return 0.
 
 `watch` returns 0 on SIGINT or SIGTERM once it has entered its event loop
-(`cmd/specter/main.go:2933-2935`). It never returns a code of its own for a
+(the signal handler in `watchCmd`). It never returns a code of its own for a
 failed cycle, because a watch cycle reports to the terminal rather than to the
 caller.
 
@@ -92,12 +92,12 @@ which is `bugs/SP-SP-020`.
 
 | Producer | Site | Example |
 |---|---|---|
-| Cobra usage error | `main.go:200-204` | unknown command, unknown flag, wrong argument count |
-| No specs discovered | `main.go:427`, `:481`, `:1273` | an empty workspace |
-| A spec failed to parse | `main.go:459`, `:687`, `:1118` | invalid YAML, schema violation |
-| A dependency error | `main.go:570`, `:702` | dangling `depends_on` reference |
-| A gate failed | `main.go:668-672`, `:1231`, `:1403` | check errors, coverage below threshold |
-| A configuration error | `main.go:875`, `:927`, `:946`, `:2891` | rejected manifest, invalid `--strictness` value |
+| Cobra usage error | `main`, where `rootCmd.Execute()` returns | unknown command, unknown flag, wrong argument count |
+| No specs discovered | the four `noSpecsMessage()` call sites | an empty workspace |
+| A spec failed to parse | `parseCmd`, `checkCmd`, `coverageCmd` | invalid YAML, schema violation |
+| A dependency error | `resolveCmd`, `checkCmd` | dangling `depends_on` reference |
+| A gate failed | `checkExitVerdict`, `coverageExitGates`, `syncCmd` | check errors, coverage below threshold |
+| A configuration error | the four `warnManifestRejected()` call sites | rejected manifest, invalid `--strictness` value |
 
 A caller reading only the integer cannot tell "the gate failed" from "the gate
 never ran". Until code 1 is re-carved, a driver has to read stderr. Cobra usage
@@ -137,7 +137,7 @@ trigger never depended on the ladder.
 
 ### Code 2, the zero-tolerance non-passed gate
 
-Emitted by `coverage` from `coverageExitGates` at `main.go:888`, which both the
+Emitted by `coverage` from `coverageExitGates`, which both the
 text path and the `--json` branch call, and by `sync`. Both print the same
 sentence to stderr before exiting:
 
@@ -152,7 +152,7 @@ returns.
 
 ### Code 2, the panic path
 
-`main.go:152-160` recovers a panic on the main goroutine, prints a pre-filled bug
+The `recover()` in `main` catches a panic on the main goroutine, prints a pre-filled bug
 report link, and calls `os.Exit(2)`.
 
 **This collides with the zero-tolerance gate.** A caller that sees 2 from
@@ -205,7 +205,7 @@ and `sync --json` each exit 3 and print the second sentence.
 
 ### Code 10, the breaking-diff gate
 
-Emitted by `diff` at `main.go:3233`, from a deferred call so the report prints
+Emitted by `diff` from `diffCmd`, from a deferred call so the report prints
 before the process leaves. Two conditions, both required: `--exit-code` was
 passed, and the change class is `breaking`.
 
@@ -289,7 +289,7 @@ another. They are recorded as current behavior, not as allocations.
 | `check` and `coverage` on an unreadable specs directory | Reported as a clean workspace with zero specs. Exit 0. `sync` exits 1, but names the wrong cause. | `bugs/SP-SP-026`, open |
 | `check --json` when a spec fails to parse, the resolver errors, or the manifest is rejected | Exit 1 with an empty stdout. No document at all. | `bugs/SP-SP-032`, open |
 | `coverage --json` when the manifest is rejected | Exit 1 with an empty stdout. | `bugs/SP-SP-032`, open |
-| A rejected `specter.yaml` | `check`, `coverage`, `sync`, `doctor`, and `watch` exit 1. `parse`, `resolve`, `resolve dependents`, and `explain` warn on stderr and exit 0, through `warnManifestRejected()` at `main.go:422`, `:476`, `:618`, and `:2612`. | `bugs/SP-SP-017`, open |
+| A rejected `specter.yaml` | `check`, `coverage`, `sync`, `doctor`, and `watch` exit 1. `parse`, `resolve`, `resolve dependents`, and `explain` warn on stderr and exit 0, through the four `warnManifestRejected()` call sites. | `bugs/SP-SP-017`, open |
 
 `check --json` was the same defect until this cycle. It was fixed by
 `checkExitVerdict`, which both the text branch and the JSON branch now end on,
@@ -414,11 +414,11 @@ can fire before code 2 and also after code 3.
 The verified order inside `coverage`, from the top of `coverageCmd` to its last
 return, identical in text and JSON mode:
 
-1. Flag validation and configuration errors. Code 1. `main.go:856`, `:873`, `:923`, `:943`.
-2. No annotated test file under zero-tolerance. Code 1. `main.go:962-967`.
-3. Unknown `--scope` domain. Code 1. `main.go:976-984`.
-4. Missing results file under a strict mode. Code 1. `main.go:1013-1024`.
-5. Spec parse errors. Code 1. `main.go:1094` in JSON mode, `main.go:1117` in text mode.
+1. Flag validation and configuration errors. Code 1. In `coverageCmd`, before any spec is read.
+2. No annotated test file under zero-tolerance. Code 1. In `coverageCmd`.
+3. Unknown `--scope` domain. Code 1. In `coverageCmd`.
+4. Missing results file under a strict mode. Code 1. In `coverageCmd`.
+5. Spec parse errors. Code 1. In `coverageCmd`, once per output mode.
 6. Annotation rule 1, a criterion with no test at all. Code 2 when
    `settings.annotation.permissive` is `false`. Under `permissive: true` it
    reports and decides nothing, so a later gate chooses the code.
@@ -598,7 +598,7 @@ Follow this order.
 5. **Wire all four places.** The check, the phase result, the exit mapping, and
    the ordering. Missing the fourth is what shipped twice.
 6. **Take one verdict for both output formats.** Copy the `checkExitVerdict`
-   shape at `main.go:668-672`.
+   shape in `checkExitVerdict`.
 7. **Pin the diagnostic.** Record the exact sentence here. The 1A4 parity test
    asserts on it, and a code that collapses onto a shipped one leaves the message
    as the only channel that separates them.
@@ -609,6 +609,12 @@ Every claim above is checkable. Build with `make build` from `specter/`, which
 writes `bin/specter`. Do not run `./specter` at the repository root. That binary
 is stale, and probing it has already produced one wrong bug severity and one
 false alarm, which `bugs/SP-SP-026` records.
+
+**Read from source, by function name rather than by line.** Every reference
+above names a function or a greppable call site. An earlier revision carried 35
+`file:line` anchors and all 35 had gone stale, several of them wrong at the
+commit that wrote them, because the tree moves faster than the registry. A name
+survives an edit above it; a number does not.
 
 **Read from source.** The exit sites, the precedence order inside `coverage` and
 `sync`, the panic path, the `watch` signal handler, and the absence of `os.Exit`
