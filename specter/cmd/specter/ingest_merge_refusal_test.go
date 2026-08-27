@@ -15,10 +15,15 @@ import (
 const declaresGo = `{"streams":[{"name":"go","scanned":2,"extracted":1}],
 	"results":[{"spec_id":"svc","ac_id":"AC-01","status":"passed","stream":"go"}]}`
 
-// labelsJSWithNoBlock is legal alone, because a file with no streams key is
-// what C-14 promises to leave untouched. Merged with a file that declares its
-// streams, it contributes a label nothing declares.
-const labelsJSWithNoBlock = `{"results":[{"spec_id":"svc","ac_id":"AC-02","status":"passed","stream":"js"}]}`
+// labelsUndeclaredWithNoBlock is legal alone, because a file with no streams
+// key is what C-14 promises to leave untouched. Merged with a file that
+// declares its streams, it contributes a label nothing declares.
+//
+// The label is `handwritten` rather than something short. An earlier draft used
+// `js` and asserted the refusal named it, which passed on a run that printed no
+// validation message at all: the output path `fresh.json` carries `js` inside
+// `.json`, so the assertion matched the filename in the "was not written" line.
+const labelsUndeclaredWithNoBlock = `{"results":[{"spec_id":"svc","ac_id":"AC-02","status":"passed","stream":"handwritten"}]}`
 
 // declaresJS is the control's second input: consistent on its own terms.
 const declaresJS = `{"streams":[{"name":"js","scanned":3,"extracted":1}],
@@ -33,7 +38,7 @@ func TestIngestMergeRefusesAnInconsistentArtifact(t *testing.T) {
 	t.Run("spec-ingest/AC-18 a merge does not write what coverage refuses", func(t *testing.T) {
 		dir := t.TempDir()
 		writeFixture(t, dir, "a.json", declaresGo)
-		writeFixture(t, dir, "b.json", labelsJSWithNoBlock)
+		writeFixture(t, dir, "b.json", labelsUndeclaredWithNoBlock)
 		writeFixture(t, dir, "c.json", declaresJS)
 		a := filepath.Join(dir, "a.json")
 		b := filepath.Join(dir, "b.json")
@@ -56,7 +61,8 @@ func TestIngestMergeRefusesAnInconsistentArtifact(t *testing.T) {
 		if code == 0 {
 			t.Errorf("C-15: merging a file that declares its streams with one carrying an undeclared label exited 0. The artifact it writes is one `coverage` refuses")
 		}
-		if !strings.Contains(stderr, "js") {
+		// The full quoted form, so no path or unrelated word can satisfy it.
+		if !strings.Contains(stderr, `stream "handwritten"`) {
 			t.Errorf("C-15: the refusal does not name the stream the artifact fails on.\nstderr:\n%s", stderr)
 		}
 		if _, err := os.Stat(fresh); !os.IsNotExist(err) {
