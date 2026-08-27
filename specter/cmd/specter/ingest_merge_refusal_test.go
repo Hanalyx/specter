@@ -1,5 +1,5 @@
 // ingest_merge_refusal_test.go -- `--merge` refuses to write an artifact
-// `coverage` would reject, spec-ingest 1.8.0 C-15/AC-18, bugs/SP-SP-075.
+// `coverage` would reject, spec-ingest 2.0.0 C-15/AC-18, bugs/SP-SP-075.
 //
 // @spec spec-ingest
 package main
@@ -146,14 +146,24 @@ func TestIngestMergeRefusesAnOversizedArtifact(t *testing.T) {
 		if code == 0 {
 			t.Errorf("C-15: a merge past the cap exited 0. `coverage` cannot read the artifact it wrote")
 		}
-		if !strings.Contains(stderr, "too large") {
-			t.Errorf("C-15: the refusal does not say the artifact is too large.\nstderr:\n%s", stderr)
+		// The contract, not a wording. C-15 asks that the message name the
+		// size and not read as an inconsistency. An earlier draft required the
+		// phrase "too large", which was wrong in both directions: it failed a
+		// conforming implementation reporting the same limit in other words,
+		// and it would have passed `stream "go" is too large`, which names
+		// exactly the thing the rule says not to name.
+		for _, want := range []string{"exceeds", "byte limit"} {
+			if !strings.Contains(stderr, want) {
+				t.Errorf("C-15: the refusal does not name the size. Missing %q.\nstderr:\n%s", want, stderr)
+			}
 		}
-		// The artifact is coherent. Calling it inconsistent sends an operator
-		// to look for a stream that is not the problem, which is the
-		// distinction C-15 requires the message to carry.
-		if strings.Contains(stderr, "inconsistent") {
-			t.Errorf("C-15: an oversized merge is reported as an inconsistency.\nstderr:\n%s", stderr)
+		// The artifact is coherent. Naming a stream, or calling it
+		// inconsistent, sends an operator to look for something that is not
+		// the problem.
+		for _, forbidden := range []string{`stream "`, "inconsistent"} {
+			if strings.Contains(stderr, forbidden) {
+				t.Errorf("C-15: an oversized merge reports %q, which is the consistency refusal's language.\nstderr:\n%s", forbidden, stderr)
+			}
 		}
 		if _, err := os.Stat(out); !os.IsNotExist(err) {
 			t.Errorf("C-15: the refused oversized merge created %s", out)
