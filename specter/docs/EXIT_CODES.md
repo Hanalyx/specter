@@ -97,7 +97,7 @@ which is `bugs/SP-SP-020`.
 | A spec failed to parse | `parseCmd`, `checkCmd`, `coverageCmd` | invalid YAML, schema violation |
 | A dependency error | `resolveCmd`, `checkCmd` | dangling `depends_on` reference |
 | A gate failed | `checkExitVerdict`, `coverageExitGates`, `syncCmd` | check errors, coverage below threshold |
-| A configuration error | the four `warnManifestRejected()` call sites | rejected manifest, invalid `--strictness` value |
+| A configuration error | the four `warnManifestRejected()` call sites; the `--strictness` check in `coverageCmd` and in `syncCmd` | rejected manifest, invalid `--strictness` value |
 
 A caller reading only the integer cannot tell "the gate failed" from "the gate
 never ran". Until code 1 is re-carved, a driver has to read stderr. Cobra usage
@@ -284,6 +284,7 @@ another. They are recorded as current behavior, not as allocations.
 | Case | Behavior | Bug |
 |---|---|---|
 | `resolve --json` on a dependency error | The `dangling_reference` diagnostic appears in the document. Exit 0. Text mode exits 1. | Not filed as of 2026-08-17 |
+| `coverage --failing` where every spec is at 100 percent | The filter leaves no rows, the command prints `All N specs at 100% coverage.` and returns above `coverageExitGates`. Exit 0 on a workspace `coverage` exits 3 or 20 on, with nothing on stderr. Two gates leak: the approval gate under a declared `settings.annotation` block, and streams-block validation. The other three do not, because each moves a coverage percentage and so leaves rows for the filter to keep. | `bugs/SP-SP-074` |
 | `diff` on a change it labels `[breaking]`, without `--exit-code` | The classification is printed and correct. Exit 0. Intended, per `spec-diff` C-10. With `--exit-code` the same run exits 10. | `bugs/done/SP-SP-012`, resolved in v0.15.0 |
 | `diff coverage` on any delta | Exit 0 by design. Documented as a diagnostic surface, not a gate. | Intended |
 | `check` and `coverage` on an unreadable specs directory | Reported as a clean workspace with zero specs. Exit 0. `sync` exits 1, but names the wrong cause. | `bugs/SP-SP-026`, open |
@@ -412,7 +413,9 @@ already proves that a numeric rule cannot work: within one `coverage` run, code 
 can fire before code 2 and also after code 3.
 
 The verified order inside `coverage`, from the top of `coverageCmd` to its last
-return, identical in text and JSON mode:
+return, identical in text and JSON mode. **One path does not reach it:**
+`--failing` on a workspace where every spec is at 100 percent returns above the
+gates, which is `bugs/SP-SP-074` and is recorded in Section 2.
 
 1. Flag validation and configuration errors. Code 1. In `coverageCmd`, before any spec is read.
 2. No annotated test file under zero-tolerance. Code 1. In `coverageCmd`.
@@ -440,8 +443,8 @@ Adding a gate to the end is how a new code takes a number without changing what
 an existing caller sees.
 
 Steps 1 through 5 are workspace and invocation preconditions. All of them return
-code 1, and all of them run before the two gates that have codes of their own. A
-gate added at the end of this list preempts nothing.
+code 1, and all of them run before the five gates below, which `GateVerdict`
+decides. A gate added at the end of that list preempts nothing.
 
 `sync` reaches the same gates in the same relative order. It no longer carries
 its own copy of them: `bugs/done/SP-SP-071` deleted that copy and routed both
@@ -618,7 +621,8 @@ survives an edit above it; a number does not.
 
 **Read from source.** The exit sites, the precedence order inside `coverage` and
 `sync`, the panic path, the `watch` signal handler, and the absence of `os.Exit`
-in `internal/`. Every one carries a `file:line` above.
+in `internal/`. Every one names the function that holds it, per the convention
+above.
 
 **Run against a built binary.** Verified on `release/v0.15.0` at `6c82473` with
 `bin/specter`:
