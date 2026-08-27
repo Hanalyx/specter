@@ -1317,13 +1317,20 @@ func coverageCmd() *cobra.Command {
 			if failingOnly {
 				displayEntries = coverage.FilterFailing(displayEntries)
 				if len(displayEntries) == 0 {
+					// C-17: the filter's empty-table confirmation. The table is
+					// all this path replaces. The verdict comes from the same
+					// gates the unfiltered path reaches, with the same inputs.
+					//
+					// This branch used to decide the code itself, from the
+					// threshold alone. That was right when the threshold was
+					// the only gate that could reach it, and it silently
+					// skipped every gate added afterward that reports without
+					// moving a coverage percentage: the approval gate under a
+					// declared annotation block, and streams validation. Both
+					// exited 0 here and non-zero without the flag
+					// (bugs/SP-SP-074).
 					fmt.Printf("All %d specs at 100%% coverage.\n", len(report.Entries))
-					// Exit code still respects threshold pass/fail —
-					// --failing is a display filter, not a status change.
-					if report.Summary.Failing > 0 {
-						return errSilent
-					}
-					return nil
+					return coverageExitGates(report, specs, results, m, effectiveStrictness)
 				}
 			}
 
