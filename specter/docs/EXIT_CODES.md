@@ -69,7 +69,7 @@ Stable row is reachable.
 | `2` | `coverage`, `sync` | Effective strictness `zero-tolerance`, and at least one annotated acceptance criterion has a results-file status other than `passed`. | Stable |
 | `2` | `coverage`, `sync` | A `settings.annotation` block is declared with `permissive: false`, and at least one acceptance criterion has no test at all. | Stable |
 | `2` | all | The process recovered a panic on the main goroutine. | Accidental collision |
-| `3` | `coverage`, `sync` | Effective strictness `zero-tolerance`, and at least one acceptance criterion carries `approval_gate: true` with an unset `approval_date`. | Stable |
+| `3` | `coverage`, `sync` | At least one acceptance criterion carries `approval_gate: true` with an unset `approval_date`, under effective strictness `zero-tolerance` **or** under a declared `settings.annotation` block. | Stable |
 | `10` | `diff` | `--exit-code` was passed and the change class is `breaking`. Without the flag, `diff` exits 0. | Stable |
 | `20` | `coverage`, `sync` | The results file carries a `streams` block that breaks one of `spec-coverage` C-44's five consistency rules, and no gate that shipped earlier also failed. | Stable |
 
@@ -146,7 +146,9 @@ error: zero-tolerance strictness — %d annotated AC(s) did not pass
 ```
 
 That string is the golden value for the propagation parity test in roadmap item
-1A4. It must stay identical across all three sites.
+1A4. It must stay identical wherever it is emitted, which is one place now:
+`coverage.GateVerdict` builds it and both commands print what the verdict
+returns.
 
 ### Code 2, the panic path
 
@@ -168,14 +170,38 @@ status the runtime produces in that case is not verified here.
 
 ### Code 3, the approval-gate violation
 
-Emitted by `coverage` from the same `coverageExitGates`, and by `sync`. Both
-print:
+Emitted by `coverage` from the same `coverageExitGates`, and by `sync`.
+
+The gate fires under both strictness models, which is what `spec-coverage`
+C-40 requires and what `bugs/done/SP-SP-071` was filed for: counting the
+violations inside the zero-tolerance branch alone made the gate silent for a
+workspace that declared `settings.annotation`. So there are two sentences, one
+per model, and a run prints the one that matches how it was configured.
+
+Under the ladder:
 
 ```
 error: zero-tolerance strictness — %d AC(s) carry approval_gate=true with unset approval_date
 ```
 
 This is the second golden value for 1A4.
+
+Under a declared `settings.annotation` block:
+
+```
+error: %d AC(s) carry approval_gate=true with unset approval_date. An approval gate is a human sign-off, so settings.annotation.permissive does not soften it
+```
+
+The second sentence names the setting the operator actually chose. Naming
+zero-tolerance in a run that is not on the ladder would send them to a setting
+they never set. `permissive` is named because an operator who set it will
+reasonably expect it to soften this too, and it does not: an approval gate is a
+human sign-off rather than a coverage measurement.
+
+Measured 2026-08-26 at `986c228`, on a workspace declaring `settings.annotation`
+with `permissive: true`, no `--strictness` flag, every criterion covered, and one
+criterion carrying `approval_gate: true`: `coverage`, `coverage --json`, `sync`
+and `sync --json` each exit 3 and print the second sentence.
 
 ### Code 10, the breaking-diff gate
 
@@ -238,8 +264,16 @@ verified by doing it, not by reading the assertion.
 `parse`, `resolve`, `resolve dependents`, `check`, `reverse`, `init`, `doctor`,
 `explain`, `watch`, `diff coverage`, `ingest`, `feedback`, and `pre-push-check`.
 `diff` is not on this list: it emits 10 under `--exit-code`, per the section
-above. `grep -rn "os.Exit" --include="*.go" cmd/ internal/` finds exit sites in
-`main.go` only, and no package under `internal/` calls `os.Exit`.
+above. Verify with
+`grep -rn "os.Exit" --include="*.go" cmd/ internal/ | grep -v _test.go`, which
+finds exit sites in `main.go` only. No package under `internal/` calls
+`os.Exit`, which is what keeps the internal packages usable as a library.
+
+The `_test.go` filter is not cosmetic. Without it the command returns
+`cli_test.go`, whose `TestMain` calls `os.Exit(0)` and `os.Exit(m.Run())`, plus
+three test files that only mention the string. Those are outside the shipped
+binary and outside the `spec-sync` AC-16 scan, which skips `_test.go` for the
+same reason.
 
 ## Section 2: where the code and the output disagree
 
@@ -313,7 +347,7 @@ reachable, which `spec-sync` AC-18 enforces.
 | `10` to `19` | Orchestration gates | `10` shipped (`diff --exit-code`). `11` to `19` free. |
 | `20` to `29` | Evidence stream validation | `20` shipped (stream validation). `21` planned. `22` to `29` free. |
 | `30` to `63` | Unallocated | Reserved for a future track |
-| `64` to `78` | Usage, internal, and configuration errors, per `sysexits.h` | None allocated |
+| `64` to `78` | Usage, internal, and configuration errors, per `sysexits.h` | `70`, `78` and `64` planned, none emitted yet. Rest free. |
 | `79` to `125` | Do not use | Reserved |
 | `126` and above | Do not use | Owned by the shell and the operating system |
 
@@ -385,15 +419,25 @@ return, identical in text and JSON mode:
 3. Unknown `--scope` domain. Code 1. `main.go:976-984`.
 4. Missing results file under a strict mode. Code 1. `main.go:1013-1024`.
 5. Spec parse errors. Code 1. `main.go:1094` in JSON mode, `main.go:1117` in text mode.
-6. Zero-tolerance non-passed. Code 2.
-7. Approval gate. Code 3.
-8. Coverage threshold. Code 1.
+6. Annotation rule 1, a criterion with no test at all. Code 2 when
+   `settings.annotation.permissive` is `false`. Under `permissive: true` it
+   reports and decides nothing, so a later gate chooses the code.
+7. Zero-tolerance non-passed. Code 2.
+8. Approval gate. Code 3.
+9. Coverage threshold. Code 1.
+10. Streams-block validation. Code 20.
 
-Items 6 through 8 no longer carry a line reference per output mode, because
-there is no longer one per mode. All three are in `coverageExitGates` at
-`main.go:888`, which the text path and the `--json` branch both call. The pairs
-this list used to name were the two copies that diverged in
-`bugs/done/SP-SP-066`.
+Items 6 through 10 carry no line reference per output mode, because there is no
+longer one per mode. All five are decided by `coverage.GateVerdict`, which
+`coverageExitGates` calls once and which the text path and the `--json` branch
+both reach. The pairs this list used to name were the two copies that diverged
+in `bugs/done/SP-SP-066`.
+
+**The order of items 6 through 10 is the order `GateVerdict` appends them**, and
+that is the whole mechanism behind the rule above: the verdict returns the first
+non-zero code, so a gate appended later cannot preempt one appended earlier.
+Adding a gate to the end is how a new code takes a number without changing what
+an existing caller sees.
 
 Steps 1 through 5 are workspace and invocation preconditions. All of them return
 code 1, and all of them run before the two gates that have codes of their own. A
@@ -575,7 +619,11 @@ in `internal/`. Every one carries a `file:line` above.
 
 - The codes 0, 1, 2, and 3, on a fixture workspace with one valid spec and one
   annotated test.
-- `parse --json` returning 0 on a spec that fails to parse.
+- `parse --json` returning 0 on a spec that fails to parse. **This result has
+  since reversed.** It was fixed on 2026-08-25 as `bugs/done/SP-SP-022`, and
+  `parse --json` now exits 1 and still writes its document. Recorded rather than
+  deleted, because this appendix is a log of what was measured when, and a
+  reader re-running it would otherwise get an answer it does not predict.
 - `resolve --json` returning 0 on a dangling `depends_on` reference.
 - `check --json` returning 1 with zero bytes on stdout, on a parse error and on a
   resolver error.
