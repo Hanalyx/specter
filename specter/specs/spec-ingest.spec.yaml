@@ -1,6 +1,6 @@
 spec:
   id: spec-ingest
-  version: "1.7.0"
+  version: "1.8.0"
   status: approved
   tier: 1
 
@@ -115,7 +115,7 @@ spec:
       enforcement: error
 
     - id: C-15
-      description: "`specter ingest --merge <file>...` MUST build its output from the named results files alone and MUST NOT read the existing output first. This is the opposite of the accumulation C-11 requires for `--junit` and `--go-test`, and both are correct for their case. Accumulating is right when one run assembles one stream from several runner files. It is wrong across runs, because a criterion that passed in the previous run and produced no entry in this one keeps its stale passing entry, which hides exactly the absence the stream foundation exists to make visible. `--merge` therefore replaces rather than layers, and a stream re-run is a stream replaced. Entries from the named files merge on `(spec_id, ac_id, stream)` per C-08, so two files carrying different streams both survive and two files carrying the same stream collapse worst-status-wins. The `streams` blocks of the named files merge by name, and a stream declared in more than one input sums its counts. `--merge` combined with `--junit`, `--go-test` or `--stream` in one invocation MUST be refused rather than given a precedence rule, because the two modes disagree about what the output is built from and a silent winner would make the artifact depend on flag order."
+      description: "`specter ingest --merge <file>...` MUST build its output from the named results files alone and MUST NOT read the existing output first. This is the opposite of the accumulation C-11 requires for `--junit` and `--go-test`, and both are correct for their case. Accumulating is right when one run assembles one stream from several runner files. It is wrong across runs, because a criterion that passed in the previous run and produced no entry in this one keeps its stale passing entry, which hides exactly the absence the stream foundation exists to make visible. `--merge` therefore replaces rather than layers, and a stream re-run is a stream replaced. Entries from the named files merge on `(spec_id, ac_id, stream)` per C-08, so two files carrying different streams both survive and two files carrying the same stream collapse worst-status-wins. The `streams` blocks of the named files merge by name, and a stream declared in more than one input sums its counts. `--merge` combined with `--junit`, `--go-test` or `--stream` in one invocation MUST be refused rather than given a precedence rule, because the two modes disagree about what the output is built from and a silent winner would make the artifact depend on flag order. **The prospective merged artifact MUST satisfy `spec-coverage` C-44 before any output is written.** When it would not, `--merge` MUST refuse: it writes nothing, leaves an existing output byte-identical, exits non-zero, and names the stream the artifact fails on. Two inputs that are each valid alone can combine into one that is not, because a file declaring its streams merged with a file carrying labeled entries and no block yields an artifact that declares one and not the other. C-44 exempts `--merge` from validating its **inputs**, and that exemption is right: a merge reads a file as a producer assembling a new one rather than as a consumer judging a workspace. It says nothing about the artifact a merge emits. A producer that writes what its own consumer refuses has moved the failure one command later and named a stream the operator never wrote. The rule is stated against C-44 rather than restated here, so the two cannot drift: a rule added to C-44 binds this refusal on the day it lands."
       type: technical
       enforcement: error
 
@@ -325,6 +325,32 @@ spec:
       references_constraints: ["C-15"]
       priority: critical
 
+    - id: AC-18
+      description: >-
+        `ingest --merge` refuses to write an artifact `coverage` would reject,
+        and writes nothing when it refuses. Given one input that declares a
+        `streams` block and one carrying entries labeled from a stream no input
+        declares, the command exits non-zero and names that stream. No output
+        file is created when none existed, and an existing output is unchanged
+        byte for byte, because a partial or replaced artifact on a refused merge
+        is worse than the artifact it refused: it destroys the file the operator
+        still had. A control merge of two consistent inputs is required beside
+        the refusal, so the check cannot be satisfied by refusing everything.
+      inputs:
+        declared_input: "a file whose streams block declares go, with go-labeled entries"
+        undeclared_input: "a file carrying js-labeled entries and no streams block"
+        no_prior_output: "the output path does not exist"
+        existing_output: "the output path holds an artifact from an earlier run"
+        control: "two inputs that each declare every stream their entries name"
+      expected_output:
+        refusal_exit_code_non_zero: true
+        refusal_names_the_undeclared_stream: true
+        no_output_file_created_when_none_existed: true
+        existing_output_unchanged_byte_for_byte: true
+        control_merge_is_written: true
+      references_constraints: ["C-15"]
+      priority: critical
+
     - id: AC-16
       description: "`ingest --stream go` writes a streams entry, and writes it even when nothing was extracted. The same inputs with no `--stream` write no block at all, per C-16 and C-14's back-compat promise, and that case is asserted rather than assumed: an unconditional block would make this cycle non-additive for every existing producer. A run whose inputs yield no results still declares its stream with a scanned count above zero and an extracted count of zero, which is what distinguishes it from a stream that never ran. A go test -json input holding a package whose terminal event arrives with no test event contributes to the zero-test-event count. Neither the artifact nor the summary line calls that a build failure, because `ingest` cannot tell a build failure from a filtered-out package or a package with no tests."
       inputs:
@@ -356,6 +382,12 @@ spec:
       priority: high
 
   changelog:
+    - version: "1.8.0"
+      date: "2026-08-26"
+      author: "specter-team"
+      type: minor
+      description: "C-15 gains the rule that a merge must not write what `coverage` refuses. Measured at 0e3e037: merging a file that declares its streams with a file carrying labeled entries and no block exits 0 and writes an artifact whose entries name a stream it does not declare, which `coverage` then exits 20 on. Both inputs are accepted and neither is inconsistent alone, so the merge creates the fault and reports success. C-44's exemption covers a merge's inputs and says nothing about its output, which is the gap. The rule is stated against C-44 rather than restated, so a rule added there binds this refusal without a second edit. AC-18 binds the refusal, that the stream is named, that no file is created when none existed, that an existing output survives byte for byte, and a control merge so the check cannot be met by refusing everything. Refusing rather than repairing: the alternative is synthesizing a `streams` row for a label the merge never observed, which means inventing `scanned` and `extracted` counts. `bugs/SP-SP-075`."
+
     - version: "1.7.0"
       date: "2026-08-26"
       author: "specter-team"
