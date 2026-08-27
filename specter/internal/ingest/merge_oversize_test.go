@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,6 +43,19 @@ func TestMergedArtifactOverTheCapIsRefusedAsASize(t *testing.T) {
 		}
 		if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
 			t.Errorf("C-15: the refused oversized merge created %s", out)
+		}
+
+		// Distinguishable by type, not only by wording. C-15 requires the two
+		// refusals to be told apart, and a caller doing that with errors.Is
+		// gets no help from a message. Without this, deleting the explicit
+		// size check leaves the test green: the parse refuses the same
+		// artifact and its wording happens to satisfy every string assertion
+		// below, while the error type collapses into the consistency one.
+		if !errors.Is(err, ErrMergeTooLarge) {
+			t.Errorf("C-15: an oversized merge does not report ErrMergeTooLarge, so a caller cannot tell it from an inconsistent one.\ngot: %v", err)
+		}
+		if errors.Is(err, ErrMergeWouldBeRefused) {
+			t.Errorf("C-15: an oversized merge also reports ErrMergeWouldBeRefused, which is the consistency refusal.\ngot: %v", err)
 		}
 
 		msg := err.Error()
