@@ -6,6 +6,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -242,7 +243,15 @@ func runMerge(paths []string, outputPath string) error {
 	}
 
 	merged := ingest.MergeStreams(streams)
-	if err := ingest.WriteResultsFileWithStreams(outputPath, results, merged); err != nil {
+	// C-15: the artifact is checked before it is written, so a merge never
+	// produces one `coverage` refuses and never destroys the output already
+	// there when it declines to.
+	if err := ingest.WriteMergedResultsFile(outputPath, results, merged); err != nil {
+		if errors.Is(err, ingest.ErrMergeWouldBeRefused) {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "       %s was not written, and any existing file at that path is unchanged.\n", outputPath)
+			return errSilent
+		}
 		fmt.Fprintf(os.Stderr, "error: write %s: %v\n", outputPath, err)
 		return errSilent
 	}

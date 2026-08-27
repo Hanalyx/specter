@@ -6,8 +6,13 @@ package ingest
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"sort"
+	"strings"
+
+	"github.com/Hanalyx/specter/internal/coverage"
 )
 
 // resultsFile is the on-disk JSON shape. Mirrors the structure
@@ -80,6 +85,79 @@ func WriteResultsFileWithStreams(path string, results []TestResult, streams []St
 	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
+// serializeResultsFile builds the exact bytes WriteResultsFileWithStreams would
+// write, without writing them.
+//
+// Split out so a caller can inspect the artifact it is about to produce. The
+// bytes are what matters: `internal/ingest` and `internal/coverage` each carry
+// their own StreamInfo, and a check over this package's structs would be a
+// check over a conversion rather than over the artifact a consumer reads.
+// Serializing and re-reading removes the conversion from the question, and it
+// is the only way to test the distinction C-44 turns on, since an absent
+// `streams` key and an empty one are the same Go value here and different
+// bytes.
+func serializeResultsFile(results []TestResult, streams []StreamInfo) ([]byte, error) {
+	merged := MergeResults(results)
+
+	out := resultsFile{Results: make([]resultEntry, 0, len(merged))}
+	for _, r := range merged {
+		entry := resultEntry{
+			SpecID: r.SpecID,
+			ACID:   r.ACID,
+			Status: r.Status,
+			Passed: r.Status == StatusPassed,
+		}
+		if r.Stream != "" && r.Stream != DefaultStream {
+			entry.Stream = r.Stream
+		}
+		out.Results = append(out.Results, entry)
+	}
+	if len(streams) > 0 {
+		out.Streams = append([]StreamInfo(nil), streams...)
+		sort.Slice(out.Streams, func(i, j int) bool { return out.Streams[i].Name < out.Streams[j].Name })
+	}
+	return json.MarshalIndent(out, "", "  ")
+}
+
+// ErrMergeWouldBeRefused is the C-15 refusal: the artifact a merge is about to
+// write is one `coverage` would reject.
+var ErrMergeWouldBeRefused = errors.New("the merged artifact is inconsistent")
+
+// WriteMergedResultsFile writes a `--merge` output, and refuses to write one
+// `coverage` would refuse.
+//
+// C-15: the prospective artifact must satisfy `spec-coverage` C-44 before
+// anything is written. Two inputs that are each valid alone can combine into
+// one that is not, so no check over the inputs would catch this.
+//
+// The rules are not restated here. The serialized bytes go through the same
+// reader and the same validator `coverage` uses, so a rule added to C-44 binds
+// this refusal on the day it lands and this package holds no copy of the stream
+// policy to go stale.
+//
+// Nothing is written on refusal, which is why the check happens before
+// os.WriteFile rather than after: a truncated or replaced output would destroy
+// the artifact the operator still had, which is worse than the one refused.
+func WriteMergedResultsFile(path string, results []TestResult, streams []StreamInfo) error {
+	data, err := serializeResultsFile(results, streams)
+	if err != nil {
+		return err
+	}
+	rf, err := coverage.ParseResultsFile(data)
+	if err != nil {
+		return fmt.Errorf("%w: the merged artifact does not parse: %v", ErrMergeWouldBeRefused, err)
+	}
+	if violations := coverage.ValidateStreams(rf); len(violations) > 0 {
+		// The shared message carries its own "error: " prefix, because the
+		// gates print it straight to stderr. Wrapped in another error here, so
+		// the prefix is trimmed the same way spec-coverage C-40 trims it for a
+		// sync phase message.
+		msg := strings.TrimPrefix(coverage.StreamValidationMessage(violations), "error: ")
+		return fmt.Errorf("%w. %s", ErrMergeWouldBeRefused, msg)
 	}
 	return os.WriteFile(path, data, 0644)
 }
