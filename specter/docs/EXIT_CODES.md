@@ -284,7 +284,6 @@ another. They are recorded as current behavior, not as allocations.
 | Case | Behavior | Bug |
 |---|---|---|
 | `resolve --json` on a dependency error | The `dangling_reference` diagnostic appears in the document. Exit 0. Text mode exits 1. | Not filed as of 2026-08-17 |
-| `coverage --failing` where every spec is at 100 percent | The filter leaves no rows, the command prints `All N specs at 100% coverage.` and returns above `coverageExitGates`. Exit 0 on a workspace `coverage` exits 3 or 20 on, with nothing on stderr. Two gates leak: the approval gate under a declared `settings.annotation` block, and streams-block validation. The other three do not, because each one either fires on a spec that is already below 100 percent or demotes one to get there, and the filter keeps those rows. | `bugs/SP-SP-074` |
 | `diff` on a change it labels `[breaking]`, without `--exit-code` | The classification is printed and correct. Exit 0. Intended, per `spec-diff` C-10. With `--exit-code` the same run exits 10. | `bugs/done/SP-SP-012`, resolved in v0.15.0 |
 | `diff coverage` on any delta | Exit 0 by design. Documented as a diagnostic surface, not a gate. | Intended |
 | `check` and `coverage` on an unreadable specs directory | Reported as a clean workspace with zero specs. Exit 0. `sync` exits 1, but names the wrong cause. | `bugs/SP-SP-026`, open |
@@ -413,9 +412,9 @@ already proves that a numeric rule cannot work: within one `coverage` run, code 
 can fire before code 2 and also after code 3.
 
 The verified order inside `coverage`, from the top of `coverageCmd` to its last
-return, identical in text and JSON mode. **One path does not reach it:**
-`--failing` on a workspace where every spec is at 100 percent returns above the
-gates, which is `bugs/SP-SP-074` and is recorded in Section 2.
+return, identical in text and JSON mode. `--failing` reaches it too: the
+empty-table path calls the same gates with the same inputs, and changes only
+which rows are printed.
 
 1. Flag validation and configuration errors. Code 1. In `coverageCmd`, before any spec is read.
 2. No annotated test file under zero-tolerance. Code 1. In `coverageCmd`.

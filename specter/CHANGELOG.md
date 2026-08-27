@@ -44,8 +44,6 @@ Unreleased changes accumulate under `## Unreleased`. Every user-visible change a
 
   **A gate that shipped earlier keeps its code.** A workspace that is also below its tier threshold, or has a criterion with no test, or an unmet approval gate, exits with that gate's code, and the stream violations are still reported. Code `20` is what a workspace exits with when the block is the only thing wrong. The same code and the same cause line come back from `coverage`, `coverage --json`, `sync` and `sync --json`.
 
-  **Known limitation.** `coverage --failing` skips this check when every spec is at 100 percent. It exits 0 with nothing on stderr, on a workspace `coverage` exits 20 on. The approval gate is skipped the same way under a declared `settings.annotation` block. **Action:** do not use `--failing` in a gating job until this is fixed.
-
 ### Fixed
 
 - **`specter parse --json` exited 0 on a spec that failed to parse.** Text mode exited 1 for the same spec, so the two modes disagreed about whether the run succeeded and a CI job reading `--json` got a green build on a workspace `parse` rejects. Both modes now take one verdict, and `--json` still writes its document on the failure. This is the last of the three commands in that family; `coverage` was fixed in v0.13 and `check` earlier in this cycle. **Action:** a CI job gating on `parse --json` may start failing where it passed. That is the workspace failing, not the tool.
