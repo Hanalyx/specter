@@ -1,6 +1,6 @@
 spec:
   id: spec-ingest
-  version: "1.8.0"
+  version: "1.9.0"
   status: approved
   tier: 1
 
@@ -115,7 +115,7 @@ spec:
       enforcement: error
 
     - id: C-15
-      description: "`specter ingest --merge <file>...` MUST build its output from the named results files alone and MUST NOT read the existing output first. This is the opposite of the accumulation C-11 requires for `--junit` and `--go-test`, and both are correct for their case. Accumulating is right when one run assembles one stream from several runner files. It is wrong across runs, because a criterion that passed in the previous run and produced no entry in this one keeps its stale passing entry, which hides exactly the absence the stream foundation exists to make visible. `--merge` therefore replaces rather than layers, and a stream re-run is a stream replaced. Entries from the named files merge on `(spec_id, ac_id, stream)` per C-08, so two files carrying different streams both survive and two files carrying the same stream collapse worst-status-wins. The `streams` blocks of the named files merge by name, and a stream declared in more than one input sums its counts. `--merge` combined with `--junit`, `--go-test` or `--stream` in one invocation MUST be refused rather than given a precedence rule, because the two modes disagree about what the output is built from and a silent winner would make the artifact depend on flag order. **The prospective merged artifact MUST satisfy `spec-coverage` C-44 before any output is written.** When it would not, `--merge` MUST refuse: it writes nothing, leaves an existing output byte-identical, exits non-zero, and names the stream the artifact fails on. Two inputs that are each valid alone can combine into one that is not, because a file declaring its streams merged with a file carrying labeled entries and no block yields an artifact that declares one and not the other. C-44 exempts `--merge` from validating its **inputs**, and that exemption is right: a merge reads a file as a producer assembling a new one rather than as a consumer judging a workspace. It says nothing about the artifact a merge emits. A producer that writes what its own consumer refuses has moved the failure one command later and named a stream the operator never wrote. The rule is stated against C-44 rather than restated here, so the two cannot drift: a rule added to C-44 binds this refusal on the day it lands."
+      description: "`specter ingest --merge <file>...` MUST build its output from the named results files alone and MUST NOT read the existing output first. This is the opposite of the accumulation C-11 requires for `--junit` and `--go-test`, and both are correct for their case. Accumulating is right when one run assembles one stream from several runner files. It is wrong across runs, because a criterion that passed in the previous run and produced no entry in this one keeps its stale passing entry, which hides exactly the absence the stream foundation exists to make visible. `--merge` therefore replaces rather than layers, and a stream re-run is a stream replaced. Entries from the named files merge on `(spec_id, ac_id, stream)` per C-08, so two files carrying different streams both survive and two files carrying the same stream collapse worst-status-wins. The `streams` blocks of the named files merge by name, and a stream declared in more than one input sums its counts. `--merge` combined with `--junit`, `--go-test` or `--stream` in one invocation MUST be refused rather than given a precedence rule, because the two modes disagree about what the output is built from and a silent winner would make the artifact depend on flag order. **The prospective merged artifact MUST satisfy `spec-coverage` C-44 before any output is written.** When it would not, `--merge` MUST refuse: it writes nothing, leaves an existing output byte-identical, exits non-zero, and names the stream the artifact fails on. Two inputs that are each valid alone can combine into one that is not, because a file declaring its streams merged with a file carrying labeled entries and no block yields an artifact that declares one and not the other. C-44 exempts `--merge` from validating its **inputs**, and that exemption is right: a merge reads a file as a producer assembling a new one rather than as a consumer judging a workspace. It says nothing about the artifact a merge emits. A producer that writes what its own consumer refuses has moved the failure one command later and named a stream the operator never wrote. The rule is stated against C-44 rather than restated here, so the two cannot drift: a rule added to C-44 binds this refusal on the day it lands. **The prospective artifact MUST also be one `coverage` can read at all, which means it MUST NOT exceed the same `MaxResultsFileBytes` cap C-17 applies to a single input.** Two inputs that each pass C-17 can sum past it, and a merge that writes a file the consumer cannot open has moved the failure one command later in exactly the way this rule exists to stop. **The two refusals MUST be distinguishable in the message**, because they need different responses: an inconsistent artifact is repaired by declaring a stream, and an oversized one is not repairable by editing a block. Reporting a size refusal as an inconsistency sends an operator to look for a stream that is not the problem."
       type: technical
       enforcement: error
 
@@ -131,7 +131,7 @@ spec:
 
   depends_on:
     - spec_id: spec-coverage
-      version_range: "^1.22.0"
+      version_range: "^1.24.0"
       relationship: requires
 
   acceptance_criteria:
@@ -342,12 +342,15 @@ spec:
         no_prior_output: "the output path does not exist"
         existing_output: "the output path holds an artifact from an earlier run"
         control: "two inputs that each declare every stream their entries name"
+        oversized: "two inputs that each pass C-17's per-input cap and whose merged artifact exceeds it"
       expected_output:
         refusal_exit_code_non_zero: true
         refusal_names_the_undeclared_stream: true
         no_output_file_created_when_none_existed: true
         existing_output_unchanged_byte_for_byte: true
         control_merge_is_written: true
+        oversized_merge_is_refused: true
+        oversized_refusal_names_the_size_not_a_stream: true
       references_constraints: ["C-15"]
       priority: critical
 
@@ -382,6 +385,12 @@ spec:
       priority: high
 
   changelog:
+    - version: "1.9.0"
+      date: "2026-08-27"
+      author: "specter-team"
+      type: minor
+      description: "Two corrections to what 1.8.0 shipped, both found in review of the implementation. C-15 required the prospective artifact to satisfy C-44 and said nothing about size, while the implementation validated by reading the artifact back through the consumer's reader, which caps at MaxResultsFileBytes. Measured: two 8.6 MiB inputs, each well under C-17's per-input cap, merge to 30.8 MiB and are refused. That refusal is defensible, since a file the consumer cannot open is the same failure one command later, but it was unspecified and it was reported as an inconsistency. C-15 now binds it and requires the two refusals to be distinguishable, because they need different responses: a stream can be declared, a size cannot be edited away. The `spec-coverage` floor rises from ^1.22.0 to ^1.24.0. C-15 names C-44, which does not exist below 1.23.0 and does not cover the `streams: null` shape below 1.24.0, so the old range admitted versions where this rule cannot be satisfied. `bugs/SP-SP-075`."
+
     - version: "1.8.0"
       date: "2026-08-26"
       author: "specter-team"
