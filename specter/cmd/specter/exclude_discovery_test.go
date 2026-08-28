@@ -75,10 +75,13 @@ func excludeWorkspace(t *testing.T, excludeLines string) string {
       priority: critical
 `
 	mustWrite("specs/demo.spec.yaml", spec)
-	// A second spec inside the excluded directory. AC-66 declares one spec on
-	// each side, because the spec walk has to be observed too: a fix that
-	// wired only the test walk leaves this one discovered.
-	mustWrite("vendored/inner.spec.yaml", strings.Replace(spec, "id: demo", "id: demo-inner", 1))
+	// A second spec inside an excluded directory, and it must live UNDER
+	// specs_dir. discoverSpecs roots its walk at m.SpecsDir() when a manifest
+	// is present, so a spec at ./vendored/ is never visited and an assertion
+	// that it is undiscovered passes whether or not exclusion works at all.
+	// Measured: with the file at ./vendored/, disabling manifestExcludesDir
+	// inside discoverSpecs left the whole test green.
+	mustWrite("specs/vendored/inner.spec.yaml", strings.Replace(spec, "id: demo", "id: demo-inner", 1))
 	return dir
 }
 
@@ -121,6 +124,21 @@ func discoveredSpecsIn(t *testing.T, dir string) []string {
 	return out
 }
 
+// assertSpecWalk observes the spec walk on both sides: the in-scope spec is
+// discovered and the excluded one is not. Both halves matter. Without the
+// include control the exclusion claim passes on a walk that found nothing, and
+// the excluded path has to sit under specs_dir or the walk never reaches it.
+func assertSpecWalk(t *testing.T, dir, label string) {
+	t.Helper()
+	specs := discoveredSpecsIn(t, dir)
+	if !contains(specs, "specs/demo.spec.yaml") {
+		t.Fatalf("AC-66 (spec include control, %s): specs/demo.spec.yaml was not discovered, so the spec walk found nothing to exclude. got: %v", label, specs)
+	}
+	if contains(specs, "specs/vendored/inner.spec.yaml") {
+		t.Errorf("AC-66 (spec exclusion, %s): specs/vendored/inner.spec.yaml was discovered although settings.exclude excludes that directory. got: %v", label, specs)
+	}
+}
+
 func contains(paths []string, want string) bool {
 	for _, p := range paths {
 		if p == want {
@@ -151,16 +169,7 @@ func TestSettingsExcludeReachesTestDiscovery(t *testing.T) {
 			t.Errorf("AC-66 (bare name): vendored/inner_test.go was discovered although settings.exclude declares \"vendored\". Spec discovery honors this setting and test discovery must too. got: %v", found)
 		}
 
-		// The spec walk, observed rather than assumed. C-29 covers both default
-		// walks, and a fix that wired only the test walk would pass everything
-		// above while leaving this one wrong.
-		specs := discoveredSpecsIn(t, dir)
-		if !contains(specs, "specs/demo.spec.yaml") {
-			t.Fatalf("AC-66 (spec include control): specs/demo.spec.yaml was not discovered, so the spec walk found nothing to exclude. got: %v", specs)
-		}
-		if contains(specs, "vendored/inner.spec.yaml") {
-			t.Errorf("AC-66 (spec exclusion): vendored/inner.spec.yaml was discovered although settings.exclude declares \"vendored\". got: %v", specs)
-		}
+		assertSpecWalk(t, dir, "bare name")
 	})
 
 	t.Run("spec-manifest/AC-66 a glob exclude removes the same file", func(t *testing.T) {
@@ -178,6 +187,11 @@ func TestSettingsExcludeReachesTestDiscovery(t *testing.T) {
 		if contains(found, "vendored/inner_test.go") {
 			t.Errorf("AC-66 (glob): vendored/inner_test.go was discovered although settings.exclude declares \"**/vendored\". got: %v", found)
 		}
+
+		// The spec walk under the glob form too. C-29 dispatches on the pattern
+		// shape, so a spec walk wired only for bare names passes the case above
+		// and fails here.
+		assertSpecWalk(t, dir, "glob")
 	})
 
 	t.Run("spec-manifest/AC-66 settings.tests_glob still overrides discovery", func(t *testing.T) {
