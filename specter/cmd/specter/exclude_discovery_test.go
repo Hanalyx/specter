@@ -1,8 +1,13 @@
 package main
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -70,6 +75,10 @@ func excludeWorkspace(t *testing.T, excludeLines string) string {
       priority: critical
 `
 	mustWrite("specs/demo.spec.yaml", spec)
+	// A second spec inside the excluded directory. AC-66 declares one spec on
+	// each side, because the spec walk has to be observed too: a fix that
+	// wired only the test walk leaves this one discovered.
+	mustWrite("vendored/inner.spec.yaml", strings.Replace(spec, "id: demo", "id: demo-inner", 1))
 	return dir
 }
 
@@ -88,6 +97,25 @@ func discoveredTestFilesIn(t *testing.T, dir, glob string) []string {
 
 	var out []string
 	for _, p := range discoverTestFiles(glob) {
+		out = append(out, filepath.ToSlash(strings.TrimPrefix(p, "./")))
+	}
+	return out
+}
+
+// discoveredSpecsIn runs the default spec walk with the workspace as cwd.
+func discoveredSpecsIn(t *testing.T, dir string) []string {
+	t.Helper()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(orig) }()
+
+	var out []string
+	for _, p := range discoverSpecs() {
 		out = append(out, filepath.ToSlash(strings.TrimPrefix(p, "./")))
 	}
 	return out
@@ -121,6 +149,17 @@ func TestSettingsExcludeReachesTestDiscovery(t *testing.T) {
 
 		if contains(found, "vendored/inner_test.go") {
 			t.Errorf("AC-66 (bare name): vendored/inner_test.go was discovered although settings.exclude declares \"vendored\". Spec discovery honors this setting and test discovery must too. got: %v", found)
+		}
+
+		// The spec walk, observed rather than assumed. C-29 covers both default
+		// walks, and a fix that wired only the test walk would pass everything
+		// above while leaving this one wrong.
+		specs := discoveredSpecsIn(t, dir)
+		if !contains(specs, "specs/demo.spec.yaml") {
+			t.Fatalf("AC-66 (spec include control): specs/demo.spec.yaml was not discovered, so the spec walk found nothing to exclude. got: %v", specs)
+		}
+		if contains(specs, "vendored/inner.spec.yaml") {
+			t.Errorf("AC-66 (spec exclusion): vendored/inner.spec.yaml was discovered although settings.exclude declares \"vendored\". got: %v", specs)
 		}
 	})
 
@@ -156,4 +195,112 @@ func TestSettingsExcludeReachesTestDiscovery(t *testing.T) {
 			t.Errorf("AC-66 (tests_glob): the glob run dropped vendored/inner_test.go, so the override was narrowed by settings.exclude. got: %v", withExclude)
 		}
 	})
+}
+
+// @spec spec-manifest
+// @ac AC-66
+//
+// C-29's shared-owner half, asserted structurally because no runtime
+// observation can see it.
+//
+// Inlining an equivalent pattern loop into discoverSpecs produces identical
+// output for every input, so every behavioral assertion above stays green while
+// the second copy of exclusion policy is back. That second copy is the defect
+// C-29 exists to prevent, and bugs/SP-SP-016 is what it looks like once the two
+// copies drift.
+func TestExclusionPolicyHasOneOwner(t *testing.T) {
+	t.Run("spec-manifest/AC-66 both default walks call the shared predicate and only it loops over patterns", func(t *testing.T) {
+		fset := token.NewFileSet()
+		// Production sources only. The rule is about the implementation: the
+		// helper's own unit tests call matchExcludePattern directly and are
+		// supposed to, and this file reads the identifier too.
+		pkg, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
+			return !strings.HasSuffix(fi.Name(), "_test.go")
+		}, 0)
+		if err != nil {
+			t.Fatalf("parsing cmd/specter failed: %v", err)
+		}
+		files := map[string]*ast.File{}
+		for _, p := range pkg {
+			for name, f := range p.Files {
+				files[name] = f
+			}
+		}
+		if len(files) == 0 {
+			t.Fatal("AC-66: parsed no files, so every claim below would pass vacuously")
+		}
+
+		// callsIn reports the function names called directly inside the named
+		// top-level function, and whether that function was found at all.
+		callsIn := func(fn string) (map[string]bool, bool) {
+			calls := map[string]bool{}
+			found := false
+			for _, f := range files {
+				for _, d := range f.Decls {
+					fd, ok := d.(*ast.FuncDecl)
+					if !ok || fd.Name.Name != fn || fd.Recv != nil {
+						continue
+					}
+					found = true
+					ast.Inspect(fd, func(n ast.Node) bool {
+						if ce, ok := n.(*ast.CallExpr); ok {
+							if id, ok := ce.Fun.(*ast.Ident); ok {
+								calls[id.Name] = true
+							}
+						}
+						return true
+					})
+				}
+			}
+			return calls, found
+		}
+
+		for _, walk := range []string{"discoverSpecs", "discoverTestFiles"} {
+			calls, found := callsIn(walk)
+			if !found {
+				t.Fatalf("AC-66: %s not found, so the ownership claim cannot be checked", walk)
+			}
+			// Positive control: the walk really was read.
+			if !calls["filepath.Walk"] && len(calls) == 0 {
+				t.Fatalf("AC-66: %s parsed with no calls at all, which cannot be right", walk)
+			}
+			if !calls["manifestExcludesDir"] {
+				t.Errorf("AC-66: %s does not call manifestExcludesDir. C-29 requires both default walks to use the one shared predicate; a private loop that behaves identically is the second copy of exclusion policy this constraint forbids", walk)
+			}
+		}
+
+		// The other half of ownership. Calling the predicate does not stop a
+		// walk from also running its own loop, so the loop itself must live in
+		// exactly one function.
+		owners := map[string]bool{}
+		for _, f := range files {
+			for _, d := range f.Decls {
+				fd, ok := d.(*ast.FuncDecl)
+				if !ok {
+					continue
+				}
+				ast.Inspect(fd, func(n ast.Node) bool {
+					if ce, ok := n.(*ast.CallExpr); ok {
+						if id, ok := ce.Fun.(*ast.Ident); ok && id.Name == "matchExcludePattern" {
+							owners[fd.Name.Name] = true
+						}
+					}
+					return true
+				})
+			}
+		}
+		want := map[string]bool{"manifestExcludesDir": true}
+		if !reflect.DeepEqual(owners, want) {
+			t.Errorf("AC-66: matchExcludePattern is called from %v, want only manifestExcludesDir. Every caller beyond the predicate is another copy of the exclusion decision", sortedNames(owners))
+		}
+	})
+}
+
+func sortedNames(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
