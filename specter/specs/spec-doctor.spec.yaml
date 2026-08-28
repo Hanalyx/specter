@@ -1,6 +1,6 @@
 spec:
   id: spec-doctor
-  version: "1.10.0"
+  version: "1.10.1"
   status: draft
   tier: 2
 
@@ -512,10 +512,15 @@ spec:
       version_range: "^1.0.0"
       relationship: requires
     - spec_id: spec-manifest
-      version_range: "^1.0.0"
+      version_range: "^2.0.0"
       relationship: requires
 
   changelog:
+    - version: "1.10.1"
+      date: "2026-08-28"
+      author: "specter-team"
+      type: patch
+      description: "Raise the `spec-manifest` dependency floor to `^2.0.0`. `spec-manifest` 2.0.0 requires every default discovery walk to apply `settings.exclude` through one shared predicate (`bugs/SP-SP-016`), and `^1.0.0` does not admit a 2.x version, so `resolve` would report a version mismatch on an unchanged workspace. No behavior of `doctor` changes."
     - version: "1.10.0"
       date: "2026-08-16"
       author: "specter-team"
