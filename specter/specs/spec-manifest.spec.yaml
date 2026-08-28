@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "2.0.1"
+  version: "2.0.2"
   status: draft
   tier: 2
 
@@ -932,11 +932,11 @@ spec:
       priority: high
 
     - id: AC-66
-      description: "Both default discovery walks apply `settings.exclude`, through one predicate, with four controls that separate the claim from its neighbours. Given a workspace whose manifest declares `exclude: [\"vendored\"]`, a spec and a test file inside `vendored/`, and a matching pair outside it: (a) the bare-name case, the excluded test file is absent from the discovered test set, which is the defect this criterion closes; (b) the include control, the test file outside `vendored/` IS discovered, so the assertion cannot pass on a walk that discovers nothing; (c) the glob case, a manifest declaring `exclude: [\"**/vendored\"]` instead excludes the same test file, so the glob semantics C-29 already required for spec discovery reach test discovery too; (d) the tests_glob control, declaring `settings.tests_glob` overrides discovery and its result is unchanged by `settings.exclude`, so the override behavior is not quietly narrowed. Spec discovery keeps its existing behavior in all four cases, and the criterion asserts it directly rather than assuming it: the excluded spec is absent and the in-scope spec is present. **The shared-owner half is asserted structurally, because no runtime observation can see it.** Inlining an equivalent pattern loop into `discoverSpecs` produces identical output for every input, so every behavioral assertion above stays green while the second copy of exclusion policy is back. That is the defect this constraint exists to prevent, so the criterion reads the source: both default walks MUST call the shared predicate, and the loop over `matchExcludePattern` MUST appear in that predicate and nowhere else."
+      description: "Both default discovery walks apply `settings.exclude`, through one predicate, with four controls that separate the claim from its neighbours. Given a workspace whose manifest declares `exclude: [\"vendored\"]`, a spec and a test file inside `vendored/`, and a matching pair outside it: (a) the bare-name case, the excluded test file is absent from the discovered test set, which is the defect this criterion closes; (b) the include control, the test file outside `vendored/` IS discovered, so the assertion cannot pass on a walk that discovers nothing; (c) the glob case, a manifest declaring `exclude: [\"**/vendored\"]` instead excludes the same test file, so the glob semantics C-29 already required for spec discovery reach test discovery too; (d) the tests_glob control, declaring `settings.tests_glob` overrides discovery and its result is unchanged by `settings.exclude`, so the override behavior is not quietly narrowed. Spec discovery keeps its existing behavior, and the criterion asserts it directly rather than assuming it, in **the bare-name and glob cases**: the excluded spec is absent and the in-scope spec is present. The `tests_glob` case does not, because `settings.tests_glob` governs test discovery alone. **The excluded spec MUST sit under `settings.specs_dir`.** `discoverSpecs` roots its walk there when a manifest is present, so a spec placed outside it is never visited and an assertion that it went undiscovered passes whether or not exclusion works. Measured 2026-08-28: with the fixture spec outside `specs_dir`, disabling the predicate inside `discoverSpecs` left the whole criterion green. **The shared-owner half is asserted structurally, because no runtime observation can see it.** Inlining an equivalent pattern loop into `discoverSpecs` produces identical output for every input, so every behavioral assertion above stays green while the second copy of exclusion policy is back. That is the defect this constraint exists to prevent, so the criterion reads the source: both default walks MUST call the shared predicate, and the loop over `matchExcludePattern` MUST appear in that predicate and nowhere else."
       inputs:
         manifest_bare: "exclude: [\"vendored\"]"
         manifest_glob: "exclude: [\"**/vendored\"]"
-        workspace: "vendored/inner_test.go and outer_test.go, one spec each"
+        workspace: "vendored/inner_test.go and outer_test.go; specs/demo.spec.yaml and specs/vendored/inner.spec.yaml, the excluded spec under specs_dir"
       expected_output:
         bare_excluded_test_discovered: false
         outside_test_discovered: true
@@ -957,6 +957,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "2.0.2"
+      date: "2026-08-28"
+      author: "specter-team"
+      type: patch
+      description: "Correct AC-66's spec-walk claim and pin where its fixture spec lives. The criterion said spec discovery is asserted directly in all four cases; only the bare-name case did so, and the `tests_glob` case never can, because `settings.tests_glob` governs test discovery alone. The glob case now asserts it too. More importantly, the excluded fixture spec MUST sit under `settings.specs_dir`: `discoverSpecs` roots its walk there when a manifest is present, so a spec outside it is never visited and an assertion that it went undiscovered passes whether or not exclusion works. Measured: with the fixture outside `specs_dir`, disabling `manifestExcludesDir` inside `discoverSpecs` left the whole criterion green. Requirement unchanged; this is the criterion learning to observe what C-29 already required."
     - version: "2.0.1"
       date: "2026-08-28"
       author: "specter-team"
