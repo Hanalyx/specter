@@ -222,7 +222,9 @@ export interface SpecterCheckDiagnostic {
   message: string;
   constraintID?: string;
   constraintType?: string;
-  changeType?: string;
+  // No `changeType`. spec-check 2.0.0 retracted version-change classification,
+  // so no check diagnostic carries `change_type`, and C-32 forbids declaring a
+  // member no document carries (bugs/SP-SP-018).
   details?: string;
 }
 

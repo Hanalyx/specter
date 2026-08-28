@@ -1087,16 +1087,28 @@ describe('C-32 the check document keys the client converts', () => {
   // member is still a member no document carries, and deleting the member while
   // leaving the map entry converts a key the CLI never sends.
   it('[spec-vscode/AC-77] no changeType member and no change_type map entry survive the retraction', () => {
-    const clientSrc = fs.readFileSync(CLIENT_PATH, 'utf-8');
-    const typesSrc = fs.readFileSync(path.join(path.dirname(CLIENT_PATH), 'types.ts'), 'utf-8');
+    // Comments are stripped before scanning. A bare substring search over the
+    // whole file cannot tell a declaration from prose about a declaration, so
+    // it fires on the comment recording why the entry was removed. That is a
+    // false positive on the correct implementation, which is the one failure a
+    // static scan must not have.
+    const codeOf = (p: string): string =>
+      fs
+        .readFileSync(p, 'utf-8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\/\/.*$/gm, '');
 
-    // Positive control: the sources really were read, and the members that DO
-    // survive are present. Without this an empty file would pass both claims.
-    expect(clientSrc).toContain("constraint_type: 'constraintType'");
-    expect(typesSrc).toContain('constraintType?:');
+    const clientCode = codeOf(CLIENT_PATH);
+    const typesCode = codeOf(path.join(path.dirname(CLIENT_PATH), 'types.ts'));
 
-    expect(clientSrc).not.toContain('change_type');
-    expect(typesSrc).not.toContain('changeType');
+    // Positive control, and it does double duty. It proves the files were read
+    // and that stripping did not eat the declarations, so an empty string
+    // cannot pass the two absence claims below.
+    expect(clientCode).toContain("constraint_type: 'constraintType'");
+    expect(typesCode).toContain('constraintType?:');
+
+    expect(clientCode).not.toContain('change_type');
+    expect(typesCode).not.toContain('changeType');
   });
 });
 

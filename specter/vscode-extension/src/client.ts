@@ -338,7 +338,9 @@ const CHECK_FIELD_MAP: Record<string, string> = {
   spec_id: 'specID',
   constraint_id: 'constraintID',
   constraint_type: 'constraintType',
-  change_type: 'changeType',
+  // `change_type` was here until spec-check 2.0.0 retracted version-change
+  // classification. No check diagnostic can carry it, and converting a key the
+  // CLI never sends is the mirror of the defect C-32 forbids (bugs/SP-SP-018).
 };
 
 /** Rewrite every key in `value` through `fieldMap`, at every depth. */

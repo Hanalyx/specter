@@ -22,7 +22,6 @@ type CheckDiagnostic struct {
 	SpecID         string `json:"spec_id"`
 	ConstraintID   string `json:"constraint_id,omitempty"`
 	ConstraintType string `json:"constraint_type,omitempty"`
-	ChangeType     string `json:"change_type,omitempty"`
 	Details        string `json:"details,omitempty"`
 }
 
@@ -40,10 +39,9 @@ type CheckSummary struct {
 
 // CheckOptions configures the check run.
 type CheckOptions struct {
-	TierOverride     int
-	PreviousVersions map[string]*schema.SpecAST
-	Strict           bool // C-07: upgrade all warning/info diagnostics to error
-	WarnOnDraft      bool // C-08: emit warning for specs with status: draft
+	TierOverride int
+	Strict       bool // C-07: upgrade all warning/info diagnostics to error
+	WarnOnDraft  bool // C-08: emit warning for specs with status: draft
 	// Concrete opts into the C-16 concreteness rule. C-17: it is off by
 	// default because `inputs` and `expected_output` are optional in the
 	// canonical schema, so a criterion carrying neither is valid and failing a
@@ -111,7 +109,6 @@ var CoverageThresholdByTier = map[int]int{
 // C-01: Detects orphan constraints.
 // C-02: Tier-based severity.
 // C-03: Structural conflict detection.
-// C-04: Breaking change classification.
 // C-05: Zero false positives for structural checks.
 // C-06: Pure function.
 // C-13: Duplicate acceptance criterion ids within one spec.
@@ -148,34 +145,11 @@ func CheckSpecs(graph *resolver.SpecGraph, opts *CheckOptions) *CheckResult {
 	// Rule 2: Structural conflicts (AC-03)
 	diagnostics = append(diagnostics, checkStructuralConflicts(graph)...)
 
-	// Rule 3: Breaking changes (AC-04, AC-05)
-	if opts.PreviousVersions != nil {
-		for id, node := range graph.Nodes {
-			prev, ok := opts.PreviousVersions[id]
-			if !ok {
-				continue
-			}
-			changes := ClassifyChanges(prev, &node.Spec)
-			for _, change := range changes {
-				kind := "patch_change"
-				severity := "info"
-				if change.Classification == "breaking" {
-					kind = "breaking_change"
-					severity = "error"
-				} else if change.Classification == "additive" {
-					kind = "additive_change"
-				}
-				diagnostics = append(diagnostics, CheckDiagnostic{
-					Kind:       kind,
-					Severity:   severity,
-					Message:    fmt.Sprintf("%s: %s", node.Spec.ID, change.Description),
-					SpecID:     node.Spec.ID,
-					ChangeType: change.Classification,
-					Details:    change.Field,
-				})
-			}
-		}
-	}
+	// Rule 3 was breaking-change classification and is gone. spec-check 2.0.0
+	// retracted C-04, AC-04 and AC-05, and `spec-diff` owns version comparison.
+	// Nothing ever populated CheckOptions.PreviousVersions, so this branch never
+	// ran while its three criteria reported covered off tests that called
+	// ClassifyChanges directly (bugs/SP-SP-018).
 
 	// Rule 4: Duplicate acceptance criterion ids (AC-21 through AC-27)
 	//
@@ -367,78 +341,4 @@ func extractSubject(description string) string {
 		return strings.TrimSpace(description[:idx])
 	}
 	return ""
-}
-
-// VersionChange represents a classified change between spec versions.
-type VersionChange struct {
-	Classification string `json:"classification"`
-	Field          string `json:"field"`
-	Description    string `json:"description"`
-}
-
-// ClassifyChanges compares two spec versions and classifies changes.
-func ClassifyChanges(v1, v2 *schema.SpecAST) []VersionChange {
-	var changes []VersionChange
-
-	// Constraint changes
-	v1c := make(map[string]*schema.Constraint)
-	for i := range v1.Constraints {
-		v1c[v1.Constraints[i].ID] = &v1.Constraints[i]
-	}
-	v2c := make(map[string]*schema.Constraint)
-	for i := range v2.Constraints {
-		v2c[v2.Constraints[i].ID] = &v2.Constraints[i]
-	}
-
-	for id := range v1c {
-		if _, ok := v2c[id]; !ok {
-			changes = append(changes, VersionChange{"breaking", "constraints." + id, "Constraint " + id + " was removed"})
-		}
-	}
-	for id := range v2c {
-		if _, ok := v1c[id]; !ok {
-			changes = append(changes, VersionChange{"additive", "constraints." + id, "Constraint " + id + " was added"})
-		}
-	}
-
-	// AC changes
-	v1ac := make(map[string]bool)
-	for _, ac := range v1.AcceptanceCriteria {
-		v1ac[ac.ID] = true
-	}
-	v2ac := make(map[string]bool)
-	for _, ac := range v2.AcceptanceCriteria {
-		v2ac[ac.ID] = true
-	}
-
-	for id := range v1ac {
-		if !v2ac[id] {
-			changes = append(changes, VersionChange{"breaking", "acceptance_criteria." + id, "Acceptance criterion " + id + " was removed"})
-		}
-	}
-	for id := range v2ac {
-		if !v1ac[id] {
-			changes = append(changes, VersionChange{"additive", "acceptance_criteria." + id, "Acceptance criterion " + id + " was added"})
-		}
-	}
-
-	return changes
-}
-
-// HighestClassification returns the most severe classification.
-func HighestClassification(changes []VersionChange) string {
-	if len(changes) == 0 {
-		return "none"
-	}
-	for _, c := range changes {
-		if c.Classification == "breaking" {
-			return "breaking"
-		}
-	}
-	for _, c := range changes {
-		if c.Classification == "additive" {
-			return "additive"
-		}
-	}
-	return "patch"
 }

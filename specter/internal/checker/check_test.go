@@ -125,43 +125,17 @@ func TestStructuralConflict(t *testing.T) {
 	})
 }
 
-// @ac AC-04
-func TestBreakingChangeRemoval(t *testing.T) {
-	t.Run("spec-check/AC-04 breaking change removal", func(t *testing.T) {
-		v1 := makeSpec("test", 2)
-		v1.Constraints = []schema.Constraint{
-			{ID: "C-01", Description: "keep"},
-			{ID: "C-02", Description: "removed"},
-		}
-		v1.AcceptanceCriteria = []schema.AcceptanceCriterion{
-			{ID: "AC-01", Description: "test", ReferencesConstraints: []string{"C-01"}},
-			{ID: "AC-02", Description: "test", ReferencesConstraints: []string{"C-02"}},
-		}
-
-		v2 := makeSpec("test", 2)
-
-		changes := ClassifyChanges(&v1, &v2)
-		if HighestClassification(changes) != "breaking" {
-			t.Errorf("expected breaking, got %s", HighestClassification(changes))
-		}
-	})
-}
-
-// @ac AC-05
-func TestAdditiveChange(t *testing.T) {
-	t.Run("spec-check/AC-05 additive change", func(t *testing.T) {
-		v1 := makeSpec("test", 2)
-		v2 := makeSpec("test", 2)
-		v2.AcceptanceCriteria = append(v2.AcceptanceCriteria,
-			schema.AcceptanceCriterion{ID: "AC-02", Description: "new"},
-		)
-
-		changes := ClassifyChanges(&v1, &v2)
-		if HighestClassification(changes) != "additive" {
-			t.Errorf("expected additive, got %s", HighestClassification(changes))
-		}
-	})
-}
+// TestBreakingChangeRemoval (AC-04) and TestAdditiveChange (AC-05) were here.
+// Both called ClassifyChanges directly, and they were the only callers that
+// ever reached it: no production code populated CheckOptions.PreviousVersions,
+// so the branch that would have used the classifier never ran. The two tests
+// kept AC-04 and AC-05 reporting covered at every strictness level while the
+// behavior they described was unreachable (bugs/SP-SP-018).
+//
+// spec-check 2.0.0 retracted C-04, AC-04 and AC-05. Version comparison belongs
+// to spec-diff, which carries the constraints, the corpora and the tests for
+// it. These are removed rather than re-pointed at internal/diff, whose own
+// criteria already cover that ground.
 
 // @ac AC-06
 func TestNoOrphansWhenAllReferenced(t *testing.T) {
