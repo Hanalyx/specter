@@ -67,14 +67,16 @@ describe('[spec-vscode/AC-05] buildACDecorations', () => {
     expect(decs[0].kind).toBe('uncovered');
   });
 
-  it('marks gap ACs with grey-dash decoration, not red', () => {
-    const decs = buildACDecorations({
-      coveredACs: [],
-      uncoveredACs: [],
-      gapACs: ['AC-01'],
-    });
-    expect(decs[0].kind).toBe('gap');
-  });
+  // The gray-dash gap assertion was here. spec-vscode 5.0.0 retracted the
+  // promise from C-07 and AC-05, because no code path could produce the
+  // decoration: `coverage --json` emits no gap criterion ids, so the only
+  // caller passed an empty list and this branch never ran (bugs/SP-SP-019).
+  //
+  // It is removed rather than re-pointed. The assertion called the builder
+  // directly with a hand-made gapACs list, so it passed on a feature no
+  // invocation could reach, which is the covered-but-unreachable shape this
+  // cycle has now closed twice. The plumbing it exercised goes in the next
+  // commit.
 
   it('includes test count in end-of-line text for covered ACs', () => {
     const decs = buildACDecorations({
