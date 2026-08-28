@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "2.0.2"
+  version: "2.0.3"
   status: draft
   tier: 2
 
@@ -939,10 +939,13 @@ spec:
         workspace: "vendored/inner_test.go and outer_test.go; specs/demo.spec.yaml and specs/vendored/inner.spec.yaml, the excluded spec under specs_dir"
       expected_output:
         bare_excluded_test_discovered: false
-        outside_test_discovered: true
         bare_excluded_spec_discovered: false
-        outside_spec_discovered: true
+        bare_outside_test_discovered: true
+        bare_outside_spec_discovered: true
         glob_excluded_test_discovered: false
+        glob_excluded_spec_discovered: false
+        glob_outside_test_discovered: true
+        glob_outside_spec_discovered: true
         tests_glob_result_unchanged_by_exclude: true
         both_default_walks_call_the_shared_predicate: true
         pattern_match_loop_owned_by_predicate_only: true
@@ -957,6 +960,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "2.0.3"
+      date: "2026-08-28"
+      author: "specter-team"
+      type: patch
+      description: "Complete AC-66's expected_output. The prose and the test exercised spec discovery under both the bare-name and the glob pattern, and the structured output declared the result for the bare-name case only, so a reader taking `expected_output` as the contract would not know the glob case covers the spec walk at all. Each of the four results is now named for its case rather than shared: an include control written once reads as covering whichever case the reader happens to be looking at. No requirement moves and no implementation changes; this is the declared output catching up with what the criterion already asserts."
     - version: "2.0.2"
       date: "2026-08-28"
       author: "specter-team"
