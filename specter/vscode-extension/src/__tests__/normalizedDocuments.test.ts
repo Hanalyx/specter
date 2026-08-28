@@ -316,12 +316,19 @@ const COVERAGE_DOC_VALIDATION_ERRORS_POPULATED = `{"entries": [],
    {"kind": "undeclared_stream", "stream": "js", "result_index": 0,
     "message": "results[0] names stream js, which the block does not declare"}]}`;
 
-/** AC-77. `check --json` reporting one diagnostic that carries all four convertible keys. */
-const CHECK_DOC_FOUR_CONVERTIBLE_KEYS = `{"diagnostics": [
-  {"kind": "breaking_change", "severity": "error", "spec_id": "spec-o",
+/**
+ * AC-77. `check --json` reporting one diagnostic that carries all three
+ * convertible keys.
+ *
+ * This carried a fourth, `change_type`, under `kind: breaking_change`, until
+ * spec-check 2.0.0 retracted version-change classification (bugs/SP-SP-018).
+ * Neither the kind nor the key can be produced any more, so the fixture would
+ * have been asserting a document the CLI cannot emit.
+ */
+const CHECK_DOC_THREE_CONVERTIBLE_KEYS = `{"diagnostics": [
+  {"kind": "orphan_constraint", "severity": "error", "spec_id": "spec-o",
    "constraint_id": "C-02", "constraint_type": "technical",
-   "change_type": "constraint_removed",
-   "message": "Constraint C-02 was removed from \\"spec-o\\" without a major version bump"}
+   "message": "Constraint C-02 in \\"spec-o\\" is not referenced by any acceptance criterion"}
 ], "summary": {"errors": 1, "warnings": 0, "info": 0}}`;
 
 /** AC-78. The one coverage parse error the CLI positions: a YAML syntax error. */
@@ -1012,27 +1019,34 @@ describe('C-31 the single point where stdout becomes a document', () => {
 });
 
 // ---------------------------------------------------------------------------
-// AC-77: all four check key-map entries.
+// AC-77: all three check key-map entries.
 //
-// AC-72 pins `spec_id` alone, so deleting any of the other three entries from
+// AC-72 pins `spec_id` alone, so deleting either of the other two entries from
 // the map changes nothing any criterion reads. The absence half is what kills
 // the mutant that converts the check document with the coverage map, because
-// that map also carries `spec_id` and would leave the other three untouched.
+// that map also carries `spec_id` and would leave the other two untouched.
+//
+// There were four until spec-check 2.0.0 retracted version-change
+// classification (bugs/SP-SP-018). `change_type` was the fourth. C-32 forbids
+// declaring a member no document carries, so once no check diagnostic can carry
+// the key, `changeType` has to leave `types.ts` and `change_type` has to leave
+// the key map. The second test below is what holds that, because nothing in the
+// first one fails if a dead entry is simply left behind.
 // ---------------------------------------------------------------------------
 
-const CONVERTED_SNAKE_KEYS = ['spec_id', 'constraint_id', 'constraint_type', 'change_type'];
+const CONVERTED_SNAKE_KEYS = ['spec_id', 'constraint_id', 'constraint_type'];
 
 // @spec spec-vscode
 // @ac AC-77
 describe('C-32 the check document keys the client converts', () => {
-  it('[spec-vscode/AC-77] all four keys arrive under their camelCase names and none survives in snake case', async () => {
-    // Precondition: the fixture really does carry all four keys the map names.
-    const raw = JSON.parse(CHECK_DOC_FOUR_CONVERTIBLE_KEYS);
+  it('[spec-vscode/AC-77] all three keys arrive under their camelCase names and none survives in snake case', async () => {
+    // Precondition: the fixture really does carry all three keys the map names.
+    const raw = JSON.parse(CHECK_DOC_THREE_CONVERTIBLE_KEYS);
     expect(CONVERTED_SNAKE_KEYS.filter((k) => k in raw.diagnostics[0])).toEqual(CONVERTED_SNAKE_KEYS);
 
     const client = makeClient();
     // Exit 1, which is what the CLI does on an error-severity diagnostic.
-    mockCli.script('check', { exitCode: 1, stdout: CHECK_DOC_FOUR_CONVERTIBLE_KEYS });
+    mockCli.script('check', { exitCode: 1, stdout: CHECK_DOC_THREE_CONVERTIBLE_KEYS });
 
     const diagnostics = checkDiagnosticsOf(await client.check());
     expect(diagnostics).toHaveLength(1);
@@ -1042,28 +1056,47 @@ describe('C-32 the check document keys the client converts', () => {
     // that a change to the declaration cannot stop this file compiling and
     // take every criterion in it down with it (AC-72 at 1.10.0).
     //
-    // These four are also the positive control for the absence claim below.
-    // Four values present under their converted names proves the document
+    // These three are also the positive control for the absence claim below.
+    // Three values present under their converted names proves the document
     // arrived and the converter ran, so an empty snake-key list is conversion
     // rather than a diagnostic that never got read.
     expect({
       specID: diagnostic.specID,
       constraintID: diagnostic.constraintID,
       constraintType: diagnostic.constraintType,
-      changeType: diagnostic.changeType,
     }).toEqual({
       specID: 'spec-o',
       constraintID: 'C-02',
       constraintType: 'technical',
-      changeType: 'constraint_removed',
     });
 
-    // The absence half. Exactly the four keys the map names, not any key that
+    // The absence half. Exactly the three keys the map names, not any key that
     // happens to carry an underscore.
     expect(Object.keys(diagnostic).filter((k) => CONVERTED_SNAKE_KEYS.includes(k))).toEqual([]);
 
     // Control: the document came from an actual invocation.
     expect(mockCli.jsonInvocations('check')).toHaveLength(1);
+  });
+
+  // The retraction half of C-32, and the reason it is a separate test: the one
+  // above passes whether or not `changeType` is still declared and mapped. A
+  // dead declaration is invisible to any behavioral assertion, which is exactly
+  // the false guarantee C-32 exists to forbid, so it has to be read statically.
+  //
+  // Both files, not one. Deleting the key-map entry while leaving the declared
+  // member is still a member no document carries, and deleting the member while
+  // leaving the map entry converts a key the CLI never sends.
+  it('[spec-vscode/AC-77] no changeType member and no change_type map entry survive the retraction', () => {
+    const clientSrc = fs.readFileSync(CLIENT_PATH, 'utf-8');
+    const typesSrc = fs.readFileSync(path.join(path.dirname(CLIENT_PATH), 'types.ts'), 'utf-8');
+
+    // Positive control: the sources really were read, and the members that DO
+    // survive are present. Without this an empty file would pass both claims.
+    expect(clientSrc).toContain("constraint_type: 'constraintType'");
+    expect(typesSrc).toContain('constraintType?:');
+
+    expect(clientSrc).not.toContain('change_type');
+    expect(typesSrc).not.toContain('changeType');
   });
 });
 
