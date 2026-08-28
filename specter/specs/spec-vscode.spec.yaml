@@ -1,6 +1,6 @@
 spec:
   id: spec-vscode
-  version: "3.0.0"
+  version: "3.0.1"
   status: draft
   tier: 2
 
@@ -336,9 +336,14 @@ spec:
         rule binds on the exact name. A declared member whose name differs
         from the key the CLI emits is a member the CLI never emits, whatever
         it was meant to mirror, unless the extension converts the document's
-        keys before returning it. The coverage path converts and the check
-        path does not, so the same declared name is correct on one document
-        and wrong on the other. A range the extension publishes as a
+        keys before returning it. Both paths convert: the coverage path always
+        did, and the check path gained `snakeToCamelCheck` in v0.15.0. Before
+        that the check path did not, so the same declared name was correct on
+        one document and wrong on the other, and every read of
+        `diagnostic.specID` returned undefined. That is history, not the
+        current shape, and this clause stated it in the present tense until
+        2026-08-28 while requiring the conversion four sentences later. A range
+        the extension publishes as a
         diagnostic, meaning a range that reaches a DiagnosticCollection and so
         the Problems panel, MUST end on the same line as its start, at
         character `Number.MAX_SAFE_INTEGER`, so the editor highlights from the
@@ -1403,6 +1408,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "3.0.1"
+      date: "2026-08-28"
+      author: "specter-team"
+      type: patch
+      description: "Correct a self-contradiction in C-32, no behavior change. The constraint required the check document's keys to be converted, and four sentences earlier said in the present tense that the coverage path converts and the check path does not. The check path gained `snakeToCamelCheck` in v0.15.0 and `client.ts` calls it, so the clause described a shape the code had already left. Reworded as history, which is what it was: before v0.15.0 the same declared name was correct on the coverage document and wrong on the check document, and every read of `diagnostic.specID` returned undefined."
     - version: "3.0.0"
       date: "2026-08-27"
       author: "specter-team"

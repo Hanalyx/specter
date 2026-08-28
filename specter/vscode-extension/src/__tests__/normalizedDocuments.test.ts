@@ -1078,37 +1078,78 @@ describe('C-32 the check document keys the client converts', () => {
     expect(mockCli.jsonInvocations('check')).toHaveLength(1);
   });
 
-  // The retraction half of C-32, and the reason it is a separate test: the one
-  // above passes whether or not `changeType` is still declared and mapped. A
-  // dead declaration is invisible to any behavioral assertion, which is exactly
-  // the false guarantee C-32 exists to forbid, so it has to be read statically.
+  // The retraction half of C-32, in two tests, and neither reads source text.
   //
-  // Both files, not one. Deleting the key-map entry while leaving the declared
-  // member is still a member no document carries, and deleting the member while
-  // leaving the map entry converts a key the CLI never sends.
-  it('[spec-vscode/AC-77] no changeType member and no change_type map entry survive the retraction', () => {
-    // Comments are stripped before scanning. A bare substring search over the
-    // whole file cannot tell a declaration from prose about a declaration, so
-    // it fires on the comment recording why the entry was removed. That is a
-    // false positive on the correct implementation, which is the one failure a
-    // static scan must not have.
-    const codeOf = (p: string): string =>
-      fs
-        .readFileSync(p, 'utf-8')
-        .replace(/\/\*[\s\S]*?\*\//g, '')
-        .replace(/\/\/.*$/gm, '');
+  // The behavioral test above passes whether or not `changeType` is still
+  // declared and mapped, so the retraction needs its own guard. Two earlier
+  // versions of that guard searched `client.ts` and `types.ts` for substrings.
+  // Both were lexical approximations of a semantic claim, and both were wrong
+  // in a way that matters:
+  //
+  //   - a raw search matched the comment recording the removal, so it failed
+  //     on the correct implementation;
+  //   - stripping comments first fixed that and still only pinned one spelling.
+  //     A spread of another object, a computed key, an escaped identifier, or a
+  //     declaration reached through an alias restores the forbidden semantics
+  //     while containing neither searched substring.
+  //
+  // So the declaration is read through the type checker, which resolves all of
+  // those to the same property, and the key map is exercised rather than read,
+  // which is independent of how its entries are written.
 
-    const clientCode = codeOf(CLIENT_PATH);
-    const typesCode = codeOf(path.join(path.dirname(CLIENT_PATH), 'types.ts'));
+  it('[spec-vscode/AC-77] SpecterCheckDiagnostic declares no changeType, read from the type', () => {
+    const { checker } = typesWorld();
+    const declared = declaredInterface('SpecterCheckDiagnostic');
+    expect(declared).toBeDefined();
 
-    // Positive control, and it does double duty. It proves the files were read
-    // and that stripping did not eat the declarations, so an empty string
-    // cannot pass the two absence claims below.
-    expect(clientCode).toContain("constraint_type: 'constraintType'");
-    expect(typesCode).toContain('constraintType?:');
+    const members = checker
+      .getPropertiesOfType(declared as ts.Type)
+      .map((p) => p.getName())
+      .sort();
 
-    expect(clientCode).not.toContain('change_type');
-    expect(typesCode).not.toContain('changeType');
+    // The whole member set, not a `not.toContain`. Pinning the set is what
+    // makes a re-added member fail under any spelling the checker resolves,
+    // and it doubles as the positive control: an empty or unresolved type
+    // fails here rather than passing the absence claim by vacuity.
+    expect(members).toEqual([
+      'constraintID',
+      'constraintType',
+      'details',
+      'kind',
+      'message',
+      'severity',
+      'specID',
+    ]);
+  });
+
+  it('[spec-vscode/AC-77] a document carrying change_type gains no changeType, whatever form the map takes', async () => {
+    // CHECK_FIELD_MAP is module-private, so this exercises it through the
+    // client instead of inspecting it. A conversion that happens is observable
+    // whether the entry is a literal, a computed key, or spread in from
+    // somewhere else, which is the point.
+    const client = makeClient();
+    mockCli.script('check', {
+      exitCode: 1,
+      stdout: `{"diagnostics": [
+        {"kind": "orphan_constraint", "severity": "error", "spec_id": "spec-o",
+         "constraint_id": "C-02", "constraint_type": "technical",
+         "change_type": "constraint_removed",
+         "message": "Constraint C-02 in \\"spec-o\\" is not referenced by any acceptance criterion"}
+      ], "summary": {"errors": 1, "warnings": 0, "info": 0}}`,
+    });
+
+    const diagnostic = checkDiagnosticsOf(await client.check())[0];
+
+    // Positive control: the converter ran on this very document. Without it,
+    // a client that returned the document untouched would pass the claim below
+    // for the wrong reason.
+    expect(diagnostic.specID).toBe('spec-o');
+    expect(diagnostic.constraintID).toBe('C-02');
+
+    // The claim. The CLI cannot emit `change_type` any more, so nothing may
+    // convert it; a surviving mapping would declare a guarantee about a key
+    // that no document carries, which is what C-32 forbids.
+    expect('changeType' in diagnostic).toBe(false);
   });
 });
 

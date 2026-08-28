@@ -209,7 +209,9 @@ export interface SpecterParseError {
  * One entry of the `diagnostics` array `specter check --json` emits, after the
  * client converts the document's keys to the camelCase shape the extension
  * reads (C-32). The CLI emits `kind`, `severity`, `message`, and `spec_id` on
- * every diagnostic, and the four optional fields only when non-empty.
+ * every diagnostic, and the three optional fields only when non-empty. There
+ * were four until spec-check 2.0.0 retracted version-change classification and
+ * `changeType` went with it (bugs/done/SP-SP-018).
  *
  * A check diagnostic carries no position of any kind and names no file, so
  * neither is declared. Until v1.9.0 both were declared as required, alongside
