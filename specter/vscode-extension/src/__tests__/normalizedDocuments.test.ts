@@ -1102,24 +1102,17 @@ describe('C-32 the check document keys the client converts', () => {
     const declared = declaredInterface('SpecterCheckDiagnostic');
     expect(declared).toBeDefined();
 
-    const members = checker
-      .getPropertiesOfType(declared as ts.Type)
-      .map((p) => p.getName())
-      .sort();
+    const members = checker.getPropertiesOfType(declared as ts.Type).map((p) => p.getName());
 
-    // The whole member set, not a `not.toContain`. Pinning the set is what
-    // makes a re-added member fail under any spelling the checker resolves,
-    // and it doubles as the positive control: an empty or unresolved type
-    // fails here rather than passing the absence claim by vacuity.
-    expect(members).toEqual([
-      'constraintID',
-      'constraintType',
-      'details',
-      'kind',
-      'message',
-      'severity',
-      'specID',
-    ]);
+    // Positive control, and it is deliberately one known survivor rather than
+    // the whole member set. An earlier version pinned all seven members, which
+    // made AC-77 the owner of every field on this interface: a legitimate new
+    // member would fail this criterion even when the CLI, the spec and the type
+    // changed together. AC-77 is about the absence of one retracted field, so
+    // it asserts exactly that plus enough to rule out vacuous success.
+    expect(members).toContain('constraintType');
+
+    expect(members).not.toContain('changeType');
   });
 
   it('[spec-vscode/AC-77] a document carrying change_type gains no changeType, whatever form the map takes', async () => {
@@ -1146,9 +1139,17 @@ describe('C-32 the check document keys the client converts', () => {
     expect(diagnostic.specID).toBe('spec-o');
     expect(diagnostic.constraintID).toBe('C-02');
 
-    // The claim. The CLI cannot emit `change_type` any more, so nothing may
-    // convert it; a surviving mapping would declare a guarantee about a key
-    // that no document carries, which is what C-32 forbids.
+    // The claim, stated as "the key survives untouched" rather than "no
+    // changeType appeared". convertKeys resolves an unmapped key to itself
+    // (`fieldMap[k] ?? k`), so a surviving `change_type` on the output is
+    // exactly the observable meaning of "the map does not carry this key".
+    //
+    // Asserting the absence of `changeType` alone is weaker and has a hole:
+    // `change_type: 'legacyChangeType'` maps the key to a different
+    // destination, so `changeType` is still absent while the entry is very much
+    // back. Measured, and it survived that assertion. This form kills every
+    // destination, because any mapping at all consumes the original key.
+    expect(Object.keys(diagnostic)).toContain('change_type');
     expect('changeType' in diagnostic).toBe(false);
   });
 });
