@@ -51,8 +51,10 @@ func matchExcludePattern(pattern, relPath, dirName string) bool {
 //
 // Scope, per C-29. This covers manifest policy only. A walk MAY skip
 // directories of its own, and those stay at the call site: discoverTestFiles
-// skips node_modules, dist and .git whatever the manifest says, and moving
-// them here would apply them to spec discovery too.
+// skips node_modules, dist and .git whatever the manifest says. Those three are
+// also in the default list ExcludePatterns() returns, so they are redundant
+// until a custom settings.exclude replaces the defaults; moving them here would
+// change spec discovery under that configuration.
 func manifestExcludesDir(patterns []string, path, name string) bool {
 	relPath := strings.TrimPrefix(path, "./")
 	for _, pat := range patterns {

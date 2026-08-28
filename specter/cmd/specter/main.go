@@ -376,9 +376,16 @@ func discoverTestFiles(glob string) []string {
 			return nil
 		}
 		if info.IsDir() {
-			// This walk's own skips, deliberately not in the shared predicate:
-			// they are properties of test discovery rather than manifest
-			// policy, and moving them there would apply them to spec discovery.
+			// This walk's own skips, deliberately not in the shared predicate.
+			//
+			// They add less than they look like they do: all three are already
+			// in the default list ExcludePatterns() returns, so with no
+			// settings.exclude declared the predicate below skips them anyway.
+			// They matter only under a custom settings.exclude, because a
+			// non-empty list REPLACES the defaults, and then spec discovery
+			// stops skipping node_modules while this walk keeps doing so.
+			// Moving them into the shared predicate would change spec
+			// discovery under exactly that configuration.
 			if info.Name() == "node_modules" || info.Name() == "dist" || info.Name() == ".git" {
 				return filepath.SkipDir
 			}
