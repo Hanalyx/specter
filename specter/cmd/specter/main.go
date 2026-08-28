@@ -335,13 +335,10 @@ func discoverSpecs(patterns ...string) []string {
 			return nil
 		}
 		if info.IsDir() {
-			// spec-manifest C-29: bare-name patterns match by directory
-			// name; glob patterns match against the relative path.
-			relPath := strings.TrimPrefix(path, "./")
-			for _, pat := range excludePatterns {
-				if matchExcludePattern(pat, relPath, info.Name()) {
-					return filepath.SkipDir
-				}
+			// spec-manifest C-29: the one shared exclusion predicate, which
+			// discoverTestFiles calls too.
+			if manifestExcludesDir(excludePatterns, path, info.Name()) {
+				return filepath.SkipDir
 			}
 			// Skip by path prefix for entries like "tests/fixtures", "testdata"
 			if strings.HasPrefix(path, filepath.Join("tests", "fixtures")) ||
@@ -358,9 +355,19 @@ func discoverSpecs(patterns ...string) []string {
 }
 
 func discoverTestFiles(glob string) []string {
+	// spec-manifest C-29 governs the default walk only. settings.tests_glob
+	// overrides discovery entirely, so exclude patterns are not applied to it:
+	// narrowing an explicit override with a separate setting would surprise
+	// anyone who set the glob precisely to say what they meant.
 	if glob != "" {
 		return globMatchWalk(glob)
 	}
+
+	// Load the manifest for settings.exclude. discoverSpecs honored it and this
+	// walk did not, which let a workspace exclude a vendored copy from spec
+	// discovery and still have its test files counted (bugs/SP-SP-016).
+	m, _, _ := loadManifest()
+	excludePatterns := m.ExcludePatterns()
 
 	// Default: walk the repo for all recognized test file suffixes.
 	var files []string
@@ -368,8 +375,17 @@ func discoverTestFiles(glob string) []string {
 		if err != nil {
 			return nil
 		}
-		if info.IsDir() && (info.Name() == "node_modules" || info.Name() == "dist" || info.Name() == ".git") {
-			return filepath.SkipDir
+		if info.IsDir() {
+			// This walk's own skips, deliberately not in the shared predicate:
+			// they are properties of test discovery rather than manifest
+			// policy, and moving them there would apply them to spec discovery.
+			if info.Name() == "node_modules" || info.Name() == "dist" || info.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			// spec-manifest C-29, the same predicate discoverSpecs calls.
+			if manifestExcludesDir(excludePatterns, path, info.Name()) {
+				return filepath.SkipDir
+			}
 		}
 		for _, ext := range testFileExts {
 			if strings.HasSuffix(path, ext) {
