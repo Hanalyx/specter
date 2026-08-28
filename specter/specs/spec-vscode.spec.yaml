@@ -1,6 +1,6 @@
 spec:
   id: spec-vscode
-  version: "3.0.2"
+  version: "4.0.0"
   status: draft
   tier: 2
 
@@ -379,7 +379,29 @@ spec:
         key map that maps `change_type` to itself is permitted, because it is
         observationally identical to no entry: the converter resolves an
         unmapped key to itself, so an identity entry changes no document and
-        asserts nothing about one. Stating this as "the key map MUST NOT carry
+        asserts nothing about one.
+
+        **Every input key this constraint does not require to be renamed MUST
+        reach the caller under its original name, and the conversion MUST NOT
+        add a key to the returned object.** The renamed set is the one named
+        above, `spec_id`, `constraint_id` and `constraint_type` for the check
+        document; every other key passes through as itself.
+
+        The rule is stated against the set this constraint owns, not against
+        what an implementation happens to rename. "A key the conversion does
+        not rename" is what this said until it was corrected, and it is
+        circular: an implementation that renames `change_type` to a third name
+        puts the key outside the clause by the act the clause exists to forbid,
+        so the rule excuses exactly the violation it is meant to catch.
+
+        Both halves are load-bearing, and neither implies the other. Without
+        the pass-through half, forbidding only the production of `changeType`
+        permits dropping `change_type` or renaming it to a third name. Without
+        the no-invention half, a converter may preserve `change_type` and emit
+        an extra key beside it. In each case the returned object carries a
+        member `types.ts` does not declare, which is the same false-guarantee
+        failure this constraint already forbids, read from the object rather
+        than from the declaration. Stating this as "the key map MUST NOT carry
         `change_type`" is what the clause said until 2026-08-28, and it is a
         rule about representation that no observation can enforce and no
         reviewer can check without reading a module-private table. This spec
@@ -1339,11 +1361,20 @@ spec:
 
     - id: AC-77
       description: >-
-        The check document's keys are converted, all three of them. Given a
-        check diagnostic carrying `spec_id`, `constraint_id`, and
+        **Two cases, and both are declared: a conversion case and a retraction
+        case.** They need separate documents, because the second turns on a key
+        the first must not contain.
+
+        **Conversion.** The check document's keys are converted, all three of
+        them. Given a check diagnostic carrying `spec_id`, `constraint_id`, and
         `constraint_type`, the object `client.check()` returns exposes
         `specID`, `constraintID`, and `constraintType` with the CLI's values,
-        and carries none of the three snake-case keys. AC-72 pins `spec_id`
+        and carries none of **those three** snake-case keys. The count is
+        qualified deliberately: it is zero of the three converted keys, not
+        zero snake-case keys of any kind. The retraction case below returns a
+        document that legitimately carries `change_type`, which is snake case
+        and must survive, so an unqualified count would put the two cases in
+        contradiction. AC-72 pins `spec_id`
         alone, through the members `types.ts` declares required, so deleting
         either of the other two entries from the check key map changes nothing
         any criterion reads. Asserting the absence of the snake-case keys is
@@ -1354,22 +1385,70 @@ spec:
         returns, not about a rendered effect, and C-32 requires the conversion
         because `types.ts` declares those two members. **This said four keys
         until 2026-08-27.** `change_type` was the fourth, and `spec-check` 2.0.0
-        retracted the classification that produced it, so the key, the
-        `changeType` member and the map entry all go (`bugs/SP-SP-018`).
+        retracted the classification that produced it, so the `changeType`
+        member goes from `types.ts` (`bugs/SP-SP-018`).
+
+        **Retraction.** The criterion also asserts what happens to a
+        `change_type` key that arrives anyway, and it asserts it as **the
+        complete key set of the returned object**: every level of it, not the first diagnostic alone.
+
+        A set rather than a list of separate claims, because C-32 makes two
+        requirements and no combination of single-key assertions covers both.
+        Absence of `changeType` alone is satisfied by renaming the key to a
+        third name. Pass-through alone is satisfied by an identity entry, which
+        is fine, **and also by a converter that preserves `change_type` and
+        emits an extra key beside it**, which is not: a rename consumes the
+        original key, but a duplication does not, so pass-through says nothing
+        about invention. That is why no-invention is a separate requirement.
+        This paragraph claimed pass-through was satisfied "by nothing else"
+        until 2026-08-28, and the preserve-and-duplicate case disproves it.
+
+        **Every level, because C-32 binds the returned object and not one
+        diagnostic.** A conversion that adds a key beside `diagnostics` and
+        `summary` violates the constraint as plainly as one that adds a key
+        beside `constraintID`, and a criterion that reads only
+        `diagnostics[0]` cannot see it.
+
+        **Both cases bind their key sets, not the retraction case alone.**
+        C-32's no-invention half applies to every input, and one case cannot
+        stand in for the other: a converter that adds a key only when
+        `change_type` is absent is invisible to the retraction fixture, which
+        always carries it. The conversion case therefore declares its own three
+        sets above. Added 2026-08-28 after exactly that converter passed every
+        assertion this criterion then had.
+
+        **The map entry itself is not the subject.** This said "the map entry
+        goes" until 2026-08-28, which contradicted C-32's explicit permission
+        for an entry mapping `change_type` to itself. That entry is
+        observationally identical to no entry, and the criterion binds the
+        document the client returns rather than a module-private table.
       inputs:
-        cli_stdout: |-
+        conversion_cli_stdout: |-
           {"diagnostics": [
             {"kind": "orphan_constraint", "severity": "error", "spec_id": "spec-o",
              "constraint_id": "C-02", "constraint_type": "technical",
              "message": "Constraint C-02 in \"spec-o\" is not referenced by any acceptance criterion"}
           ], "summary": {"errors": 1, "warnings": 0, "info": 0}}
+        retraction_cli_stdout: |-
+          {"diagnostics": [
+            {"kind": "orphan_constraint", "severity": "error", "spec_id": "spec-o",
+             "constraint_id": "C-02", "constraint_type": "technical",
+             "change_type": "constraint_removed",
+             "message": "Constraint C-02 in \"spec-o\" is not referenced by any acceptance criterion"}
+          ], "summary": {"errors": 1, "warnings": 0, "info": 0}}
         cli_exit_code: 1
         client_method: "check"
       expected_output:
-        specID: "spec-o"
-        constraintID: "C-02"
-        constraintType: "technical"
-        snake_case_keys_present_on_returned_diagnostic: 0
+        conversion_specID: "spec-o"
+        conversion_constraintID: "C-02"
+        conversion_constraintType: "technical"
+        conversion_converted_snake_case_keys_present: 0
+        conversion_returned_keys: "diagnostics, summary"
+        conversion_summary_keys: "errors, warnings, info"
+        conversion_diagnostic_keys: "constraintID, constraintType, kind, message, severity, specID"
+        retraction_returned_keys: "diagnostics, summary"
+        retraction_summary_keys: "errors, warnings, info"
+        retraction_diagnostic_keys: "change_type, constraintID, constraintType, kind, message, severity, specID"
       references_constraints: ["C-32"]
       priority: high
 
@@ -1419,6 +1498,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "4.0.0"
+      date: "2026-08-28"
+      author: "specter-team"
+      type: major
+      description: "C-32 gains two requirements about the returned document: every input key the constraint does not require to be renamed reaches the caller under its original name, and the conversion adds no key. Neither implies the other. Without pass-through, forbidding only the production of `changeType` permits dropping `change_type` or renaming it to a third name. Without no-invention, a converter may preserve `change_type` and emit an extra key beside it. In both cases the returned object carries a member `types.ts` does not declare, which is the false guarantee this constraint already forbids, read from the object rather than the declaration. Stated against the renamed set this constraint owns rather than against what an implementation happens to rename: the earlier wording, \"a key the conversion does not rename\", was circular, because renaming `change_type` to a third name put it outside the clause by the act the clause forbids. AC-77 said the map entry goes, contradicting 3.0.2's permission for an entry mapping `change_type` to itself; it now binds the returned document. AC-77 binds the exact key set at every level of the returned object in **both** of its cases, because a converter that invents a key only when `change_type` is absent is invisible to the retraction fixture, which always carries it. AC-77 also gains the case it was already being tested against: it declared one input, without `change_type`, while its test supplied an undeclared second document carrying the key. Both are now declared, a conversion case and a retraction case, with the retraction case binding the complete key set at every level of the returned object rather than the first diagnostic alone, because a conversion that adds a key beside `diagnostics` and `summary` breaks the constraint as plainly as one that adds a key beside `constraintID`. The conversion case's zero snake-case count is qualified to the three converted keys, since the retraction document legitimately carries `change_type`. And AC-77 said pass-through is satisfied by an identity entry \"and by nothing else\", which the preserve-and-duplicate case disproves and which is the reason no-invention is a separate requirement. Major, not the minor first written and not the patch `specter diff` reports: `docs/SPEC_SCHEMA_REFERENCE.md` sets MAJOR for a change that could break downstream specs **or implementations**, and lists narrowing scope in a way that invalidates existing implementations. A new MUST makes a previously conforming converter nonconforming. No spec depends on `spec-vscode`, so nothing cascades, which affects blast radius and not classification."
     - version: "3.0.2"
       date: "2026-08-28"
       author: "specter-team"
