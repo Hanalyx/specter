@@ -1,6 +1,6 @@
 spec:
   id: spec-vscode
-  version: "2.0.0"
+  version: "3.0.0"
   status: draft
   tier: 2
 
@@ -320,8 +320,11 @@ spec:
         only for a YAML syntax error, and never carries `column`, because no
         code path in the parser assigns that field. A check diagnostic carries
         `kind`, `severity`, `message`, and the spec id on every diagnostic,
-        carries `constraint_id`, `constraint_type`, `change_type`, and
-        `details` only when non-empty, and carries no position of any kind.
+        carries `constraint_id`, `constraint_type`, and `details` only when
+        non-empty, and carries no position of any kind. `change_type` was in
+        this list until 2026-08-27 and no longer exists: `spec-check` 2.0.0
+        retracted version-change classification, so no check diagnostic can
+        carry it (`bugs/SP-SP-018`).
         Where a position field is absent the extension MUST use 0, giving a
         range at the start of the file, rather than arithmetic on `undefined`.
         The extension MUST NOT read `col` or `code` from a parse error under
@@ -357,11 +360,17 @@ spec:
         --json` run and the `coverage --json` refresh, so a per-site decision
         renders one error two ways depending on which run produced it. The
         check document's keys MUST be converted the way the coverage
-        document's are, covering `spec_id`, `constraint_id`, `constraint_type`,
-        and `change_type`. The last three have no consumer in the extension
-        today. They are converted because `types.ts` declares `constraintID`,
-        `constraintType`, and `changeType`, and a declared member no document
-        carries is the false guarantee this rule exists to prevent. Rationale
+        document's are, covering `spec_id`, `constraint_id`, and
+        `constraint_type`. The last two have no consumer in the extension
+        today. They are converted because `types.ts` declares `constraintID`
+        and `constraintType`, and a declared member no document carries is the
+        false guarantee this rule exists to prevent. That rule cuts both ways,
+        which is why `change_type` came out rather than staying as a harmless
+        extra: `spec-check` 2.0.0 retracted version-change classification, so
+        `types.ts` MUST NOT declare `changeType` and the key map MUST NOT carry
+        `change_type`. Leaving either would be exactly the false guarantee this
+        constraint forbids, declared against a document that can never carry
+        the field (`bugs/SP-SP-018`). Rationale
         (SP-SP-025): `SpecterParseError`
         declared `col` and `code` where the CLI emits `column` and `type`, and
         `SpecterCheckDiagnostic` declared `specID`, `file`, and `line` as
@@ -1314,28 +1323,29 @@ spec:
 
     - id: AC-77
       description: >-
-        The check document's keys are converted, all four of them. Given a
-        check diagnostic carrying `spec_id`, `constraint_id`,
-        `constraint_type`, and `change_type`, the object `client.check()`
-        returns exposes `specID`, `constraintID`, `constraintType`, and
-        `changeType` with the CLI's values, and carries none of the four
-        snake-case keys. AC-72 pins `spec_id` alone, through the members
-        `types.ts` declares required, so deleting any of the other three
-        entries from the check key map changes nothing any criterion reads.
-        Asserting the absence of the snake-case keys is the half that fails
-        when the check document is converted with the coverage map instead,
-        which would map `spec_id` and leave the other three untouched. Nothing
-        in the extension reads `constraintID`, `constraintType`, or
-        `changeType` today. The criterion is about the document the client
+        The check document's keys are converted, all three of them. Given a
+        check diagnostic carrying `spec_id`, `constraint_id`, and
+        `constraint_type`, the object `client.check()` returns exposes
+        `specID`, `constraintID`, and `constraintType` with the CLI's values,
+        and carries none of the three snake-case keys. AC-72 pins `spec_id`
+        alone, through the members `types.ts` declares required, so deleting
+        either of the other two entries from the check key map changes nothing
+        any criterion reads. Asserting the absence of the snake-case keys is
+        the half that fails when the check document is converted with the
+        coverage map instead, which would map `spec_id` and leave the other two
+        untouched. Nothing in the extension reads `constraintID` or
+        `constraintType` today. The criterion is about the document the client
         returns, not about a rendered effect, and C-32 requires the conversion
-        because `types.ts` declares those three members.
+        because `types.ts` declares those two members. **This said four keys
+        until 2026-08-27.** `change_type` was the fourth, and `spec-check` 2.0.0
+        retracted the classification that produced it, so the key, the
+        `changeType` member and the map entry all go (`bugs/SP-SP-018`).
       inputs:
         cli_stdout: |-
           {"diagnostics": [
-            {"kind": "breaking_change", "severity": "error", "spec_id": "spec-o",
+            {"kind": "orphan_constraint", "severity": "error", "spec_id": "spec-o",
              "constraint_id": "C-02", "constraint_type": "technical",
-             "change_type": "constraint_removed",
-             "message": "Constraint C-02 was removed from \"spec-o\" without a major version bump"}
+             "message": "Constraint C-02 in \"spec-o\" is not referenced by any acceptance criterion"}
           ], "summary": {"errors": 1, "warnings": 0, "info": 0}}
         cli_exit_code: 1
         client_method: "check"
@@ -1343,7 +1353,6 @@ spec:
         specID: "spec-o"
         constraintID: "C-02"
         constraintType: "technical"
-        changeType: "constraint_removed"
         snake_case_keys_present_on_returned_diagnostic: 0
       references_constraints: ["C-32"]
       priority: high
@@ -1381,7 +1390,7 @@ spec:
       version_range: "^1.1.0"
       relationship: requires
     - spec_id: spec-check
-      version_range: "^1.1.0"
+      version_range: "^2.0.0"
       relationship: requires
     - spec_id: spec-coverage
       version_range: "^1.23.0"
@@ -1394,6 +1403,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "3.0.0"
+      date: "2026-08-27"
+      author: "specter-team"
+      type: major
+      description: "Drop `change_type` from the check document contract. `spec-check` 2.0.0 retracted version-change classification (`bugs/SP-SP-018`), so no check diagnostic can carry the field and the extension must not declare it. Amend C-32 to remove `change_type` from both the carries list and the key-conversion list, and to say plainly that leaving `changeType` in `types.ts` would be the same false guarantee C-32 already forbids, pointed the other way: a declared member against a document that can never carry the field. Amend AC-77 from four converted keys to three, and replace its fixture, which used `kind: breaking_change`, a diagnostic kind that no longer exists. Raise the `spec-check` dependency floor to `^2.0.0`, because `^1.1.0` does not admit 2.0.0. Major because a documented field is removed from the contract."
     - version: "2.0.0"
       date: "2026-08-26"
       author: "specter-team"

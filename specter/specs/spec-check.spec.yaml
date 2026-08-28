@@ -1,6 +1,6 @@
 spec:
   id: spec-check
-  version: "1.11.1"
+  version: "2.0.0"
   status: approved
   tier: 1
 
@@ -11,8 +11,6 @@ spec:
       The core analysis tool. Walks the dependency graph produced by spec-resolve
       and validates semantic consistency across specs. MVP focuses on deterministic,
       structural checks. AI-assisted semantic checks are deferred to a later phase.
-    dependencies:
-      - "deep-diff (1.x) or custom tree differ"
     related_specs:
       - "spec-parse.spec.yaml"
       - "spec-resolve.spec.yaml"
@@ -25,14 +23,14 @@ spec:
     summary: >
       Perform structural type-checking across the spec dependency graph.
       Detect orphan constraints, structural conflicts between connected specs,
-      breaking changes between spec versions, and (opt-in) test-annotation
-      references that do not match any parsed spec.
+      and (opt-in) test-annotation references that do not match any parsed spec.
+      Version-change classification is not part of this spec: `spec-diff` owns
+      it.
     scope:
       includes:
         - "Orphan constraint detection (constraints not referenced by any AC)"
         - "Duplicate acceptance criterion ID detection within a single spec"
         - "Structural conflict detection between dependent specs"
-        - "Breaking change detection (compare current spec to previous version)"
         - "Tier-aware severity (Tier 1 = error, Tier 3 = warning)"
         - "Diagnostic output with spec ID, constraint ID, and explanation"
         - "Test-annotation cross-reference (opt-in via --test / -t): scan test files, flag @spec and @ac references that do not match any parsed spec"
@@ -57,11 +55,6 @@ spec:
 
     - id: C-03
       description: "MUST detect structural conflicts where a downstream spec contradicts an upstream constraint, and MUST report them advisorily per C-15 rather than as a build failure"
-      type: technical
-      enforcement: error
-
-    - id: C-04
-      description: "MUST classify spec-version changes as breaking/additive/patch per SDD versioning rules"
       type: technical
       enforcement: error
 
@@ -199,28 +192,6 @@ spec:
         kind: "structural_conflict"
       references_constraints: ["C-03"]
       priority: critical
-
-    - id: AC-04
-      description: "Removing a field between versions is classified as MAJOR (breaking)"
-      inputs:
-        v1: "spec with field 'legacy_token'"
-        v2: "spec without 'legacy_token'"
-      expected_output:
-        change_type: "breaking"
-        requires_major_bump: true
-      references_constraints: ["C-04"]
-      priority: high
-
-    - id: AC-05
-      description: "Adding an optional field between versions is classified as MINOR (additive)"
-      inputs:
-        v1: "spec without 'refresh_token'"
-        v2: "spec with optional 'refresh_token'"
-      expected_output:
-        change_type: "additive"
-        requires_minor_bump: true
-      references_constraints: ["C-04"]
-      priority: high
 
     - id: AC-06
       description: "Spec where all constraints are referenced by ACs produces zero orphan diagnostics"
@@ -701,6 +672,11 @@ spec:
 
 
   changelog:
+    - version: "2.0.0"
+      date: "2026-08-27"
+      author: "specter-team"
+      type: major
+      description: "Retract version-change classification from this spec. Remove C-04, AC-04 and AC-05, the objective summary's promise to detect breaking changes between spec versions, the matching `scope.includes` entry, and the `deep-diff` differ dependency that existed only for them. `bugs/SP-SP-018`: no production caller populates `CheckOptions.PreviousVersions`, so the branch calling `ClassifyChanges` was unreachable and `check` emitted no change diagnostic on a constraint rewritten to the opposite meaning. The three criteria nonetheless reported covered, because the only callers were tests invoking the pure function directly, which is why the record is graded P1 false confidence rather than a lower defect. Retracted rather than reworded: `spec-diff` owns version comparison and carries the constraints, the corpora and the tests for it, so a rewritten checker-owned criterion would invent a second version policy and recreate the defect under new wording. Any future previous-version feature reuses `internal/diff`. Major because constraints and criteria are removed."
     - version: "1.11.1"
       date: "2026-08-23"
       author: "specter-team"
