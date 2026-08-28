@@ -963,7 +963,6 @@ function registerProviders(ctx: vscode.ExtensionContext): void {
         const decorations = buildACDecorations({
           coveredACs: entry.coveredACs ?? [],
           uncoveredACs: entry.uncoveredACs ?? [],
-          gapACs: [],
         });
 
         const lenses: vscode.CodeLens[] = [];
@@ -1653,7 +1652,7 @@ function escapeAttr(s: string): string {
 // ---------------------------------------------------------------------------
 
 type TreeElement = { kind: 'spec'; specID: string; file: string; children: TreeElement[] }
-  | { kind: 'ac'; id: string; icon: 'covered' | 'uncovered' | 'gap'; children: TreeElement[] }
+  | { kind: 'ac'; id: string; icon: 'covered' | 'uncovered'; children: TreeElement[] }
   | { kind: 'testFile'; path: string }
   | { kind: 'message'; label: string; detail?: string; iconId?: string }
   | { kind: 'parseErrorGroup'; label: string; children: TreeElement[] }

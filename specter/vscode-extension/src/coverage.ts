@@ -289,7 +289,6 @@ export function resolveCoveringFiles(
 export interface BuildACDecorationsInput {
   coveredACs: string[];
   uncoveredACs: string[];
-  gapACs: string[];
   testCountByAC?: Record<string, number>;
 }
 
@@ -313,9 +312,9 @@ export function buildACDecorations(input: BuildACDecorationsInput): ACDecoration
     decs.push({ acID: id, kind: 'uncovered' });
   }
 
-  for (const id of input.gapACs) {
-    decs.push({ acID: id, kind: 'gap' });
-  }
+  // No gap branch. spec-vscode 5.0.0 retracted the gray-dash promise from
+  // C-07 and AC-05: `coverage --json` emits no gap criterion ids, so this loop
+  // only ever ran over an empty list (bugs/SP-SP-019).
 
   return decs;
 }

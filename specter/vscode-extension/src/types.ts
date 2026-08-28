@@ -278,7 +278,9 @@ export interface QuickFixResult {
 // Decoration (VS-Code-agnostic)
 // ---------------------------------------------------------------------------
 
-export type DecorationKind = 'covered' | 'uncovered' | 'gap';
+// No 'gap'. spec-vscode 5.0.0 retracted the gray-dash rendering, and a kind
+// nothing can produce is a declaration that reads as a guarantee (SP-SP-019).
+export type DecorationKind = 'covered' | 'uncovered';
 
 export interface ACDecoration {
   acID: string;

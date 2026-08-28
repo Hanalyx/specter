@@ -52,7 +52,6 @@ describe('[spec-vscode/AC-05] buildACDecorations', () => {
     const decs = buildACDecorations({
       coveredACs: ['AC-01', 'AC-02'],
       uncoveredACs: ['AC-03'],
-      gapACs: [],
     });
     const covered = decs.filter(d => d.acID === 'AC-01' || d.acID === 'AC-02');
     expect(covered.every(d => d.kind === 'covered')).toBe(true);
@@ -62,7 +61,6 @@ describe('[spec-vscode/AC-05] buildACDecorations', () => {
     const decs = buildACDecorations({
       coveredACs: [],
       uncoveredACs: ['AC-01'],
-      gapACs: [],
     });
     expect(decs[0].kind).toBe('uncovered');
   });
@@ -82,7 +80,6 @@ describe('[spec-vscode/AC-05] buildACDecorations', () => {
     const decs = buildACDecorations({
       coveredACs: ['AC-01'],
       uncoveredACs: [],
-      gapACs: [],
       testCountByAC: { 'AC-01': 3 },
     });
     expect(decs[0].endOfLineText).toContain('3');
