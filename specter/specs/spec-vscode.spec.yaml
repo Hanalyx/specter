@@ -1,6 +1,6 @@
 spec:
   id: spec-vscode
-  version: "3.0.1"
+  version: "3.0.2"
   status: draft
   tier: 2
 
@@ -372,10 +372,21 @@ spec:
         false guarantee this rule exists to prevent. That rule cuts both ways,
         which is why `change_type` came out rather than staying as a harmless
         extra: `spec-check` 2.0.0 retracted version-change classification, so
-        `types.ts` MUST NOT declare `changeType` and the key map MUST NOT carry
-        `change_type`. Leaving either would be exactly the false guarantee this
-        constraint forbids, declared against a document that can never carry
-        the field (`bugs/SP-SP-018`). Rationale
+        `types.ts` MUST NOT declare `changeType`, and no conversion the client
+        performs MUST produce a `changeType` key on a returned document
+        (`bugs/SP-SP-018`). **The rule binds on what is declared and what is
+        produced, not on the contents of a private constant.** An entry in the
+        key map that maps `change_type` to itself is permitted, because it is
+        observationally identical to no entry: the converter resolves an
+        unmapped key to itself, so an identity entry changes no document and
+        asserts nothing about one. Stating this as "the key map MUST NOT carry
+        `change_type`" is what the clause said until 2026-08-28, and it is a
+        rule about representation that no observation can enforce and no
+        reviewer can check without reading a module-private table. This spec
+        has been bitten twice by exactly that: the guard for this clause was
+        written first as a text search and then as a comment-stripped text
+        search, and both were lexical approximations of a semantic claim.
+        Rationale
         (SP-SP-025): `SpecterParseError`
         declared `col` and `code` where the CLI emits `column` and `type`, and
         `SpecterCheckDiagnostic` declared `specID`, `file`, and `line` as
@@ -1408,6 +1419,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "3.0.2"
+      date: "2026-08-28"
+      author: "specter-team"
+      type: patch
+      description: "Move C-32's retraction clause from representation to observable semantics, no behavior change. It said the client's key map MUST NOT carry `change_type`. That is a rule about the contents of a module-private constant, and no observation enforces it: the converter resolves an unmapped key to itself, so an entry mapping `change_type` to itself is observationally identical to no entry. A guard written against the old wording passed on that mutant while reporting that it killed every mapping. The clause now binds what is declared and what is produced, which is what the rule was ever about, and permits an identity entry explicitly. Recorded here because the same clause has now produced three failed guards, two of them lexical searches over source text."
     - version: "3.0.1"
       date: "2026-08-28"
       author: "specter-team"

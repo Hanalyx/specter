@@ -1139,16 +1139,27 @@ describe('C-32 the check document keys the client converts', () => {
     expect(diagnostic.specID).toBe('spec-o');
     expect(diagnostic.constraintID).toBe('C-02');
 
-    // The claim, stated as "the key survives untouched" rather than "no
-    // changeType appeared". convertKeys resolves an unmapped key to itself
-    // (`fieldMap[k] ?? k`), so a surviving `change_type` on the output is
-    // exactly the observable meaning of "the map does not carry this key".
+    // The claim, and it is deliberately about the document rather than about
+    // the map. C-32 binds what is declared and what is produced, not the
+    // contents of a module-private constant.
     //
-    // Asserting the absence of `changeType` alone is weaker and has a hole:
-    // `change_type: 'legacyChangeType'` maps the key to a different
-    // destination, so `changeType` is still absent while the entry is very much
-    // back. Measured, and it survived that assertion. This form kills every
-    // destination, because any mapping at all consumes the original key.
+    // Two assertions, because either alone has a hole, both measured:
+    //
+    //   - `changeType` absent, alone, is satisfied by
+    //     `change_type: 'legacyChangeType'`. The entry is back under a
+    //     different destination and nothing here notices.
+    //   - `change_type` surviving, alone, is satisfied by any mapping that
+    //     happens to land on a name this test does not read.
+    //
+    // Together they say: the key the CLI cannot send passes through untouched,
+    // and the member the type does not declare is not produced.
+    //
+    // What this deliberately does NOT catch is `change_type: 'change_type'`.
+    // That entry is observationally identical to no entry, because convertKeys
+    // resolves an unmapped key to itself (`fieldMap[k] ?? k`), so it changes no
+    // document and asserts nothing about one. C-32 permits it explicitly as of
+    // spec-vscode 3.0.2. An earlier version of this comment claimed the pair
+    // below killed "any mapping at all", which was false.
     expect(Object.keys(diagnostic)).toContain('change_type');
     expect('changeType' in diagnostic).toBe(false);
   });
