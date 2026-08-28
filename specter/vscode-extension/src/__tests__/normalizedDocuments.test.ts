@@ -1029,9 +1029,13 @@ describe('C-31 the single point where stdout becomes a document', () => {
 // There were four until spec-check 2.0.0 retracted version-change
 // classification (bugs/SP-SP-018). `change_type` was the fourth. C-32 forbids
 // declaring a member no document carries, so once no check diagnostic can carry
-// the key, `changeType` has to leave `types.ts` and `change_type` has to leave
-// the key map. The second test below is what holds that, because nothing in the
-// first one fails if a dead entry is simply left behind.
+// the key, `changeType` has to leave `types.ts`.
+//
+// The key map is NOT the subject, and no test here reads it. C-32 permits an
+// entry mapping `change_type` to itself, which is observationally identical to
+// no entry, so no observation can tell the two apart and none should try. What
+// the tests below hold is the document: what the type declares, and the exact
+// key set the client returns at every level.
 // ---------------------------------------------------------------------------
 
 const CONVERTED_SNAKE_KEYS = ['spec_id', 'constraint_id', 'constraint_type'];
@@ -1048,7 +1052,8 @@ describe('C-32 the check document keys the client converts', () => {
     // Exit 1, which is what the CLI does on an error-severity diagnostic.
     mockCli.script('check', { exitCode: 1, stdout: CHECK_DOC_THREE_CONVERTIBLE_KEYS });
 
-    const diagnostics = checkDiagnosticsOf(await client.check());
+    const result = (await client.check()) as unknown as Loose;
+    const diagnostics = checkDiagnosticsOf(result);
     expect(diagnostics).toHaveLength(1);
     const diagnostic = diagnostics[0];
 
@@ -1073,6 +1078,29 @@ describe('C-32 the check document keys the client converts', () => {
     // The absence half. Exactly the three keys the map names, not any key that
     // happens to carry an underscore.
     expect(Object.keys(diagnostic).filter((k) => CONVERTED_SNAKE_KEYS.includes(k))).toEqual([]);
+
+    // The exact key set, at every level, for this case too. C-32's
+    // no-invention half applies to any input, and the retraction case cannot
+    // cover this one: a converter can invent a key only when `change_type` is
+    // absent, and the retraction fixture never sees it. Measured, and it
+    // survived until these three assertions existed.
+    //
+    // The values above are checked separately, because a key set alone says a
+    // key is present and nothing about what it holds.
+    expect(Object.keys(result).sort()).toEqual(['diagnostics', 'summary']);
+    expect(Object.keys(result.summary as Loose).sort()).toEqual([
+      'errors',
+      'info',
+      'warnings',
+    ]);
+    expect(Object.keys(diagnostic).sort()).toEqual([
+      'constraintID',
+      'constraintType',
+      'kind',
+      'message',
+      'severity',
+      'specID',
+    ]);
 
     // Control: the document came from an actual invocation.
     expect(mockCli.jsonInvocations('check')).toHaveLength(1);
@@ -1115,7 +1143,7 @@ describe('C-32 the check document keys the client converts', () => {
     expect(members).not.toContain('changeType');
   });
 
-  it('[spec-vscode/AC-77] a document carrying change_type gains no changeType, whatever form the map takes', async () => {
+  it('[spec-vscode/AC-77] a document carrying change_type returns exactly the expected keys, none renamed, none invented', async () => {
     // CHECK_FIELD_MAP is module-private, so this exercises it through the
     // client instead of inspecting it. A conversion that happens is observable
     // whether the entry is a literal, a computed key, or spread in from
@@ -1131,7 +1159,8 @@ describe('C-32 the check document keys the client converts', () => {
       ], "summary": {"errors": 1, "warnings": 0, "info": 0}}`,
     });
 
-    const diagnostic = checkDiagnosticsOf(await client.check())[0];
+    const result = (await client.check()) as unknown as Loose;
+    const diagnostic = checkDiagnosticsOf(result)[0];
 
     // Positive control: the converter ran on this very document. Without it,
     // a client that returned the document untouched would pass the claim below
@@ -1139,29 +1168,53 @@ describe('C-32 the check document keys the client converts', () => {
     expect(diagnostic.specID).toBe('spec-o');
     expect(diagnostic.constraintID).toBe('C-02');
 
-    // The claim, and it is deliberately about the document rather than about
-    // the map. C-32 binds what is declared and what is produced, not the
-    // contents of a module-private constant.
+    // The claim, as C-32 4.0.0 states it: the exact key set of the returned
+    // object, for this exact input document. Nothing here inspects
+    // CHECK_FIELD_MAP, and nothing copies it.
     //
-    // Two assertions, because either alone has a hole, both measured:
+    // The whole set rather than assertions about individual keys, because
+    // C-32 makes two requirements and single-key assertions cover neither
+    // completely:
     //
-    //   - `changeType` absent, alone, is satisfied by
-    //     `change_type: 'legacyChangeType'`. The entry is back under a
-    //     different destination and nothing here notices.
-    //   - `change_type` surviving, alone, is satisfied by any mapping that
-    //     happens to land on a name this test does not read.
+    //   - pass-through. `change_type` must arrive as itself. Renaming it to
+    //     any destination consumes the original key, since
+    //     `out[fieldMap[k] ?? k]` writes one entry per input key.
+    //   - no invention. The conversion adds nothing. This is the half that
+    //     `toContain('change_type')` plus `'changeType' in x === false` did
+    //     NOT cover, and it was measured: a converter that preserves
+    //     `change_type` and emits `legacyChangeType` beside it passed both.
+    //     Those two assertions constrained replacements only, and read as
+    //     complete solely because the implementation writes one output per
+    //     input. That is exactly the implementation detail a criterion must
+    //     not lean on.
     //
-    // Together they say: the key the CLI cannot send passes through untouched,
-    // and the member the type does not declare is not produced.
+    // The set is written out rather than derived from the fixture, so a
+    // fixture edit has to be matched here deliberately.
+    //
+    // Every level, not the first diagnostic alone. C-32 binds the object the
+    // client returns, so a conversion that adds a key beside `diagnostics` and
+    // `summary` breaks it as plainly as one that adds a key beside
+    // `constraintID`. Reading `diagnostics[0]` only, this test passed a mutant
+    // that appended `invented_top_level_key` to the returned CheckResult.
     //
     // What this deliberately does NOT catch is `change_type: 'change_type'`.
-    // That entry is observationally identical to no entry, because convertKeys
-    // resolves an unmapped key to itself (`fieldMap[k] ?? k`), so it changes no
-    // document and asserts nothing about one. C-32 permits it explicitly as of
-    // spec-vscode 3.0.2. An earlier version of this comment claimed the pair
-    // below killed "any mapping at all", which was false.
-    expect(Object.keys(diagnostic)).toContain('change_type');
-    expect('changeType' in diagnostic).toBe(false);
+    // That entry is observationally identical to no entry, so it changes no
+    // document and asserts nothing about one. C-32 permits it explicitly.
+    expect(Object.keys(result).sort()).toEqual(['diagnostics', 'summary']);
+    expect(Object.keys(result.summary as Loose).sort()).toEqual([
+      'errors',
+      'info',
+      'warnings',
+    ]);
+    expect(Object.keys(diagnostic).sort()).toEqual([
+      'change_type',
+      'constraintID',
+      'constraintType',
+      'kind',
+      'message',
+      'severity',
+      'specID',
+    ]);
   });
 });
 
