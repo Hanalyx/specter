@@ -1,6 +1,6 @@
 spec:
   id: spec-vscode
-  version: "4.0.0"
+  version: "5.0.0"
   status: draft
   tier: 2
 
@@ -101,7 +101,7 @@ spec:
       enforcement: error
 
     - id: C-07
-      description: "MUST render coverage status on each AC line in spec files: green (covered), red (uncovered), grey dash (gap: true). MUST render gutter icons on test functions annotated with @spec/@ac."
+      description: "MUST render coverage status on each AC line in spec files: green (covered), red (uncovered). MUST render gutter icons on test functions annotated with @spec/@ac. The gray-dash rendering for `gap: true` was retracted in 5.0.0 and is deliberately absent: no code path could produce it, because `coverage --json` emits no gap criterion ids, and the extension's only caller passed an empty list. Making the promise true would render a signal that is mostly wrong, since a constraint counts as covered only when an assertion's text contains its field name (`bugs/SP-SP-064`), so most `gap: true` values on a real repository are false. This spec is the source of truth and the code is normally the thing that is wrong; here the spec promised what no code path could deliver, so the spec was the defect (`bugs/SP-SP-019`)."
       type: business
       enforcement: error
 
@@ -441,7 +441,7 @@ spec:
       priority: critical
 
     - id: AC-05
-      description: "Each AC line in a spec file shows a gutter icon: green circle (covered), red circle (uncovered), grey dash (gap: true). End-of-line text decoration shows test count for covered ACs."
+      description: "Each AC line in a spec file shows a gutter icon: green circle (covered) or red circle (uncovered). End-of-line text decoration shows test count for covered ACs. The gray dash for `gap: true` was retracted in 5.0.0 with C-07; the decoration kind, its builder branch and its test are removed with it, so the repository does not keep an unowned private feature that no criterion claims."
       references_constraints: ["C-07"]
       priority: critical
 
@@ -1498,6 +1498,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "5.0.0"
+      date: "2026-08-28"
+      author: "specter-team"
+      type: major
+      description: "Retract the gray-dash `gap: true` rendering from C-07 and AC-05. The extension could not produce it: `coverage --json` emits no gap criterion ids, so the only caller passed an empty list and the builder branch never ran (`bugs/SP-SP-019`). Retracted rather than implemented, because making the promise true would render a mostly wrong signal: a constraint counts as covered only when an assertion's text contains its field name, so most `gap: true` values on a real repository are false (`bugs/SP-SP-064`, deferred). The dead plumbing goes with the promise, so no unowned private feature is left behind. Major. `specter diff` reports patch, because it sees description text; `docs/SPEC_SCHEMA_REFERENCE.md` reserves PATCH for non-functional changes that do not alter meaning, and removing a normative promise alters meaning. The doc lists removing a constraint or criterion as MAJOR without an impact test, and this is the same act one level down. Recorded honestly: no implementation is invalidated, because none produced the decoration, so the conservative reading is chosen rather than an argued-down one."
     - version: "4.0.0"
       date: "2026-08-28"
       author: "specter-team"
