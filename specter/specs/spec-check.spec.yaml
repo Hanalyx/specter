@@ -1,6 +1,6 @@
 spec:
   id: spec-check
-  version: "2.0.0"
+  version: "2.1.0"
   status: approved
   tier: 1
 
@@ -69,7 +69,7 @@ spec:
       enforcement: error
 
     - id: C-07
-      description: "MUST support strict mode (CheckOptions.Strict=true) that upgrades all warning-severity and info-severity diagnostics to error severity, with one exemption: `structural_conflict` is not upgraded, per C-15. Without the exemption the advisory posture would hold only until someone passed --strict, which is what CI passes."
+      description: "MUST support strict mode (CheckOptions.Strict=true) that upgrades all warning-severity and info-severity diagnostics to error severity, with one exemption: `structural_conflict` is not upgraded, per C-15. Without the exemption the advisory posture would hold only until someone passed --strict, which is what CI passes. **The upgrade MUST apply to every diagnostic the run reports, whatever stage assembled it, and exactly one place MUST apply it.** A diagnostic added to the result after the upgrade has run is silently exempt, and nothing fails when that happens: the kind keeps its own severity, the summary counts it as a warning, and `--strict` returns 0 on a workspace this constraint says it should fail. That is not a hypothetical. `tier_conflict` and `domain_tier_conflict` are both computed from the manifest and appended by the command after the checker returns, so both escaped this rule until 2026-08-28, and `spec-manifest` C-35 states in plain terms that `--strict` promotes the second of them. One owner rather than a promotion step per assembly site, because a second site is how the exemption list drifts: the rule is that structural_conflict alone is exempt, and a private copy elsewhere would not know that."
       type: technical
       enforcement: error
 
@@ -572,6 +572,21 @@ spec:
       references_constraints: ["C-15"]
       priority: high
 
+    - id: AC-45
+      description: "Strictness reaches diagnostics the command assembles, not only those the checker produced. Workspace: a manifest declaring `settings.tier_overrides` for a spec whose declared `tier` disagrees, and a domain declaring a `tier` that also disagrees, so one run carries both a `tier_conflict` and a `domain_tier_conflict` and no other diagnostic. Plain `specter check` reports both at `warning` and exits 0. `specter check --strict` reports both at `error` and exits 1. `specter check --strict --json` agrees: every diagnostic in the document carries `severity: error`, the summary reports zero warnings, and the exit code is 1. Both kinds are computed from the manifest and appended after the checker returns, which is why they are the case this criterion binds: an implementation that promotes inside the checker alone passes AC-07, AC-31 and AC-36 and fails here."
+      inputs:
+        workspace: "one spec whose declared tier disagrees with both settings.tier_overrides and its domain tier"
+        invocations: "check, check --strict, check --strict --json"
+      expected_output:
+        plain_severities: "warning, warning"
+        plain_exit_code: 0
+        strict_severities: "error, error"
+        strict_exit_code: 1
+        strict_json_warning_count: 0
+        strict_json_exit_code: 1
+      references_constraints: ["C-07"]
+      priority: critical
+
     - id: AC-36
       description: "The advisory posture does not weaken the other structural checks. A workspace carrying an orphan constraint on a Tier 1 spec still fails, and `--strict` still upgrades a Tier 3 orphan to an error, in the same run that reports a structural conflict at info."
       inputs:
@@ -672,6 +687,11 @@ spec:
 
 
   changelog:
+    - version: "2.1.0"
+      date: "2026-08-28"
+      author: "specter-team"
+      type: minor
+      description: "C-07 now says what it always meant: the strict upgrade applies to every diagnostic a run reports, whatever stage assembled it, and exactly one place applies it. `tier_conflict` and `domain_tier_conflict` are computed from the manifest and appended by the command after the checker returns, so both sat past the upgrade loop and stayed warnings under `--strict`. `check --strict` returned 0 on a workspace `spec-manifest` C-35 says it should fail, which is a false green in the command CI runs. AC-45 binds it across plain, strict and strict JSON, and is written on the two kinds that escaped rather than on the orphan diagnostics AC-07, AC-31 and AC-36 already cover, because an implementation that promotes inside the checker alone passes all three of those and still fails this one. Minor: a new criterion, and C-07's rule is unchanged in what it requires."
     - version: "2.0.0"
       date: "2026-08-27"
       author: "specter-team"

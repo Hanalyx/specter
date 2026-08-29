@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "2.0.3"
+  version: "2.1.0"
   status: draft
   tier: 2
 
@@ -951,6 +951,20 @@ spec:
         pattern_match_loop_owned_by_predicate_only: true
       references_constraints: ["C-29"]
       priority: high
+
+    - id: AC-67
+      description: "`--strict` promotes the domain tier conflict, which C-35 states and nothing observed. On the AC-63 workspace, `specter check` reports `domain_tier_conflict` at `warning` and exits 0, and `specter check --strict` reports it at `error` and exits 1. The same holds under `--json`: the diagnostic carries `severity: error` and the summary reports zero warnings. The diagnostic is computed from the manifest and appended after the checker returns, so it sat past the upgrade loop and stayed a warning under `--strict` until 2026-08-28, and a CI job running `check --strict` passed a workspace this spec says it should fail. `spec-check` C-07 owns the upgrade rule and AC-45 binds the shared owner; this criterion binds the half C-35 states."
+      inputs:
+        workspace: "the AC-63 workspace: a spec declaring tier 3, listed in a domain declaring tier 1"
+        invocations: "check, check --strict, check --strict --json"
+      expected_output:
+        plain_severity: "warning"
+        plain_exit_code: 0
+        strict_severity: "error"
+        strict_exit_code: 1
+        strict_json_warning_count: 0
+      references_constraints: ["C-35"]
+      priority: high
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -960,6 +974,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "2.1.0"
+      date: "2026-08-28"
+      author: "specter-team"
+      type: minor
+      description: "AC-67 binds C-35's `--strict` clause, which the constraint stated and no criterion observed. `domain_tier_conflict` is computed from the manifest and appended after the checker returns, so it sat past the strict upgrade loop and stayed a warning under `--strict`: `check --strict` exited 0 on a workspace this spec says it should fail, which is a false green in the command CI runs. AC-63 and AC-64 bind the plain and `--json` paths and neither reaches strictness. The upgrade rule itself belongs to `spec-check` C-07, amended in 2.1.0 to require one owner over the complete assembled set; this criterion binds the half C-35 states. Minor: a new criterion, no requirement moves."
     - version: "2.0.3"
       date: "2026-08-28"
       author: "specter-team"
