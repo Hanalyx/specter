@@ -126,10 +126,16 @@ Measured on a Tier 2 spec with one orphan constraint: `check` reports
 `0 error(s), 1 warning(s)` and exits 0, while `check --strict` reports
 `1 error(s), 0 warning(s)` and exits 1.
 
-The qualifier is load-bearing and is not a hedge. Measured on a workspace with
-two `unreachable_annotation` warnings, `check --test --strict` reports
-`0 error(s), 2 warning(s), 0 info` and exits 0. See "Promotion is incomplete"
-below for why.
+The qualifier is load-bearing and is not a hedge. Re-measured 2026-08-29 on a
+workspace with two `unreachable_annotation` warnings under
+`settings.strictness: threshold`: `check --test --strict` reports
+`2 error(s), 0 warning(s), 0 info` and exits 1.
+
+**That reading changed.** It was `0 error(s), 2 warning(s)` and exit 0 until the
+strictness boundary fix, because those diagnostics were appended after the
+promotion loop had run. The qualifier is still load-bearing, for the reason
+below rather than for the old one: the severity is decided by
+`settings.strictness` first, and `--strict` promotes whatever that leaves.
 
 Second, scan gating. On `sync`, it decides whether the test-annotation
 cross-reference runs **at all** (`main.go:1347`). Measured, no flag in either
@@ -171,11 +177,18 @@ both `strict: true` and `strictness: annotation`, plain `coverage` exits 0 and
 **Three further defects, all verified.** The key and the flag are not
 interchangeable on `sync`: `main.go:1313` combines them, `:1323` reads the flag
 alone, so `settings.strict: true` reaches the severity switch and never reaches
-the ladder. Promotion is incomplete: it runs inside `CheckSpecs`
-(`internal/checker/check.go:150`), and `main.go:744` and `:773` append the
-test-annotation families afterward, so those never pass through it. And
-spec-manifest C-11 says strict upgrades "warning-severity" diagnostics while the
-code upgrades warning **and** info.
+the ladder. **Promotion was incomplete and is not any more.** It ran inside
+`CheckSpecs`, and the command appended the test-annotation families afterward,
+so those never passed through it. Since 2026-08-29 the command hands them to
+`CheckSpecs` through `CheckOptions.ExtraDiagnostics`, and the promotion loop at
+`internal/checker/check.go:220` sees the complete set. `spec-check` C-07 now
+requires exactly one owner and names the kinds it does not promote. One gap
+survives, in a different command: `internal/sync/sync.go:188` still appends its
+test-annotation diagnostics after `CheckSpecs` and counts them itself. Nothing
+reports the wrong severity there today, because every diagnostic on that path is
+error severity, but the route is the one C-07 forbids. And spec-manifest C-11
+says strict upgrades "warning-severity" diagnostics while the code upgrades
+warning **and** info, which is unchanged.
 
 **Standing. Open, and the entry above supersedes an earlier claim in this
 document that it was settled.** That claim was written from a citation rather
@@ -1128,9 +1141,10 @@ place so the line numbers have one place to drift.
 `internal/manifest/tier_conflict.go:37` skips a spec when `spec.Tier == 0` or
 when it equals the override, so the same manifest produces the warning against a
 Tier 3 spec and nothing against a Tier 1 spec. This is not enforcement, because
-it gates nothing: `check` exits 0 with the warning present, and `check --strict`
-leaves it a warning while promoting the orphan, which is the promotion gap
-recorded in Part 5. It is not presentation either. It is its own register, and
+it gates nothing on a plain run: `check` exits 0 with the warning present.
+`check --strict` is a different matter since 2026-08-29, and this sentence used
+to say otherwise. The warning is promoted to an error there and the run exits 1,
+so declaring `settings.tier_overrides` can fail a strict build. It is not presentation either. It is its own register, and
 the two-bucket split an earlier draft used had no slot for it.
 
 **Presentation, the rest.** A tier sorts entries within a coverage bucket
@@ -1343,8 +1357,9 @@ corrected: the `README.md` explanation and its example, and the
 `docs/CLI_REFERENCE.md` diagnostic table and its example. Both examples are
 generated from measured CLI output, and both now show `warn` rather than
 `ERROR`, with the counts the binary prints. The table row also records what the
-old text omitted: the diagnostic appears in `--json` as well as text, and
-`--strict` does not escalate it.
+old text omitted: the diagnostic appears in `--json` as well as text. It also
+said `--strict` does not escalate it, which was true when written and is not
+now: the strictness boundary fix promotes it to an error.
 
 ## orphan constraint
 
@@ -1600,7 +1615,7 @@ above with its evidence.
 | Tier 3 orphan severity | `spec-check` C-02 and the code: `info` | `spec-check` objective scope, line 36: `warning` | `SP-SP-003` |
 | sync's default strictness | Code comment at `main.go:1318`: "ultimate default is `annotation`" | Behavior: `threshold`, because the manifest loader fills it in | Not filed |
 | `settings.strict` against `--strict` on `sync` | The key reaches the severity switch at `main.go:1313` | It never reaches the ladder: `:1323` reads the flag alone, so key and flag are not interchangeable | `SP-SP-047` |
-| `--strict` promotion coverage | Promotes the families `CheckSpecs` built, at `internal/checker/check.go:150` | Skips `taDiags` and `uaDiags`, appended after that returns at `main.go:744` and `:773` | `SP-SP-047` |
+| `--strict` promotion coverage | **Closed 2026-08-29.** The command hands every family to `CheckSpecs` through `ExtraDiagnostics`, and one loop at `internal/checker/check.go:220` promotes the complete set. `internal/sync/sync.go:188` still appends after the call, with no wrong severity today because that path carries only error-severity diagnostics | was: skips `taDiags` and `uaDiags`, appended after that returns at `main.go:744` and `:773` | `SP-SP-047` |
 | spec-manifest C-11 against the code | C-11: strict upgrades "warning-severity" diagnostics | The code upgrades warning **and** info | `SP-SP-047` |
 
 ---

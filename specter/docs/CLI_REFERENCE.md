@@ -193,9 +193,10 @@ specter check [--json] [--tier <n>] [--strict] [--test] [--concrete]
 | `duplicate_ac_id` | error, all tiers | Two or more acceptance criteria in one spec share an id. Names the id, the count, and the positions. Severity does not vary by tier: a repeated id makes coverage overstate itself, because one annotation satisfies every entry sharing the id. |
 | `vague_criterion` | T1=error, T2=warning, T3=info | An acceptance criterion carries neither `inputs` nor `expected_output`, so nothing states what it asserts. Emitted only under `--concrete`. |
 | `tier_conflict` | warning, error under `--strict` | A spec's declared `tier:` disagrees with the entry for it in the deprecated `settings.tier_overrides`. The declared tier governs and the override is not applied. Appears in `--json` as well as text. |
+| `domain_tier_conflict` | warning, error under `--strict` | A spec's declared `tier:` disagrees with the `tier` its `domains.<name>` entry asserts. The declared tier governs and the domain tier resolves nothing. Appears in `--json` as well as text. |
 | `unknown_spec_ref` | error (under `--test`) | A test annotates `@spec <id>` but no spec with that ID was parsed. Emitted only under `--test`. |
 | `unknown_ac_ref` | error (under `--test`) | A test annotates `@ac AC-NN` but the spec has no AC with that ID. Emitted only under `--test`. |
-| `unreachable_annotation` | by `settings.strictness`: annotation→suppressed, threshold→warning, zero-tolerance→error | Source-comment `@ac` whose enclosing test produces no runner-visible `<spec-id>/AC-NN` token (Convention A) and no runtime print (Convention B). Such annotations would silently demote under `coverage --strict`. Per-file off-switch: `// @reachable manual` (`# @reachable manual` for Python). Added in v0.13.0. |
+| `unreachable_annotation` | by `settings.strictness`: annotation→suppressed, threshold→warning, zero-tolerance→error. `--strict` promotes it to error | Source-comment `@ac` whose enclosing test produces no runner-visible `<spec-id>/AC-NN` token (Convention A) and no runtime print (Convention B). Such annotations would silently demote under `coverage --strict`. Per-file off-switch: `// @reachable manual` (`# @reachable manual` for Python). Added in v0.13.0. |
 | `unreachable_annotation_unknown` | warning (regardless of strictness) | The reachability scanner could not recognize the test shape (custom helper, non-Go/TS/Python language, dynamically-generated tests). Soft form of the above; never fails a gate. Same off-switch suppresses it. Added in v0.13.0. |
 
 When a constraint has a `type` (e.g. `security`, `performance`), it appears in parentheses after the constraint ID so diagnostics can be grouped by category.
@@ -211,11 +212,12 @@ warn [tier_conflict] spec-payments: spec "spec-payments" declares tier: 2 but sp
 1 error(s), 1 warning(s), 0 info
 
 $ specter check --strict
-# Warnings and info are treated as errors, so this exits 1.
-# structural_conflict is the one exception and stays at its own severity.
+# Warnings and info are treated as errors, so this exits 1. Two kinds are
+# exempt and keep their own severity: structural_conflict, and
+# unreachable_annotation_unknown.
 ```
 
-**Exit codes:** `0` = no errors. `1` = one or more errors. Warnings do not fail a run, and under `--strict` they become errors and do, with one exception: `structural_conflict` keeps its own severity under `--strict`, so a run carrying only that one still exits `0`.
+**Exit codes:** `0` = no errors. `1` = one or more errors. Warnings do not fail a run, and under `--strict` they become errors and do, with two exceptions: `structural_conflict` and `unreachable_annotation_unknown` keep their own severity under `--strict`, so a run carrying only those still exits `0`.
 
 ---
 
@@ -1091,7 +1093,7 @@ tier reported by `coverage --json`. Nothing resolves or overrides it.
 | `spec.tier` | **Authoritative.** Required, one of 1, 2, 3 |
 | `domains.<name>.tier` | A **checked assertion**. It declares the risk level the domain asserts, and a spec listed in that domain whose tier disagrees produces a `domain_tier_conflict` warning. It does not change the spec's tier |
 | `system.tier` | **Deprecated.** Warns on every run, has no effect, removed at v1.0.0 |
-| `settings.tier_overrides` | **Deprecated.** Warns on every run, has no effect, removed at v1.0.0. The `tier_conflict` warning it produces now states that the declared tier governs |
+| `settings.tier_overrides` | **Deprecated.** Warns on every run, resolves no tier, removed at v1.0.0. It is not inert under `--strict`: the `tier_conflict` warning it produces is promoted to an error there, so declaring the key can fail a strict run. The `tier_conflict` warning it produces now states that the declared tier governs |
 | `registry` | **Retired.** The key is still accepted so an existing manifest parses, and its value is discarded. Removed at v1.0.0 |
 
 A manifest declaring a deprecated key gets one stderr line per key. The warning
