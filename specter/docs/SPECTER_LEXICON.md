@@ -1149,7 +1149,7 @@ matters because it is what anyone scoping `bugs/SP-SP-049` has to change:
 | `internal/coverage/coverage.go:517` | the Tier 1 evidence rule |
 | `internal/coverage/coverage.go:542` | the threshold lookup |
 | `internal/checker/check.go:189` | orphan severity |
-| `internal/manifest/tier_conflict.go:37,42,46` | whether `tier_conflict` is emitted |
+| `internal/manifest/tier_conflict.go:37` | whether `tier_conflict` is emitted |
 | `internal/coverage/coverage.go:571` | the `tier` field in `--json` |
 | `cmd/specter/main.go:2701`, `:2747` | `explain`, printed |
 | `internal/schema/validate.go:93` | range validation, decides nothing |
@@ -1297,23 +1297,31 @@ Verified by running. A manifest declaring `tier_overrides: {lo: 1}` against a
 spec declaring `tier: 3` produces this warning:
 
 ```
-warn [tier_conflict] spec "lo" declares tier: 3 but specter.yaml tier_overrides assigns tier: 1 — using override (1)
+warn [tier_conflict] lo: spec "lo" declares tier: 3 but specter.yaml tier_overrides assigns tier: 1. The declared tier governs; tier_overrides is not applied.
 ```
+
+Re-measured 2026-08-28. Until the message was corrected this line ended
+`— using override (1)`, which is the claim that made this entry a defect. It
+also omitted the `lo: ` spec-id field the printer emits.
 
 and then `coverage --json` reports `"tier": 3, "threshold": 50` for that same
 spec. The message says the override is in use. It is not.
 
 **Standing.** Open as a defect, not as a definition. The intended meaning is not
-in dispute. The implementation does not deliver it, and the warning text claims
-otherwise. This is the case `CLAUDE.md` cites: a program's own log line is a
-claim by an author, not evidence.
+in dispute and the implementation still does not deliver it: nothing applies the
+override. **The half about the message is closed.** The warning used to claim
+the override was in use; it now states that the declared tier governs and the
+override is not applied. The remaining defect is that the setting does nothing,
+which is why it is deprecated and removed at v1.0.0. This is the case
+`CLAUDE.md` cites: a program's own log line is a claim by an author, not
+evidence.
 
 ## tier conflict
 
 **Meaning.** Two incompatible things, depending on which surface you read.
 
 **Surfaces.** The only producer of the string `tier_conflict` is
-`cmd/specter/main.go:804`, which prints the warnings from
+`cmd/specter/main.go:872`, which prints the warnings from
 `manifest.CheckTierConflicts`. That function compares a spec's declared tier
 against its `settings.tier_overrides` entry. Verified by running, in the fixture
 above.
@@ -1579,7 +1587,7 @@ above with its evidence.
 | results file path | `ingest --output` writes anywhere | `coverage` and `sync` read only `./.specter-results.json` | Not filed |
 | `--strict` with `strictness: annotation` | `coverage` rejects it, per C-24 | `sync` accepts it silently | Not filed |
 | `--scope` prerequisite | Requires the literal `--strict` flag | `--strictness zero-tolerance` is refused despite being stricter | Not filed |
-| `tier_conflict` | Code: a `tier_overrides` mismatch | `CLI_REFERENCE.md:190`: a high-tier spec depending on a low-tier one | Not filed |
+| `tier_conflict` | Code: a `tier_overrides` mismatch | The docs said the same thing until 2026-08-28 | **Closed.** `README.md` and `docs/CLI_REFERENCE.md` now state the override-mismatch meaning, with examples generated from measured output |
 | Convention B grammar | `check --test`: either `@spec` or `@ac` alone marks a test reachable, and a bare pair in any string-literal argument counts | `ingest`: both markers required, and a bare pair read only from the name or classname | `SP-SP-050` |
 | `gap` readers | This document, earlier draft: "nothing reads it" | `reverse.go:235` and `:241` read it in process, and `main.go:1617` prints the count. Roadmap 3C7 had it right; the summary here did not | Not filed; a defect in this document |
 | `tier_overrides` | Warning said "using override" | No caller applied it. **Resolved 2026-08-22**: the message states that the declared tier governs, and the key is deprecated | `SP-SP-001`, closed |
@@ -1905,7 +1913,7 @@ parse-stage and a resolve-stage `dangling_reference` never appear in one run
 (built a workspace with both defects in different files; blocking is global, not
 per file); that `unreachable_annotation_unknown` never fails a gate (all seven
 emit sites hardcode `warning` and none reach `routeSeverity`; `--strict` output
-was byte-identical); that `main.go:804` is the only producer of `tier_conflict`;
+was byte-identical); that `main.go:872` is the only producer of `tier_conflict`;
 that only two commands accept `--strictness` and there are five flag
 registrations; that nothing reads a persisted `gap: true`, widened to the
 extension; and that `coverage` never reads `settings.strict`, where the third

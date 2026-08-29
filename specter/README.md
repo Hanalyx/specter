@@ -25,11 +25,11 @@ Specter's schema is deliberately detailed: constraints, acceptance criteria, tie
 
 The intended workflow is a collaboration between you and your AI coding assistant:
 
-1. **You provide intent.** a brief description of what a module should do, its key constraints, and any non-obvious judgment calls or trade-offs
-2. **The AI writes the spec.** translating your intent into a fully structured `.spec.yaml` file with constraints, ACs, and tier assignments
-3. **The AI writes the tests.** derived directly from the ACs in the spec
-4. **You review.** the spec and tests are the approval gate; you validate that the AI correctly captured your intent before any implementation begins
-5. **The AI implements.** with the spec as the contract and the tests as the verification
+1. **You provide intent:** a brief description of what a module should do, its key constraints, and any non-obvious judgment calls or trade-offs
+2. **The AI writes the spec:** translating your intent into a fully structured `.spec.yaml` file with constraints, ACs, and tier assignments
+3. **The AI writes the tests:** derived directly from the ACs in the spec
+4. **You review:** the spec and tests are the approval gate; you validate that the AI correctly captured your intent before any implementation begins
+5. **The AI implements:** with the spec as the contract and the tests as the verification
 
 Specter enforces the discipline at every step: the spec must exist before code, tests must trace to ACs, and coverage must meet the tier threshold before `specter sync` passes. It makes the process infrastructure, not a suggestion.
 
@@ -144,10 +144,11 @@ specter resolve
 ```bash
 specter check
 
-warn [orphan_constraint] spec-auth C-04 (security): Constraint C-04 in "spec-auth" is not referenced by any acceptance criterion
-warn [tier_conflict] spec-payments: spec "spec-payments" declares tier: 2 but specter.yaml tier_overrides assigns tier: 1. The declared tier governs; tier_overrides is not applied.
-
-0 error(s), 2 warning(s), 0 info
+# warn: settings.tier_overrides is deprecated and has no effect. Set tier: in each .spec.yaml file. It is removed at v1.0.0.
+# error [orphan_constraint] spec-auth C-04 (security): Constraint C-04 in "spec-auth" is not referenced by any acceptance criterion
+# warn [tier_conflict] spec-payments: spec "spec-payments" declares tier: 2 but specter.yaml tier_overrides assigns tier: 1. The declared tier governs; tier_overrides is not applied.
+#
+# 1 error(s), 1 warning(s), 0 info
 ```
 
 **`specter coverage`.** Reads `@spec` and `@ac` annotations from your test files and produces a traceability matrix. Enforces tier-based coverage thresholds.

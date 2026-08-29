@@ -205,13 +205,14 @@ When a constraint has a `type` (e.g. `security`, `performance`), it appears in p
 ```
 $ specter check
 warn: settings.tier_overrides is deprecated and has no effect. Set tier: in each .spec.yaml file. It is removed at v1.0.0.
-warn [orphan_constraint] spec-auth C-04 (security): Constraint C-04 in "spec-auth" is not referenced by any acceptance criterion
+error [orphan_constraint] spec-auth C-04 (security): Constraint C-04 in "spec-auth" is not referenced by any acceptance criterion
 warn [tier_conflict] spec-payments: spec "spec-payments" declares tier: 2 but specter.yaml tier_overrides assigns tier: 1. The declared tier governs; tier_overrides is not applied.
 
-0 error(s), 2 warning(s), 0 info
+1 error(s), 1 warning(s), 0 info
 
 $ specter check --strict
-# Warnings are now treated as errors — exits 1
+# Most warnings are treated as errors, so this exits 1. structural_conflict
+# and tier_conflict are not escalated and stay at their own severity.
 ```
 
 **Exit codes:** `0` = no errors (warnings allowed unless `--strict`). `1` = one or more errors.
