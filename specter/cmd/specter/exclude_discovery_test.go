@@ -2,7 +2,6 @@ package main
 
 import (
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
@@ -224,25 +223,11 @@ func TestSettingsExcludeReachesTestDiscovery(t *testing.T) {
 // copies drift.
 func TestExclusionPolicyHasOneOwner(t *testing.T) {
 	t.Run("spec-manifest/AC-66 both default walks call the shared predicate and only it loops over patterns", func(t *testing.T) {
-		fset := token.NewFileSet()
 		// Production sources only. The rule is about the implementation: the
 		// helper's own unit tests call matchExcludePattern directly and are
 		// supposed to, and this file reads the identifier too.
-		pkg, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
-			return !strings.HasSuffix(fi.Name(), "_test.go")
-		}, 0)
-		if err != nil {
-			t.Fatalf("parsing cmd/specter failed: %v", err)
-		}
-		files := map[string]*ast.File{}
-		for _, p := range pkg {
-			for name, f := range p.Files {
-				files[name] = f
-			}
-		}
-		if len(files) == 0 {
-			t.Fatal("AC-66: parsed no files, so every claim below would pass vacuously")
-		}
+		fset := token.NewFileSet()
+		files := parseProductionFiles(t, fset, ".")
 
 		// callsIn reports the function names called directly inside the named
 		// top-level function, and whether that function was found at all.
