@@ -1305,7 +1305,7 @@ Re-measured 2026-08-28. Until the message was corrected this line ended
 also omitted the `lo: ` spec-id field the printer emits.
 
 and then `coverage --json` reports `"tier": 3, "threshold": 50` for that same
-spec. The message says the override is in use. It is not.
+spec. The message used to end `using override (1)`, claiming the override was in use. It is not, and since 2026-08-28 the message says so.
 
 **Standing.** Open as a defect, not as a definition. The intended meaning is not
 in dispute and the implementation still does not deliver it: nothing applies the
@@ -1318,7 +1318,10 @@ evidence.
 
 ## tier conflict
 
-**Meaning.** Two incompatible things, depending on which surface you read.
+**Meaning.** A spec's declared `tier` disagrees with its `settings.tier_overrides`
+entry. Settled, and the docs agree since 2026-08-28. The two surfaces disagreed
+until then, and the history is kept below because the disagreement outlived two
+readers.
 
 **Surfaces.** The only producer of the string `tier_conflict` is
 `cmd/specter/main.go:872`, which prints the warnings from

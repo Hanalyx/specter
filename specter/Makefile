@@ -166,7 +166,7 @@ release-check: prerelease
 	echo "       code --install-extension $$VSIX --force"; \
 	echo ""; \
 	echo "  2. Reload VS Code and open a KNOWN-WORKING workspace"; \
-	echo "     (the specter/ repo itself — 14 dogfood specs)."; \
+	echo "     (the specter/ repo itself, 15 dogfood specs)."; \
 	echo "     Verify: Coverage sidebar populates with spec entries."; \
 	echo ""; \
 	echo "  3. Reload VS Code and open a KNOWN-FAILING workspace"; \
