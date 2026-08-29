@@ -802,22 +802,13 @@ func checkCmd() *cobra.Command {
 				})
 			}
 
-			opts := &checker.CheckOptions{
-				ExtraDiagnostics: extra,
-				Strict:           strict || m.Settings.Strict,
-				WarnOnDraft:      m.Settings.WarnOnDraft,
-				// C-17: opt-in, and deliberately not derived from --strict or
-				// from a manifest key. Both fields the rule reads are optional
-				// in the schema, so a criterion without them is valid.
-				Concrete: concrete,
-			}
-			if tierOverride > 0 {
-				opts.TierOverride = tierOverride
-			}
-
-			result := checker.CheckSpecs(graph, opts)
-
-			// C-09: opt-in test-annotation cross-reference.
+			// C-09 and C-10: the opt-in test-annotation scans. They are
+			// computed here, before the check runs, for the reason the tier
+			// diagnostics above are: appending them to the result afterwards
+			// put them past the C-07 upgrade, so a threshold-severity
+			// unreachable_annotation stayed a warning and `check --test
+			// --strict` exited 0. They join `extra` and the checker owns both
+			// the upgrade and the summary.
 			if testAnnotations {
 				testFiles := discoverTestFiles("")
 				contents := make(map[string]string, len(testFiles))
@@ -839,18 +830,7 @@ func checkCmd() *cobra.Command {
 					}
 					contents[path] = string(data)
 				}
-				taDiags := checker.CheckTestAnnotations(contents, specs)
-				result.Diagnostics = append(result.Diagnostics, taDiags...)
-				for _, d := range taDiags {
-					switch d.Severity {
-					case "error":
-						result.Summary.Errors++
-					case "warning":
-						result.Summary.Warnings++
-					case "info":
-						result.Summary.Info++
-					}
-				}
+				extra = append(extra, checker.CheckTestAnnotations(contents, specs)...)
 
 				// spec-check C-10: under `check --test`, also run the
 				// unreachable_annotation scan. A source-comment @ac
@@ -871,18 +851,7 @@ func checkCmd() *cobra.Command {
 				// spec-manifest C-34(d): a declared settings.annotation block
 				// governs the strictness routing, so the manifest's own
 				// strictness value stops changing this severity.
-				uaDiags := checker.CheckUnreachableAnnotations(contents, m.GoverningStrictness())
-				result.Diagnostics = append(result.Diagnostics, uaDiags...)
-				for _, d := range uaDiags {
-					switch d.Severity {
-					case "error":
-						result.Summary.Errors++
-					case "warning":
-						result.Summary.Warnings++
-					case "info":
-						result.Summary.Info++
-					}
-				}
+				extra = append(extra, checker.CheckUnreachableAnnotations(contents, m.GoverningStrictness())...)
 			}
 
 			// spec-manifest C-36: the deprecated tier keys warn once per key.
@@ -892,6 +861,22 @@ func checkCmd() *cobra.Command {
 				fmt.Fprintf(os.Stderr, "warn: %s\n", msg)
 			}
 
+			opts := &checker.CheckOptions{
+				ExtraDiagnostics: extra,
+				Strict:           strict || m.Settings.Strict,
+				WarnOnDraft:      m.Settings.WarnOnDraft,
+				// C-17: opt-in, and deliberately not derived from --strict or
+				// from a manifest key. Both fields the rule reads are optional
+				// in the schema, so a criterion without them is valid.
+				Concrete: concrete,
+			}
+			if tierOverride > 0 {
+				opts.TierOverride = tierOverride
+			}
+
+			result := checker.CheckSpecs(graph, opts)
+
+			// C-09: opt-in test-annotation cross-reference.
 			// spec-check C-14: `--json` writes the document to stdout in
 			// full, then takes its exit code from checkExitVerdict, the
 			// same function the text path below ends on. The verdict is a

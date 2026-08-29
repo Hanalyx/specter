@@ -62,9 +62,27 @@ type CheckOptions struct {
 	//
 	// C-07 requires one owner for the upgrade over the complete set. Passing
 	// them in rather than promoting them at the call site is what keeps that
-	// true: a second promotion step would be a private copy of the exemption
-	// list, and the list is that structural_conflict alone is exempt.
+	// true: a second promotion step would be a private copy of the
+	// non-promotable set, which is enumerated once, below.
 	ExtraDiagnostics []CheckDiagnostic
+}
+
+// nonPromotable is the set C-07 names: kinds --strict does not upgrade.
+//
+// structural_conflict, per C-15(b). An advisory posture that holds until
+// someone passes --strict holds until CI runs, which is the same as not
+// holding.
+//
+// unreachable_annotation_unknown, per C-10. The scanner could not recognize
+// the test shape, so it has found no defect to report. Promoting it would fail
+// a build on the checker's own blind spot, and C-10 states in its own terms
+// that this kind is always a warning regardless of strictness.
+//
+// Enumerated here and nowhere else. Adding a kind is an amendment to C-07, not
+// a local choice at a call site.
+var nonPromotable = map[string]bool{
+	"structural_conflict":            true,
+	"unreachable_annotation_unknown": true,
 }
 
 // vagueSeverityByTier is the C-16 gradient. It is a separate table from
@@ -195,15 +213,13 @@ func CheckSpecs(graph *resolver.SpecGraph, opts *CheckOptions) *CheckResult {
 	// happened to produce.
 	diagnostics = append(diagnostics, opts.ExtraDiagnostics...)
 
-	// C-07: strict mode, upgrade warnings and info to errors.
-	//
-	// C-15(b): structural_conflict is exempt. An advisory posture that holds
-	// until someone passes --strict holds until CI runs, which is the same as
-	// not holding. The exemption is here rather than at the emit site because
-	// this loop is what would undo it.
+	// C-07: strict mode, upgrade warnings and info to errors, except the kinds
+	// C-07 names as non-promotable. The exemptions live here rather than at the
+	// emit sites because this loop is what would undo them, and one copy of the
+	// set is the point: a second would not know what the set contains.
 	if opts.Strict {
 		for i := range diagnostics {
-			if diagnostics[i].Kind == "structural_conflict" {
+			if nonPromotable[diagnostics[i].Kind] {
 				continue
 			}
 			if diagnostics[i].Severity == "warning" || diagnostics[i].Severity == "info" {
@@ -212,19 +228,29 @@ func CheckSpecs(graph *resolver.SpecGraph, opts *CheckOptions) *CheckResult {
 		}
 	}
 
-	result := &CheckResult{Diagnostics: diagnostics}
+	return &CheckResult{Diagnostics: diagnostics, Summary: summarize(diagnostics)}
+}
+
+// summarize counts the final diagnostics. C-07 requires the summary to be
+// computed once, after the upgrade, from the list the run reports.
+//
+// A function rather than a loop inline, so "computed once" is a property a
+// reader and a guard can both check by counting call sites. The command used
+// to count its own diagnostics into the summary as it appended them, which
+// reported as a warning what the run reported as an error.
+func summarize(diagnostics []CheckDiagnostic) CheckSummary {
+	var s CheckSummary
 	for _, d := range diagnostics {
 		switch d.Severity {
 		case "error":
-			result.Summary.Errors++
+			s.Errors++
 		case "warning":
-			result.Summary.Warnings++
+			s.Warnings++
 		case "info":
-			result.Summary.Info++
+			s.Info++
 		}
 	}
-
-	return result
+	return s
 }
 
 // checkOrphanConstraints finds constraints not referenced by any AC.
