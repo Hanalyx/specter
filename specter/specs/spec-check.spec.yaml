@@ -1,6 +1,6 @@
 spec:
   id: spec-check
-  version: "2.1.0"
+  version: "3.0.0"
   status: approved
   tier: 1
 
@@ -69,7 +69,7 @@ spec:
       enforcement: error
 
     - id: C-07
-      description: "MUST support strict mode (CheckOptions.Strict=true) that upgrades all warning-severity and info-severity diagnostics to error severity, with one exemption: `structural_conflict` is not upgraded, per C-15. Without the exemption the advisory posture would hold only until someone passed --strict, which is what CI passes. **The upgrade MUST apply to every diagnostic the run reports, whatever stage assembled it, and exactly one place MUST apply it.** A diagnostic added to the result after the upgrade has run is silently exempt, and nothing fails when that happens: the kind keeps its own severity, the summary counts it as a warning, and `--strict` returns 0 on a workspace this constraint says it should fail. That is not a hypothetical. `tier_conflict` and `domain_tier_conflict` are both computed from the manifest and appended by the command after the checker returns, so both escaped this rule until 2026-08-28, and `spec-manifest` C-35 states in plain terms that `--strict` promotes the second of them. One owner rather than a promotion step per assembly site, because a second site is how the exemption list drifts: the rule is that structural_conflict alone is exempt, and a private copy elsewhere would not know that."
+      description: "MUST support strict mode (CheckOptions.Strict=true) that upgrades all warning-severity and info-severity diagnostics to error severity, with a **named set of non-promotable kinds**: `structural_conflict` per C-15, and `unreachable_annotation_unknown` per C-10. The set is enumerated in this constraint rather than decided per call site, so adding a kind to it is a deliberate amendment here and not a local choice. Without the first the advisory posture would hold only until someone passed --strict, which is what CI passes. The second is stated in C-10's own terms, that the soft form is always a warning regardless of strictness mode, and this constraint agrees with it rather than overriding it: a scanner that could not recognize a test shape has found no defect to report, so promoting it would fail a build on the checker's own blind spot. **The upgrade MUST apply to every diagnostic the run reports, whatever stage assembled it, and exactly one place MUST apply it.** A diagnostic added to the result after the upgrade has run is silently exempt, and nothing fails when that happens: the kind keeps its own severity, the summary counts it as a warning, and `--strict` returns 0 on a workspace this constraint says it should fail. That is not a hypothetical. `tier_conflict` and `domain_tier_conflict` are computed from the manifest, and `unreachable_annotation` and the other `--test` diagnostics from test file contents, and all of them were appended by the command after the checker returned. What that cost differed by kind, and the accurate account is narrower than the route suggests. The two tier kinds escaped the rule outright and were fixed on 2026-08-28. Of the `--test` diagnostics, only `unreachable_annotation` at threshold severity did: the reference kinds are error severity, so promotion was a no-op for them and they failed the run either way, and `unreachable_annotation_unknown` is in the non-promotable set by design. That one case was fixed on 2026-08-29. The route was wrong for all of them, which is why the fix is structural rather than per-kind, but only two kinds ever reported the wrong severity because of it. One owner rather than a promotion step per assembly site, because a second site is how the non-promotable set drifts, and a private copy elsewhere would not know what the set contains. **The summary is computed once, from the final diagnostics, in the same place.** Counting at each assembly site is the same defect wearing different clothes: a count taken before the upgrade reports as a warning what the run reports as an error."
       type: technical
       enforcement: error
 
@@ -573,10 +573,12 @@ spec:
       priority: high
 
     - id: AC-45
-      description: "Strictness reaches diagnostics the command assembles, not only those the checker produced. Workspace: a manifest declaring `settings.tier_overrides` for a spec whose declared `tier` disagrees, and a domain declaring a `tier` that also disagrees, so one run carries both a `tier_conflict` and a `domain_tier_conflict` and no other diagnostic. Plain `specter check` reports both at `warning` and exits 0. `specter check --strict` reports both at `error` and exits 1. `specter check --strict --json` agrees: every diagnostic in the document carries `severity: error`, the summary reports zero warnings, and the exit code is 1. Both kinds are computed from the manifest and appended after the checker returns, which is why they are the case this criterion binds: an implementation that promotes inside the checker alone passes AC-07, AC-31 and AC-36 and fails here."
+      description: "Strictness reaches diagnostics the command assembles, not only those the checker produced. Workspace: a manifest declaring `settings.tier_overrides` for a spec whose declared `tier` disagrees, and a domain declaring a `tier` that also disagrees, so one run carries both a `tier_conflict` and a `domain_tier_conflict` and no other diagnostic. Plain `specter check` reports both at `warning` and exits 0. `specter check --strict` reports both at `error` and exits 1. `specter check --strict --json` agrees: every diagnostic in the document carries `severity: error`, the summary reports zero warnings, and the exit code is 1. Both kinds are computed from the manifest and appended after the checker returns, which is why they are the case this criterion binds: an implementation that promotes inside the checker alone passes AC-07, AC-31 and AC-36 and fails here. The `--test` diagnostics are the second half of this criterion, and they are the half that separates the rule from the two kinds that prompted it. On a workspace declaring `settings.strictness: threshold` with a source annotation whose test produces no runner-visible token, `specter check --test` reports `unreachable_annotation` at `warning` and exits 0, and `specter check --test --strict` reports it at `error` and exits 1. These diagnostics are computed from test file contents, which the checker does not read, so they arrive by the same route the tier kinds do. And the non-promotable set holds: on a workspace whose test shape the reachability scanner cannot recognize, `unreachable_annotation_unknown` stays at `warning` under `--strict` and does not by itself make the run exit non-zero, per C-10. A run carrying only that diagnostic exits 0 with or without the flag. This is the case that stops the rule being implemented as promote everything that arrives late."
       inputs:
-        workspace: "one spec whose declared tier disagrees with both settings.tier_overrides and its domain tier"
-        invocations: "check, check --strict, check --strict --json"
+        workspace_tier: "one spec whose declared tier disagrees with both settings.tier_overrides and its domain tier"
+        workspace_annotation: "settings.strictness: threshold, one source annotation with no runner-visible token"
+        workspace_unknown: "a test shape the reachability scanner cannot recognize"
+        invocations: "check, check --strict, check --strict --json, check --test, check --test --strict"
       expected_output:
         plain_severities: "warning, warning"
         plain_exit_code: 0
@@ -584,7 +586,12 @@ spec:
         strict_exit_code: 1
         strict_json_warning_count: 0
         strict_json_exit_code: 1
-      references_constraints: ["C-07"]
+        unreachable_annotation_plain_severity: "warning"
+        unreachable_annotation_strict_severity: "error"
+        unreachable_annotation_strict_exit_code: 1
+        unreachable_annotation_unknown_strict_severity: "warning"
+        unreachable_annotation_unknown_strict_exit_code: 0
+      references_constraints: ["C-07", "C-10"]
       priority: critical
 
     - id: AC-36
@@ -687,6 +694,11 @@ spec:
 
 
   changelog:
+    - version: "3.0.0"
+      date: "2026-08-29"
+      author: "specter-team"
+      type: major
+      description: "Reconcile C-07 with C-10 and finish the boundary 2.1.0 opened. 2.1.0 generalized the rule to every assembled diagnostic and moved only the two manifest-derived kinds across it. The `--test` diagnostics are still appended after the checker returns, each with its own summary accounting, so a threshold-severity `unreachable_annotation` stays a warning and `check --test --strict` exits 0. Same false-green class, in the flag CI reaches for. C-07 stated one exemption, `structural_conflict`; C-10 states that `unreachable_annotation_unknown` is always a warning regardless of strictness. Feeding every late diagnostic through the shared owner would have fixed one bypass and broken that guarantee. C-07 now names a set of non-promotable kinds rather than one exemption, enumerated in the constraint so adding to it is an amendment and not a local choice, and defers to C-10's wording rather than overriding it: a scanner that could not recognize a test shape has found no defect, so promoting it would fail a build on the checker's blind spot. C-07 also states that the summary is computed once in the same place, because a count taken at an assembly site reports as a warning what the run reports as an error. AC-45 gains the two `--test` cases, one that must promote and one that must not. Major, not the minor first written: an implementation conforming to 2.1.0 promoted `unreachable_annotation_unknown`, because that version named `structural_conflict` as the sole exemption, and this version forbids promoting it. `docs/SPEC_SCHEMA_REFERENCE.md` sets MAJOR for a change that could break implementations, and widening the non-promotable set does exactly that. `spec-sync` and `spec-vscode` pin `^2.0.0` and move with it."
     - version: "2.1.0"
       date: "2026-08-28"
       author: "specter-team"

@@ -1,6 +1,6 @@
 spec:
   id: spec-sync
-  version: "2.4.1"
+  version: "2.4.2"
   status: approved
   tier: 2
 
@@ -106,7 +106,7 @@ spec:
       version_range: "^1.0.0"
       relationship: requires
     - spec_id: spec-check
-      version_range: "^2.0.0"
+      version_range: "^3.0.0"
       relationship: requires
     - spec_id: spec-coverage
       version_range: "^1.23.0"
@@ -354,6 +354,11 @@ spec:
       priority: high
 
   changelog:
+    - version: "2.4.2"
+      date: "2026-08-29"
+      author: "specter-team"
+      type: patch
+      description: "Raise the `spec-check` dependency floor to `^3.0.0`. `spec-check` 3.0.0 widens C-07's non-promotable set to include `unreachable_annotation_unknown`, and `^2.0.0` does not admit a 3.x version, so `resolve` would report a version mismatch on an unchanged workspace. No behavior of this spec changes."
     - version: "2.4.1"
       date: "2026-08-27"
       author: "specter-team"
