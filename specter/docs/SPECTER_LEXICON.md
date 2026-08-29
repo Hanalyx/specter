@@ -1318,18 +1318,22 @@ claim by an author, not evidence.
 against its `settings.tier_overrides` entry. Verified by running, in the fixture
 above.
 
-`docs/CLI_REFERENCE.md:190` documents `tier_conflict` under `specter check` as
+`docs/CLI_REFERENCE.md` documented `tier_conflict` under `specter check` as
 "A higher-tier spec depends on a lower-tier spec (e.g., Tier 1 depends on Tier
-3)". Verified by running that this does not fire: the same fixture has a Tier 1
-spec depending on a Tier 3 spec, and the only `tier_conflict` emitted is the
-override one.
+3)", and `README.md` printed it as an ERROR. Verified by running that this did
+not fire: the same fixture has a Tier 1 spec depending on a Tier 3 spec, and the
+only `tier_conflict` emitted is the override one.
 
-The documented meaning has no producer anywhere in the tree.
+The documented meaning had no producer anywhere in the tree.
 
-**Standing.** Open. The definition is settled by the code (an override
-mismatch). The documentation states a different definition for a check that does
-not exist. This belongs in a bug and is listed in
-[Part 5](#part-5-where-two-surfaces-disagree).
+**Standing. Closed 2026-08-28.** The definition is settled by the code, an
+override mismatch, and the documentation now states it. Four sites were
+corrected: the `README.md` explanation and its example, and the
+`docs/CLI_REFERENCE.md` diagnostic table and its example. Both examples are
+generated from measured CLI output, and both now show `warn` rather than
+`ERROR`, with the counts the binary prints. The table row also records what the
+old text omitted: the diagnostic appears in `--json` as well as text, and
+`--strict` does not escalate it.
 
 ## orphan constraint
 

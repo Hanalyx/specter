@@ -192,7 +192,7 @@ specter check [--json] [--tier <n>] [--strict] [--test] [--concrete]
 | `malformed_ac_id` | error (under `--test`) | A test annotation names an AC id that does not match `^AC-\d{2,}$`, for example `AC-1` or `ac-01`. Emitted only under `--test`. |
 | `duplicate_ac_id` | error, all tiers | Two or more acceptance criteria in one spec share an id. Names the id, the count, and the positions. Severity does not vary by tier: a repeated id makes coverage overstate itself, because one annotation satisfies every entry sharing the id. |
 | `vague_criterion` | T1=error, T2=warning, T3=info | An acceptance criterion carries neither `inputs` nor `expected_output`, so nothing states what it asserts. Emitted only under `--concrete`. |
-| `tier_conflict` | warning | A higher-tier spec depends on a lower-tier spec (e.g., Tier 1 depends on Tier 3). |
+| `tier_conflict` | warning | A spec's declared `tier:` disagrees with the entry for it in the deprecated `settings.tier_overrides`. The declared tier governs and the override is not applied. Appears in `--json` as well as text. `--strict` does not escalate it. |
 | `unknown_spec_ref` | error (under `--test`) | A test annotates `@spec <id>` but no spec with that ID was parsed. Emitted only under `--test`. |
 | `unknown_ac_ref` | error (under `--test`) | A test annotates `@ac AC-NN` but the spec has no AC with that ID. Emitted only under `--test`. |
 | `unreachable_annotation` | by `settings.strictness`: annotation→suppressed, threshold→warning, zero-tolerance→error | Source-comment `@ac` whose enclosing test produces no runner-visible `<spec-id>/AC-NN` token (Convention A) and no runtime print (Convention B). Such annotations would silently demote under `coverage --strict`. Per-file off-switch: `// @reachable manual` (`# @reachable manual` for Python). Added in v0.13.0. |
@@ -204,10 +204,11 @@ When a constraint has a `type` (e.g. `security`, `performance`), it appears in p
 
 ```
 $ specter check
-warn [orphan_constraint] spec-auth C-04 (security): C-04 is not referenced by any AC
-error [tier_conflict] spec-payments: Tier 1 spec depends on Tier 3 spec-util
+warn: settings.tier_overrides is deprecated and has no effect. Set tier: in each .spec.yaml file. It is removed at v1.0.0.
+warn [orphan_constraint] spec-auth C-04 (security): Constraint C-04 in "spec-auth" is not referenced by any acceptance criterion
+warn [tier_conflict] spec-payments: spec "spec-payments" declares tier: 2 but specter.yaml tier_overrides assigns tier: 1. The declared tier governs; tier_overrides is not applied.
 
-1 error(s), 1 warning(s), 0 info
+0 error(s), 2 warning(s), 0 info
 
 $ specter check --strict
 # Warnings are now treated as errors — exits 1
