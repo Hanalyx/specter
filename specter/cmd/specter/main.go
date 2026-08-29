@@ -765,9 +765,47 @@ func checkCmd() *cobra.Command {
 			}
 			warnAnnotationStrictnessConflict(m)
 
+			_, specs, _ := parseAllSpecs(files)
+
+			// Tier conflict warnings (spec-manifest C-14, qualified because
+			// spec-check C-14 elsewhere is a different constraint) and the
+			// domain-tier assertion (C-35).
+			//
+			// bugs/SP-SP-002: these were once computed after the checker
+			// returned, printed by the text path, and counted separately at
+			// the summary line, but never appended to result.Diagnostics, so
+			// no JSON consumer saw them and the two modes disagreed on the
+			// warning count. Appending them fixed that half.
+			//
+			// They are built here, before the check runs, because appending
+			// them afterwards put them past the C-07 strict upgrade: both kept
+			// severity warning under --strict and `check --strict` exited 0 on
+			// a workspace spec-manifest C-35 says it should fail. Handing them
+			// to CheckSpecs makes the upgrade own the complete set. Promoting
+			// them here instead would be a private copy of the exemption list,
+			// which is the shape C-07 now forbids.
+			var extra []checker.CheckDiagnostic
+			for _, tc := range manifest.CheckTierConflicts(specs, m) {
+				extra = append(extra, checker.CheckDiagnostic{
+					Kind:     "tier_conflict",
+					Severity: "warning",
+					Message:  tc.Message,
+					SpecID:   tc.SpecID,
+				})
+			}
+			for _, dc := range manifest.CheckDomainTierConflicts(specs, m) {
+				extra = append(extra, checker.CheckDiagnostic{
+					Kind:     "domain_tier_conflict",
+					Severity: "warning",
+					Message:  dc.Message,
+					SpecID:   dc.SpecID,
+				})
+			}
+
 			opts := &checker.CheckOptions{
-				Strict:      strict || m.Settings.Strict,
-				WarnOnDraft: m.Settings.WarnOnDraft,
+				ExtraDiagnostics: extra,
+				Strict:           strict || m.Settings.Strict,
+				WarnOnDraft:      m.Settings.WarnOnDraft,
 				// C-17: opt-in, and deliberately not derived from --strict or
 				// from a manifest key. Both fields the rule reads are optional
 				// in the schema, so a criterion without them is valid.
@@ -780,7 +818,6 @@ func checkCmd() *cobra.Command {
 			result := checker.CheckSpecs(graph, opts)
 
 			// C-09: opt-in test-annotation cross-reference.
-			_, specs, _ := parseAllSpecs(files)
 			if testAnnotations {
 				testFiles := discoverTestFiles("")
 				contents := make(map[string]string, len(testFiles))
@@ -853,37 +890,6 @@ func checkCmd() *cobra.Command {
 			// not diagnostics.
 			for _, msg := range manifest.DeprecatedTierKeys(m) {
 				fmt.Fprintf(os.Stderr, "warn: %s\n", msg)
-			}
-
-			// Tier conflict warnings (spec-manifest C-14, qualified because
-			// spec-check C-14 below is a different constraint) and the
-			// domain-tier assertion (C-35).
-			//
-			// bugs/SP-SP-002: these were computed here, printed by the text
-			// path, and counted separately at the summary line, but never
-			// appended to result.Diagnostics. The --json branch encodes
-			// result, so no JSON consumer has ever seen them, including the
-			// VS Code extension, and the two modes disagreed on the warning
-			// count for the same workspace. Appending them before either
-			// branch runs makes both modes read one list, so the counts agree
-			// by construction rather than by two places being kept in step.
-			for _, tc := range manifest.CheckTierConflicts(specs, m) {
-				result.Diagnostics = append(result.Diagnostics, checker.CheckDiagnostic{
-					Kind:     "tier_conflict",
-					Severity: "warning",
-					Message:  tc.Message,
-					SpecID:   tc.SpecID,
-				})
-				result.Summary.Warnings++
-			}
-			for _, dc := range manifest.CheckDomainTierConflicts(specs, m) {
-				result.Diagnostics = append(result.Diagnostics, checker.CheckDiagnostic{
-					Kind:     "domain_tier_conflict",
-					Severity: "warning",
-					Message:  dc.Message,
-					SpecID:   dc.SpecID,
-				})
-				result.Summary.Warnings++
 			}
 
 			// spec-check C-14: `--json` writes the document to stdout in

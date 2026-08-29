@@ -47,6 +47,24 @@ type CheckOptions struct {
 	// canonical schema, so a criterion carrying neither is valid and failing a
 	// build on it would be a gate failing on correct input.
 	Concrete bool
+
+	// ExtraDiagnostics are diagnostics the caller assembled from sources this
+	// package cannot see, currently the manifest-derived tier_conflict and
+	// domain_tier_conflict. They join the run's own diagnostics BEFORE the
+	// C-07 strict upgrade and before the summary, which is the whole reason
+	// this field exists.
+	//
+	// The command used to append them to the returned result instead. That put
+	// them past the upgrade loop, so both kept severity warning under --strict
+	// and `check --strict` exited 0 on a workspace spec-manifest C-35 says it
+	// should fail. Nothing failed when that happened, because the rule lived in
+	// one place and the diagnostics arrived in another.
+	//
+	// C-07 requires one owner for the upgrade over the complete set. Passing
+	// them in rather than promoting them at the call site is what keeps that
+	// true: a second promotion step would be a private copy of the exemption
+	// list, and the list is that structural_conflict alone is exempt.
+	ExtraDiagnostics []CheckDiagnostic
 }
 
 // vagueSeverityByTier is the C-16 gradient. It is a separate table from
@@ -171,6 +189,11 @@ func CheckSpecs(graph *resolver.SpecGraph, opts *CheckOptions) *CheckResult {
 	if opts.Concrete {
 		diagnostics = append(diagnostics, checkConcreteness(graph, specIDs)...)
 	}
+
+	// C-07: everything the run reports joins the list before the upgrade, so
+	// the upgrade owns the complete set rather than whatever this function
+	// happened to produce.
+	diagnostics = append(diagnostics, opts.ExtraDiagnostics...)
 
 	// C-07: strict mode, upgrade warnings and info to errors.
 	//
