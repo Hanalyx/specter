@@ -1,5 +1,5 @@
-// ingest_merge_empty_block_test.go -- a declared but empty `streams` block
-// survives a merge, spec-ingest 3.0.0 C-15/AC-18.
+// ingest_merge_empty_block_test.go -- a declared `streams` block survives a
+// merge, empty or null, spec-ingest 4.0.0 C-15/AC-18.
 //
 // The laundering path this closes: `[]` and an absent key are the same Go
 // value inside the producer and different bytes to the consumer. An input
@@ -30,6 +30,16 @@ const emptyBlockWithLabel = `{"streams":[],
 // Without this case a fix could satisfy the refusal above by dropping every
 // empty block on the floor, which is the behavior being removed.
 const emptyBlockNoLabel = `{"streams":[],
+	"results":[{"spec_id":"svc","ac_id":"AC-02","status":"passed"}]}`
+
+// nullBlockWithLabel is the third shape, and the one 3.0.0 left unbound. An
+// explicit null is a declared block to spec-coverage C-44, so this is the same
+// violation as emptyBlockWithLabel wearing different bytes.
+const nullBlockWithLabel = `{"streams":null,
+	"results":[{"spec_id":"svc","ac_id":"AC-01","status":"passed","stream":"ghost"}]}`
+
+// nullBlockNoLabel is consistent, and must normalize to `[]` on the way out.
+const nullBlockNoLabel = `{"streams":null,
 	"results":[{"spec_id":"svc","ac_id":"AC-02","status":"passed"}]}`
 
 // legacyNoKey is what every producer wrote before the field existed. C-14
@@ -138,6 +148,54 @@ func TestIngestMergePreservesStreamsKeyPresence(t *testing.T) {
 		}
 		if present && n != 0 {
 			t.Errorf("AC-18: the merged output declares %d stream(s), want 0. The input declared an empty block and the merge invented rows", n)
+		}
+	})
+
+	t.Run("spec-ingest/AC-18 a null block beside a labeled entry is refused", func(t *testing.T) {
+		// The shape 3.0.0 left open. Measured before this test was written:
+		// reading an explicit null as absent restores the laundering path and
+		// the whole suite still passes, so the empty-block cases above do not
+		// cover this one.
+		dir := t.TempDir()
+		writeFixture(t, dir, "null_labeled.json", nullBlockWithLabel)
+		out := filepath.Join(dir, "null_out.json")
+
+		_, stderr, code := runCLISplit(t, dir, "ingest", "--merge", filepath.Join(dir, "null_labeled.json"), "--output", out)
+		if code == 0 {
+			present, n := streamsKeyPresent(t, out)
+			t.Fatalf("AC-18: the merge exited 0 on `streams: null` beside an entry naming \"ghost\". C-44 reads an explicit null as a declared block, so coverage refuses this artifact and the producer wrote it. Output carries streams key=%v len=%d", present, n)
+		}
+		if !strings.Contains(stderr, "ghost") {
+			t.Errorf("AC-18: the null-block refusal does not name \"ghost\".\nstderr:\n%s", stderr)
+		}
+		if _, err := os.Stat(out); err == nil {
+			t.Errorf("AC-18: %s was created by a refused merge", out)
+		}
+	})
+
+	t.Run("spec-ingest/AC-18 a null block with no labels is declared and normalized to an empty array", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFixture(t, dir, "null_plain.json", nullBlockNoLabel)
+		out := filepath.Join(dir, "null_plain_out.json")
+
+		if _, stderr, code := runCLISplit(t, dir, "ingest", "--merge", filepath.Join(dir, "null_plain.json"), "--output", out); code != 0 {
+			t.Fatalf("AC-18: a null block with no labeled entries was refused, exit %d. Nothing about it violates C-44.\nstderr:\n%s", code, stderr)
+		}
+		present, n := streamsKeyPresent(t, out)
+		if !present {
+			t.Errorf("AC-18: the merged output dropped a null-declared streams key. A null block is declared, so dropping it is the same loss of evidence as dropping an empty one")
+		}
+		if present && n != 0 {
+			t.Errorf("AC-18: the merged output declares %d stream(s), want 0", n)
+		}
+		// Normalization: one meaning, one shape. Asserted on the bytes,
+		// because `null` and `[]` both decode to a nil slice.
+		data, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), `"streams": null`) {
+			t.Errorf("AC-18: the output carries `streams: null` verbatim. AC-18 requires a null block to be normalized to `[]`, so the artifact states one thing in one shape.\n%s", data)
 		}
 	})
 
