@@ -1,6 +1,6 @@
 spec:
   id: spec-ingest
-  version: "2.0.0"
+  version: "3.0.0"
   status: approved
   tier: 1
 
@@ -336,6 +336,16 @@ spec:
         is worse than the artifact it refused: it destroys the file the operator
         still had. A control merge of two consistent inputs is required beside
         the refusal, so the check cannot be satisfied by refusing everything.
+        A declared but empty `streams` block is the case this criterion missed,
+        and missing it shipped a laundering path: `[]` and an absent key are the
+        same Go value in the producer and different bytes to the consumer, so an
+        input declaring `streams: []` beside a labeled entry serialized with no
+        block at all, and the artifact `coverage` exits 20 on became one it
+        accepts. Key presence MUST therefore survive read, merge and
+        serialization. A merge whose inputs declared the block declares it, even
+        when the merged block is empty, and a merge whose inputs never declared
+        it MUST still omit it, because C-14 promises an unlabeled producer keeps
+        writing exactly the file it wrote before.
       inputs:
         declared_input: "a file whose streams block declares go, with go-labeled entries"
         undeclared_input: "a file carrying js-labeled entries and no streams block"
@@ -343,6 +353,9 @@ spec:
         existing_output: "the output path holds an artifact from an earlier run"
         control: "two inputs that each declare every stream their entries name"
         oversized: "two inputs that each pass C-17's per-input cap and whose merged artifact exceeds it"
+        declared_empty_block_with_label: "one input whose streams block is declared and empty, carrying an entry labeled ghost"
+        declared_empty_block_no_label: "one input whose streams block is declared and empty, carrying no labeled entries"
+        legacy_no_streams_key: "one input carrying no streams key at all, with no labeled entries"
       expected_output:
         refusal_exit_code_non_zero: true
         refusal_names_the_undeclared_stream: true
@@ -351,6 +364,9 @@ spec:
         control_merge_is_written: true
         oversized_merge_is_refused: true
         oversized_refusal_names_the_size_not_a_stream: true
+        declared_empty_block_with_label_is_refused: true
+        declared_empty_block_survives_as_an_empty_array: true
+        legacy_absent_key_stays_absent: true
       references_constraints: ["C-15"]
       priority: critical
 
@@ -385,6 +401,12 @@ spec:
       priority: high
 
   changelog:
+    - version: "3.0.0"
+      date: "2026-08-30"
+      author: "specter-team"
+      type: major
+      description: "AC-18 gains the declared-but-empty `streams` block, the case that let `--merge` launder an artifact its own consumer refuses. Measured at b3d02c9: an input carrying `streams: []` beside an entry labeled `ghost` exits 20 at `coverage`, and the same content through `ingest --merge` exits 0 and writes an output `coverage` then accepts. C-15 already required the prospective artifact to satisfy C-44 before anything is written, so this is a violated contract rather than an undecided policy, and C-15 needs no new clause. The fault is that key presence did not survive the producer: `ReadResultsFile` returned only the decoded rows, and `serializeResultsFile` emitted the key only when the block was non-empty, so the evidence C-44 turns on was gone before the validator saw it. `internal/coverage` already solves this with a `json.RawMessage` wire field and a presence flag, and the producer gains the mirror. AC-18 also binds the two halves a naive fix would break: a declared empty block survives as `streams: []`, and an input that never declared the key keeps C-14's back-compat omission. Major, not minor. AC-18 gains three inputs, and `spec-diff` C-05 classifies an `inputs` change as breaking; `specter diff` over this change reports `[breaking]`. Nothing depends on `spec-ingest`, so nothing cascades."
+
     - version: "2.0.0"
       date: "2026-08-27"
       author: "specter-team"
