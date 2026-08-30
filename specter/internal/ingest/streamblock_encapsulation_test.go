@@ -59,3 +59,45 @@ func TestStreamBlockKeepsPresenceInseparableFromRows(t *testing.T) {
 		}
 	})
 }
+
+// @spec spec-ingest
+// @ac AC-18
+//
+// The behavior the accessors have to preserve, so unexporting the fields
+// cannot be satisfied by a Len that reports something else.
+//
+// Lands with the implementation rather than in the red commit: it names the
+// constructor directly, and a test referencing a symbol that does not exist
+// yet is a build failure, which takes down the package and reads as a kill.
+func TestStreamBlockAccessorsReportTheBlock(t *testing.T) {
+	t.Run("spec-ingest/AC-18 a declared empty block is declared and counts zero", func(t *testing.T) {
+		// The case the whole cycle turns on. If these two ever collapse into
+		// one another, the laundering path is back.
+		empty := newStreamBlock(true, nil)
+		if got := empty.Len(); got != 0 {
+			t.Errorf("AC-18: a declared empty block reports Len %d, want 0", got)
+		}
+		if !empty.Declared() {
+			t.Errorf("AC-18: a block constructed as declared reports Declared false, so presence did not survive construction")
+		}
+	})
+
+	t.Run("spec-ingest/AC-18 an absent block is undeclared and counts zero", func(t *testing.T) {
+		absent := newStreamBlock(false, nil)
+		if absent.Declared() {
+			t.Errorf("AC-18: a block constructed as undeclared reports Declared true. C-14's back-compat omission depends on this being false")
+		}
+		if got := absent.Len(); got != 0 {
+			t.Errorf("AC-18: an absent block reports Len %d, want 0", got)
+		}
+	})
+
+	t.Run("spec-ingest/AC-18 Len counts the rows it was given", func(t *testing.T) {
+		// The positive control for Len. Without it, a Len hardcoded to 0
+		// satisfies both cases above.
+		two := newStreamBlock(true, []StreamInfo{{Name: "go"}, {Name: "js"}})
+		if got := two.Len(); got != 2 {
+			t.Errorf("AC-18: a block of two rows reports Len %d, want 2", got)
+		}
+	})
+}

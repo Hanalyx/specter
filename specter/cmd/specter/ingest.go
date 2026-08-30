@@ -262,7 +262,7 @@ func runMerge(paths []string, outputPath string) error {
 	}
 
 	entries := len(ingest.MergeResults(results))
-	fmt.Fprintf(os.Stderr, "Merged %d file(s) into %d result entries across %d stream(s).\n", len(files), entries, len(merged.Streams))
+	fmt.Fprintf(os.Stderr, "Merged %d file(s) into %d result entries across %d stream(s).\n", len(files), entries, merged.Len())
 	fmt.Printf("Wrote %d result entries to %s\n", entries, outputPath)
 	return nil
 }

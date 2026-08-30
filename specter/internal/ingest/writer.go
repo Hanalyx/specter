@@ -35,15 +35,39 @@ type resultsFile struct {
 //
 // The two travel as one value on purpose. They were separate before, as a
 // []StreamInfo whose emptiness stood in for absence, and that conflation is
-// exactly what shipped the laundering path. A caller cannot now forward the
-// rows and drop the presence, because there is no way to hold one without
-// the other.
+// what shipped the laundering path.
+//
+// Both fields are unexported, and that is the part bundling alone did not
+// buy. An earlier revision exported them and claimed in a comment that a
+// caller could not forward the rows while dropping the presence. A caller
+// could: `ingest.StreamBlock{Streams: rows}` compiles, reads as complete, and
+// declares nothing. Adjacent is not inseparable. Construction now lives in
+// this package, so outside it the undeclared-with-rows state cannot be
+// written down at all.
 type StreamBlock struct {
-	// Declared is true when the input carried a `streams` key, including
-	// when it carried an empty one.
-	Declared bool
-	Streams  []StreamInfo
+	// declared is true when the input carried a `streams` key, including
+	// when it carried an empty or an explicitly null one.
+	declared bool
+	streams  []StreamInfo
 }
+
+// newStreamBlock is the only way a StreamBlock is built. Unexported on
+// purpose: presence is a fact about an input this package read, not something
+// a consumer supplies.
+func newStreamBlock(declared bool, streams []StreamInfo) StreamBlock {
+	return StreamBlock{declared: declared, streams: streams}
+}
+
+// Len reports how many streams the block declares.
+//
+// Exported because the CLI prints "across N stream(s)" and needs the count.
+// A count is all it needs, so a count is all it gets: handing back the slice
+// would put the rows in a caller's hands again without the presence.
+func (b StreamBlock) Len() int { return len(b.streams) }
+
+// Declared reports whether the input carried the key at all. Zero rows and no
+// key are different facts, and this is the one C-44 turns on.
+func (b StreamBlock) Declared() bool { return b.declared }
 
 // StreamInfo records what one stream's run observed. Mirrors the shape
 // internal/coverage reads, spec-coverage C-42.
@@ -81,7 +105,7 @@ func WriteResultsFileWithStreams(path string, results []TestResult, streams []St
 	// C-16: a run that names a stream writes the block, and an unlabeled run
 	// writes none. Presence and non-emptiness coincide on this path, which is
 	// why it kept working while `--merge` did not.
-	data, err := serializeResultsFile(results, StreamBlock{Declared: len(streams) > 0, Streams: streams})
+	data, err := serializeResultsFile(results, newStreamBlock(len(streams) > 0, streams))
 	if err != nil {
 		return err
 	}
@@ -119,8 +143,8 @@ func serializeResultsFile(results []TestResult, block StreamBlock) ([]byte, erro
 	// is in it. Keying this off len(rows) is the bug: it drops a declared
 	// empty block, and a declared empty block beside a labeled entry is
 	// precisely the artifact C-44 rejects.
-	if block.Declared {
-		rows := append([]StreamInfo(nil), block.Streams...)
+	if block.declared {
+		rows := append([]StreamInfo(nil), block.streams...)
 		if rows == nil {
 			rows = []StreamInfo{}
 		}

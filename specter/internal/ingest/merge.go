@@ -51,9 +51,9 @@ func ReadResultsFile(path string) ([]TestResult, StreamBlock, error) {
 		return nil, StreamBlock{}, fmt.Errorf("%s: %w", path, err)
 	}
 	in := resultsFile{Results: wire.Results}
-	block := StreamBlock{Declared: wire.Streams != nil}
+	block := newStreamBlock(wire.Streams != nil, nil)
 	if len(wire.Streams) > 0 && string(wire.Streams) != "null" {
-		if err := json.Unmarshal(wire.Streams, &block.Streams); err != nil {
+		if err := json.Unmarshal(wire.Streams, &block.streams); err != nil {
 			return nil, StreamBlock{}, fmt.Errorf("%s: %w", path, err)
 		}
 	}
@@ -90,8 +90,8 @@ func MergeStreams(in []StreamBlock) StreamBlock {
 	out := StreamBlock{}
 	byName := map[string]StreamInfo{}
 	for _, b := range in {
-		out.Declared = out.Declared || b.Declared
-		for _, s := range b.Streams {
+		out.declared = out.declared || b.declared
+		for _, s := range b.streams {
 			cur := byName[s.Name]
 			cur.Name = s.Name
 			cur.Scanned += s.Scanned
@@ -100,9 +100,9 @@ func MergeStreams(in []StreamBlock) StreamBlock {
 			byName[s.Name] = cur
 		}
 	}
-	out.Streams = make([]StreamInfo, 0, len(byName))
+	out.streams = make([]StreamInfo, 0, len(byName))
 	for _, s := range byName {
-		out.Streams = append(out.Streams, s)
+		out.streams = append(out.streams, s)
 	}
 	return out // serializeResultsFile sorts, per C-42
 }
