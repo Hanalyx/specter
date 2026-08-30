@@ -12,7 +12,7 @@ test:
 test-verbose:
 	go test -v ./...
 
-# Race condition detector — slower but catches concurrency bugs
+# Race condition detector, slower but catches concurrency bugs
 test-race:
 	go test -race ./...
 
@@ -106,7 +106,7 @@ build-all:
 # This is the lightweight annotation-counting gate: coverage and sync run
 # with --strictness annotation so the target stays independent of
 # .specter-results.json (the manifest default `threshold` routes both
-# commands through the strict path, which requires the results file —
+# commands through the strict path, which requires the results file,
 # spec-coverage C-31 / spec-sync C-06). The strict-pipeline variant is
 # `make dogfood-strict` below.
 dogfood: build
@@ -116,7 +116,7 @@ dogfood: build
 	./$(BINARY) coverage --strictness annotation
 	./$(BINARY) sync --strictness annotation
 
-# Mechanical eval gate — Specter dogfoods its own --strict on itself.
+# Mechanical eval gate. Specter dogfoods its own --strict on itself.
 # Runs go test -json and jest (with jest-junit reporter), feeds both
 # streams into specter ingest, then runs specter coverage --strict.
 # Every annotated AC must have a passing test result or the gate fails.
@@ -134,7 +134,7 @@ dogfood-strict: build
 	@echo "--- specter coverage --strict ---"
 	./$(BINARY) coverage --strict
 
-# Full pre-release gate — run this before every release
+# Full pre-release gate. Run this before every release
 prerelease: check test-race vulncheck dogfood
 	@echo ""
 	@echo "--- Cross-compiling for all platforms ---"
@@ -146,7 +146,7 @@ prerelease: check test-race vulncheck dogfood
 	@echo ""
 	@echo "--- All pre-release checks passed ---"
 
-# Release gate — packages the VSIX and prints the mandatory human-verification
+# Release gate. Packages the VSIX and prints the mandatory human-verification
 # checklist. Does NOT run vsce publish under any circumstance.
 # See CLAUDE.md > "Release discipline" for why every step matters.
 release-check: prerelease
@@ -185,6 +185,6 @@ release-check: prerelease
 	echo "       npx vsce publish --packagePath $$VSIX"; \
 	echo "     For non-trivial changes, prefer --pre-release first."; \
 	echo ""; \
-	echo "Skipping a step is not a shortcut — it's a commitment to"; \
+	echo "Skipping a step is not a shortcut, it's a commitment to"; \
 	echo "ship a broken version. See RELEASING.md for the full gate."; \
 	echo "============================================================"
