@@ -341,7 +341,14 @@ func TestStrictnessHasOneOwner(t *testing.T) {
 	t.Run("spec-check/AC-45 one promotion site, one summary site, and neither in the command", func(t *testing.T) {
 		fset := token.NewFileSet()
 		checkerFiles := parseProductionFiles(t, fset, filepath.Join("..", "..", "internal", "checker"))
-		cmdFiles := parseProductionFiles(t, fset, ".")
+
+		// Every command that builds a check result, not this one alone. sync
+		// runs the same checker and assembles its own diagnostics, so the same
+		// route exists there and a guard reading one package cannot see it.
+		commandFiles := parseProductionFiles(t, fset, ".")
+		for path, f := range parseProductionFiles(t, fset, filepath.Join("..", "..", "internal", "sync")) {
+			commandFiles[path] = f
+		}
 
 		// A promotion is an ASSIGNMENT to a .Severity field. Constructing a
 		// diagnostic sets Severity too, in a composite literal, and that is not
@@ -396,8 +403,8 @@ func TestStrictnessHasOneOwner(t *testing.T) {
 			t.Errorf("AC-45: the one severity assignment is at %s, want it inside CheckSpecs", promoteSites[0])
 		}
 
-		if sites := funcSitesMatching(fset, cmdFiles, promotes); len(sites) != 0 {
-			t.Errorf("AC-45: the command assigns severity at %v. Diagnostics it assembles are handed to the checker through CheckOptions.ExtraDiagnostics; promoting them here would be a private copy of the rule", sites)
+		if sites := funcSitesMatching(fset, commandFiles, promotes); len(sites) != 0 {
+			t.Errorf("AC-45: a command assigns severity at %v. Diagnostics it assembles are handed to the checker through CheckOptions.ExtraDiagnostics; promoting them here would be a private copy of the rule", sites)
 		}
 
 		// The summary is computed once. Counting write sites alone cannot say
@@ -425,8 +432,8 @@ func TestStrictnessHasOneOwner(t *testing.T) {
 			t.Errorf("AC-45: summarize is called at %d site(s), %v, want exactly 1. Two calls are two summaries, and the second would disagree with the first about a diagnostic the upgrade moved", len(sites), sites)
 		}
 
-		if sites := funcSitesMatching(fset, cmdFiles, mutatesSummary); len(sites) != 0 {
-			t.Errorf("AC-45: the command writes a result summary at %v. A count taken at an assembly site reports as a warning what the run reports as an error", sites)
+		if sites := funcSitesMatching(fset, commandFiles, mutatesSummary); len(sites) != 0 {
+			t.Errorf("AC-45: a command writes a result summary at %v. A count taken at an assembly site reports as a warning what the run reports as an error", sites)
 		}
 	})
 }

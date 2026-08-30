@@ -140,8 +140,111 @@ func TestDeprecatedTierKeys_WarnWithoutChangingExit(t *testing.T) {
 		if !strings.Contains(ovErr, "tier_overrides") {
 			t.Errorf("C-36: settings.tier_overrides must warn, got:\n%s", ovErr)
 		}
+
+		// The message's semantics, not just the key name. Asserting only that
+		// the line mentions tier_overrides leaves the retired "has no effect"
+		// claim passing, and that claim is what C-36 was corrected to forbid:
+		// the key resolves no tier, its value is still compared, and a
+		// disagreement becomes an error under --strict.
+		for _, want := range []string{"resolves no tier", "still compared", "--strict", "v1.0.0"} {
+			if !strings.Contains(ovErr, want) {
+				t.Errorf("C-36: the tier_overrides line must state %q. Got:\n%s", want, ovErr)
+			}
+		}
+		if strings.Contains(ovErr, "tier_overrides is deprecated and has no effect") {
+			t.Errorf("C-36: the retired \"has no effect\" claim is back. The key is not inert: a mismatching value fails a strict run. Got:\n%s", ovErr)
+		}
+
+		// system.tier keeps its own wording, and genuinely has no effect. This
+		// is the control that stops the assertions above being read as a rule
+		// about every deprecated key.
+		if !strings.Contains(sysErr, "system.tier is deprecated and has no effect") {
+			t.Errorf("C-36: system.tier does have no effect and its line should still say so. Got:\n%s", sysErr)
+		}
+
+		// Cardinality, and the case where both keys are declared at once. C-36
+		// says exactly one line per declared key. Contains cannot say that: a
+		// duplicated line passes it, and so does a run that emits one line
+		// when two keys are declared. Neither case is exercised by a fixture
+		// that declares one key at a time.
+		countLines := func(stderr, key string) int {
+			n := 0
+			for _, line := range strings.Split(stderr, "\n") {
+				if strings.HasPrefix(line, "warn: "+key+" is deprecated") {
+					n++
+				}
+			}
+			return n
+		}
+		if got := countLines(sysErr, "system.tier"); got != 1 {
+			t.Errorf("C-36: %d line(s) for system.tier, want exactly 1.\nstderr:\n%s", got, sysErr)
+		}
+		if got := countLines(ovErr, "settings.tier_overrides"); got != 1 {
+			t.Errorf("C-36: %d line(s) for settings.tier_overrides, want exactly 1.\nstderr:\n%s", got, ovErr)
+		}
+		// One key declared must not produce the other key's line, in BOTH
+		// directions. Asserting one direction leaves a run that emits the
+		// system.tier line whenever tier_overrides is declared passing.
+		if got := countLines(sysErr, "settings.tier_overrides"); got != 0 {
+			t.Errorf("C-36: a manifest declaring only system.tier produced %d tier_overrides line(s), want 0.\nstderr:\n%s", got, sysErr)
+		}
+		if got := countLines(ovErr, "system.tier"); got != 0 {
+			t.Errorf("C-36: a manifest declaring only settings.tier_overrides produced %d system.tier line(s), want 0.\nstderr:\n%s", got, ovErr)
+		}
+
+		both := "system:\n  name: dep\n  tier: 2\nsettings:\n  specs_dir: specs\n  tier_overrides:\n    dt-spec: 3\n"
+		_, bothErr, bothCode := runCLISplit(t, tierWorkspace(t, both), "check")
+		if got := countLines(bothErr, "system.tier"); got != 1 {
+			t.Errorf("C-36 (both declared): %d line(s) for system.tier, want exactly 1.\nstderr:\n%s", got, bothErr)
+		}
+		if got := countLines(bothErr, "settings.tier_overrides"); got != 1 {
+			t.Errorf("C-36 (both declared): %d line(s) for settings.tier_overrides, want exactly 1.\nstderr:\n%s", got, bothErr)
+		}
+		// A matching override, so the exit code still reflects the deprecation
+		// lines alone rather than a tier_conflict.
+		if bothCode != baseCode {
+			t.Errorf("C-36 (both declared): exited %d, want %d. Two advisory lines change no exit code.", bothCode, baseCode)
+		}
 		if ovCode != baseCode {
 			t.Errorf("C-36: the warning must not change the exit code, got %d want %d", ovCode, baseCode)
+		}
+	})
+}
+
+// @spec spec-manifest
+// @ac AC-65
+//
+// C-36 and C-14: the deprecation line is advisory, and the conflict it
+// accompanies is not. Declaring settings.tier_overrides does not fail a strict
+// run; disagreeing with the declared tier does.
+func TestDeprecatedOverrideStrictExit(t *testing.T) {
+	t.Run("spec-manifest/AC-65 a matching override warns and still exits 0 under --strict", func(t *testing.T) {
+		// dt-spec declares tier 3 in tierWorkspace, so 3 is the matching value.
+		matching := "system:\n  name: dep\nsettings:\n  specs_dir: specs\n  tier_overrides:\n    dt-spec: 3\n"
+		_, errOut, code := runCLISplit(t, tierWorkspace(t, matching), "check", "--strict")
+
+		// The control. The deprecation line must be present, or this proves
+		// nothing about a declared key.
+		if !strings.Contains(errOut, "tier_overrides") {
+			t.Fatalf("AC-65 (matching): the deprecation line is absent, so the key was not declared.\nstderr:\n%s", errOut)
+		}
+		if strings.Contains(errOut, "tier_conflict") {
+			t.Errorf("AC-65 (matching): an override equal to the declared tier is not a conflict.\nstderr:\n%s", errOut)
+		}
+		if code != 0 {
+			t.Errorf("AC-65 (matching): exited %d, want 0. Declaring the key is not what fails a strict run.", code)
+		}
+	})
+
+	t.Run("spec-manifest/AC-65 a mismatching override exits 1 under --strict", func(t *testing.T) {
+		mismatching := "system:\n  name: dep\nsettings:\n  specs_dir: specs\n  tier_overrides:\n    dt-spec: 1\n"
+		out, errOut, code := runCLISplit(t, tierWorkspace(t, mismatching), "check", "--strict")
+
+		if !strings.Contains(out, "error [tier_conflict]") {
+			t.Errorf("AC-65 (mismatching): the conflict must be promoted under --strict, per spec-check C-07.\nstdout:\n%s\nstderr:\n%s", out, errOut)
+		}
+		if code != 1 {
+			t.Errorf("AC-65 (mismatching): exited %d, want 1. Disagreeing with the declared tier is what fails a strict run.", code)
 		}
 	})
 }
