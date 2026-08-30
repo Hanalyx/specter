@@ -94,7 +94,7 @@ without it.
 ## The collision, stated first
 
 Two manifest keys, both accepted, both listed in `validSettingsKeys` at
-`internal/manifest/manifest.go:25-26`:
+`internal/manifest/manifest.go`, in `validTopLevelKeys`:
 
 | Key | Type | Constraint | Governs |
 |---|---|---|---|
@@ -148,7 +148,7 @@ settings.strict absent    PASS check / PASS coverage   exit 0
 ```
 
 The diagnostic is `unknown_spec_ref`, hardcoded at error severity
-(`internal/checker/test_annotations.go:119`), so no promotion is involved. A
+(`internal/checker/test_annotations.go`, in `scanFileAnnotations`), so no promotion is involved. A
 severity switch cannot change which defects are discovered. This one does.
 
 Third, the intended behavior, recorded because it explains the name. `strict`
@@ -159,15 +159,15 @@ tree implements this. `coverage` never reads the key, and severity has no
 meaning in a coverage report, which carries percentages rather than diagnostics.
 
 **Surfaces, and the scope is not uniform.** Set by `settings.strict`
-(`internal/manifest/types.go:49`) or by a `--strict` flag. The two spellings
+(`internal/manifest/types.go`, in `DomainConfig`) or by a `--strict` flag. The two spellings
 apply to **different sets of commands**:
 
 | Command | Accepts `--strict` | Reads `settings.strict` |
 |---|---|---|
-| `check` | yes | yes, `main.go:711` |
+| `check` | yes | yes, `main.go`, in `resolveDependentsCmd` |
 | `sync` | yes | yes, `syncCmd`, where it builds `checker.CheckOptions{Strict: ...}` and sets `CheckTestAnnotations` |
 | `coverage` | yes | **no** |
-| `watch` | **no** | yes, `main.go:3003` |
+| `watch` | **no** | yes, `main.go`, in `explainDetailMode` |
 
 Union of four, intersection of two. Verified with the C-24 guard, which exists
 to reject strict combined with `strictness: annotation`: on a manifest holding
@@ -237,7 +237,7 @@ scans spec to test, so it knows.
 
 **It is not the only command that knows.** An earlier draft said so, inferring
 "only" from `check`'s blindness rather than checking the other commands.
-`explain` computes the same fact per criterion at `cmd/specter/main.go:2706-2709`
+`explain` computes the same fact per criterion at `cmd/specter/main.go`, in `runDoctorFix`
 and names it:
 
 ```
@@ -268,10 +268,10 @@ error: invalid .../specter.yaml: settings.strictness: "bogus" is not a valid val
 
 **The enum is declared three times, not once.** An earlier draft said the flag
 and the key validate against a single declaration at
-`internal/manifest/manifest.go:30`. They do not. That line declares
+`internal/manifest/manifest.go`, in `validSettingsKeys`. They do not. That line declares
 `validStrictnessValues` for the manifest. The flag validates against two
-separately written map literals, `cmd/specter/main.go:924` for `coverage` and
-`:1263` for `sync`.
+separately written map literals, `cmd/specter/main.go`, in `checkCmd` for `coverage` and
+`syncCmd` for `sync`.
 
 The three agree today, which is why the behavior above is correct and the
 mechanism claim was still wrong. It is latent rather than visible: add a fourth
@@ -292,15 +292,15 @@ all in `main.go`.
 
 | Command | `--strict` | `--strictness` | Registration |
 |---|---|---|---|
-| `check` | yes | **no** | `:837` |
-| `coverage` | yes | yes | `:1239`, `:1241` |
-| `sync` | yes | yes | `:1411`, `:1412` |
+| `check` | yes | **no** | `checkCmd` |
+| `coverage` | yes | yes | `coverageCmd` |
+| `sync` | yes | yes | `syncCmd` |
 | the other 11 | no | no | none |
 
 The other 11 are `completion`, `diff`, `doctor`, `explain`, `feedback`,
 `ingest`, `init`, `parse`, `resolve`, `reverse`, and `watch`. `watch` is the
 one worth naming: it accepts neither flag and still reads `settings.strict` at
-`main.go:3003`.
+`main.go`, in `explainDetailMode`.
 
 That asymmetry matters more than it looks. `check` accepts `--strict` and has no
 ladder at all. Any proposal that defines `--strict` in terms of a strictness
@@ -319,7 +319,7 @@ it. The word "only" in that last row was checked: a grep of `internal/checker/`
 for `strictness` returns hits in five files, four excluding the test file:
 `unreachable_annotation.go`, `unreachable_go.go`, `unreachable_ts.go`, and
 `unreachable_py.go`. All four are in the `unreachable_annotation` family, and
-every one routes through `routeSeverity`, which `unreachable_annotation.go:305`
+every one routes through `routeSeverity`, which `unreachable_annotation.go`, in `routeSeverity`
 defines. An earlier draft said three, which was true before `85dfd54` added the
 Go reachability scanner. The conclusion the count supports is unaffected; the
 number was stale, and a stale number inside a sentence whose purpose is to show
@@ -428,10 +428,10 @@ Verified by which commands discover test files at all:
 |---|---|---|
 | `parse` | no | **No.** Nothing to scan; a flag there would be inert |
 | `resolve` | no | **No.** Same |
-| `check` | yes, `main.go:723` | Has the files, scans the wrong direction. Needs new spec-side code |
-| `coverage` | yes, `main.go:886` | Yes, and already computes the fact |
+| `check` | yes, `main.go`, in `checkExitVerdict` | Has the files, scans the wrong direction. Needs new spec-side code |
+| `coverage` | yes, `main.go`, in `checkCmd` | Yes, and already computes the fact |
 | `sync` | yes, the `--strict` flag on `syncCmd` | Passthrough to its phases only |
-| `doctor` | yes, `main.go:2223` | Undecided, and not yet considered |
+| `doctor` | yes, `main.go`, in `extractFencedBody` | Undecided, and not yet considered |
 
 ### The four questions, settled 2026-08-19
 
@@ -460,14 +460,14 @@ escalation belongs to `settings.strict`. Ladder routing is what retires.
 
 ### One consequence owed before v1.0.0
 
-`vscode-extension/src/client.ts:180` passes `--strictness annotation` to
+`vscode-extension/src/client.ts`, in `coverage`, passes `--strictness annotation` to
 guarantee a parseable document on every run, because under a `threshold`
 manifest plain `coverage` hard-fails without a results file and emits no JSON.
 Manifest-only annotation gives it no replacement once `--strictness` is removed.
 
-**The larger casualty is this repository's own build.** `Makefile:116-117` runs
-`coverage --strictness annotation` and `sync --strictness annotation` for
-`make dogfood`, and `Makefile:135` runs `coverage --strict` for
+**The larger casualty is this repository's own build.** the `dogfood` target in `Makefile` runs
+`coverage --strictness annotation` and `sync --strictness annotation`, and the
+`dogfood-strict` target runs `coverage --strict` for
 `make dogfood-strict`. There is no `specter.yaml` at the repository root. **Two
 targets, one tree, no manifest, needing two different modes**, and
 per-invocation control is the only mechanism that expresses that. SSRB-104
@@ -613,12 +613,12 @@ An earlier draft added "or when the `--strict` boolean is set" and called that
 one rule stated by both specs. **The disjunct is dead on both surfaces**, for
 two different reasons.
 
-On `coverage`, `main.go:958` really does read
-`strict || threshold || zero-tolerance`. But the C-24 guard at `main.go:943`
+On `coverage`, `main.go`, in `coverageExitGates` really does read
+`strict || threshold || zero-tolerance`. But the C-24 guard at `main.go`, in `coverageExitGates`
 tests the same `effectiveStrictness` and exits first, so the only configuration
 where the disjunct could decide is refused before the line is reached.
 
-On `sync`, `internal/sync/sync.go:217-218` consults the boolean only when
+On `sync`, `internal/sync/sync.go`, in `RunSync` consults the boolean only when
 `input.Strictness == ""`, and `syncCmd` always passes a
 non-empty value, because the manifest loader fills it. `sync --strict` alone
 still reaches the strict path, through the strictness resolution in `syncCmd`, which resolves the
@@ -650,10 +650,10 @@ Same dead-branch shape as `tier`: a disjunct that reads as a rule and decides
 nothing.
 
 **The specs were checked, because the earlier standing line claimed both stated
-the rule.** Neither states it as written. `specs/spec-coverage.spec.yaml:192`
+the rule.** Neither states it as written. `spec-coverage` C-19
 (C-31) states the two-disjunct rule for `coverage` and separately records that
 `--strict` with `annotation` "remains a C-24 error", which is consistent with
-the code. `specs/spec-sync.spec.yaml:72` (C-07) says only "Under any strict mode
+the code. `spec-sync` C-07 says only "Under any strict mode
 (`threshold` or `zero-tolerance`)" and never mentions the boolean. So the
 cross-command generalization was this document's own, and there is no
 spec-versus-code disagreement to file.
@@ -670,7 +670,7 @@ manifest, and the built-in default have been resolved against each other.
 
 **Surfaces.** The two commands resolve it differently, and that is `SP-046`.
 
-`coverage` (`cmd/specter/main.go:932-938`) resolves the flag over the manifest
+`coverage` (`cmd/specter/main.go`, in `checkCmd`) resolves the flag over the manifest
 over a built-in `threshold`. The `--strict` boolean does not participate at all.
 It is a separate variable feeding the strict path.
 
@@ -716,8 +716,8 @@ by divergent rules. It is three flags that happen to be spelled the same.
 
 | Site | Command | Help text says | What it does |
 |---|---|---|---|
-| `main.go:837` | `check` | "Treat warnings as errors (also set via settings.strict in specter.yaml)" | The severity switch, and nothing else |
-| `coverage --strict` flag help | `coverage` | "Require .specter-results.json and treat any non-passed annotated AC as uncovered (all tiers)" | Forces the strict path at `:958`. Not severity, not the ladder |
+| `main.go`, in `checkCmd` | `check` | "Treat warnings as errors (also set via settings.strict in specter.yaml)" | The severity switch, and nothing else |
+| `coverage --strict` flag help | `coverage` | "Require .specter-results.json and treat any non-passed annotated AC as uncovered (all tiers)" | Forces the strict path at `coverageExitGates`. Not severity, not the ladder |
 | `sync --strict` flag help | `sync` | "Treat warnings as errors (also set via settings.strict in specter.yaml). Alias for --strictness zero-tolerance when --strictness is not set." | Severity, plus test-annotation checking, plus the ladder |
 
 Only `sync` touches the ladder. Only `check` and `sync` touch severity. `coverage`
@@ -741,7 +741,7 @@ not interchangeable even in the check phase, which reads no coverage strictness.
 threshold and zero-tolerance route through the same strict path as --strict; --strict is equivalent to --strictness threshold under the default manifest strictness and does not override a manifest-set level.
 ```
 
-Against `sync --strict`'s help at `:1411`, which calls it an alias for
+Against `sync --strict`'s help in `syncCmd`, which calls it an alias for
 `zero-tolerance`. Each string is accurate about its own command. Read together
 they define one flag name four ways.
 
@@ -908,8 +908,8 @@ the two runs is the number.
 **The distinction survives nowhere.** An earlier draft of this entry claimed
 that spec-coverage C-28's per-criterion hint separates the two cases. It does
 not. C-28 fires when a criterion has a source annotation and **no matching
-entry** in the results file (`specs/spec-coverage.spec.yaml:177`), and the code
-agrees: the guard is `hasEntry[key]` at `internal/coverage/coverage.go:174`. A
+entry** in the results file (`spec-coverage`, in its results-file constraint), and the code
+agrees: the guard is `hasEntry[key]` at `internal/coverage/coverage.go`, in `DiagnoseSourceOnlyACs`. A
 criterion whose test ran and failed **has** an entry, so no hint fires. "No
 matching pass" is the hint's message text, not its trigger.
 
@@ -935,7 +935,7 @@ TypeScript sources.
 
 **Not every percentage Specter prints is spec coverage**, which an earlier draft
 claimed. `BuildSummaryHeader` emits a per-tier rollup at
-`internal/coverage/coverage.go:845` computing `t.passing / t.total`, the fraction
+`internal/coverage/coverage.go`, in `SortCoverageEntriesForDisplay` computing `t.passing / t.total`, the fraction
 of specs in a tier that pass their threshold. That is a spec pass rate, over a
 different denominator. One header carries both meanings at once:
 
@@ -965,7 +965,7 @@ to test statuses. It is the evidence channel that the strict path requires.
 The path is asymmetric, and this is a trap worth naming. `ingest` accepts
 `--output <path>`, defaulting to `.specter-results.json`. Both readers open the
 literal string `.specter-results.json` in the working directory
-(`main.go:993` and `:1331`) and have no flag to point elsewhere. So
+(`coverageExitGates` and `coverageCmd`) and have no flag to point elsewhere. So
 `ingest --output results/run.json` succeeds, and every later strict run reports
 the file as missing.
 
@@ -1015,11 +1015,11 @@ output," and that description is falsified by measurement below.
 Two forms, and they are not variants of one rule:
 
 - **Convention A** puts a `<spec-id>/AC-NN` token in the **test name or the
-  JUnit classname** (`internal/ingest/annotations.go:31-35`). Python cannot use
+  JUnit classname** (`internal/ingest/annotations.go`, in `extractAnnotations`). Python cannot use
   it, because function names cannot contain a slash.
 - **Convention B** prints `// @spec <id>` **and** `// @ac AC-NN` from the test
-  body. **Both markers are required.** `internal/ingest/junit.go:111-113` drops
-  the case when either is empty, and `internal/ingest/gotest.go:89-93` takes the
+  body. **Both markers are required.** `internal/ingest/junit.go`, in `testResultFromCase` drops
+  the case when either is empty, and `internal/ingest/gotest.go`, in `ParseGoTestStreamStats` takes the
   body pair only when both were seen.
 
 A bare `<spec-id>/AC-NN` token printed into the body matches neither, and is
@@ -1072,10 +1072,10 @@ zero-tolerance   1 error(s), 0 warning(s), 0 info             exit 1
 **Standing. Open, on coverage rather than on severity.** The routing above holds
 and the `@reachable manual` suppression works in both Go and Python. What is open
 is that **the diagnostic misses forms that demote.** Its reachability scanner
-accepts either marker alone (`unreachable_go.go:452-460`,
-`unreachable_py.go:122-127`, `unreachable_ts.go:165-168`) where `ingest` requires
+accepts either marker alone (`unreachable_go.go`, in `walkFunctionForReachability`,
+`unreachable_py.go`, in `reachesViaPrint`, `unreachable_ts.go`, in `reachesViaConsoleLog`) where `ingest` requires
 both, and accepts a bare pair in any string-literal argument
-(`unreachable_go.go:441-446`) where `ingest` reads only the name and classname.
+(`unreachable_go.go`, in `walkFunctionForReachability`) where `ingest` reads only the name and classname.
 
 Measured: on a four-criterion fixture, `check --test` warned about `AC-04` and
 stayed silent on `AC-03`, while `coverage --strictness threshold` reported
@@ -1138,7 +1138,7 @@ coverage rule, not a severity. Citations are in Surfaces below, kept in one
 place so the line numbers have one place to drift.
 
 **Emission, exactly one.** A tier decides whether `tier_conflict` exists at all.
-`internal/manifest/tier_conflict.go:37` skips a spec when `spec.Tier == 0` or
+`internal/manifest/tier_conflict.go`, in `CheckTierConflicts` skips a spec when `spec.Tier == 0` or
 when it equals the override, so the same manifest produces the warning against a
 Tier 3 spec and nothing against a Tier 1 spec. This is not enforcement, because
 it gates nothing on a plain run: `check` exits 0 with the warning present.
@@ -1148,10 +1148,9 @@ so declaring `settings.tier_overrides` can fail a strict build. It is not presen
 the two-bucket split an earlier draft used had no slot for it.
 
 **Presentation, the rest.** A tier sorts entries within a coverage bucket
-(`internal/coverage/coverage.go:792`), groups the summary rollup (`:826`),
+(`internal/coverage/coverage.go`, in `updateMultilineStringState`), groups the summary rollup (`SortCoverageEntriesForDisplay`),
 prints the `T%-5d` column in the coverage table, is
-printed twice by `explain` (`:2701`, `:2747`), and is printed by `doctor`
-(`:2273-2275`), which re-derives the threshold from the same map only in order
+printed twice by `explain`, and is printed by `doctor`, which re-derives the threshold from the same map only in order
 to display it. None of these decide a verdict.
 
 **Surfaces.** Declared per spec as `tier:`. **Nothing resolves it.** Every live
@@ -1160,33 +1159,33 @@ matters because it is what anyone scoping `bugs/SP-SP-049` has to change:
 
 | Site | Register |
 |---|---|
-| `internal/coverage/coverage.go:517` | the Tier 1 evidence rule |
-| `internal/coverage/coverage.go:542` | the threshold lookup |
-| `internal/checker/check.go:189` | orphan severity |
-| `internal/manifest/tier_conflict.go:37` | whether `tier_conflict` is emitted |
-| `internal/coverage/coverage.go:571` | the `tier` field in `--json` |
-| `cmd/specter/main.go:2701`, `:2747` | `explain`, printed |
-| `internal/schema/validate.go:93` | range validation, decides nothing |
+| `internal/coverage/coverage.go`, in `buildCoverageReportCore` | the Tier 1 evidence rule |
+| `internal/coverage/coverage.go`, in `buildCoverageReportCore` | the threshold lookup |
+| `internal/checker/check.go`, in `CheckSpecs` | orphan severity |
+| `internal/manifest/tier_conflict.go`, in `CheckTierConflicts` | whether `tier_conflict` is emitted |
+| `internal/coverage/coverage.go`, in `buildCoverageReportCore` | the `tier` field in `--json` |
+| `runDoctorFix` and `canonicalizeManifest` | `explain`, printed |
+| `internal/schema/validate.go`, in `ValidateEnums` | range validation, decides nothing |
 
-An earlier draft gave the first three plus `:571` and called that "every live
+An earlier draft gave the first three plus `buildCoverageReportCore` and called that "every live
 consumer." It was an absolute quantifier over an incomplete list, which is the
 worst shape a claim can take in a document meant for scoping. `explain` and the
 conflict check were missing.
 
 The only tier-keyed severity map in the tree is `orphanSeverityByTier` at
-`check.go:50`. `duplicate_ac_id` refuses tier routing outright
-(`internal/checker/duplicate_ac_id.go:12-13`).
+`check.go`, in `CheckOptions`. `duplicate_ac_id` refuses tier routing outright
+(`internal/checker/duplicate_ac_id.go`, in its package comment).
 
 **There is a resolver, and it is dead.** `ResolveTier` in
 `internal/manifest/tier.go` implements a four-step cascade: an explicit spec
 `tier:` greater than 0, then the tier of a domain in `specter.yaml` that lists
 the spec, then `system.tier`, then a hardcoded default of 2. It has two call
-sites and **neither is reachable**. `types.go:164` sits inside
-`ResolveTierWithOverrides`, which has no caller. `registry.go:15` sits inside
-`BuildRegistryFromSpecs`, whose only **non-test** caller is `UpdateRegistry`,
+sites and **neither is reachable**. `types.go`, in `DomainCoverageEntry` sits inside
+`ResolveTierWithOverrides`, which has no caller. The other sat inside
+`BuildRegistryFromSpecs`, whose only **non-test** caller was `UpdateRegistry`,
 which has no caller at all, tests included. The qualifier matters in a document
 whose thesis is that you must walk the call graph:
-`internal/manifest/manifest_test.go:310` and `:334` both call
+`internal/manifest/manifest_test.go` had two tests that both called
 `BuildRegistryFromSpecs`, so "only caller" without it is false.
 Confirmed by running: `sync` on a workspace whose `specter.yaml`
 has no `registry:` block leaves the manifest byte-identical, because no registry
@@ -1200,7 +1199,7 @@ a domain tier and `system.tier` inert, and it is worth keeping them apart:
    with enum `[1, 2, 3]` in `internal/parser/spec-schema.json`, so `specTier > 0`
    would hold for every spec that parses. Measured: a spec omitting `tier` fails
    with `Missing required field 'tier'`, which is a Go-side translation at
-   `internal/parser/humanize.go:59`, and `tier: 0` fails the schema validator
+   `internal/parser/humanize.go`, in `humanizeRequired`, and `tier: 0` fails the schema validator
    with `value must be one of 1, 2, 3`.
 
 An earlier draft of this entry named only the second fact, and so described
@@ -1219,11 +1218,11 @@ regenerates it. It is the same shape as
 that this one emits no warning at all.
 
 Scoped precisely: this is about tier **resolution**. Domains still drive
-`--scope`, and that path reads `domain.Specs` (`cmd/specter/main.go:986-989`)
+`--scope`, and that path reads `domain.Specs` (`cmd/specter/main.go`, in `coverageExitGates`)
 without ever reading `domain.Tier`. Measured: `coverage --strict --scope
 payments --json` on a fixture whose `payments` domain is Tier 1 still reports
 `"tier": 3, "threshold": 50` for a spec declaring `tier: 3`. The only other
-reader of `domain.Tier` is `DomainCoverage` in `internal/manifest/domain.go:48`,
+reader of `domain.Tier` is `DomainCoverage` in `internal/manifest/domain.go`, in `DomainCoverage`,
 which also has no caller. `domain.Tier` is read nowhere live.
 
 **Decided and shipped 2026-08-22.** `docs/ssrb/SSRB-106.md` settled this
@@ -1255,7 +1254,7 @@ inheritance without it reproduces this entry's own defect one level up.
 annotation model is settled and accepted (`docs/ssrb/SSRB-104.md`, status
 ACCEPT, shape settled 2026-08-19) and Part 2 of this document states it. It is
 not yet implemented: `internal/manifest/types.go` has no `Annotation` field, and
-`annotation` exists today only as a `strictness` enum value at `manifest.go:30`.
+`annotation` exists today only as a `strictness` enum value at `manifest.go`, in `validSettingsKeys`.
 The SP-SP-049 recommendation is a separate schema change that needs its own
 SSRB, and that brief should settle `tier_overrides` in the same pass.
 
@@ -1265,11 +1264,11 @@ gate result. None of these do, so they are named here rather than counted above.
 Confirmed by running the extension's own jest suite with `-t` filters, not by
 driving a live VS Code window:
 
-- `vscode-extension/src/coverage.ts:529`, `classifyNotification`. A Tier 3 spec
+- `vscode-extension/src/coverage.ts in classifyNotification`, `classifyNotification`. A Tier 3 spec
   dropping below threshold gets the status bar only. Tiers 1 and 2 get a toast.
-- `vscode-extension/src/coverage.ts:586`, `buildFileDecoration`. A failing Tier 1
+- `vscode-extension/src/coverage.ts in buildFileDecoration`, `buildFileDecoration`. A failing Tier 1
   spec renders red, a failing Tier 2 yellow.
-- `vscode-extension/src/extension.ts:658-659`, `updateStatusBar`. The warning
+- `vscode-extension/src/extension.ts in updateSpecIndex`, `updateStatusBar`. The warning
   color trips only for a failing Tier 1 or Tier 2 spec, so a failing Tier 3 does
   not trip it.
 
@@ -1300,8 +1299,8 @@ labeled **every** misleads about the tree.
 **Meaning.** `settings.tier_overrides` in the manifest, a per-spec map that is
 supposed to replace a spec's declared tier.
 
-**Surfaces.** Parsed at `internal/manifest/types.go:51`. A resolver exists,
-`ResolveTierWithOverrides` at `types.go:159`, and it correctly applies the
+**Surfaces.** Parsed at `internal/manifest/types.go`, in `DomainConfig`. A resolver exists,
+`ResolveTierWithOverrides` at `types.go`, in `UnmarshalYAML`, and it correctly applies the
 override.
 
 Nothing calls it. A repository-wide grep for `ResolveTierWithOverrides` returns
@@ -1338,7 +1337,7 @@ until then, and the history is kept below because the disagreement outlived two
 readers.
 
 **Surfaces.** The only producer of the string `tier_conflict` is
-`cmd/specter/main.go:872`, which prints the warnings from
+`cmd/specter/main.go`, in `checkCmd`, which prints the warnings from
 `manifest.CheckTierConflicts`. That function compares a spec's declared tier
 against its `settings.tier_overrides` entry. Verified by running, in the fixture
 above.
@@ -1470,21 +1469,21 @@ than attributing `C-07` to a spec that has no such constraint.
 
 The **parse** meaning: an acceptance criterion's `references_constraints` names a
 constraint the spec does not declare. Emitted as a `ParseError.Type` from
-`internal/parser/parse.go:189`, per spec-parse C-10. Observed message:
+`internal/parser/parse.go`, in `validateReferencedConstraints`, per spec-parse C-10. Observed message:
 
 ```
   error [dangling_reference] spec.acceptance_criteria[AC-01].references_constraints: references constraint "C-99" which is not declared in this spec (declared constraints: [C-01])
 ```
 
 The **resolve** meaning: a `depends_on.spec_id` names no discovered spec. Emitted
-as a `Diagnostic.Kind` from `internal/resolver/resolve.go:106`, per spec-resolve
+as a `Diagnostic.Kind` from `internal/resolver/resolve.go`, in `ResolveSpecs`, per spec-resolve
 C-05. Observed message:
 
 ```
 error [dangling_reference] Spec "alpha" depends on "nosuchspec" which does not exist
 ```
 
-`docs/CLI_REFERENCE.md:94` documents only the second, under `specter resolve`.
+`docs/CLI_REFERENCE.md` documents only the second, in its `dangling_reference` row under `specter resolve`.
 That entry is correct for its command. Nothing documents that the same string
 also names a parse error about constraint references.
 
@@ -1500,13 +1499,13 @@ diagnostics by kind gets two defect classes in one bucket.
 **Surfaces.** The shipped meaning is a field: `gap: true` on a generated
 acceptance criterion. `specter reverse` sets it on placeholder criteria it
 generates for constraints it could not match to existing tests
-(`internal/reverse/gap.go:24`). It is declared in the schema at
-`internal/parser/spec-schema.json:302`.
+(`internal/reverse/gap.go`, in `DetectGaps`). It is declared in the schema at
+the `gap` property in `internal/parser/spec-schema.json`.
 
 The second use is informal. "Coverage gap" appears in prose meaning an uncovered
 criterion. It has no field, no diagnostic, and no code.
 
-The third is unshipped. `specs/spec-check.spec.yaml:43` lists "Gap detection
+The third is unshipped. `spec-check`'s `scope.includes` lists "Gap detection
 (uncovered input paths, Phase 8)" in its objective scope. Phase 8 has not
 shipped.
 
@@ -1515,8 +1514,8 @@ this cycle with a migration drop rule.
 
 An earlier draft of this entry summarized 3C7's grounds as "nothing reads it."
 **That summary was wrong, and it was wrong about this document, not about the
-plan.** The field has live in-process readers: `internal/reverse/reverse.go:235`
-builds a per-spec warning from it and `:241` feeds `Summary.GapsDetected`,
+plan.** The field has live in-process readers: `internal/reverse/reverse.go`, in `Reverse`
+builds a per-spec warning from it and feeds `Summary.GapsDetected`,
 printed from `result.Summary.GapsDetected` in `reverse`'s summary line. Measured on a zod fixture:
 
 ```
@@ -1570,14 +1569,14 @@ section 7.6 promotes from optional to a prerequisite. A reader who took
 describe what exists today, which is nothing, and each names the item that
 changes it.
 
-**evidence stream.** `docs/EXIT_CODES.md:181` reserves exit codes 20 to 29 for
+**evidence stream.** `docs/EXIT_CODES.md` reserves exit codes 20 to 29 for
 "Evidence stream validation". No code in that band is allocated, no command
 emits one, and no spec defines what an evidence stream is. The band is an
 allocation, not a feature. **Roadmap 3A builds it**, and `docs/EXIT_CODES.md`
 already maps roadmap 3B4 into the band, so the reservation has a scheduled
 occupant.
 
-**deferred criterion.** `docs/EXIT_CODES.md:18` describes a prototype in which a
+**deferred criterion.** `docs/EXIT_CODES.md` describes a prototype in which a
 failing test was misreported as a "stale deferral marker". No shipped schema
 field, diagnostic, or command uses the term. There is no way to defer a criterion
 in Specter today.
@@ -1599,9 +1598,9 @@ above with its evidence.
 | `--strict` on `check` | The severity switch. `check` has no `--strictness` flag at all | On `sync` the same flag sets a ladder position | Not filed |
 | `--strict` on `coverage` | Forces the strict path, never touches the level | `sync` maps it to `zero-tolerance` | `SP-SP-046` |
 | `--strict` in help text | `coverage --strictness` flag help: "equivalent to `--strictness threshold` ... does not override a manifest-set level" | `sync --strict` help at the `sync --strict` flag help: "Alias for `--strictness zero-tolerance`" | `SP-SP-046` |
-| `--strict` descriptions | Four exist: `main.go:837`, `:1239`, `:1411`, and `:1241` | No two of the four are equivalent. Each states or omits behavior another asserts | `SP-SP-046` |
+| `--strict` descriptions | Four exist: the `--strict` registrations on `checkCmd`, `coverageCmd` and `syncCmd`, and `coverage --strictness` | No two of the four are equivalent. Each states or omits behavior another asserts | `SP-SP-046` |
 | effective strictness | `EXIT_CODES.md` states one resolution rule with `--strict` as an alias | Neither command implements that rule in full, and it is undefined on `check` | `SP-SP-046` |
-| `settings.strict` and `settings.strictness` | Both valid keys at `manifest.go:25-26`, four letters apart | One is checker severity, the other is coverage judgment. Confusing them is not a parse error | Not filed |
+| `settings.strict` and `settings.strictness` | Both valid keys at `manifest.go`, in `validTopLevelKeys`, four letters apart | One is checker severity, the other is coverage judgment. Confusing them is not a parse error | Not filed |
 | results file path | `ingest --output` writes anywhere | `coverage` and `sync` read only `./.specter-results.json` | Not filed |
 | `--strict` with `strictness: annotation` | `coverage` rejects it, per C-24 | `sync` accepts it silently | Not filed |
 | `--scope` prerequisite | Requires the literal `--strict` flag | `--strictness zero-tolerance` is refused despite being stricter | Not filed |
@@ -1614,8 +1613,8 @@ above with its evidence.
 | `dangling_reference` | Parse: an undeclared constraint reference | Resolve: an unknown `depends_on` target | Not filed |
 | Tier 3 orphan severity | `spec-check` C-02 and the code: `info` | `spec-check` objective scope, line 36: `warning` | `SP-SP-003` |
 | sync's default strictness | Code comment in `syncCmd`: "ultimate default is `annotation`" | Behavior: `threshold`, because the manifest loader fills it in | Not filed |
-| `settings.strict` against `--strict` on `sync` | The key reaches the severity switch where `syncCmd` builds `checker.CheckOptions{Strict: ...}` | It never reaches the ladder: `:1323` reads the flag alone, so key and flag are not interchangeable | `SP-SP-047` |
-| `--strict` promotion coverage | **Closed 2026-08-30.** Both commands hand every family to `CheckSpecs` through `ExtraDiagnostics`, and the one promotion loop in `CheckSpecs` promotes the complete set. `sync` was corrected in the same cycle; the ownership guard reads `cmd/specter` and `internal/sync` together, because a guard over one could not see the other | was: skips `taDiags` and `uaDiags`, appended after that returns at `main.go:744` and `:773` | `SP-SP-047` |
+| `settings.strict` against `--strict` on `sync` | The key reaches the severity switch where `syncCmd` builds `checker.CheckOptions{Strict: ...}` | It never reaches the ladder: the strictness resolution in `syncCmd` reads the flag alone, so key and flag are not interchangeable | `SP-SP-047` |
+| `--strict` promotion coverage | **Closed 2026-08-30.** Both commands hand every family to `CheckSpecs` through `ExtraDiagnostics`, and the one promotion loop in `CheckSpecs` promotes the complete set. `sync` was corrected in the same cycle; the ownership guard reads `cmd/specter` and `internal/sync` together, because a guard over one could not see the other | was: skips `taDiags` and `uaDiags`, appended after that returns at `main.go`, in `checkCmd` and the test-annotation assembly in `syncCmd` | `SP-SP-047` |
 | spec-manifest C-11 against the code | **Closed 2026-08-30.** C-11 owned a restatement of spec-check C-07 and now owns parsing only, so there is one rule and no second copy to disagree with | was: C-11 said warning-severity, the code upgrades warning **and** info | `SP-SP-047` |
 
 ---
@@ -1672,39 +1671,40 @@ standard.
 
 ## Verified by reading source or specs
 
-- The three `--strict` flag registrations at `main.go:837`, `:1239`, and `:1411`,
+- The three `--strict` flag registrations, on `checkCmd`, `coverageCmd` and `syncCmd`,
   and their help strings.
-- The three effects of `sync --strict`, in `syncCmd`: the `Strict` field of the `checker.CheckOptions` it builds, `CheckTestAnnotations`, and
-  `:1321-1328`.
-- The strictness resolution blocks at `main.go:932-938` and `:1321-1328`, and the
-  stale comment above the second one at `:1318`.
-- The strict-path routing decision at `main.go:958`.
-- `validateStrictness` at `internal/manifest/manifest.go:126-130`, which fills an
-  empty strictness with `threshold`, and `Defaults()` at `:282`, which does the
+- The three effects of `sync --strict`, in `syncCmd`: the `Strict` field of the
+  `checker.CheckOptions` it builds, `CheckTestAnnotations`, and the strictness
+  resolution.
+- The strictness resolution blocks in `checkCmd` and `syncCmd`, and the stale
+  comment above the second one.
+- The strict-path routing decision at `main.go`, in `coverageExitGates`.
+- `validateStrictness` at `internal/manifest/manifest.go`, in `validateManifestKeys`, which fills an
+  empty strictness with `threshold`, and `Defaults()`, which does the
   same when no manifest exists. `loadManifest` returns one
   or the other, so the field is never empty downstream.
-- `ResolveTierWithOverrides` at `internal/manifest/types.go:159` having no caller.
-- The two `dangling_reference` emit sites, `internal/parser/parse.go:189` and
-  `internal/resolver/resolve.go:106`.
-- The `settings.strict` consumers at `main.go:711`, `:1313`, and `:3003`.
-- `Gap` at `internal/schema/types.go:82` and `internal/reverse/gap.go:24`.
+- `ResolveTierWithOverrides` at `internal/manifest/types.go`, in `UnmarshalYAML` having no caller.
+- The two `dangling_reference` emit sites, `internal/parser/parse.go`, in `validateReferencedConstraints` and
+  `internal/resolver/resolve.go`, in `ResolveSpecs`.
+- The `settings.strict` consumers: `checkCmd`, `coverageCmd` and `syncCmd`.
+- `Gap` at `internal/schema/types.go`, in `AcceptanceCriterion` and `internal/reverse/gap.go`, in `DetectGaps`.
 - `ResolveTier` in `internal/manifest/tier.go`, read as a function body and not
   as its comment, for the four-step tier cascade. **This is the entry that failed
   twice.** Reading the body established the cascade correctly and established
   nothing about whether the cascade runs. See Appendix B for the call-graph walk
   that settled it, and the `tier` entry for what the two failures have in common.
-- The hardcoded `.specter-results.json` reads at `main.go:993` and `:1331`, and
+- The hardcoded `.specter-results.json` reads in `coverageExitGates` and `coverageCmd`, and
   the absence of any path flag on `coverage` or `sync`.
 - Every hit for `strictness` under `internal/checker/`, which lands only in
   `unreachable_annotation.go`, `unreachable_ts.go`, and `unreachable_py.go`.
-- All four descriptions of `--strict`, at `main.go:837`, `:1239`, `:1411`, and
-  `:1241`.
+- All four descriptions of `--strict`: the registrations on `checkCmd`,
+  `coverageCmd` and `syncCmd`, and `coverage --strictness`.
 - A grep of `cmd/` for the literal strings `"strict"` and `"strictness"`,
   excluding tests. It returns five flag registrations, all in `main.go`: three
-  for `--strict` (`:837`, `:1239`, `:1411`) and two for `--strictness` (`:1241`,
-  `:1412`). This is the evidence for which commands accept which flag, and it is
+  for `--strict` (`checkCmd`, `coverageCmd`, `syncCmd`) and two for
+  `--strictness` (`coverageCmd`, `syncCmd`). This is the evidence for which commands accept which flag, and it is
   stronger than a help sweep because it cannot miss a command.
-- `validSettingsKeys` at `internal/manifest/manifest.go:25-26`, which is what
+- `validSettingsKeys` at `internal/manifest/manifest.go`, in `validTopLevelKeys`, which is what
   establishes that `strict` and `strictness` are both accepted keys and that
   writing one for the other is not a parse error.
 - spec-manifest C-11 (`settings.strict`) and C-24 (`settings.strictness`).
@@ -1740,7 +1740,7 @@ provenance is traceable.
 - The `check --test` against `coverage` missing-marker pair in the `strictness`
   entry.
 - The A/B conflation table. Byte-identity confirmed with `cmp` on both streams.
-- The `SP-SP-032` consequence behind `client.ts:180`: under a threshold manifest
+- The `SP-SP-032` consequence behind `client.ts`, in `coverage`: under a threshold manifest
   with no results file, `coverage --json` writes zero bytes to stdout and exits 1,
   while `coverage --json --strictness annotation` writes a document.
 - "Three of fifteen specs would fail" is exact: `spec-diff` AC-11,
@@ -1750,9 +1750,9 @@ provenance is traceable.
 
 **Confirmed by reading source:**
 
-- The four discovery citations in the command-reach table: `main.go:723`,
-  `:886`, `:1275`, `:2223`.
-- `vscode-extension/src/client.ts:180`.
+- The four discovery citations in the command-reach table: `main.go`, in `checkExitVerdict`,
+  `checkCmd`, `coverageCmd`, and the manifest canonicalizer.
+- `vscode-extension/src/client.ts`, in `coverage`.
 
 **Corrected by the same pass, and now fixed above:** the claim that
 spec-coverage C-28's hint distinguishes a demoted criterion from an unannotated
@@ -1791,28 +1791,28 @@ version 0.14.1, fixtures in a scratch directory):
 **Confirmed by walking the call graph**, which is the step both earlier drafts
 skipped:
 
-- `ResolveTier` has two call sites, `registry.go:15` and `types.go:164`.
-- `types.go:164` is inside `ResolveTierWithOverrides`, which has no caller.
-- `registry.go:15` is inside `BuildRegistryFromSpecs`, whose only non-test
-  caller is `UpdateRegistry`, which has no caller at all.
-  `manifest_test.go:310` and `:334` call `BuildRegistryFromSpecs` directly.
-- `DomainCoverage` at `domain.go:48`, the only other reader of `domain.Tier`,
+- `ResolveTier` had two call sites, `BuildRegistryFromSpecs` and `DomainCoverageEntry`.
+- `DomainCoverageEntry`'s call is inside `ResolveTierWithOverrides`, which has no caller.
+- the other was inside `BuildRegistryFromSpecs`, whose only non-test
+    caller was `UpdateRegistry`, which had no caller at all. Two tests in
+    `manifest_test.go` called `BuildRegistryFromSpecs` directly.
+- `DomainCoverage`, the only other reader of `domain.Tier`,
   also has no caller.
 - The live consumers read `spec.Tier` raw. The complete Go-binary list is in the
   entry itself and has seven rows, not the four an earlier draft gave.
-  `explain` at `main.go:2701` and `:2747` and the conflict check at
-  `tier_conflict.go:37` were the ones missing.
-- `orphanSeverityByTier` at `check.go:50` is the only tier-keyed severity map in
-  the tree. `duplicate_ac_id.go:12-13` refuses tier routing.
+  `explain` in `runDoctorFix` and `canonicalizeManifest`, and the conflict check at
+  `tier_conflict.go`, in `CheckTierConflicts` were the ones missing.
+- `orphanSeverityByTier` at `check.go`, in `CheckOptions` is the only tier-keyed severity map in
+  the tree. `duplicate_ac_id.go`, in its package comment, refuses tier routing.
 
 **Read as source, not measured, and flagged as such:** what a tier-0 spec would
-do if the schema allowed one. `CoverageThresholds()` at `types.go:126-139`
+do if the schema allowed one. `CoverageThresholds()` at `types.go`, in `CoverageConfig`
 populates keys 1, 2 and 3 only, so `thresholds[0]` misses and
-`coverage.go:542-545` falls back to 80. `orphanSeverityByTier[0]` returns the
-empty string and the guard at `check.go:189-192` turns it into `warning`. Both
+`buildCoverageReportCore` falls back to 80 for a tier the threshold map does not name. `orphanSeverityByTier[0]` returns the
+empty string and the guard at `check.go`, in `CheckSpecs` turns it into `warning`. Both
 are near-Tier-2 behavior. A tier-0 spec would also vanish from the summary
 rollup, because `BuildSummaryHeader` loops `for tier := 1; tier <= 3` at
-`coverage.go:838`. This could not be run, because the schema blocks
+`internal/coverage/coverage.go`. This could not be run, because the schema blocks
 `tier: 0` at the CLI and running it would have meant editing the repository.
 `bugs/SP-SP-049` carries the same flag, and it is the reason the recommendation
 there costs more than it first appeared to.
@@ -1931,11 +1931,11 @@ parse-stage and a resolve-stage `dangling_reference` never appear in one run
 (built a workspace with both defects in different files; blocking is global, not
 per file); that `unreachable_annotation_unknown` never fails a gate (all seven
 emit sites hardcode `warning` and none reach `routeSeverity`; `--strict` output
-was byte-identical); that `main.go:872` is the only producer of `tier_conflict`;
+was byte-identical); that `main.go`, in `checkCmd` is the only producer of `tier_conflict`;
 that only two commands accept `--strictness` and there are five flag
 registrations; that nothing reads a persisted `gap: true`, widened to the
 extension; and that `coverage` never reads `settings.strict`, where the third
-consumer at `main.go:3003` is `watch`.
+consumer at `main.go`, in `explainDetailMode` is `watch`.
 
 **The pattern in the failures is worth more than the count.** Three of the four
 are sentences whose **conclusion** is sound and whose **quantifier** was

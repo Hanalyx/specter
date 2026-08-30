@@ -923,6 +923,9 @@ spec:
         case_system_tier: "system.tier: 2 declared"
         case_tier_overrides: "settings.tier_overrides declared"
         case_neither: "neither declared"
+        case_both_keys: "system.tier and settings.tier_overrides declared together"
+        case_matching_override: "tier_overrides equal to the spec's declared tier, under --strict"
+        case_mismatching_override: "tier_overrides disagreeing with the spec's declared tier, under --strict"
       expected_output:
         system_tier_warns: true
         tier_overrides_warns: true
