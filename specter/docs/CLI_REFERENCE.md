@@ -205,7 +205,7 @@ When a constraint has a `type` (e.g. `security`, `performance`), it appears in p
 
 ```
 $ specter check
-warn: settings.tier_overrides is deprecated and has no effect. Set tier: in each .spec.yaml file. It is removed at v1.0.0.
+warn: settings.tier_overrides is deprecated and resolves no tier. Its value is still compared: one that disagrees with a spec's declared tier warns, and --strict makes that an error. Set tier: in each .spec.yaml file. It is removed at v1.0.0.
 error [orphan_constraint] spec-auth C-04 (security): Constraint C-04 in "spec-auth" is not referenced by any acceptance criterion
 warn [tier_conflict] spec-payments: spec "spec-payments" declares tier: 2 but specter.yaml tier_overrides assigns tier: 1. The declared tier governs; tier_overrides is not applied.
 
@@ -1093,7 +1093,7 @@ tier reported by `coverage --json`. Nothing resolves or overrides it.
 | `spec.tier` | **Authoritative.** Required, one of 1, 2, 3 |
 | `domains.<name>.tier` | A **checked assertion**. It declares the risk level the domain asserts, and a spec listed in that domain whose tier disagrees produces a `domain_tier_conflict` warning. It does not change the spec's tier |
 | `system.tier` | **Deprecated.** Warns on every run, has no effect, removed at v1.0.0 |
-| `settings.tier_overrides` | **Deprecated.** Warns on every run, resolves no tier, removed at v1.0.0. It is not inert under `--strict`: the `tier_conflict` warning it produces is promoted to an error there, so declaring the key can fail a strict run. The `tier_conflict` warning it produces now states that the declared tier governs |
+| `settings.tier_overrides` | **Deprecated.** Warns on every run, resolves no tier, removed at v1.0.0. Its value is still compared: one that disagrees with a spec's declared `tier:` produces a `tier_conflict`, which `--strict` promotes to an error. A matching value produces only the deprecation line and exits 0. The `tier_conflict` warning it produces now states that the declared tier governs |
 | `registry` | **Retired.** The key is still accepted so an existing manifest parses, and its value is discarded. Removed at v1.0.0 |
 
 A manifest declaring a deprecated key gets one stderr line per key. The warning

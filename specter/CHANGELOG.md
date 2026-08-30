@@ -115,9 +115,9 @@ Unreleased changes accumulate under `## Unreleased`. Every user-visible change a
 
 ### Deprecated
 
-Four manifest surfaces are on a removal path for v1.0.0. Three of them have no effect on a run, so removing them changes no workspace's behavior. Only `settings.strictness` carries behavior and needs a migration.
+Four manifest surfaces are on a removal path for v1.0.0. Three of them resolve nothing, so removing them changes no workspace's tier or coverage. `settings.strictness` carries behavior and needs a migration. `settings.tier_overrides` needs a second look: it resolves no tier, but its value is still compared, and a value disagreeing with a spec's declared `tier:` fails a `--strict` run.
 
-- **`system.tier` and `settings.tier_overrides` now warn on every run**, name themselves, and state that they are removed at v1.0.0. Neither resolves a tier, and neither said so before. `system.tier` changes no exit code. **`settings.tier_overrides` does, under `--strict`:** its `tier_conflict` warning is promoted to an error, so declaring the key is the difference between a passing and a failing strict run on an otherwise identical workspace. Measured. **Action:** set `tier:` in the `.spec.yaml` file, the only place that has ever governed a spec's tier.
+- **`system.tier` and `settings.tier_overrides` now warn on every run**, name themselves, and state that they are removed at v1.0.0. Neither resolves a tier, and neither said so before. The deprecation line changes no exit code for either. **`settings.tier_overrides` is not inert beyond that, and its line now says so.** Its value is still compared against each spec's declared `tier:`, and a value that disagrees produces a `tier_conflict` warning, which `--strict` promotes to an error. Measured: a **mismatching** override fails `check --strict`; a **matching** one prints the deprecation line and exits 0. Declaring the key is not what fails a strict run; disagreeing with the declared tier is. **Action:** set `tier:` in the `.spec.yaml` file, the only place that has ever governed a spec's tier.
 
 - **The `registry` section is retired.** Its key is still accepted so an existing manifest parses, and its value is discarded. The key is removed at v1.0.0. **Action:** delete the block. Nothing is lost: the section never held anything a command read. `docs/ssrb/SSRB-105.md`.
 

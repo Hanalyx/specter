@@ -98,7 +98,7 @@ Two manifest keys, both accepted, both listed in `validSettingsKeys` at
 
 | Key | Type | Constraint | Governs |
 |---|---|---|---|
-| `settings.strict` | bool | spec-manifest C-11 | Whether checker warnings become errors |
+| `settings.strict` | bool | spec-manifest C-11 parses it; spec-check C-07 decides what it does | Routes into `CheckOptions.Strict`, where warning and info diagnostics are promoted except the kinds C-07 names |
 | `settings.strictness` | enum | spec-manifest C-24 | When a criterion counts as covered |
 
 They share no code path. `settings.strict` never affects a coverage number.
@@ -138,7 +138,7 @@ below rather than for the old one: the severity is decided by
 `settings.strictness` first, and `--strict` promotes whatever that leaves.
 
 Second, scan gating. On `sync`, it decides whether the test-annotation
-cross-reference runs **at all** (`main.go:1347`). Measured, no flag in either
+cross-reference runs **at all** (`syncCmd`, setting `CheckTestAnnotations`). Measured, no flag in either
 run, only the manifest key changed, with one test file carrying a stale
 `@spec bogus-spec`:
 
@@ -165,7 +165,7 @@ apply to **different sets of commands**:
 | Command | Accepts `--strict` | Reads `settings.strict` |
 |---|---|---|
 | `check` | yes | yes, `main.go:711` |
-| `sync` | yes | yes, `main.go:1313` and `:1347` |
+| `sync` | yes | yes, `syncCmd`, where it builds `checker.CheckOptions{Strict: ...}` and sets `CheckTestAnnotations` |
 | `coverage` | yes | **no** |
 | `watch` | **no** | yes, `main.go:3003` |
 
@@ -175,24 +175,24 @@ both `strict: true` and `strictness: annotation`, plain `coverage` exits 0 and
 `coverage --strict` exits 1. The guard cannot see the key it is meant to police.
 
 **Three further defects, all verified.** The key and the flag are not
-interchangeable on `sync`: `main.go:1313` combines them, `:1323` reads the flag
+interchangeable on `sync`: `syncCmd` combines them where it builds `checker.CheckOptions{Strict: ...}`, and reads the flag alone where it selects the ladder
 alone, so `settings.strict: true` reaches the severity switch and never reaches
 the ladder. **Promotion was incomplete and is not any more.** It ran inside
 `CheckSpecs`, and the command appended the test-annotation families afterward,
 so those never passed through it. Since 2026-08-29 the command hands them to
 `CheckSpecs` through `CheckOptions.ExtraDiagnostics`, and the promotion loop at
-`internal/checker/check.go:220` sees the complete set. `spec-check` C-07 now
-requires exactly one owner and names the kinds it does not promote. One gap
-survives, in a different command: `internal/sync/sync.go:188` still appends its
-test-annotation diagnostics after `CheckSpecs` and counts them itself. Nothing
-reports the wrong severity there today, because every diagnostic on that path is
-error severity, but the route is the one C-07 forbids. And spec-manifest C-11
-says strict upgrades "warning-severity" diagnostics while the code upgrades
-warning **and** info, which is unchanged.
+the promotion loop in `CheckSpecs` sees the complete set. `spec-check` C-07 now
+requires exactly one owner and names the kinds it does not promote. `sync` had the same
+route and was corrected in the same cycle: it builds its test-annotation
+diagnostics before the check and hands them over, copying `CheckOptions` first
+so a run does not mutate what its caller passed in. spec-manifest C-11 also
+said strict upgrades "warning-severity" diagnostics while the code upgrades
+warning **and** info; that disagreement is gone, because C-11 now owns parsing
+`settings.strict` and defers to C-07 for what strict mode does.
 
 **Standing. Open, and the entry above supersedes an earlier claim in this
 document that it was settled.** That claim was written from a citation rather
-than a measurement: the site at `main.go:1347` was correctly listed as a
+than a measurement: the `CheckTestAnnotations` site was correctly listed as a
 consumer and never exercised, so the scan-gating behavior went unrecorded while
 the line that proves it sat in the entry.
 
@@ -430,7 +430,7 @@ Verified by which commands discover test files at all:
 | `resolve` | no | **No.** Same |
 | `check` | yes, `main.go:723` | Has the files, scans the wrong direction. Needs new spec-side code |
 | `coverage` | yes, `main.go:886` | Yes, and already computes the fact |
-| `sync` | yes, `main.go:1275` | Passthrough to its phases only |
+| `sync` | yes, the `--strict` flag on `syncCmd` | Passthrough to its phases only |
 | `doctor` | yes, `main.go:2223` | Undecided, and not yet considered |
 
 ### The four questions, settled 2026-08-19
@@ -619,9 +619,9 @@ tests the same `effectiveStrictness` and exits first, so the only configuration
 where the disjunct could decide is refused before the line is reached.
 
 On `sync`, `internal/sync/sync.go:217-218` consults the boolean only when
-`input.Strictness == ""`, and `cmd/specter/main.go:1345` always passes a
+`input.Strictness == ""`, and `syncCmd` always passes a
 non-empty value, because the manifest loader fills it. `sync --strict` alone
-still reaches the strict path, through `main.go:1321-1328`, which resolves the
+still reaches the strict path, through the strictness resolution in `syncCmd`, which resolves the
 bare flag to `zero-tolerance` before `RunSync` is called.
 
 Measured on a fixture with no results file, which makes the strict path fatal
@@ -674,7 +674,7 @@ manifest, and the built-in default have been resolved against each other.
 over a built-in `threshold`. The `--strict` boolean does not participate at all.
 It is a separate variable feeding the strict path.
 
-`sync` (`cmd/specter/main.go:1321-1328`) resolves the flag first, then a bare
+`sync` (the strictness resolution in `syncCmd`) resolves the flag first, then a bare
 `--strict` to `zero-tolerance`, then the manifest.
 
 One workspace makes it visible. A Tier 3 spec, two annotated criteria, a results
@@ -717,17 +717,17 @@ by divergent rules. It is three flags that happen to be spelled the same.
 | Site | Command | Help text says | What it does |
 |---|---|---|---|
 | `main.go:837` | `check` | "Treat warnings as errors (also set via settings.strict in specter.yaml)" | The severity switch, and nothing else |
-| `main.go:1239` | `coverage` | "Require .specter-results.json and treat any non-passed annotated AC as uncovered (all tiers)" | Forces the strict path at `:958`. Not severity, not the ladder |
-| `main.go:1411` | `sync` | "Treat warnings as errors (also set via settings.strict in specter.yaml). Alias for --strictness zero-tolerance when --strictness is not set." | Severity, plus test-annotation checking, plus the ladder |
+| `coverage --strict` flag help | `coverage` | "Require .specter-results.json and treat any non-passed annotated AC as uncovered (all tiers)" | Forces the strict path at `:958`. Not severity, not the ladder |
+| `sync --strict` flag help | `sync` | "Treat warnings as errors (also set via settings.strict in specter.yaml). Alias for --strictness zero-tolerance when --strictness is not set." | Severity, plus test-annotation checking, plus the ladder |
 
 Only `sync` touches the ladder. Only `check` and `sync` touch severity. `coverage`
 touches neither.
 
 **`sync --strict` does three separate things**, and no single document says so.
-It sets the checker's `Strict` field (`main.go:1313`), so the check phase
-upgrades warnings to errors. It sets `CheckTestAnnotations` (`main.go:1347`), so
+It sets the checker's `Strict` field in `syncCmd`, so the check phase
+upgrades warnings to errors. It sets `CheckTestAnnotations` (`syncCmd`, setting `CheckTestAnnotations`), so
 the check phase cross-references test annotations against specs. And it sets
-effective strictness to `zero-tolerance` (`main.go:1321-1328`).
+effective strictness to `zero-tolerance` (the strictness resolution in `syncCmd`).
 
 Measured on a workspace with one orphan constraint in a Tier 2 spec:
 `sync --strict` reports `FAIL check: 1 error(s)`, while
@@ -735,7 +735,7 @@ Measured on a workspace with one orphan constraint in a Tier 2 spec:
 not interchangeable even in the check phase, which reads no coverage strictness.
 
 **A fourth description exists.** `coverage --strictness`'s own help at
-`main.go:1241` describes `--strict` a fourth way:
+`coverage`'s `--strictness` flag help describes `--strict` a fourth way:
 
 ```
 threshold and zero-tolerance route through the same strict path as --strict; --strict is equivalent to --strictness threshold under the default manifest strictness and does not override a manifest-set level.
@@ -853,7 +853,7 @@ manifest-set level is consistent with the proposal, since under it `--strict`
 never touches the level at all.
 
 **`sync --strict`'s third effect is still unresolved.** It also sets
-`CheckTestAnnotations` (`main.go:1347`), which is neither severity nor ladder.
+`CheckTestAnnotations` (`syncCmd`, setting `CheckTestAnnotations`), which is neither severity nor ladder.
 The proposal settles the ladder question and says nothing about this one.
 Whatever is decided, the fix must state what happens to all three effects, or the
 next reader inherits the same problem one layer down.
@@ -1149,7 +1149,7 @@ the two-bucket split an earlier draft used had no slot for it.
 
 **Presentation, the rest.** A tier sorts entries within a coverage bucket
 (`internal/coverage/coverage.go:792`), groups the summary rollup (`:826`),
-prints the `T%-5d` column in the coverage table (`cmd/specter/main.go:1189`), is
+prints the `T%-5d` column in the coverage table, is
 printed twice by `explain` (`:2701`, `:2747`), and is printed by `doctor`
 (`:2273-2275`), which re-derives the threshold from the same map only in order
 to display it. None of these decide a verdict.
@@ -1517,7 +1517,7 @@ An earlier draft of this entry summarized 3C7's grounds as "nothing reads it."
 **That summary was wrong, and it was wrong about this document, not about the
 plan.** The field has live in-process readers: `internal/reverse/reverse.go:235`
 builds a per-spec warning from it and `:241` feeds `Summary.GapsDetected`,
-printed at `cmd/specter/main.go:1617`. Measured on a zod fixture:
+printed from `result.Summary.GapsDetected` in `reverse`'s summary line. Measured on a zod fixture:
 
 ```
 $ bin/specter reverse ts --dry-run --adapter typescript
@@ -1598,7 +1598,7 @@ above with its evidence.
 |---|---|---|---|
 | `--strict` on `check` | The severity switch. `check` has no `--strictness` flag at all | On `sync` the same flag sets a ladder position | Not filed |
 | `--strict` on `coverage` | Forces the strict path, never touches the level | `sync` maps it to `zero-tolerance` | `SP-SP-046` |
-| `--strict` in help text | `coverage --strictness` help at `main.go:1241`: "equivalent to `--strictness threshold` ... does not override a manifest-set level" | `sync --strict` help at `main.go:1411`: "Alias for `--strictness zero-tolerance`" | `SP-SP-046` |
+| `--strict` in help text | `coverage --strictness` flag help: "equivalent to `--strictness threshold` ... does not override a manifest-set level" | `sync --strict` help at the `sync --strict` flag help: "Alias for `--strictness zero-tolerance`" | `SP-SP-046` |
 | `--strict` descriptions | Four exist: `main.go:837`, `:1239`, `:1411`, and `:1241` | No two of the four are equivalent. Each states or omits behavior another asserts | `SP-SP-046` |
 | effective strictness | `EXIT_CODES.md` states one resolution rule with `--strict` as an alias | Neither command implements that rule in full, and it is undefined on `check` | `SP-SP-046` |
 | `settings.strict` and `settings.strictness` | Both valid keys at `manifest.go:25-26`, four letters apart | One is checker severity, the other is coverage judgment. Confusing them is not a parse error | Not filed |
@@ -1607,16 +1607,16 @@ above with its evidence.
 | `--scope` prerequisite | Requires the literal `--strict` flag | `--strictness zero-tolerance` is refused despite being stricter | Not filed |
 | `tier_conflict` | Code: a `tier_overrides` mismatch | The docs said the same thing until 2026-08-28 | **Closed.** `README.md` and `docs/CLI_REFERENCE.md` now state the override-mismatch meaning, with examples generated from measured output |
 | Convention B grammar | `check --test`: either `@spec` or `@ac` alone marks a test reachable, and a bare pair in any string-literal argument counts | `ingest`: both markers required, and a bare pair read only from the name or classname | `SP-SP-050` |
-| `gap` readers | This document, earlier draft: "nothing reads it" | `reverse.go:235` and `:241` read it in process, and `main.go:1617` prints the count. Roadmap 3C7 had it right; the summary here did not | Not filed; a defect in this document |
+| `gap` readers | This document, earlier draft: "nothing reads it" | `reverse.go` reads it in process, and `reverse`'s summary line prints the count. Roadmap 3C7 had it right; the summary here did not | Not filed; a defect in this document |
 | `tier_overrides` | Warning said "using override" | No caller applied it. **Resolved 2026-08-22**: the message states that the declared tier governs, and the key is deprecated | `SP-SP-001`, closed |
 | tier cascade | `ResolveTier` inherited from a domain tier, then `system.tier`, then a default of 2 | Nothing called it. **Resolved 2026-08-22**: SSRB-106 deleted the function, and the domain tier is now a checked assertion | `SP-SP-049`, closed |
 | `registry` block | Parsed into `Manifest.Registry` | No command read it or regenerated it. **Resolved 2026-08-22**: SSRB-105 retired the section; the key is accepted and discarded until v1.0.0 | `SP-SP-054`, closed |
 | `dangling_reference` | Parse: an undeclared constraint reference | Resolve: an unknown `depends_on` target | Not filed |
 | Tier 3 orphan severity | `spec-check` C-02 and the code: `info` | `spec-check` objective scope, line 36: `warning` | `SP-SP-003` |
-| sync's default strictness | Code comment at `main.go:1318`: "ultimate default is `annotation`" | Behavior: `threshold`, because the manifest loader fills it in | Not filed |
-| `settings.strict` against `--strict` on `sync` | The key reaches the severity switch at `main.go:1313` | It never reaches the ladder: `:1323` reads the flag alone, so key and flag are not interchangeable | `SP-SP-047` |
-| `--strict` promotion coverage | **Closed 2026-08-29.** The command hands every family to `CheckSpecs` through `ExtraDiagnostics`, and one loop at `internal/checker/check.go:220` promotes the complete set. `internal/sync/sync.go:188` still appends after the call, with no wrong severity today because that path carries only error-severity diagnostics | was: skips `taDiags` and `uaDiags`, appended after that returns at `main.go:744` and `:773` | `SP-SP-047` |
-| spec-manifest C-11 against the code | C-11: strict upgrades "warning-severity" diagnostics | The code upgrades warning **and** info | `SP-SP-047` |
+| sync's default strictness | Code comment in `syncCmd`: "ultimate default is `annotation`" | Behavior: `threshold`, because the manifest loader fills it in | Not filed |
+| `settings.strict` against `--strict` on `sync` | The key reaches the severity switch where `syncCmd` builds `checker.CheckOptions{Strict: ...}` | It never reaches the ladder: `:1323` reads the flag alone, so key and flag are not interchangeable | `SP-SP-047` |
+| `--strict` promotion coverage | **Closed 2026-08-30.** Both commands hand every family to `CheckSpecs` through `ExtraDiagnostics`, and the one promotion loop in `CheckSpecs` promotes the complete set. `sync` was corrected in the same cycle; the ownership guard reads `cmd/specter` and `internal/sync` together, because a guard over one could not see the other | was: skips `taDiags` and `uaDiags`, appended after that returns at `main.go:744` and `:773` | `SP-SP-047` |
+| spec-manifest C-11 against the code | **Closed 2026-08-30.** C-11 owned a restatement of spec-check C-07 and now owns parsing only, so there is one rule and no second copy to disagree with | was: C-11 said warning-severity, the code upgrades warning **and** info | `SP-SP-047` |
 
 ---
 
@@ -1674,14 +1674,14 @@ standard.
 
 - The three `--strict` flag registrations at `main.go:837`, `:1239`, and `:1411`,
   and their help strings.
-- The three effects of `sync --strict`, at `main.go:1313`, `:1347`, and
+- The three effects of `sync --strict`, in `syncCmd`: the `Strict` field of the `checker.CheckOptions` it builds, `CheckTestAnnotations`, and
   `:1321-1328`.
 - The strictness resolution blocks at `main.go:932-938` and `:1321-1328`, and the
   stale comment above the second one at `:1318`.
 - The strict-path routing decision at `main.go:958`.
 - `validateStrictness` at `internal/manifest/manifest.go:126-130`, which fills an
   empty strictness with `threshold`, and `Defaults()` at `:282`, which does the
-  same when no manifest exists. `loadManifest` at `main.go:1671-1685` returns one
+  same when no manifest exists. `loadManifest` returns one
   or the other, so the field is never empty downstream.
 - `ResolveTierWithOverrides` at `internal/manifest/types.go:159` having no caller.
 - The two `dangling_reference` emit sites, `internal/parser/parse.go:189` and
