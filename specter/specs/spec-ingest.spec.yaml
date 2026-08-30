@@ -1,6 +1,6 @@
 spec:
   id: spec-ingest
-  version: "3.0.0"
+  version: "4.0.0"
   status: approved
   tier: 1
 
@@ -345,7 +345,15 @@ spec:
         serialization. A merge whose inputs declared the block declares it, even
         when the merged block is empty, and a merge whose inputs never declared
         it MUST still omit it, because C-14 promises an unlabeled producer keeps
-        writing exactly the file it wrote before.
+        writing exactly the file it wrote before. `streams: null` is a third
+        shape and it is declared, not absent: `spec-coverage` C-44 reads an
+        explicit null as a declared block, so a merge MUST refuse a null block
+        beside a labeled entry exactly as it refuses an empty one. Binding the
+        empty case alone leaves the null case open, and a producer that reads
+        null as absent restores the whole laundering path through a shape the
+        consumer still rejects. A null block carrying no labels merges, and is
+        normalized to `[]` on the way out, because the artifact should state
+        the same thing in one shape rather than two.
       inputs:
         declared_input: "a file whose streams block declares go, with go-labeled entries"
         undeclared_input: "a file carrying js-labeled entries and no streams block"
@@ -356,6 +364,8 @@ spec:
         declared_empty_block_with_label: "one input whose streams block is declared and empty, carrying an entry labeled ghost"
         declared_empty_block_no_label: "one input whose streams block is declared and empty, carrying no labeled entries"
         legacy_no_streams_key: "one input carrying no streams key at all, with no labeled entries"
+        null_block_with_label: "one input whose streams key is an explicit null, carrying an entry labeled ghost"
+        null_block_no_label: "one input whose streams key is an explicit null, carrying no labeled entries"
       expected_output:
         refusal_exit_code_non_zero: true
         refusal_names_the_undeclared_stream: true
@@ -367,6 +377,8 @@ spec:
         declared_empty_block_with_label_is_refused: true
         declared_empty_block_survives_as_an_empty_array: true
         legacy_absent_key_stays_absent: true
+        null_block_with_label_is_refused: true
+        null_block_no_label_is_declared_and_normalized_to_an_empty_array: true
       references_constraints: ["C-15"]
       priority: critical
 
@@ -401,6 +413,12 @@ spec:
       priority: high
 
   changelog:
+    - version: "4.0.0"
+      date: "2026-08-30"
+      author: "specter-team"
+      type: major
+      description: "AC-18 binds `streams: null`, the third shape of the key and the one 3.0.0 left open. The implementation already handled it, so this is a guard over correct behavior rather than a fix, and it was measured as unguarded before it was written: changing the presence test to read an explicit null as absent restores the laundering path in full, and the entire test suite still passes. `spec-coverage` C-44 reads a null block as declared, so a merge must refuse null beside a labeled entry exactly as it refuses an empty one. Binding only the empty case is what let a one-line change reopen a P1 with every gate green. The criterion also binds normalization: a null block with no labels merges and is written as `[]`, so the artifact states one thing in one shape. Major, not minor. AC-18 gains two inputs and `spec-diff` C-05 classifies an inputs change as breaking. Nothing depends on `spec-ingest`, so nothing cascades."
+
     - version: "3.0.0"
       date: "2026-08-30"
       author: "specter-team"
