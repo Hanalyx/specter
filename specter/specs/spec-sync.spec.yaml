@@ -1,6 +1,6 @@
 spec:
   id: spec-sync
-  version: "2.4.2"
+  version: "2.5.0"
   status: approved
   tier: 2
 
@@ -98,6 +98,11 @@ spec:
       description: "Every exit code the binary can emit MUST appear in `docs/EXIT_CODES.md`, and no code may be emitted from a band the document does not allocate to that purpose. This is a registry-parity rule, not a behavior rule: it fails when the code and the document disagree, in either direction. Rationale, per roadmap item 1A: three design tracks began allocating exit codes independently, which is the mechanism that double-books them. A registry nobody checks is a document, not an authority."
       type: technical
       enforcement: error
+    - id: C-13
+      description: "`RunSync` MUST NOT mutate the `CheckOptions` reached through `SyncInput.CheckOpts`. The options are a pointer the caller still owns. **Scoped to that one field deliberately.** An earlier draft said `RunSync` does not mutate the `SyncInput` at all, which promises more than AC-22 observes: a mutation of `SpecFiles`, `TestFiles`, `Thresholds` or `Results` would satisfy the criterion and violate the constraint. Widening it back requires an observation per reference-bearing field, and the defect this rule exists for is in `CheckOpts`. A run that extends `CheckOptions.ExtraDiagnostics` MUST copy the struct, and MUST copy the existing slice rather than appending to it in place, because a slice with spare capacity shares its backing array with the caller and an in-place append writes into storage the caller can still read. Rationale: sync assembles its own test-annotation diagnostics and hands them to the checker, per `spec-check` C-07's one-owner rule. Writing them through the caller's pointer would leave those options carrying one run's diagnostics, so a second run over the same value would start from the first run's list and count the same diagnostics twice. This constraint is here rather than in `spec-check` because `RunSync` is the API that takes the pointer; an acceptance criterion in `spec-check` stated it first, which put the rule where no caller of this package would look for it."
+      type: technical
+      enforcement: error
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -353,7 +358,25 @@ spec:
       references_constraints: ["C-11"]
       priority: high
 
+    - id: AC-22
+      description: "A run leaves its caller's options untouched. Given a `SyncInput` whose `CheckOpts.ExtraDiagnostics` already carries one diagnostic, in a slice with spare capacity, and whose test files carry an annotation naming an acceptance criterion the spec does not declare: `RunSync` produces a check result containing both the caller's diagnostic and the `unknown_ac_ref` it assembled, each exactly once. After the run the caller's slice has the same length it started with, and the element beyond that length in the caller's backing array is unchanged, which is what an in-place append to a copied slice header would overwrite. Running twice over the same options value produces two results with identical diagnostic counts. The spare capacity is the point: copying the slice header alone passes a length check and still writes into storage the caller owns."
+      inputs:
+        caller_options: "CheckOpts.ExtraDiagnostics with one element and spare capacity"
+        test_files: "one annotation naming an undeclared AC"
+      expected_output:
+        caller_slice_length_after_run: "unchanged"
+        caller_backing_array_beyond_length: "unchanged"
+        callers_diagnostic_in_result: 1
+        assembled_diagnostic_in_result: 1
+        two_runs_produce_equal_counts: true
+      references_constraints: ["C-13"]
+      priority: high
   changelog:
+    - version: "2.5.0"
+      date: "2026-08-30"
+      author: "specter-team"
+      type: minor
+      description: "C-13 and AC-22: `RunSync` does not mutate the `CheckOptions` reached through `SyncInput.CheckOpts`. Sync assembles its own test-annotation diagnostics and hands them to the checker under `spec-check` C-07's one-owner rule, and writing them through the caller's pointer would leave those options carrying one run's diagnostics, so a second run over the same value would start from the first run's list. The constraint requires copying the slice as well as the struct: a slice with spare capacity shares its backing array, so an in-place append writes into storage the caller can still read while leaving the caller's length unchanged, which a length check does not see. AC-22 seeds spare capacity for exactly that reason and reads the caller's array past its own length. Scoped to `CheckOpts` rather than to the whole `SyncInput`, because a constraint saying the input is never mutated promises more than one criterion can observe: a write to `SpecFiles`, `TestFiles`, `Thresholds` or `Results` would pass AC-22 and break the rule. Minor: a new constraint and criterion, and the implementation already conforms."
     - version: "2.4.2"
       date: "2026-08-29"
       author: "specter-team"

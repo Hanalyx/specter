@@ -1,6 +1,6 @@
 spec:
   id: spec-check
-  version: "3.0.0"
+  version: "3.1.0"
   status: approved
   tier: 1
 
@@ -573,12 +573,13 @@ spec:
       priority: high
 
     - id: AC-45
-      description: "Strictness reaches diagnostics the command assembles, not only those the checker produced. Workspace: a manifest declaring `settings.tier_overrides` for a spec whose declared `tier` disagrees, and a domain declaring a `tier` that also disagrees, so one run carries both a `tier_conflict` and a `domain_tier_conflict` and no other diagnostic. Plain `specter check` reports both at `warning` and exits 0. `specter check --strict` reports both at `error` and exits 1. `specter check --strict --json` agrees: every diagnostic in the document carries `severity: error`, the summary reports zero warnings, and the exit code is 1. Both kinds are computed from the manifest and appended after the checker returns, which is why they are the case this criterion binds: an implementation that promotes inside the checker alone passes AC-07, AC-31 and AC-36 and fails here. The `--test` diagnostics are the second half of this criterion, and they are the half that separates the rule from the two kinds that prompted it. On a workspace declaring `settings.strictness: threshold` with a source annotation whose test produces no runner-visible token, `specter check --test` reports `unreachable_annotation` at `warning` and exits 0, and `specter check --test --strict` reports it at `error` and exits 1. These diagnostics are computed from test file contents, which the checker does not read, so they arrive by the same route the tier kinds do. And the non-promotable set holds: on a workspace whose test shape the reachability scanner cannot recognize, `unreachable_annotation_unknown` stays at `warning` under `--strict` and does not by itself make the run exit non-zero, per C-10. A run carrying only that diagnostic exits 0 with or without the flag. This is the case that stops the rule being implemented as promote everything that arrives late."
+      description: "Strictness reaches diagnostics the command assembles, not only those the checker produced. Workspace: a manifest declaring `settings.tier_overrides` for a spec whose declared `tier` disagrees, and a domain declaring a `tier` that also disagrees, so one run carries both a `tier_conflict` and a `domain_tier_conflict` and no other diagnostic. Plain `specter check` reports both at `warning` and exits 0. `specter check --strict` reports both at `error` and exits 1. `specter check --strict --json` agrees: every diagnostic in the document carries `severity: error`, the summary reports zero warnings, and the exit code is 1. Both kinds are computed from the manifest and appended after the checker returns, which is why they are the case this criterion binds: an implementation that promotes inside the checker alone passes AC-07, AC-31 and AC-36 and fails here. The `--test` diagnostics are the second half of this criterion, and they are the half that separates the rule from the two kinds that prompted it. On a workspace declaring `settings.strictness: threshold` with a source annotation whose test produces no runner-visible token, `specter check --test` reports `unreachable_annotation` at `warning` and exits 0, and `specter check --test --strict` reports it at `error` and exits 1. These diagnostics are computed from test file contents, which the checker does not read, so they arrive by the same route the tier kinds do. And the non-promotable set holds: on a workspace whose test shape the reachability scanner cannot recognize, `unreachable_annotation_unknown` stays at `warning` under `--strict` and does not by itself make the run exit non-zero, per C-10. A run carrying only that diagnostic exits 0 with or without the flag. This is the case that stops the rule being implemented as promote everything that arrives late. **The rule binds every command that builds a check result, not the `check` command alone.** `sync` runs the same checker and assembles its own test-annotation diagnostics, so the same route exists there and the same criterion covers it. It reported no wrong severity while every diagnostic on that path was error severity, which is the condition that makes a structural violation invisible: the route is wrong and the output happens to be right, so nothing fails until a warning-severity kind is added. A guard that reads only one command cannot see the second, so the ownership assertion covers `cmd/specter` and `internal/sync` together. Whether a command may write through the `CheckOptions` pointer it was handed is not this criterion's business. `spec-sync` C-13 owns that boundary, because `RunSync` is the API that takes the pointer."
       inputs:
         workspace_tier: "one spec whose declared tier disagrees with both settings.tier_overrides and its domain tier"
         workspace_annotation: "settings.strictness: threshold, one source annotation with no runner-visible token"
         workspace_unknown: "a test shape the reachability scanner cannot recognize"
         invocations: "check, check --strict, check --strict --json, check --test, check --test --strict"
+        commands_bound: "cmd/specter and internal/sync"
       expected_output:
         plain_severities: "warning, warning"
         plain_exit_code: 0
@@ -591,6 +592,8 @@ spec:
         unreachable_annotation_strict_exit_code: 1
         unreachable_annotation_unknown_strict_severity: "warning"
         unreachable_annotation_unknown_strict_exit_code: 0
+        promotion_sites_across_both_commands: 1
+        summary_computation_sites: 1
       references_constraints: ["C-07", "C-10"]
       priority: critical
 
@@ -694,6 +697,11 @@ spec:
 
 
   changelog:
+    - version: "3.1.0"
+      date: "2026-08-30"
+      author: "specter-team"
+      type: minor
+      description: "AC-45 binds C-07 over every command that builds a check result, not `check` alone. `sync` runs the same checker and assembles its own test-annotation diagnostics after it returns, counting them into the summary itself, which is the route C-07 forbids. It reported no wrong severity, because every diagnostic on that path is error severity and `sync` does not run the unreachable scan, and that is exactly the condition that makes a structural violation invisible: the route is wrong and the output happens to be right, so nothing fails until a warning-severity kind is added there. The ownership guard reads `cmd/specter` and `internal/sync` together, because a guard over one command cannot see the other. Whether a command may write through the `CheckOptions` pointer it is handed is not this spec's business: `spec-sync` C-13 owns that boundary, because `RunSync` is the API that takes the pointer. Minor: the criterion widens to see a violation that was always there, C-07's rule is unchanged, and no conforming implementation breaks."
     - version: "3.0.0"
       date: "2026-08-29"
       author: "specter-team"

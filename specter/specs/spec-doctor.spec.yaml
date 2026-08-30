@@ -1,6 +1,6 @@
 spec:
   id: spec-doctor
-  version: "1.10.1"
+  version: "1.10.2"
   status: draft
   tier: 2
 
@@ -512,10 +512,15 @@ spec:
       version_range: "^1.0.0"
       relationship: requires
     - spec_id: spec-manifest
-      version_range: "^2.0.0"
+      version_range: "^3.0.0"
       relationship: requires
 
   changelog:
+    - version: "1.10.2"
+      date: "2026-08-30"
+      author: "specter-team"
+      type: patch
+      description: "Raise the `spec-manifest` dependency floor to `^3.0.0`. `spec-manifest` 3.0.0 requires each deprecation line to state what is true of its own key rather than a single wording for both, and `^2.0.0` does not admit a 3.x version, so `resolve` would report a version mismatch on an unchanged workspace. No behavior of `doctor` changes."
     - version: "1.10.1"
       date: "2026-08-28"
       author: "specter-team"

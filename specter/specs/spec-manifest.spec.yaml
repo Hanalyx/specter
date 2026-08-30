@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "2.1.0"
+  version: "3.0.0"
   status: draft
   tier: 2
 
@@ -95,7 +95,7 @@ spec:
       enforcement: error
 
     - id: C-11
-      description: "MUST parse settings.strict (bool): when true, all warning-severity check diagnostics are treated as errors"
+      description: "MUST parse `settings.strict` (bool) into the manifest's `Settings.Strict` field. **This constraint owns parsing and nothing else.** What strict mode does is `spec-check` C-07, and where the parsed value is carried to is the business of the command that reads the manifest. Until 2026-08-30 this said strict mode treats all warning-severity check diagnostics as errors. That was a second copy of C-07's rule and wrong twice over: C-07 promotes warning and info, and it names two kinds it does not promote. The rule is that a constraint states what this spec can be held to on its own: where the parsed value is carried to is the business of the command that reads the manifest, and AC-15 tests what this constraint owns, which is parsing."
       type: technical
       enforcement: error
 
@@ -110,7 +110,7 @@ spec:
       enforcement: error
 
     - id: C-14
-      description: "MUST parse settings.tier_overrides (map[spec-id]int) and emit a tier_conflict warning when a spec's declared tier disagrees with its override value. The override is NOT applied: the tier declared in the spec governs every downstream decision, and no command consults the override value. The warning MUST therefore state that the declared tier governs, and MUST NOT assert that the override is in use. Rationale, per docs/ssrb/SSRB-106.md section 7.3: the setting is deprecated and removed at v1.0.0, but the message is corrected now and independently, because a program that misdescribes itself defeats the reviewer who checks the program. The prior wording ended `using override (N)`, which is false on every run, and it was the only evidence behind a near-miss documentation fix that would have asserted the override wins."
+      description: "MUST parse settings.tier_overrides (map[spec-id]int) and emit a tier_conflict warning when a spec's declared tier disagrees with its override value. The override is NOT applied as a tier source: the tier declared in the spec governs every downstream decision, and no command resolves a tier from it. **Its value is still read, by this rule.** `tier_conflict` exists because the two are compared, so the override is an input to conflict detection and resolves nothing anywhere else. Saying no command consults it is wrong and was the wording here until 2026-08-29. The warning MUST therefore state that the declared tier governs, and MUST NOT assert that the override is in use. Rationale, per docs/ssrb/SSRB-106.md section 7.3: the setting is deprecated and removed at v1.0.0, but the message is corrected now and independently, because a program that misdescribes itself defeats the reviewer who checks the program. The prior wording ended `using override (N)`, which is false on every run, and it was the only evidence behind a near-miss documentation fix that would have asserted the override wins."
       type: technical
       enforcement: error
 
@@ -221,7 +221,7 @@ spec:
       enforcement: error
 
     - id: C-36
-      description: "`system.tier` and `settings.tier_overrides` are deprecated and MUST warn on every run that reads the manifest. A manifest declaring either gets one stderr line per key naming it, stating that it has no effect and that it is removed at v1.0.0. The warning MUST NOT change any exit code. Both keys stay accepted so an existing manifest parses. Rationale, per docs/ssrb/SSRB-106.md sections 7.2 and 7.3: both are validated and inert, `specter init` has been writing `system.tier` into every new workspace, and an operator who configures either currently gets no signal that it did nothing. `settings.tier_overrides` additionally emitted a message asserting the override was in use, corrected under C-14 at spec-manifest 1.15.0."
+      description: "`system.tier` and `settings.tier_overrides` are deprecated and MUST warn on every run that reads the manifest. A manifest declaring either gets **exactly one stderr line per declared key**, naming that key and stating it is removed at v1.0.0. **Each line MUST state what is true of its own key, and the two are not the same.** `system.tier` has no effect, and its line says so. `settings.tier_overrides` resolves no tier, and its value is still compared under C-14, so a mismatching override produces a `tier_conflict` warning that `spec-check` C-07 promotes under `--strict`; its line says that instead. A single wording for both makes one of them false, which is what this constraint required until 3.0.0. The deprecation line itself MUST NOT change any exit code, and does not: a matching override produces the line alone and the run still exits 0. What can change an exit code is the conflict, not the deprecation. Both keys stay accepted so an existing manifest parses. Rationale, per docs/ssrb/SSRB-106.md sections 7.2 and 7.3: both are validated, neither resolves a tier, `specter init` has been writing `system.tier` into every new workspace, and an operator who configures either currently gets no signal that it did nothing. `settings.tier_overrides` additionally emitted a message asserting the override was in use, corrected under C-14 at spec-manifest 1.15.0."
       type: technical
       enforcement: error
   acceptance_criteria:
@@ -918,7 +918,7 @@ spec:
       priority: critical
 
     - id: AC-65
-      description: "The deprecated tier keys warn without changing an exit code. A manifest declaring `system.tier: 2` produces one stderr line naming `system.tier`, stating it has no effect and is removed at v1.0.0. A manifest declaring `settings.tier_overrides` produces the equivalent line for that key. A manifest declaring neither produces neither line, which is the control that stops the assertion passing on a run that warns about everything. In all three cases the exit code matches the same workspace with no deprecated key declared, so the warning is advisory."
+      description: "The deprecated tier keys warn without changing an exit code, and the deprecation line is not the whole story for one of them. A manifest declaring `system.tier: 2` produces exactly one stderr line naming `system.tier`, stating it has no effect and is removed at v1.0.0. A manifest declaring both keys produces exactly two lines, one per key, and no key produces two. A manifest declaring `settings.tier_overrides` produces the equivalent line for that key. A manifest declaring neither produces neither line, which is the control that stops the assertion passing on a run that warns about everything. Across the four deprecation fixtures, neither key declared, each alone, and both together, the exit code matches the same workspace with no deprecated key declared, so a deprecation line is advisory. Each declared key produces exactly one line and no key produces the other's, in both directions. **Two further cases separate the line from the conflict, and they are the point of this criterion.** A manifest whose override MATCHES the spec's declared tier produces the deprecation line, no `tier_conflict`, and exit 0 under `specter check --strict`. A manifest whose override MISMATCHES produces the deprecation line and a `tier_conflict`, which `spec-check` C-07 promotes, so the same invocation exits 1. Declaring the key is not what fails a strict run; disagreeing with the declared tier is."
       inputs:
         case_system_tier: "system.tier: 2 declared"
         case_tier_overrides: "settings.tier_overrides declared"
@@ -928,6 +928,11 @@ spec:
         tier_overrides_warns: true
         neither_warns: false
         exit_code_unchanged: true
+        matching_override_strict_exit_code: 0
+        mismatching_override_strict_exit_code: 1
+        lines_per_declared_key: 1
+        system_tier_line_says: "has no effect"
+        tier_overrides_line_says: "resolves no tier, still compared, error under --strict"
       references_constraints: ["C-36"]
       priority: high
 
@@ -974,6 +979,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "3.0.0"
+      date: "2026-08-30"
+      author: "specter-team"
+      type: major
+      description: "Three constraints now say what this spec owns. C-11 owns parsing `settings.strict` into `Settings.Strict`; what strict mode does belongs to `spec-check` C-07, which C-11 had restated as promotion of warning-severity diagnostics. That copy was wrong twice over: C-07 promotes warning and info, and names two kinds it does not promote. C-14 said no command consults `settings.tier_overrides`, in the same clause requiring a `tier_conflict` warning when its value disagrees with the declared tier; the override resolves no tier, and its value is read. C-36 required both deprecation lines to state the key has no effect. That is true of `system.tier` and false of `settings.tier_overrides`, whose value is still compared and whose mismatch `spec-check` C-07 promotes to an error under `--strict`, so each line now states what is true of its own key. AC-65 binds exactly one line per declared key, both keys declared together, the wording of each, and the two `--strict` cases that separate the line from the conflict: a matching override exits 0 and a mismatching one exits 1. Major: C-36 forbids a message a conforming implementation used to emit. C-11 and C-14 alone would have been a patch."
     - version: "2.1.0"
       date: "2026-08-28"
       author: "specter-team"
