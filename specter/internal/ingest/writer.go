@@ -19,8 +19,30 @@ import (
 // internal/coverage consumes via ParseResultsFile.
 type resultsFile struct {
 	// Streams is emitted ascending by name, spec-coverage C-42.
-	Streams []StreamInfo  `json:"streams,omitempty"`
+	//
+	// A pointer, not a slice, and that is the whole fix for AC-18. With a
+	// plain slice plus omitempty, a declared-but-empty block and an absent
+	// key are the same value and serialize to the same bytes, so a producer
+	// silently converted `streams: []` into no key at all. C-44 turns on
+	// telling those two apart, so an artifact that arrived inconsistent left
+	// consistent and `coverage` accepted what it had just refused. A nil
+	// pointer omits the key; a pointer to an empty slice writes `[]`.
+	Streams *[]StreamInfo `json:"streams,omitempty"`
 	Results []resultEntry `json:"results"`
+}
+
+// StreamBlock is a `streams` block together with whether the key was there.
+//
+// The two travel as one value on purpose. They were separate before, as a
+// []StreamInfo whose emptiness stood in for absence, and that conflation is
+// exactly what shipped the laundering path. A caller cannot now forward the
+// rows and drop the presence, because there is no way to hold one without
+// the other.
+type StreamBlock struct {
+	// Declared is true when the input carried a `streams` key, including
+	// when it carried an empty one.
+	Declared bool
+	Streams  []StreamInfo
 }
 
 // StreamInfo records what one stream's run observed. Mirrors the shape
@@ -56,7 +78,10 @@ func WriteResultsFile(path string, results []TestResult) error {
 // block C-16 requires when a run names a stream. A nil or empty slice writes
 // no block at all rather than an empty array.
 func WriteResultsFileWithStreams(path string, results []TestResult, streams []StreamInfo) error {
-	data, err := serializeResultsFile(results, streams)
+	// C-16: a run that names a stream writes the block, and an unlabeled run
+	// writes none. Presence and non-emptiness coincide on this path, which is
+	// why it kept working while `--merge` did not.
+	data, err := serializeResultsFile(results, StreamBlock{Declared: len(streams) > 0, Streams: streams})
 	if err != nil {
 		return err
 	}
@@ -74,7 +99,7 @@ func WriteResultsFileWithStreams(path string, results []TestResult, streams []St
 // is the only way to test the distinction C-44 turns on, since an absent
 // `streams` key and an empty one are the same Go value here and different
 // bytes.
-func serializeResultsFile(results []TestResult, streams []StreamInfo) ([]byte, error) {
+func serializeResultsFile(results []TestResult, block StreamBlock) ([]byte, error) {
 	merged := MergeResults(results)
 
 	out := resultsFile{Results: make([]resultEntry, 0, len(merged))}
@@ -90,9 +115,17 @@ func serializeResultsFile(results []TestResult, streams []StreamInfo) ([]byte, e
 		}
 		out.Results = append(out.Results, entry)
 	}
-	if len(streams) > 0 {
-		out.Streams = append([]StreamInfo(nil), streams...)
-		sort.Slice(out.Streams, func(i, j int) bool { return out.Streams[i].Name < out.Streams[j].Name })
+	// Presence decides whether the key is written, and the rows decide what
+	// is in it. Keying this off len(rows) is the bug: it drops a declared
+	// empty block, and a declared empty block beside a labeled entry is
+	// precisely the artifact C-44 rejects.
+	if block.Declared {
+		rows := append([]StreamInfo(nil), block.Streams...)
+		if rows == nil {
+			rows = []StreamInfo{}
+		}
+		sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+		out.Streams = &rows
 	}
 	return json.MarshalIndent(out, "", "  ")
 }
@@ -122,8 +155,8 @@ var ErrMergeTooLarge = errors.New("the merged artifact is too large to be read b
 // Nothing is written on refusal, which is why the check happens before
 // os.WriteFile rather than after: a truncated or replaced output would destroy
 // the artifact the operator still had, which is worse than the one refused.
-func WriteMergedResultsFile(path string, results []TestResult, streams []StreamInfo) error {
-	data, err := serializeResultsFile(results, streams)
+func WriteMergedResultsFile(path string, results []TestResult, block StreamBlock) error {
+	data, err := serializeResultsFile(results, block)
 	if err != nil {
 		return err
 	}

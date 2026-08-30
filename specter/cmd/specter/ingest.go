@@ -231,18 +231,23 @@ func runMerge(paths []string, outputPath string) error {
 	}
 
 	var results []ingest.TestResult
-	var streams []ingest.StreamInfo
+	// Blocks, not rows. Each input's `streams` key carries whether it was
+	// declared at all, and appending the rows alone would drop that: an input
+	// declaring an empty block contributes no rows and would vanish. A
+	// declared empty block beside a labeled entry is the artifact C-44
+	// rejects, so losing it here is what let `--merge` write one.
+	var blocks []ingest.StreamBlock
 	for _, p := range files {
-		r, st, readErr := ingest.ReadResultsFile(p)
+		r, block, readErr := ingest.ReadResultsFile(p)
 		if readErr != nil {
 			fmt.Fprintf(os.Stderr, "error: read %s: %v\n", p, readErr)
 			return errSilent
 		}
 		results = append(results, r...)
-		streams = append(streams, st...)
+		blocks = append(blocks, block)
 	}
 
-	merged := ingest.MergeStreams(streams)
+	merged := ingest.MergeStreams(blocks)
 	// C-15: the artifact is checked before it is written, so a merge never
 	// produces one `coverage` refuses and never destroys the output already
 	// there when it declines to.
@@ -257,7 +262,7 @@ func runMerge(paths []string, outputPath string) error {
 	}
 
 	entries := len(ingest.MergeResults(results))
-	fmt.Fprintf(os.Stderr, "Merged %d file(s) into %d result entries across %d stream(s).\n", len(files), entries, len(merged))
+	fmt.Fprintf(os.Stderr, "Merged %d file(s) into %d result entries across %d stream(s).\n", len(files), entries, len(merged.Streams))
 	fmt.Printf("Wrote %d result entries to %s\n", entries, outputPath)
 	return nil
 }
