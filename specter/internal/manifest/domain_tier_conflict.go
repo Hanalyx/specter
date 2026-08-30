@@ -87,8 +87,17 @@ func DeprecatedTierKeys(m *Manifest) []string {
 			"Set tier: in each .spec.yaml file. It is removed at v1.0.0.")
 	}
 	if len(m.Settings.TierOverrides) > 0 {
-		msgs = append(msgs, "settings.tier_overrides is deprecated and has no effect. "+
-			"Set tier: in each .spec.yaml file. It is removed at v1.0.0.")
+		// Not "has no effect", which system.tier above can say and this key
+		// cannot. It resolves no tier, and its value is still compared under
+		// C-14: a mismatching override produces a tier_conflict, which
+		// spec-check C-07 promotes to an error under --strict. Telling an
+		// operator the setting does nothing, and then failing their strict
+		// build over it, is the shape of misdescription C-14 already forbids
+		// one clause up.
+		msgs = append(msgs, "settings.tier_overrides is deprecated and resolves no tier. "+
+			"Its value is still compared: one that disagrees with a spec's declared tier "+
+			"warns, and --strict makes that an error. Set tier: in each .spec.yaml file. "+
+			"It is removed at v1.0.0.")
 	}
 	return msgs
 }

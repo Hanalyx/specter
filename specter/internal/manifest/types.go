@@ -54,7 +54,7 @@ type Settings struct {
 	SpecsDir      string            `yaml:"specs_dir,omitempty" json:"specs_dir,omitempty"`
 	Coverage      CoverageConfig    `yaml:"coverage,omitempty" json:"coverage,omitempty"`
 	Exclude       []string          `yaml:"exclude,omitempty" json:"exclude,omitempty"`
-	Strict        bool              `yaml:"strict,omitempty" json:"strict,omitempty"`                 // C-11: treat warnings as errors
+	Strict        bool              `yaml:"strict,omitempty" json:"strict,omitempty"`                 // C-11: parsed here; spec-check C-07 decides what strict mode does
 	WarnOnDraft   bool              `yaml:"warn_on_draft,omitempty" json:"warn_on_draft,omitempty"`   // C-12: warn on draft specs
 	TierOverrides map[string]int    `yaml:"tier_overrides,omitempty" json:"tier_overrides,omitempty"` // C-14: per-spec tier overrides
 	TestsGlob     StringOrList      `yaml:"tests_glob,omitempty" json:"tests_glob,omitempty"`         // C-25: default test-discovery glob (string or list)

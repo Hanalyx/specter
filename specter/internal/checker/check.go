@@ -40,8 +40,10 @@ type CheckSummary struct {
 // CheckOptions configures the check run.
 type CheckOptions struct {
 	TierOverride int
-	Strict       bool // C-07: upgrade all warning/info diagnostics to error
-	WarnOnDraft  bool // C-08: emit warning for specs with status: draft
+	// Strict upgrades warning and info diagnostics to error, per C-07, except
+	// the kinds nonPromotable names below.
+	Strict      bool
+	WarnOnDraft bool // C-08: emit warning for specs with status: draft
 	// Concrete opts into the C-16 concreteness rule. C-17: it is off by
 	// default because `inputs` and `expected_output` are optional in the
 	// canonical schema, so a criterion carrying neither is valid and failing a
@@ -49,10 +51,11 @@ type CheckOptions struct {
 	Concrete bool
 
 	// ExtraDiagnostics are diagnostics the caller assembled from sources this
-	// package cannot see, currently the manifest-derived tier_conflict and
-	// domain_tier_conflict. They join the run's own diagnostics BEFORE the
-	// C-07 strict upgrade and before the summary, which is the whole reason
-	// this field exists.
+	// package cannot see: the manifest-derived tier_conflict and
+	// domain_tier_conflict, and the test-annotation families both the check
+	// command and sync build from test file contents. They join the run's own
+	// diagnostics BEFORE the C-07 strict upgrade and before the summary, which
+	// is the whole reason this field exists.
 	//
 	// The command used to append them to the returned result instead. That put
 	// them past the upgrade loop, so both kept severity warning under --strict

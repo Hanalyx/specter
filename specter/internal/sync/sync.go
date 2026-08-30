@@ -177,27 +177,37 @@ func RunSync(input SyncInput) *SyncResult {
 	}
 
 	// Phase 3: Check
-	checkResult := checker.CheckSpecs(graph, input.CheckOpts)
-
-	// spec-check C-09: opt-in test-annotation cross-reference pass.
+	//
+	// spec-check C-09: the opt-in test-annotation pass runs BEFORE the check,
+	// and its diagnostics are handed over rather than appended afterwards.
+	//
+	// C-07 requires one assembly, promotion and summary boundary. This used to
+	// finalize the check and then append and recount, which is the route that
+	// constraint forbids. No severity was wrong, because every diagnostic on
+	// this path is error severity and sync does not run the unreachable scan,
+	// and that is what made it invisible: the route was wrong and the output
+	// happened to be right, so nothing failed until a warning-severity kind
+	// were added here.
+	checkOpts := input.CheckOpts
 	if input.CheckTestAnnotations {
 		contents := make(map[string]string, len(input.TestFiles))
 		for _, f := range input.TestFiles {
 			contents[f.Path] = f.Content
 		}
-		taDiags := checker.CheckTestAnnotations(contents, specs)
-		checkResult.Diagnostics = append(checkResult.Diagnostics, taDiags...)
-		for _, d := range taDiags {
-			switch d.Severity {
-			case "error":
-				checkResult.Summary.Errors++
-			case "warning":
-				checkResult.Summary.Warnings++
-			case "info":
-				checkResult.Summary.Info++
-			}
+		// Copy before extending. CheckOpts is a pointer the caller still owns,
+		// so appending through it would leave the caller's options carrying
+		// this run's diagnostics, and a second run would start from the first
+		// one's list.
+		var opts checker.CheckOptions
+		if checkOpts != nil {
+			opts = *checkOpts
 		}
+		opts.ExtraDiagnostics = append(append([]checker.CheckDiagnostic(nil), opts.ExtraDiagnostics...),
+			checker.CheckTestAnnotations(contents, specs)...)
+		checkOpts = &opts
 	}
+
+	checkResult := checker.CheckSpecs(graph, checkOpts)
 
 	result.CheckResult = checkResult
 
