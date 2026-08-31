@@ -179,7 +179,7 @@ export class CoverageReportStore {
   /**
    * Aggregate view for the status bar, Coverage sidebar, and Insights.
    * Single-folder workspaces get their stored report back by identity —
-   * byte-for-byte the pre-1.7.0 single-root behavior. Returns null when
+   * the pre-1.7.0 single-root behavior observationally, entry for entry. Not the stored object: spec-vscode C-33 requires the aggregate type in every case, so a lone refused folder cannot return a report carrying a singular stopReason. Returns null when
    * nothing is stored (the sidebar's "coverage not run yet" state).
    * The optional fields (parseErrors, specCandidatesCount,
    * parseErrorPatterns) stay absent unless at least one folder's report
@@ -398,7 +398,23 @@ export function reportStopReasons(
 }
 
 
-export function buildCoverageTreeRoot(report: CoverageReport | null): SpecTreeRootNode[] {
+/**
+ * Whether one folder refused, read from the aggregate, spec-vscode C-33.
+ *
+ * The aggregate is what every consumer holds; a folder's own report is not
+ * reachable from the tree or the status bar. Answering per folder is what lets
+ * a caller mark the refused one errored without touching the others.
+ */
+export function isFolderRefused(
+  merged: MergedCoverageReport | null | undefined,
+  folderKey: string,
+): boolean {
+  return Boolean(merged?.folderStopReasons?.[folderKey]);
+}
+
+export function buildCoverageTreeRoot(
+  report: CoverageReport | MergedCoverageReport | null,
+): SpecTreeRootNode[] {
   if (report === null) {
     return [{
       kind: 'message',
@@ -411,17 +427,33 @@ export function buildCoverageTreeRoot(report: CoverageReport | null): SpecTreeRo
   const entries = report.entries ?? [];
   const parseErrors = report.parseErrors ?? [];
 
-  // A refused run, C-33. Checked BEFORE the degenerate case below, because a
-  // refusal carries an empty entries list and no parse errors and is otherwise
-  // indistinguishable from a clean empty workspace. Reading the reason first is
-  // the whole obligation this constraint places here.
-  if (report.stopReason) {
-    return [{
-      kind: 'message',
-      label: `Coverage did not run: ${report.stopReason.message}`,
-      detail: 'Specter stopped before measuring anything, so this is neither an empty workspace nor a parse failure. Fix the cause and run coverage again; the Output channel names the folder it came from.',
-      iconId: 'warning',
-    }];
+  // Refusals, C-33. Read from the AGGREGATE, because that is what the tree
+  // provider passes. An aggregate never carries a singular stopReason, so a
+  // check on that field alone cannot fire in production and a refused folder
+  // falls through to the empty-workspace message below.
+  //
+  // The singular field is still honored for a report handed in directly, keyed
+  // under an empty folder name because there is no folder to name.
+  const refusals: Record<string, CoverageStopReason> = {
+    ...('folderStopReasons' in report ? report.folderStopReasons ?? {} : {}),
+    ...('stopReason' in report && report.stopReason ? { '': report.stopReason } : {}),
+  };
+  const refusedFolders = Object.keys(refusals).sort();
+  const refusalNodes: SpecTreeRootNode[] = refusedFolders.map(folder => ({
+    kind: 'message' as const,
+    label: folder
+      ? `Coverage did not run for ${folder}: ${refusals[folder].message}`
+      : `Coverage did not run: ${refusals[folder].message}`,
+    detail: 'Specter stopped before measuring anything in this folder, so it is neither an empty workspace nor a parse failure. Fix the cause and run coverage again.',
+    iconId: 'warning',
+  }));
+
+  // Before the degenerate case, because a refusal carries an empty entries
+  // list and no parse errors and is otherwise identical to a clean empty
+  // workspace. Only when nothing else was measured: a refusal must not blank
+  // the folders that were.
+  if (refusedFolders.length > 0 && entries.length === 0 && parseErrors.length === 0) {
+    return refusalNodes;
   }
 
 
@@ -443,7 +475,9 @@ export function buildCoverageTreeRoot(report: CoverageReport | null): SpecTreeRo
     }];
   }
 
-  const roots: SpecTreeRootNode[] = [];
+  // Refusals first, so a folder that could not be measured is the first thing
+  // a reader sees, ahead of the folders that were.
+  const roots: SpecTreeRootNode[] = [...refusalNodes];
 
   // Parse-failure group goes first so it's the first thing the user sees
   // when there's work to do. Collapsible so a workspace with many failures

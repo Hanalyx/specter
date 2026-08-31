@@ -40,6 +40,7 @@ import {
   CoverageReportStore,
   findEntryBySpecFile,
   reportStopReasons,
+  isFolderRefused,
 } from './coverage';
 import { buildConstraintHover, resolveDefinitionTarget } from './navigation';
 import { buildInsightCards, computeInsightsStatus, formatSpecContextForAI, shouldShowWalkthrough } from './insights';
@@ -67,8 +68,11 @@ let specIndex: SpecIndex = { specs: {} };
 // workspace. Paths inside each stored report are normalized to absolute
 // against the owning folder's CLI cwd at ingestion time (AC-33), so
 // downstream consumers need no folder context. Aggregate views read
-// coverageReports.merged() — identical to the folder's own report in a
-// single-root workspace.
+// coverageReports.merged(), which returns MergedCoverageReport in every case,
+// including a single-root workspace. There it carries the same entries,
+// summary and parse errors as the folder's own report, but it is not that
+// object: spec-vscode C-33 requires the aggregate type always, so a lone
+// refused folder cannot hand back a report carrying a singular stopReason.
 const coverageReports = new CoverageReportStore({
   resolve: (base, p) => path.resolve(base, p),
   isAbsolute: p => path.isAbsolute(p),
@@ -512,9 +516,24 @@ async function runCoverageForFolder(key: string, client: SpecterClient): Promise
     // the store write so the aggregate reflects this run. The aggregate, not
     // this folder's report: a refusal has to arrive with the folder that
     // produced it, and a singular report carries no folder identity at all.
+    const merged = coverageReports.merged();
     if (outputChannel) {
-      reportStopReasons(outputChannel, coverageReports.merged());
+      reportStopReasons(outputChannel, merged);
     }
+
+    // spec-vscode C-33: refusal state is read BEFORE entries, summary or parse
+    // errors. A refused run carries an empty entries list and no parse errors,
+    // so the branch below would take it for a clean measurement: update the
+    // status bar from a zero-entry aggregate and delete the folder from
+    // coverageErrorFolders. A run that measured nothing would be recorded as a
+    // run that found nothing wrong.
+    if (isFolderRefused(merged, key)) {
+      setStatusBarError('Specter: coverage did not run. Click to view details.');
+      coverageErrorFolders.add(key);
+      treeProvider?.refresh();
+      return;
+    }
+
     updateSpecIndex(report);
 
     // v0.9.0: parse errors flow through the report now, not a rejected
@@ -533,7 +552,7 @@ async function runCoverageForFolder(key: string, client: SpecterClient): Promise
       setStatusBarError('Specter: parse errors. Click to view details.');
       coverageErrorFolders.add(key);
     } else {
-      updateStatusBar(coverageReports.merged());
+      updateStatusBar(merged);
       coverageErrorFolders.delete(key);
     }
     treeProvider?.refresh();

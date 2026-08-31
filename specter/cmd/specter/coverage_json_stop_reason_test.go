@@ -439,19 +439,16 @@ func TestCoverageRendersThroughOneDiscoveredOwner(t *testing.T) {
 		if got := len(sitesIn(owners[0], encodes)); got != 1 {
 			t.Errorf("AC-74: the owner %s encodes at %d site(s), want exactly 1", owners[0], got)
 		}
-		// Routing is TRANSITIVE, and that is the criterion rather than a
-		// weakening of it. AC-74 asks for one render owner and no encoding in
-		// the command; it does not ask the command to call the owner directly.
-		// An earlier version of this guard required at least eight direct
-		// calls, which is an invention beyond the criterion of the same kind
-		// as the AC-54 identity pin: it would forbid a named refusal helper,
-		// and building the human message once and reusing it for stderr and
-		// stop_reason.message is exactly what such a helper is for.
+		// EVERY value-returning return in the command resolves to the owner.
 		//
-		// What still binds is the part that matters: no exit leaves the
-		// command without reaching the owner. The bare-errSilent check above
-		// is what enforces that, and it is why this can be transitive without
-		// going slack.
+		// The bare-errSilent check above is not enough alone: a new exit
+		// written as `return errors.New("coverage stopped")` is not bare
+		// errSilent, leaves the routed sites intact, and bypasses the
+		// renderer. A count of routed calls cannot see it either, because the
+		// count does not change. Only the returns can.
+		//
+		// Nested closures are excluded. renderText returns nothing and is
+		// invoked by the owner, so its returns are not exits from the command.
 		routers := map[string]bool{owners[0]: true}
 		for name := range callees {
 			for _, s := range funcSitesMatching(fset, files, func(n ast.Node) bool {
@@ -467,20 +464,69 @@ func TestCoverageRendersThroughOneDiscoveredOwner(t *testing.T) {
 				}
 			}
 		}
-		routed := 0
-		for name, n := range callees {
-			if routers[name] {
-				routed += n
+
+		var offending []string
+		returns := 0
+		for _, f := range files {
+			for _, d := range f.Decls {
+				fd, ok := d.(*ast.FuncDecl)
+				if !ok || fd.Name.Name != "coverageCmd" {
+					continue
+				}
+				ast.Inspect(fd, func(n ast.Node) bool {
+					kv, ok := n.(*ast.KeyValueExpr)
+					if !ok {
+						return true
+					}
+					if key, ok := kv.Key.(*ast.Ident); !ok || key.Name != "RunE" {
+						return true
+					}
+					body, ok := kv.Value.(*ast.FuncLit)
+					if !ok {
+						return true
+					}
+					ast.Inspect(body, func(n ast.Node) bool {
+						if lit, nested := n.(*ast.FuncLit); nested && lit != body {
+							return false // a closure's returns are not the command's exits
+						}
+						ret, ok := n.(*ast.ReturnStmt)
+						if !ok || len(ret.Results) != 1 {
+							return true
+						}
+						returns++
+						line := fset.Position(ret.Pos()).Line
+						call, ok := ret.Results[0].(*ast.CallExpr)
+						if !ok {
+							offending = append(offending, fmt.Sprintf("line %d: not a call", line))
+							return true
+						}
+						id, ok := call.Fun.(*ast.Ident)
+						if !ok {
+							offending = append(offending, fmt.Sprintf("line %d: returns an expression", line))
+							return true
+						}
+						if !routers[id.Name] {
+							offending = append(offending, fmt.Sprintf("line %d: returns %s", line, id.Name))
+						}
+						return true
+					})
+					return false
+				})
 			}
 		}
-		// Eight exits today: seven refusals and the ordinary path.
-		if routed < 8 {
+
+		// Positive control: the returns were found. Zero would make the
+		// emptiness of `offending` meaningless.
+		if returns == 0 {
+			t.Fatalf("AC-74: no value-returning return found in coverageCmd's RunE, so the claim below is vacuous")
+		}
+		if len(offending) != 0 {
 			names := make([]string, 0, len(routers))
 			for k := range routers {
 				names = append(names, k)
 			}
 			sort.Strings(names)
-			t.Errorf("AC-74: coverageCmd reaches its render owner %s at %d site(s), directly or through %v, want at least 8: seven refusals and the ordinary path", owners[0], routed, names)
+			t.Errorf("AC-74: %d of %d returns in coverageCmd do not resolve to the render owner %s (directly or through %v): %v. Every exit writes a document, or the next one added quietly does not", len(offending), returns, owners[0], names, offending)
 		}
 
 		// The verdict half, with its owner DISCOVERED rather than named.
