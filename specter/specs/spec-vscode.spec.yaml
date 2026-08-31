@@ -1,6 +1,6 @@
 spec:
   id: spec-vscode
-  version: "5.0.1"
+  version: "5.0.2"
   status: draft
   tier: 2
 
@@ -1485,7 +1485,7 @@ spec:
       version_range: "^1.1.0"
       relationship: requires
     - spec_id: spec-check
-      version_range: "^3.0.0"
+      version_range: "^4.0.0"
       relationship: requires
     - spec_id: spec-coverage
       version_range: "^1.23.0"
@@ -1498,6 +1498,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "5.0.2"
+      date: "2026-08-30"
+      author: "specter-team"
+      type: patch
+      description: "Raises the spec-check floor from ^3.0.0 to ^4.0.0. spec-check 4.0.0 strengthens AC-46 so the check document must name the diagnostic that stopped the run, and specter diff classifies an expected_output change as breaking, so the major was taken from the classifier. The old range excluded the version this spec is now checked against, and check reported version_mismatch. Patch: only the dependency range moved, with no constraint or criterion touched on this spec."
     - version: "5.0.1"
       date: "2026-08-29"
       author: "specter-team"

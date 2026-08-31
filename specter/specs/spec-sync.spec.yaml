@@ -1,6 +1,6 @@
 spec:
   id: spec-sync
-  version: "2.5.0"
+  version: "2.5.1"
   status: approved
   tier: 2
 
@@ -111,7 +111,7 @@ spec:
       version_range: "^1.0.0"
       relationship: requires
     - spec_id: spec-check
-      version_range: "^3.0.0"
+      version_range: "^4.0.0"
       relationship: requires
     - spec_id: spec-coverage
       version_range: "^1.23.0"
@@ -372,6 +372,11 @@ spec:
       references_constraints: ["C-13"]
       priority: high
   changelog:
+    - version: "2.5.1"
+      date: "2026-08-30"
+      author: "specter-team"
+      type: patch
+      description: "Raises the spec-check floor from ^3.0.0 to ^4.0.0. spec-check 4.0.0 strengthens AC-46 so the check document must name the diagnostic that stopped the run, and specter diff classifies an expected_output change as breaking, so the major was taken from the classifier. The old range excluded the version this spec is now checked against, and check reported version_mismatch. Patch: only the dependency range moved, with no constraint or criterion touched on this spec."
     - version: "2.5.0"
       date: "2026-08-30"
       author: "specter-team"
