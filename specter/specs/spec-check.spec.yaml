@@ -1,6 +1,6 @@
 spec:
   id: spec-check
-  version: "3.2.0"
+  version: "4.0.0"
   status: approved
   tier: 1
 
@@ -608,10 +608,24 @@ spec:
         separate early returns and a fix applied to one is the defect this
         criterion exists to catch. A control run that reaches the checker
         normally is required beside them, so the criterion cannot be satisfied by
-        a command that emits a document and never checks anything. The count of
-        sites that render the document is asserted at one, because a second
-        renderer reproduces every observable result here while restoring the
-        condition that produced the defect.
+        a command that emits a document and never checks anything.
+
+        Each state binds the diagnostic it produces: its kind, error severity, a
+        non-empty message, and a summary error count of at least one. A document
+        carrying an empty diagnostics list satisfies every structural assertion
+        about the document while telling a caller nothing, and its summary counts
+        zero errors so both modes exit 0. That is a worse failure than writing
+        nothing at all, because an empty stream is at least obviously broken. The
+        exit code is therefore asserted as 1 in its own right, not only as
+        agreeing with text mode, since the two agree at 0 when the document is
+        empty.
+
+        Rendering is bound as ownership rather than as placement. One named
+        function owns encoding and the verdict, the command encodes at no site of
+        its own, and every path out of the command routes through that owner.
+        Asserting instead that the encoder sits lexically inside the command
+        would fail a valid extraction of the renderer into a helper, which is a
+        refactor that preserves the property this criterion is about.
       inputs:
         parse_failure: "a workspace where one spec is not valid against the schema"
         resolver_error: "a schema-valid spec depending on a spec id that does not exist"
@@ -625,8 +639,17 @@ spec:
         stdout_contains_only_the_document: true
         human_readable_notices_on_stderr: true
         exit_code_matches_text_mode_in_all_three: true
+        exit_code_in_all_three: 1
+        parse_failure_diagnostic_kind: "parse_error"
+        resolver_error_diagnostic_kind: "dangling_reference"
+        manifest_failure_diagnostic_kind: "manifest_error"
+        every_early_diagnostic_severity: "error"
+        every_early_diagnostic_message_non_empty: true
+        summary_errors_at_least_one_in_all_three: true
         control_reaches_the_checker_and_reports_its_diagnostic: true
-        document_render_sites: 1
+        render_owner_functions: 1
+        command_encodes_directly_at_zero_sites: true
+        command_routes_to_the_owner_at_every_exit: true
       references_constraints: ["C-14"]
       priority: critical
 
@@ -730,6 +753,12 @@ spec:
 
 
   changelog:
+    - version: "4.0.0"
+      date: "2026-08-30"
+      author: "specter-team"
+      type: major
+      description: "AC-46 was satisfiable by a document that says nothing. It asserted the diagnostics key exists and that the two modes agree on the exit code, and both hold for an empty list: the summary counts zero errors, so both modes exit 0. Measured rather than argued. Dropping the diagnostic from all three early returns leaves AC-46 green; the kill came from an unrelated criterion, spec-manifest AC-51, which covers the manifest state only, so the parse and resolver states were unbound. An empty document with a zero exit is worse than writing nothing, because an empty stream is at least obviously broken while a successful-looking empty document is not. AC-46 now binds each state's diagnostic kind, error severity, a non-empty message, a summary error count of at least one, and exit 1 in its own right rather than only as parity. The ownership half is restated as ownership rather than placement: it asserted the encoder appears lexically inside the command, which would fail a valid extraction of the renderer into a named helper while the single-owner property still held. It now asserts one named owner, no encoding in the command, and every exit routed through the owner. Major, and taken from the classifier rather than from a reading of the diff: expected_output gains keys on one criterion, and spec-diff C-05 counts a change to any of the six concrete fields as breaking. specter diff over this change reports [breaking]. This repository has twice recorded overriding that classifier with a judgment about half the diff, so it is followed here. Nothing depends on spec-check, so nothing cascades."
+
     - version: "3.2.0"
       date: "2026-08-30"
       author: "specter-team"
