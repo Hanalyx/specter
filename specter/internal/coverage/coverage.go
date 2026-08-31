@@ -70,10 +70,44 @@ type SpecCoverageEntry struct {
 }
 
 // CoverageReport is the full coverage result.
+// StopKind names why a run stopped before it measured anything,
+// spec-coverage C-10. The set is closed and lives here alone: a second
+// declaration is a copy of policy that cannot know when this one changes.
+type StopKind string
+
+const (
+	// StopManifestError: the manifest failed to load.
+	StopManifestError StopKind = "manifest_error"
+	// StopInvalidFlag: a flag value or a combination of flags is not usable.
+	StopInvalidFlag StopKind = "invalid_flag"
+	// StopUnknownScope: --scope named a domain the manifest does not declare.
+	StopUnknownScope StopKind = "unknown_scope"
+	// StopUnmetPrecondition: the run needs something it does not have, such as
+	// a results artifact or an annotated test file.
+	StopUnmetPrecondition StopKind = "unmet_precondition"
+)
+
+// StopReason says why a run produced no measurements.
+//
+// Two fields, both required. `kind` is what a consumer branches on and
+// `message` is what a person reads; collapsing them into one string forces
+// every consumer to parse prose to decide what happened.
+type StopReason struct {
+	Kind    StopKind `json:"kind"`
+	Message string   `json:"message"`
+}
+
 type CoverageReport struct {
-	Entries     []SpecCoverageEntry `json:"entries"`
-	Summary     CoverageSummary     `json:"summary"`
-	ParseErrors []ParseErrorEntry   `json:"parse_errors,omitempty"`
+	Entries []SpecCoverageEntry `json:"entries"`
+	Summary CoverageSummary     `json:"summary"`
+	// StopReason is present only when the run stopped before measuring, C-10.
+	//
+	// Entries and Summary stay required and are emitted as an empty list and a
+	// zeroed summary beside it. Those are uncomputed placeholders, and this
+	// field is the only thing that distinguishes them from a clean empty
+	// workspace, which is why a consumer must read it first.
+	StopReason  *StopReason       `json:"stop_reason,omitempty"`
+	ParseErrors []ParseErrorEntry `json:"parse_errors,omitempty"`
 	// Verdicts carries the per-criterion classification every field above was
 	// derived from, in spec order and then declaration order. It is how a
 	// caller computes a guard over the same answers the report used, rather

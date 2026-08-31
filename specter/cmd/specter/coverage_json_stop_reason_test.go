@@ -436,9 +436,48 @@ func TestCoverageRendersThroughOneDiscoveredOwner(t *testing.T) {
 		if got := len(sitesIn(owners[0], encodes)); got != 1 {
 			t.Errorf("AC-74: the owner %s encodes at %d site(s), want exactly 1", owners[0], got)
 		}
-		// Eight returns exist today: seven refusals and the ordinary path.
-		if n := callees[owners[0]]; n < 8 {
-			t.Errorf("AC-74: coverageCmd routes to its render owner %s at %d site(s), want at least 8: seven refusals and the ordinary path", owners[0], n)
+		// Routing is TRANSITIVE, and that is the criterion rather than a
+		// weakening of it. AC-74 asks for one render owner and no encoding in
+		// the command; it does not ask the command to call the owner directly.
+		// An earlier version of this guard required at least eight direct
+		// calls, which is an invention beyond the criterion of the same kind
+		// as the AC-54 identity pin: it would forbid a named refusal helper,
+		// and building the human message once and reusing it for stderr and
+		// stop_reason.message is exactly what such a helper is for.
+		//
+		// What still binds is the part that matters: no exit leaves the
+		// command without reaching the owner. The bare-errSilent check above
+		// is what enforces that, and it is why this can be transitive without
+		// going slack.
+		routers := map[string]bool{owners[0]: true}
+		for name := range callees {
+			for _, s := range funcSitesMatching(fset, files, func(n ast.Node) bool {
+				ce, ok := n.(*ast.CallExpr)
+				if !ok {
+					return false
+				}
+				id, ok := ce.Fun.(*ast.Ident)
+				return ok && id.Name == owners[0]
+			}) {
+				if strings.HasPrefix(s, name+":") {
+					routers[name] = true
+				}
+			}
+		}
+		routed := 0
+		for name, n := range callees {
+			if routers[name] {
+				routed += n
+			}
+		}
+		// Eight exits today: seven refusals and the ordinary path.
+		if routed < 8 {
+			names := make([]string, 0, len(routers))
+			for k := range routers {
+				names = append(names, k)
+			}
+			sort.Strings(names)
+			t.Errorf("AC-74: coverageCmd reaches its render owner %s at %d site(s), directly or through %v, want at least 8: seven refusals and the ordinary path", owners[0], routed, names)
 		}
 
 		// The verdict half, with its owner DISCOVERED rather than named.
