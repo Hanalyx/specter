@@ -1,6 +1,6 @@
 spec:
   id: spec-check
-  version: "3.1.0"
+  version: "3.2.0"
   status: approved
   tier: 1
 
@@ -104,7 +104,7 @@ spec:
       enforcement: error
 
     - id: C-14
-      description: "`specter check --json` MUST exit with the same process exit code that `specter check` produces for the same workspace, the same flags, and the same manifest settings. The exit code is a function of the diagnostics the run produced, not of how they are rendered. Per the documented check contract, the code is 1 when the run reports one or more error-severity diagnostics, counted after tier routing (C-02) and after any `--strict` upgrade (C-07), and 0 otherwise. A run whose worst severity is warning or info therefore exits 0 in both formats, and a `--strict` run that upgrades those warnings to errors exits 1 in both. No diagnostic kind is exempt, including kinds added later. The JSON document MUST be written to stdout in full before the exit-code decision runs, and stdout MUST carry that document alone, so one invocation gives a caller both the diagnostics and a usable verdict. Human-readable notices stay on stderr. This is the `check` instance of the parity rule spec-coverage C-29 states for `coverage`, where the same defect was found in the v0.13 D3 audit. Rationale: a CI job that uses `--json` to capture structured diagnostics has a check gate that never fails, at any severity, for any kind. The document is correct and the exit code, which is the one thing an automated caller reads, reports a passing run."
+      description: "`specter check --json` MUST exit with the same process exit code that `specter check` produces for the same workspace, the same flags, and the same manifest settings. The exit code is a function of the diagnostics the run produced, not of how they are rendered. Per the documented check contract, the code is 1 when the run reports one or more error-severity diagnostics, counted after tier routing (C-02) and after any `--strict` upgrade (C-07), and 0 otherwise. A run whose worst severity is warning or info therefore exits 0 in both formats, and a `--strict` run that upgrades those warnings to errors exits 1 in both. No diagnostic kind is exempt, including kinds added later. The JSON document MUST be written to stdout in full before the exit-code decision runs, and stdout MUST carry that document alone, so one invocation gives a caller both the diagnostics and a usable verdict. Human-readable notices stay on stderr. This is the `check` instance of the parity rule spec-coverage C-29 states for `coverage`, where the same defect was found in the v0.13 D3 audit. Rationale: a CI job that uses `--json` to capture structured diagnostics has a check gate that never fails, at any severity, for any kind. The document is correct and the exit code, which is the one thing an automated caller reads, reports a passing run. **A run that cannot reach the structural rules still writes the document.** Three states end a run early: one or more specs fail to parse, the resolver reports an error, or the manifest fails to load. In each of them `--json` MUST still write one complete document to stdout, carrying diagnostics that say why the run stopped, and MUST take its exit code from the same verdict the ordinary path uses. Writing nothing is this constraint's own failure one step earlier: a caller reading stdout gets an empty stream and cannot distinguish a broken workspace from a crashed process, which is the state `bugs/SP-SP-032` records. The document MUST be assembled and rendered on one path rather than by adding an emitter to each early return, because three emitters are three places for the next early return to be forgotten, and this defect began as exactly that omission."
       type: business
       enforcement: error
 
@@ -597,6 +597,39 @@ spec:
       references_constraints: ["C-07", "C-10"]
       priority: critical
 
+    - id: AC-46
+      description: >-
+        `check --json` writes one complete document in each of the three states
+        that end a run before the structural rules execute. A spec that fails to
+        parse, a resolver error, and a manifest that fails to load each leave
+        stdout carrying a parseable document and nothing else, and each takes its
+        exit code from the same verdict the ordinary path uses. The three are
+        asserted separately rather than as one case, because they are three
+        separate early returns and a fix applied to one is the defect this
+        criterion exists to catch. A control run that reaches the checker
+        normally is required beside them, so the criterion cannot be satisfied by
+        a command that emits a document and never checks anything. The count of
+        sites that render the document is asserted at one, because a second
+        renderer reproduces every observable result here while restoring the
+        condition that produced the defect.
+      inputs:
+        parse_failure: "a workspace where one spec is not valid against the schema"
+        resolver_error: "a schema-valid spec depending on a spec id that does not exist"
+        manifest_failure: "a specter.yaml the manifest loader rejects"
+        control: "a workspace whose specs parse, resolve, and produce one orphan_constraint"
+        invocation: "specter check --json"
+      expected_output:
+        parse_failure_stdout_parses_as_json: true
+        resolver_error_stdout_parses_as_json: true
+        manifest_failure_stdout_parses_as_json: true
+        stdout_contains_only_the_document: true
+        human_readable_notices_on_stderr: true
+        exit_code_matches_text_mode_in_all_three: true
+        control_reaches_the_checker_and_reports_its_diagnostic: true
+        document_render_sites: 1
+      references_constraints: ["C-14"]
+      priority: critical
+
     - id: AC-36
       description: "The advisory posture does not weaken the other structural checks. A workspace carrying an orphan constraint on a Tier 1 spec still fails, and `--strict` still upgrades a Tier 3 orphan to an error, in the same run that reports a structural conflict at info."
       inputs:
@@ -697,6 +730,12 @@ spec:
 
 
   changelog:
+    - version: "3.2.0"
+      date: "2026-08-30"
+      author: "specter-team"
+      type: minor
+      description: "C-14 gains the three states that end a `check` run before any structural rule executes, and AC-46 binds them. Measured at b3d02c9: a schema-valid spec depending on a spec that does not exist gives `check --json` rc=1 with zero bytes on stdout, and a parse failure and a rejected manifest do the same. C-14 already required the document to be written in full before the exit-code decision, so this is a conformance failure rather than a gap, and the constraint now says so instead of leaving it to be inferred from a rule about severity routing. The cost is not limited to CI: the VS Code extension's jsonDocumentFrom throws on an empty stream, and extension.ts runs parse and check through Promise.all, so one unparseable spec discards the parse result that succeeded and freezes on-save diagnostics and the coverage tree for every file in the workspace. A workspace with a broken cross-spec reference gets no Problems-panel entry for it at all. AC-46 asserts one render site rather than three emitters, because the defect is an omission at an early return and adding an emitter per branch leaves the next early return to be forgotten the same way. Minor: a new clause and a new criterion, with no criterion removed and no `inputs` changed on an existing one. `bugs/SP-SP-032`."
+
     - version: "3.1.0"
       date: "2026-08-30"
       author: "specter-team"
