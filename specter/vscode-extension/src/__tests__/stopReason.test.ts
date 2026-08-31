@@ -469,55 +469,43 @@ describe('spec-vscode/AC-79 the stop-reason declarations, semantically', () => {
         true,
       );
       const found = new Set<string>();
-      const note = (n: ts.Node): void => {
-        if (ts.isStringLiteralLike(n) && canonical.has(n.text)) found.add(n.text);
-      };
-      // Bound when some ancestor gives the value a name it can be reached by.
-      // `new Set([...])` assigned to a const is bound; the same array handed
-      // straight to a call is not.
-      const isBoundToAName = (n: ts.Node): boolean => {
+
+      // Reachable through a declaration name. That is the whole rule, and it
+      // replaces a per-shape list that kept missing shapes: object property
+      // NAMES were inspected while their VALUES were not, so this survived:
+      //
+      //   const PrivateKinds = { manifest: "manifest_error", ... } as const;
+      //
+      // and four standalone `const A = "manifest_error"` survived too, because
+      // plain initializers were never read at all.
+      //
+      // A canonical value a name can reach is reusable policy. One handed
+      // inline to a call is acceptance data, checked once and reachable by
+      // nothing, which is why the exact-kind assertion in this file is not an
+      // offender.
+      const POLICY_ANCESTORS = new Set<ts.SyntaxKind>([
+        ts.SyntaxKind.VariableDeclaration,
+        ts.SyntaxKind.PropertyAssignment,
+        ts.SyntaxKind.PropertyDeclaration,
+        ts.SyntaxKind.PropertySignature,
+        ts.SyntaxKind.EnumMember,
+        ts.SyntaxKind.TypeAliasDeclaration,
+        ts.SyntaxKind.InterfaceDeclaration,
+      ]);
+      const reachableByName = (n: ts.Node): boolean => {
         for (let cur: ts.Node | undefined = n.parent; cur; cur = cur.parent) {
-          if (
-            ts.isVariableDeclaration(cur) ||
-            ts.isPropertyAssignment(cur) ||
-            ts.isPropertyDeclaration(cur) ||
-            ts.isEnumMember(cur)
-          ) {
-            return true;
-          }
+          if (POLICY_ANCESTORS.has(cur.kind)) return true;
         }
         return false;
       };
+
       const visit = (n: ts.Node): void => {
-        // A type-level union of string literals.
-        if (ts.isUnionTypeNode(n)) {
-          for (const m of n.types) {
-            if (ts.isLiteralTypeNode(m)) note(m.literal);
-          }
-        }
-        // An enum whose members carry the values.
-        if (ts.isEnumDeclaration(n)) {
-          for (const m of n.members) {
-            if (m.initializer) note(m.initializer);
-          }
-        }
-        // A constant collection, but only one BOUND TO A NAME. That is the
-        // line between a reusable policy source and acceptance data used once.
-        //
-        // `expect(x).toEqual(['manifest_error', ...])` is an inline argument
-        // checked in a single assertion; nothing else can reach it, and it
-        // cannot go stale in a way that hides a second policy. A named
-        // `const KINDS = new Set([...])` can be reached, reused, and drift.
-        //
-        // Without this distinction the scan flags this very file, because the
-        // exact-kind assertion above passes all four values inline.
-        if (ts.isArrayLiteralExpression(n) && isBoundToAName(n)) {
-          n.elements.forEach(note);
-        }
-        if (ts.isObjectLiteralExpression(n) && isBoundToAName(n)) {
-          for (const prop of n.properties) {
-            if (prop.name) note(prop.name);
-          }
+        if (
+          ts.isStringLiteralLike(n) &&
+          canonical.has(n.text) &&
+          reachableByName(n)
+        ) {
+          found.add(n.text);
         }
         ts.forEachChild(n, visit);
       };
