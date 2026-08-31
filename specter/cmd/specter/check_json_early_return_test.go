@@ -19,6 +19,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -255,7 +256,7 @@ func TestCheckJSONWritesADocumentOnEveryEarlyReturn(t *testing.T) {
 // cares about was preserved. Private policy about where code sits is not the
 // rule; one owner that every exit routes through is.
 func TestCheckRendersThroughOneNamedOwner(t *testing.T) {
-	t.Run("spec-check/AC-46 one named function owns encoding, and the command routes to it", func(t *testing.T) {
+	t.Run("spec-check/AC-46 one discovered function owns encoding, and the command routes to it", func(t *testing.T) {
 		fset := token.NewFileSet()
 		files := parseProductionFiles(t, fset, ".")
 
@@ -271,14 +272,6 @@ func TestCheckRendersThroughOneNamedOwner(t *testing.T) {
 			pkg, ok := sel.X.(*ast.Ident)
 			return ok && pkg.Name == "json"
 		}
-		callsOwner := func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return false
-			}
-			id, ok := call.Fun.(*ast.Ident)
-			return ok && id.Name == "renderCheckResult"
-		}
 		bareErrSilent := func(n ast.Node) bool {
 			ret, ok := n.(*ast.ReturnStmt)
 			if !ok || len(ret.Results) != 1 {
@@ -287,7 +280,28 @@ func TestCheckRendersThroughOneNamedOwner(t *testing.T) {
 			id, ok := ret.Results[0].(*ast.Ident)
 			return ok && id.Name == "errSilent"
 		}
-
+		// calleesOf collects the plain-identifier calls made inside fn, which
+		// is how the owner is discovered rather than named.
+		calleesOf := func(fn string) map[string]int {
+			out := map[string]int{}
+			for _, f := range files {
+				for _, d := range f.Decls {
+					fd, ok := d.(*ast.FuncDecl)
+					if !ok || fd.Name.Name != fn {
+						continue
+					}
+					ast.Inspect(fd, func(n ast.Node) bool {
+						if ce, ok := n.(*ast.CallExpr); ok {
+							if id, ok := ce.Fun.(*ast.Ident); ok {
+								out[id.Name]++
+							}
+						}
+						return true
+					})
+				}
+			}
+			return out
+		}
 		sitesIn := func(fn string, want func(ast.Node) bool) []string {
 			var out []string
 			for _, s := range funcSitesMatching(fset, files, want) {
@@ -304,24 +318,37 @@ func TestCheckRendersThroughOneNamedOwner(t *testing.T) {
 			t.Fatalf("AC-46: no json.NewEncoder call found in any production file, so this matcher is wrong and every count below is meaningless")
 		}
 
-		// The owner exists and encodes exactly once.
-		owner := sitesIn("renderCheckResult", encodes)
-		if len(owner) != 1 {
-			t.Errorf("AC-46: renderCheckResult encodes at %d site(s), want exactly 1. Sites: %v. A named owner is what makes the single-render property survive a refactor", len(owner), owner)
+		// The owner is DISCOVERED, not named. Of everything checkCmd calls,
+		// exactly one callee may encode a document. Hard-coding the owner's
+		// name would make a rename fail a guard whose property survived it,
+		// which is private policy rather than the rule.
+		callees := calleesOf("checkCmd")
+		if len(callees) == 0 {
+			t.Fatalf("AC-46: checkCmd appears to call nothing, so the owner cannot be discovered and every claim below is vacuous")
 		}
+		var owners []string
+		for name := range callees {
+			if len(sitesIn(name, encodes)) > 0 {
+				owners = append(owners, name)
+			}
+		}
+		sort.Strings(owners)
+		if len(owners) != 1 {
+			t.Fatalf("AC-46: %d of checkCmd's callees encode a document, want exactly 1. Found: %v. One owner is what keeps a state added later from acquiring an empty stdout", len(owners), owners)
+		}
+		owner := owners[0]
 
-		// The command owns none of it.
+		if got := len(sitesIn(owner, encodes)); got != 1 {
+			t.Errorf("AC-46: the owner %s encodes at %d site(s), want exactly 1", owner, got)
+		}
 		if got := sitesIn("checkCmd", encodes); len(got) != 0 {
 			t.Errorf("AC-46: checkCmd encodes a document itself at %v. Encoding belongs to the owner; a command that encodes is a second renderer whatever it is named", got)
 		}
-
-		// Every exit routes through the owner. A bare `return errSilent` is an
-		// exit that renders nothing, which is the defect in its original form.
 		if got := sitesIn("checkCmd", bareErrSilent); len(got) != 0 {
 			t.Errorf("AC-46: checkCmd returns errSilent directly at %v. That exit writes no document, which is exactly bugs/SP-SP-032", got)
 		}
-		if got := sitesIn("checkCmd", callsOwner); len(got) < 4 {
-			t.Errorf("AC-46: checkCmd routes to renderCheckResult at %d site(s), want at least 4: three early returns and the ordinary path. Sites: %v", len(got), got)
+		if n := callees[owner]; n < 4 {
+			t.Errorf("AC-46: checkCmd routes to its render owner %s at %d site(s), want at least 4: three early returns and the ordinary path", owner, n)
 		}
 	})
 }
