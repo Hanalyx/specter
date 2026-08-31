@@ -549,42 +549,43 @@ describe('spec-vscode/AC-79 the stop-reason declarations, semantically', () => {
 // as the way to bind what lives there.
 // ---------------------------------------------------------------------------
 
-describe('spec-vscode/AC-79 the coverage run reports refusals', () => {
-  const EXT_TS = path.resolve(__dirname, '..', 'extension.ts');
+const EXT_TS = path.resolve(__dirname, '..', 'extension.ts');
 
-  /** Every identifier called inside the named top-level function. */
-  function callsInFunction(fnName: string): string[] {
-    const source = ts.createSourceFile(
-      EXT_TS,
-      fs.readFileSync(EXT_TS, 'utf8'),
-      ts.ScriptTarget.ES2020,
-      true,
-    );
-    const calls: string[] = [];
-    let found = false;
-    const visit = (node: ts.Node): void => {
-      if (
-        (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) &&
-        node.name &&
-        node.name.getText(source) === fnName
-      ) {
-        found = true;
-        const collect = (n: ts.Node): void => {
-          if (ts.isCallExpression(n)) {
-            const fn = n.expression;
-            if (ts.isIdentifier(fn)) calls.push(fn.text);
-            else if (ts.isPropertyAccessExpression(fn)) calls.push(fn.name.text);
-          }
-          ts.forEachChild(n, collect);
-        };
-        ts.forEachChild(node, collect);
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(source);
-    if (!found) throw new Error(`${fnName} not found in extension.ts`);
-    return calls;
-  }
+/** Every identifier called inside the named top-level function. */
+function callsInFunction(fnName: string): string[] {
+  const source = ts.createSourceFile(
+    EXT_TS,
+    fs.readFileSync(EXT_TS, 'utf8'),
+    ts.ScriptTarget.ES2020,
+    true,
+  );
+  const calls: string[] = [];
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (
+      (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) &&
+      node.name &&
+      node.name.getText(source) === fnName
+    ) {
+      found = true;
+      const collect = (n: ts.Node): void => {
+        if (ts.isCallExpression(n)) {
+          const fn = n.expression;
+          if (ts.isIdentifier(fn)) calls.push(fn.text);
+          else if (ts.isPropertyAccessExpression(fn)) calls.push(fn.name.text);
+        }
+        ts.forEachChild(n, collect);
+      };
+      ts.forEachChild(node, collect);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  if (!found) throw new Error(`${fnName} not found in extension.ts`);
+  return calls;
+}
+
+describe('spec-vscode/AC-79 the coverage run reports refusals', () => {
 
   /** The argument NODES of each call to `callee` inside `fnName`.
    *
@@ -692,5 +693,89 @@ describe('spec-vscode/AC-79 the coverage run reports refusals', () => {
     expect(access.name.text).toBe('merged');
     expect(ts.isIdentifier(access.expression)).toBe(true);
     expect((access.expression as ts.Identifier).text).toBe('coverageReports');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-79, the aggregate as the product actually uses it.
+//
+// The sidebar test above hands a SINGULAR report to the builder. The product
+// hands it coverageReports.merged(), which never carries a singular stopReason
+// because C-33 forbids one on an aggregate. So the builder's singular check
+// cannot fire in production, and a refused folder reaches the real sidebar as
+// an empty entries list with no parse errors: "No specs found in this
+// workspace", which is the exact misreport this criterion exists to remove.
+// ---------------------------------------------------------------------------
+
+describe('spec-vscode/AC-79 the aggregate reaches the real consumers', () => {
+  const refusedReport = () => snakeToCamelCoverage(rawRefused) as CoverageReport;
+  const okReport = () =>
+    snakeToCamelCoverage({
+      entries: [
+        { spec_id: 'ok-spec', total_acs: 1, covered_acs: ['AC-01'], passes_threshold: true },
+      ],
+      summary: { total_specs: 1, passing: 1, failing: 0 },
+      parse_errors: [],
+    }) as CoverageReport;
+
+  it('a single refused folder is not rendered as an empty workspace', () => {
+    const store = new CoverageReportStore(noopOps);
+    store.set('/ws/bad', refusedReport(), '/ws/bad');
+
+    // Through merged(), which is what the tree provider passes.
+    const root = JSON.stringify(buildCoverageTreeRoot(store.merged() as never));
+    expect(root).not.toContain('No specs found in this workspace');
+    expect(root).toContain('manifest_error');
+  });
+
+  it('a mixed aggregate keeps the successful entries and still surfaces the refusal', () => {
+    const store = new CoverageReportStore(noopOps);
+    store.set('/ws/good', okReport(), '/ws/good');
+    store.set('/ws/bad', refusedReport(), '/ws/bad');
+
+    const root = JSON.stringify(buildCoverageTreeRoot(store.merged() as never));
+    // The working folder's specs are still there. A refusal must not blank the
+    // rest of the workspace.
+    expect(root).toContain('ok-spec');
+    // And the refusal is visible, naming the folder it came from.
+    expect(root).toContain('/ws/bad');
+  });
+
+  it('isFolderRefused answers for one folder within the aggregate', () => {
+    const mod = require('../coverage') as Record<string, unknown>;
+    const isFolderRefused = mod.isFolderRefused as
+      | ((merged: unknown, key: string) => boolean)
+      | undefined;
+    expect(typeof isFolderRefused).toBe('function');
+
+    const store = new CoverageReportStore(noopOps);
+    store.set('/ws/good', okReport(), '/ws/good');
+    store.set('/ws/bad', refusedReport(), '/ws/bad');
+    const merged = store.merged();
+
+    expect(isFolderRefused!(merged, '/ws/bad')).toBe(true);
+    // The negative control. Without it a function returning true always would
+    // pass, and every folder would be marked errored.
+    expect(isFolderRefused!(merged, '/ws/good')).toBe(false);
+    expect(isFolderRefused!(null, '/ws/bad')).toBe(false);
+  });
+
+  it('runCoverageForFolder reads refusal state before interpreting placeholders', () => {
+    // A refusal carries entries [] and no parse errors, so the existing branch
+    // reads it as a clean measurement: it updates the status bar from a
+    // zero-entry aggregate and DELETES the folder from coverageErrorFolders.
+    // The refusal check has to come first.
+    const calls = callsInFunction('runCoverageForFolder');
+    expect(calls.length).toBeGreaterThan(0);
+
+    const refusedAt = calls.indexOf('isFolderRefused');
+    expect(refusedAt).toBeGreaterThanOrEqual(0);
+
+    for (const later of ['updateSpecIndex', 'updateStatusBar', 'pushCoverageParseDiagnostics']) {
+      const at = calls.indexOf(later);
+      if (at >= 0) {
+        expect(refusedAt).toBeLessThan(at);
+      }
+    }
   });
 });
