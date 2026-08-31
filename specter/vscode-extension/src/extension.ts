@@ -39,6 +39,7 @@ import {
   matchFileInIndex,
   CoverageReportStore,
   findEntryBySpecFile,
+  reportStopReasons,
 } from './coverage';
 import { buildConstraintHover, resolveDefinitionTarget } from './navigation';
 import { buildInsightCards, computeInsightsStatus, formatSpecContextForAI, shouldShowWalkthrough } from './insights';
@@ -506,6 +507,14 @@ async function runCoverageForFolder(key: string, client: SpecterClient): Promise
     // sit here erased the compiler's ability to notice when they did.
     coverageReports.set(key, result, client.cliCwd);
     const report = coverageReports.get(key)!;
+
+    // spec-vscode C-33: name any refused folder in the Output channel, after
+    // the store write so the aggregate reflects this run. The aggregate, not
+    // this folder's report: a refusal has to arrive with the folder that
+    // produced it, and a singular report carries no folder identity at all.
+    if (outputChannel) {
+      reportStopReasons(outputChannel, coverageReports.merged());
+    }
     updateSpecIndex(report);
 
     // v0.9.0: parse errors flow through the report now, not a rejected

@@ -4,6 +4,8 @@ import type {
   ACDecoration,
   SpecCoverageEntry,
   CoverageReport,
+  CoverageStopReason,
+  MergedCoverageReport,
   SpecTreeNode,
   SpecTreeRootNode,
   ACNode,
@@ -186,10 +188,34 @@ export class CoverageReportStore {
    * report carries `[]` rather than nothing, and every consumer reads through
    * `?? []` and then `.length`. Absent and empty read the same (AC-28/29/30).
    */
-  merged(): CoverageReport | null {
+  merged(): MergedCoverageReport | null {
     if (this.reports.size === 0) return null;
     const all = Array.from(this.reports.values());
-    if (all.length === 1) return all[0];
+
+      // Refusals, keyed by the folder that produced them, built before the
+      // single-folder shortcut. That path used to return the stored report
+      // itself, which would hand back a singular stopReason on an aggregate:
+      // a reason with no owner, which C-33 forbids.
+      const byFolder: Record<string, CoverageStopReason> = {};
+      for (const [key, report] of this.reports) {
+        if (report.stopReason) byFolder[key] = report.stopReason;
+      }
+      const refusals = Object.keys(byFolder).length > 0 ? byFolder : undefined;
+
+      // One folder is OBSERVATIONALLY the same report, not the same object.
+      // AC-54 asked only that the merged view contain the folder's specs.
+      if (all.length === 1) {
+        const only = all[0];
+        return {
+          entries: only.entries,
+          summary: only.summary,
+          parseErrors: only.parseErrors,
+          specCandidatesCount: only.specCandidatesCount,
+          parseErrorPatterns: only.parseErrorPatterns,
+          resultsValidationErrors: only.resultsValidationErrors,
+          folderStopReasons: refusals,
+        };
+      }
 
     const withParseErrors = all.filter(r => r.parseErrors !== undefined);
     const withCandidates = all.filter(r => r.specCandidatesCount !== undefined);
@@ -216,6 +242,7 @@ export class CoverageReportStore {
       parseErrorPatterns: withPatterns.length > 0
         ? withPatterns.flatMap(r => r.parseErrorPatterns ?? [])
         : undefined,
+      folderStopReasons: refusals,
     };
   }
 }
@@ -338,6 +365,39 @@ export function buildACDecorations(input: BuildACDecorationsInput): ACDecoration
  *        → ParseErrorGroupNode (if parseErrors present) + one spec node
  *          per entry. Either list can be empty; we still render the other.
  */
+/**
+ * Format one folder's refusal for the Output channel, spec-vscode C-33.
+ *
+ * The folder is named because an operator who cannot see which of the seven
+ * refusals fired, and where, cannot act on it. The kind sits beside the
+ * message so the line is greppable by the same value a consumer branches on.
+ */
+export function formatStopReasonNotice(
+  folderKey: string,
+  reason: CoverageStopReason,
+): string {
+  return `coverage refused for ${folderKey} [${reason.kind}]: ${reason.message}`;
+}
+
+/**
+ * Write one line per refused folder to the Output channel, C-33.
+ *
+ * Takes the aggregate rather than a single report, so a refusal always arrives
+ * with the folder that produced it. A successful folder contributes nothing,
+ * or an operator cannot tell which one needs attention.
+ */
+export function reportStopReasons(
+  channel: { appendLine(value: string): void },
+  merged: MergedCoverageReport | null,
+): void {
+  const byFolder = merged?.folderStopReasons;
+  if (!byFolder) return;
+  for (const key of Object.keys(byFolder).sort()) {
+    channel.appendLine(formatStopReasonNotice(key, byFolder[key]));
+  }
+}
+
+
 export function buildCoverageTreeRoot(report: CoverageReport | null): SpecTreeRootNode[] {
   if (report === null) {
     return [{
@@ -350,6 +410,20 @@ export function buildCoverageTreeRoot(report: CoverageReport | null): SpecTreeRo
 
   const entries = report.entries ?? [];
   const parseErrors = report.parseErrors ?? [];
+
+  // A refused run, C-33. Checked BEFORE the degenerate case below, because a
+  // refusal carries an empty entries list and no parse errors and is otherwise
+  // indistinguishable from a clean empty workspace. Reading the reason first is
+  // the whole obligation this constraint places here.
+  if (report.stopReason) {
+    return [{
+      kind: 'message',
+      label: `Coverage did not run: ${report.stopReason.message}`,
+      detail: 'Specter stopped before measuring anything, so this is neither an empty workspace nor a parse failure. Fix the cause and run coverage again; the Output channel names the folder it came from.',
+      iconId: 'warning',
+    }];
+  }
+
 
   // Both empty: degenerate case. Name the likely cause.
   if (entries.length === 0 && parseErrors.length === 0) {

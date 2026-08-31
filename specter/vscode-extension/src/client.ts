@@ -320,6 +320,11 @@ const FIELD_MAP: Record<string, string> = {
   fully_covered: 'fullyCovered',
   partially_covered: 'partiallyCovered',
   parse_errors: 'parseErrors',
+  // spec-coverage C-10's refusal reason. Without this entry the raw
+  // snake_case key survives the conversion and every access to
+  // report.stopReason returns undefined, which is the defect this map's own
+  // comment records for spec_id.
+  stop_reason: 'stopReason',
   // C-44's document. The outer key and both coordinate names, because
   // convertKeys rewrites at every depth and an element's own keys are as much
   // the CLI's spelling as the document's.

@@ -123,9 +123,33 @@ export type StreamValidationError =
   | NegativeCountError
   | ExtractedBelowEntriesError;
 
+/**
+ * Why a coverage run stopped before it measured anything, spec-coverage C-10.
+ *
+ * The four kinds are declared here and nowhere else. A second union, enum or
+ * named constant collection is a copy of policy that cannot know when this one
+ * changes, which spec-vscode C-33 forbids.
+ */
+export interface CoverageStopReason {
+  /** What stopped the run. A consumer branches on this. */
+  kind: 'manifest_error' | 'invalid_flag' | 'unknown_scope' | 'unmet_precondition';
+  /** What a person reads. Required: a kind that explains nothing is not a reason. */
+  message: string;
+}
+
 export interface CoverageReport {
   entries: SpecCoverageEntry[];
   summary: SpecSummary;
+  /**
+   * Present only when the run refused, spec-coverage C-10.
+   *
+   * `entries` and `summary` are still emitted on a refusal, as an empty list
+   * and a zeroed summary, and those are uncomputed placeholders rather than
+   * measurements. This field is the only thing that separates them from a
+   * clean empty workspace, so spec-vscode C-33 requires it to be read before
+   * either of them is interpreted.
+   */
+  stopReason?: CoverageStopReason;
   /**
    * v0.9.0+: per-file parse errors surfaced by `specter coverage --json`.
    * Every report that came through the client carries this field, as [] when
@@ -163,6 +187,33 @@ export interface CoverageReport {
    * of 20 individual diagnostics.
    */
   parseErrorPatterns?: CoverageParseErrorPattern[];
+}
+
+/**
+ * The multi-root aggregate, spec-vscode C-33.
+ *
+ * A distinct type, not CoverageReport with an extra field and not an
+ * `extends` of it. A single-folder report and an aggregate answer different
+ * questions, and one type wearing both makes every consumer decide which it
+ * holds.
+ *
+ * It deliberately does NOT carry `stopReason`. A lone reason on an aggregate
+ * has no owner, and concatenating several loses which folder each belongs to,
+ * which is the one thing an operator needs in order to fix one.
+ */
+export interface MergedCoverageReport {
+  entries: SpecCoverageEntry[];
+  summary: SpecSummary;
+  parseErrors?: CoverageParseError[];
+  specCandidatesCount?: number;
+  parseErrorPatterns?: CoverageParseErrorPattern[];
+  resultsValidationErrors?: CoverageReport['resultsValidationErrors'];
+  /**
+   * Refusals keyed by the store's own folder key, the value createClientKey
+   * produces. The key is the caller's existing handle on a folder, not a
+   * display name.
+   */
+  folderStopReasons?: Record<string, CoverageStopReason>;
 }
 
 export interface CoverageParseErrorPattern {
