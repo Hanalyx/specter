@@ -440,6 +440,27 @@ spec:
         both an empty workspace and a parse failure, and the reason MUST reach
         the Output channel, because an operator who cannot see which of the
         seven refusals fired cannot act on it.
+
+        **The field crosses the wire boundary like every other.** The CLI emits
+        `stop_reason` with `kind` and `message`; this extension speaks
+        camelCase, so `SpecterClient` MUST convert it to `stopReason` through
+        the same explicit map that carries `spec_id` and `parse_errors`, the
+        typed `CoverageReport` MUST declare it, and the raw key MUST NOT survive
+        the conversion. A document handed straight to the tree builder without
+        passing through the client is not evidence: it would carry a field the
+        real client never produces, and the criterion would pass while the
+        product returned an untyped raw key. This is the defect the field map's
+        own comment records for `spec_id`, where every access silently returned
+        undefined.
+
+        **A refusal is owned by the folder it came from.** The multi-root store
+        merges per-folder reports into one, reconstructing it field by field, so
+        a field not named there is dropped. One refused folder MUST NOT erase a
+        successful one, and MUST remain visible with its folder named. The
+        merged report therefore carries a per-folder map of refusals rather than
+        a single `stopReason`: a lone reason on an aggregate has no owner, and
+        concatenating several loses which folder each belongs to, which is what
+        an operator needs in order to fix one.
       type: technical
       enforcement: error
 
@@ -1518,14 +1539,22 @@ spec:
         Asserting only the refusal case would pass on an implementation that
         renamed the empty state.
       inputs:
-        refused: "a report with stop_reason set, entries [], summary zeroed, parse_errors []"
+        refused: "a raw CLI document with stop_reason {kind, message}, entries [], summary zeroed, parse_errors []"
         empty_workspace: "the same document with no stop_reason"
         parse_failed: "entries [], no stop_reason, parse_errors non-empty"
+        through_the_client: "the refused document read through SpecterClient rather than handed to the tree builder"
+        multi_root: "two folders, one reaching its report and one refused"
       expected_output:
+        raw_stop_reason_converts_to_stopReason: true
+        raw_snake_case_key_does_not_survive: true
+        typed_report_declares_the_field: true
         refused_state_differs_from_nothing_to_show: true
         refused_state_differs_from_parse_failed: true
         empty_workspace_still_renders_nothing_to_show: true
         stop_reason_text_reaches_the_output_channel: true
+        merged_report_keeps_the_refusal: true
+        merged_refusal_names_its_folder: true
+        successful_folder_entries_survive_the_merge: true
       references_constraints: ["C-33"]
       priority: critical
 
@@ -1551,7 +1580,7 @@ spec:
       date: "2026-08-30"
       author: "specter-team"
       type: minor
-      description: "C-33 and AC-79 carry the consumer half of spec-coverage C-10. That constraint chose the additive shape for a refused coverage run: the document still emits entries [] and a zeroed summary, as uncomputed placeholders, with stop_reason as the only field that distinguishes them. This extension keys its empty state on exactly that pair, an empty entries list with no parse errors, so the producer fix arrives here as a new way to be wrong: the sidebar would report nothing to show for a workspace whose manifest was rejected, which leaves bugs/SP-SP-032 semantically open while the CLI half is closed. C-33 requires stop_reason to be read before entries or summary are interpreted, requires the state to be distinguishable from both the empty and the parse-failed states, and requires the reason to reach the Output channel so an operator can tell which of the seven refusals fired. AC-79 carries a negative control: the same document without stop_reason must still render as nothing to show, since the two are identical on every other field and asserting only the refusal case would pass on an implementation that merely renamed the empty state. The spec-coverage floor rises from ^1.23.0 to ^1.26.0, because stop_reason does not exist below it. Minor per the classifier: specter diff reports [additive]."
+      description: "C-33 and AC-79 carry the consumer half of spec-coverage C-10. That constraint chose the additive shape for a refused coverage run: the document still emits entries [] and a zeroed summary, as uncomputed placeholders, with stop_reason as the only field that distinguishes them. This extension keys its empty state on exactly that pair, an empty entries list with no parse errors, so the producer fix arrives here as a new way to be wrong: the sidebar would report nothing to show for a workspace whose manifest was rejected, which leaves bugs/SP-SP-032 semantically open while the CLI half is closed. C-33 requires stop_reason to be read before entries or summary are interpreted, requires the state to be distinguishable from both the empty and the parse-failed states, and requires the reason to reach the Output channel so an operator can tell which of the seven refusals fired. AC-79 carries a negative control: the same document without stop_reason must still render as nothing to show, since the two are identical on every other field and asserting only the refusal case would pass on an implementation that merely renamed the empty state. The spec-coverage floor rises from ^1.23.0 to ^1.26.0, because stop_reason does not exist below it. C-33 also binds the two boundaries the first draft left open. The wire boundary: the CLI emits stop_reason and this extension speaks camelCase, and client.ts FIELD_MAP had no entry for it, so the raw key would have survived untyped and AC-79 could have passed while the real client returned it. The criterion now reads the document through SpecterClient rather than handing it to the tree builder, which is the only way to see that. The multi-root boundary: the store merges per-folder reports by reconstructing the document field by field, so a field not named there is silently dropped. One refused folder must not erase a successful one, and the merged report carries a per-folder map of refusals rather than one aggregate reason, because a lone reason on an aggregate has no owner and concatenating several loses which folder each belongs to. Minor per the classifier: specter diff reports [additive]."
 
     - version: "5.0.2"
       date: "2026-08-30"
