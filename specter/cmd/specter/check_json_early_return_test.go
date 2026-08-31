@@ -152,10 +152,16 @@ func TestCheckJSONWritesADocumentOnEveryEarlyReturn(t *testing.T) {
 		// passing when the manifest branch was reverted. A mutation found it;
 		// the green suite could not.
 		stage string
+		// kind is the diagnostic the document must carry. Without it the
+		// criterion is satisfied by an empty diagnostics list, which counts
+		// zero errors, so both modes exit 0 and the parity assertion holds
+		// too. Measured: dropping the diagnostic from all three early returns
+		// left this test green.
+		kind string
 	}{
-		{"parse", "one spec in the workspace fails to parse", "FAIL specs/bad.spec.yaml"},
-		{"resolver", "the resolver reports a dangling reference", "dangling_reference"},
-		{"manifest", "the manifest fails to load", "unknown settings key"},
+		{"parse", "one spec in the workspace fails to parse", "FAIL specs/bad.spec.yaml", "parse_error"},
+		{"resolver", "the resolver reports a dangling reference", "dangling_reference", "dangling_reference"},
+		{"manifest", "the manifest fails to load", "unknown settings key", "manifest_error"},
 	} {
 		t.Run("spec-check/AC-46 "+tc.state+" failure still writes a document", func(t *testing.T) {
 			// Three subtests rather than one loop assertion, because these are
@@ -176,17 +182,57 @@ func TestCheckJSONWritesADocumentOnEveryEarlyReturn(t *testing.T) {
 			if len(strings.TrimSpace(stdout)) == 0 {
 				t.Fatalf("AC-46: stdout is empty when %s. C-14 requires the document to be written in full before the exit-code decision, so a caller reading stdout cannot tell a broken workspace from a crashed process.\nstderr:\n%s", tc.why, stderr)
 			}
-			var doc map[string]any
-			if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
-				t.Errorf("AC-46: stdout does not parse as one JSON document when %s: %v\nstdout:\n%s", tc.why, err, stdout)
+			var doc struct {
+				Diagnostics []struct {
+					Kind     string `json:"kind"`
+					Severity string `json:"severity"`
+					Message  string `json:"message"`
+				} `json:"diagnostics"`
+				Summary struct {
+					Errors int `json:"errors"`
+				} `json:"summary"`
 			}
-			if _, ok := doc["diagnostics"]; !ok {
-				t.Errorf("AC-46: the document carries no diagnostics key when %s, so it does not say why the run stopped.\nstdout:\n%s", tc.why, stdout)
+			if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+				t.Fatalf("AC-46: stdout does not parse as one JSON document when %s: %v\nstdout:\n%s", tc.why, err, stdout)
+			}
+
+			// The document has to say why the run stopped. A present but empty
+			// diagnostics list passes every structural check, counts zero
+			// errors, and exits 0 in both modes, which is worse than writing
+			// nothing: an empty stream is at least obviously broken.
+			var got string
+			for _, d := range doc.Diagnostics {
+				if d.Kind != tc.kind {
+					continue
+				}
+				got = d.Kind
+				if d.Severity != "error" {
+					t.Errorf("AC-46: the %s diagnostic has severity %q, want \"error\". A non-error severity gives the run a zero summary and a passing exit code", tc.state, d.Severity)
+				}
+				if strings.TrimSpace(d.Message) == "" {
+					t.Errorf("AC-46: the %s diagnostic carries an empty message, so the document names a kind and explains nothing", tc.state)
+				}
+			}
+			if got == "" {
+				kinds := make([]string, 0, len(doc.Diagnostics))
+				for _, d := range doc.Diagnostics {
+					kinds = append(kinds, d.Kind)
+				}
+				t.Errorf("AC-46: the document carries no %q diagnostic when %s. Kinds present: %v.\nstdout:\n%s", tc.kind, tc.why, kinds, stdout)
+			}
+			if doc.Summary.Errors < 1 {
+				t.Errorf("AC-46: the summary reports %d error(s) when %s, want at least 1. The summary is what the exit code is computed from, so a zero here is a passing verdict on a failed run", doc.Summary.Errors, tc.why)
 			}
 			// C-14: stdout carries the document alone. Human-readable notices
 			// belong on stderr, and the text run above shows there are some.
 			if strings.Contains(stdout, "error [") || strings.Contains(stdout, "error:") {
 				t.Errorf("AC-46: stdout carries human-readable notices beside the document when %s. C-14 requires stdout to hold the document alone.\nstdout:\n%s", tc.why, stdout)
+			}
+			// Exit 1 in its own right, not only as parity. Both modes agree at
+			// 0 when the document is empty, so parity alone cannot see the
+			// failure this criterion is about.
+			if jsonCode != 1 {
+				t.Errorf("AC-46: --json exited %d when %s, want 1", jsonCode, tc.why)
 			}
 			if jsonCode != textCode {
 				t.Errorf("AC-46: exit codes disagree when %s. text=%d json=%d. The verdict is a function of the diagnostics, not of how they are rendered.\ntext:\n%s", tc.why, textCode, jsonCode, textOut)
@@ -198,19 +244,22 @@ func TestCheckJSONWritesADocumentOnEveryEarlyReturn(t *testing.T) {
 // @spec spec-check
 // @ac AC-46
 //
-// C-14's one-path half, asserted structurally because no runtime observation
-// can see it.
+// C-14's ownership half, asserted structurally because no runtime observation
+// can see it. Adding an encoder to each early return produces identical output
+// for every input above, so every behavioral assertion stays green while the
+// condition that caused the defect is restored.
 //
-// Adding an encoder to each early return produces identical output for every
-// input above, so every behavioral assertion stays green while the condition
-// that caused the defect is restored: an early return with no emitter is one
-// edit away, and the next one added will be forgotten the same way.
-func TestCheckRendersTheJSONDocumentInOnePlace(t *testing.T) {
-	t.Run("spec-check/AC-46 checkCmd encodes to stdout at exactly one site", func(t *testing.T) {
+// Ownership, not placement. An earlier version of this guard required the
+// encoder to appear lexically inside checkCmd, which would fail a valid
+// extraction of the renderer into a named helper even though the property it
+// cares about was preserved. Private policy about where code sits is not the
+// rule; one owner that every exit routes through is.
+func TestCheckRendersThroughOneNamedOwner(t *testing.T) {
+	t.Run("spec-check/AC-46 one named function owns encoding, and the command routes to it", func(t *testing.T) {
 		fset := token.NewFileSet()
 		files := parseProductionFiles(t, fset, ".")
 
-		sites := funcSitesMatching(fset, files, func(n ast.Node) bool {
+		encodes := func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
 				return false
@@ -221,22 +270,58 @@ func TestCheckRendersTheJSONDocumentInOnePlace(t *testing.T) {
 			}
 			pkg, ok := sel.X.(*ast.Ident)
 			return ok && pkg.Name == "json"
-		})
-
-		var inCheck []string
-		for _, s := range sites {
-			if strings.HasPrefix(s, "checkCmd:") {
-				inCheck = append(inCheck, s)
+		}
+		callsOwner := func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return false
 			}
+			id, ok := call.Fun.(*ast.Ident)
+			return ok && id.Name == "renderCheckResult"
+		}
+		bareErrSilent := func(n ast.Node) bool {
+			ret, ok := n.(*ast.ReturnStmt)
+			if !ok || len(ret.Results) != 1 {
+				return false
+			}
+			id, ok := ret.Results[0].(*ast.Ident)
+			return ok && id.Name == "errSilent"
 		}
 
-		// Positive control. A guard that finds no encoder anywhere is matching
-		// the wrong pattern, and would pass this claim vacuously.
-		if len(sites) == 0 {
-			t.Fatalf("AC-46: no json.NewEncoder call found in any production file, so the matcher is wrong and the count below is meaningless")
+		sitesIn := func(fn string, want func(ast.Node) bool) []string {
+			var out []string
+			for _, s := range funcSitesMatching(fset, files, want) {
+				if strings.HasPrefix(s, fn+":") {
+					out = append(out, s)
+				}
+			}
+			return out
 		}
-		if len(inCheck) != 1 {
-			t.Errorf("AC-46: checkCmd encodes a document at %d site(s), want exactly 1. Sites: %v. Every early return that renders its own document is another place for the next early return to be forgotten, which is how bugs/SP-SP-032 began", len(inCheck), inCheck)
+
+		// Positive control: the matcher finds encoders somewhere, so a zero
+		// below means absence rather than a broken pattern.
+		if len(funcSitesMatching(fset, files, encodes)) == 0 {
+			t.Fatalf("AC-46: no json.NewEncoder call found in any production file, so this matcher is wrong and every count below is meaningless")
+		}
+
+		// The owner exists and encodes exactly once.
+		owner := sitesIn("renderCheckResult", encodes)
+		if len(owner) != 1 {
+			t.Errorf("AC-46: renderCheckResult encodes at %d site(s), want exactly 1. Sites: %v. A named owner is what makes the single-render property survive a refactor", len(owner), owner)
+		}
+
+		// The command owns none of it.
+		if got := sitesIn("checkCmd", encodes); len(got) != 0 {
+			t.Errorf("AC-46: checkCmd encodes a document itself at %v. Encoding belongs to the owner; a command that encodes is a second renderer whatever it is named", got)
+		}
+
+		// Every exit routes through the owner. A bare `return errSilent` is an
+		// exit that renders nothing, which is the defect in its original form.
+		if got := sitesIn("checkCmd", bareErrSilent); len(got) != 0 {
+			t.Errorf("AC-46: checkCmd returns errSilent directly at %v. That exit writes no document, which is exactly bugs/SP-SP-032", got)
+		}
+		if got := sitesIn("checkCmd", callsOwner); len(got) < 4 {
+			t.Errorf("AC-46: checkCmd routes to renderCheckResult at %d site(s), want at least 4: three early returns and the ordinary path. Sites: %v", len(got), got)
 		}
 	})
 }
