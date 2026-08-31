@@ -298,13 +298,25 @@ describe('spec-vscode/AC-79 the product path, through the scripted CLI', () => {
 describe('spec-vscode/AC-79 the stop-reason declarations, semantically', () => {
   const typesPath = path.resolve(__dirname, '..', 'types.ts');
 
-  /** The four-value policy, named once here so the checks below share it. */
-  const KINDS = new Set([
-    'manifest_error',
-    'invalid_flag',
-    'unknown_scope',
-    'unmet_precondition',
-  ]);
+  /**
+   * The canonical set, DERIVED from the declaration rather than restated.
+   *
+   * A `const KINDS = new Set([...])` here would be the private copy in a test
+   * fixture C-33 forbids, and it would be the copy held by the very test that
+   * forbids copies. It would also go stale silently: the scan would keep
+   * looking for the old four while the type declared five.
+   */
+  function canonicalKinds(): Set<string> {
+    const sym = prop('CoverageStopReason', 'kind');
+    if (!sym) return new Set();
+    const t = typeOfProp(sym);
+    const members = t.isUnion() ? t.types : [t];
+    const out = new Set<string>();
+    for (const m of members) {
+      if (m.isStringLiteral()) out.add(m.value);
+    }
+    return out;
+  }
 
   // ONE compiler world for the whole block. Building a Program per lookup gave
   // every call its own universe, so an identity comparison between two
@@ -384,6 +396,9 @@ describe('spec-vscode/AC-79 the stop-reason declarations, semantically', () => {
     const literals = members.map(m =>
       m.isStringLiteral() ? m.value : `NON_LITERAL:${checker.typeToString(m)}`,
     );
+    // The expected list is acceptance data for this one assertion. It is not
+    // reused as a policy source anywhere else in this file, which is the
+    // distinction between checking a set and keeping a second copy of it.
     expect(literals.sort()).toEqual(
       ['invalid_flag', 'manifest_error', 'unknown_scope', 'unmet_precondition'].sort(),
     );
@@ -435,15 +450,18 @@ describe('spec-vscode/AC-79 the stop-reason declarations, semantically', () => {
     expect(prop('MergedCoverageReport', 'stopReason')).toBeUndefined();
   });
 
-  it('declares the four kinds once, in types.ts and nowhere else', () => {
-    // Parsed, not grepped. A text search for one spelling misses a second
-    // union written with double quotes, which is the same policy declared
-    // twice and reads as clean:
-    //
-    //   type PrivateStopKind = "manifest_error" | "invalid_flag" | ...
-    //
-    // String-literal VALUES are quote-independent, so the parse sees both.
-    const kindValues = (file: string): Set<string> => {
+  it('declares the kind policy once, in types.ts and nowhere else', () => {
+    const canonical = canonicalKinds();
+    // The control, and it has to come first: before the implementation lands
+    // the derived set is empty, and an empty set is a subset of everything, so
+    // every file would read as clean.
+    expect(canonical.size).toBeGreaterThan(0);
+
+    // DECLARATIONS, not uses. A branch comparing one kind is ordinary code; a
+    // union, an enum, or a constant collection that reconstructs the set is a
+    // second copy of the policy. Parsed rather than grepped, so a copy written
+    // with double quotes is seen the same as one with single quotes.
+    const declaredKindsIn = (file: string): Set<string> => {
       const source = ts.createSourceFile(
         file,
         fs.readFileSync(file, 'utf8'),
@@ -451,9 +469,55 @@ describe('spec-vscode/AC-79 the stop-reason declarations, semantically', () => {
         true,
       );
       const found = new Set<string>();
+      const note = (n: ts.Node): void => {
+        if (ts.isStringLiteralLike(n) && canonical.has(n.text)) found.add(n.text);
+      };
+      // Bound when some ancestor gives the value a name it can be reached by.
+      // `new Set([...])` assigned to a const is bound; the same array handed
+      // straight to a call is not.
+      const isBoundToAName = (n: ts.Node): boolean => {
+        for (let cur: ts.Node | undefined = n.parent; cur; cur = cur.parent) {
+          if (
+            ts.isVariableDeclaration(cur) ||
+            ts.isPropertyAssignment(cur) ||
+            ts.isPropertyDeclaration(cur) ||
+            ts.isEnumMember(cur)
+          ) {
+            return true;
+          }
+        }
+        return false;
+      };
       const visit = (n: ts.Node): void => {
-        if (ts.isStringLiteral(n) || ts.isStringLiteralLike(n)) {
-          if (KINDS.has(n.text)) found.add(n.text);
+        // A type-level union of string literals.
+        if (ts.isUnionTypeNode(n)) {
+          for (const m of n.types) {
+            if (ts.isLiteralTypeNode(m)) note(m.literal);
+          }
+        }
+        // An enum whose members carry the values.
+        if (ts.isEnumDeclaration(n)) {
+          for (const m of n.members) {
+            if (m.initializer) note(m.initializer);
+          }
+        }
+        // A constant collection, but only one BOUND TO A NAME. That is the
+        // line between a reusable policy source and acceptance data used once.
+        //
+        // `expect(x).toEqual(['manifest_error', ...])` is an inline argument
+        // checked in a single assertion; nothing else can reach it, and it
+        // cannot go stale in a way that hides a second policy. A named
+        // `const KINDS = new Set([...])` can be reached, reused, and drift.
+        //
+        // Without this distinction the scan flags this very file, because the
+        // exact-kind assertion above passes all four values inline.
+        if (ts.isArrayLiteralExpression(n) && isBoundToAName(n)) {
+          n.elements.forEach(note);
+        }
+        if (ts.isObjectLiteralExpression(n) && isBoundToAName(n)) {
+          for (const prop of n.properties) {
+            if (prop.name) note(prop.name);
+          }
         }
         ts.forEachChild(n, visit);
       };
@@ -467,22 +531,20 @@ describe('spec-vscode/AC-79 the stop-reason declarations, semantically', () => {
       for (const name of fs.readdirSync(dir)) {
         const full = path.join(dir, name);
         if (fs.statSync(full).isDirectory()) {
-          if (name !== '__tests__') walk(full);
+          walk(full);
           continue;
         }
         if (!name.endsWith('.ts') || full === typesPath) continue;
-        // A file that spells out the whole policy is a second declaration of
-        // it. One kind alone is an ordinary use, such as a branch on a value.
-        if (kindValues(full).size === KINDS.size) {
+        const declared = declaredKindsIn(full);
+        if (canonical.size > 0 && [...canonical].every(k => declared.has(k))) {
           offenders.push(path.relative(srcDir, full));
         }
       }
     };
+    // __tests__ is walked too. This file must not hold the copy it forbids,
+    // and excluding the directory would have hidden exactly that.
     walk(srcDir);
 
-    // The control. Without it this passes while NOTHING declares the union,
-    // which is the state before the implementation lands.
-    expect(kindValues(typesPath)).toEqual(KINDS);
     expect(offenders).toEqual([]);
   });
 });
@@ -536,15 +598,22 @@ describe('spec-vscode/AC-79 the coverage run reports refusals', () => {
     return calls;
   }
 
-  /** The argument source text of each call to `callee` inside `fnName`. */
-  function callArgsInFunction(fnName: string, callee: string): string[][] {
+  /** The argument NODES of each call to `callee` inside `fnName`.
+   *
+   * Nodes, not source text. Substring matching accepts an expression that
+   * merely contains the wanted spelling, so all of these read as correct:
+   *
+   *   reportStopReasons(otheroutputChannel, coverageReports.merged() && null)
+   *   reportStopReasons((outputChannel, null), (coverageReports.merged(), null))
+   */
+  function callArgsInFunction(fnName: string, callee: string): ts.Expression[][] {
     const source = ts.createSourceFile(
       EXT_TS,
       fs.readFileSync(EXT_TS, 'utf8'),
       ts.ScriptTarget.ES2020,
       true,
     );
-    const out: string[][] = [];
+    const out: ts.Expression[][] = [];
     const visit = (node: ts.Node): void => {
       if (
         (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) &&
@@ -560,7 +629,7 @@ describe('spec-vscode/AC-79 the coverage run reports refusals', () => {
                 ? fn.name.text
                 : '';
             if (name === callee) {
-              out.push(n.arguments.map(a => a.getText(source)));
+              out.push([...n.arguments]);
             }
           }
           ts.forEachChild(n, collect);
@@ -596,12 +665,44 @@ describe('spec-vscode/AC-79 the coverage run reports refusals', () => {
     // ownership the folder map exists to carry. So the arguments are read.
     const args = callArgsInFunction('runCoverageForFolder', 'reportStopReasons');
     expect(args).toHaveLength(1);
-    const [channelArg, reportArg] = args[0];
+    expect(args[0]).toHaveLength(2);
 
-    // The module's own Output channel, not a literal and not a fresh object.
-    expect(channelArg).toContain('outputChannel');
-    // The aggregate, read after the store write. A folder's own report has no
-    // folder map on it at all.
-    expect(reportArg).toContain('coverageReports.merged()');
+    // Unwrap only what is transparent: parentheses and a non-null assertion.
+    // A comma expression is NOT unwrapped, because its value is the last
+    // operand and `(outputChannel, null)` is null.
+    const unwrap = (e: ts.Expression): ts.Expression => {
+      let cur = e;
+      for (;;) {
+        if (ts.isParenthesizedExpression(cur)) {
+          cur = cur.expression;
+          continue;
+        }
+        if (ts.isNonNullExpression(cur)) {
+          cur = cur.expression;
+          continue;
+        }
+        return cur;
+      }
+    };
+
+    const channelArg = unwrap(args[0][0]);
+    const reportArg = unwrap(args[0][1]);
+
+    // Argument one is the identifier itself, not something spelled like it.
+    // `otheroutputChannel` contains the text and is a different binding.
+    expect(ts.isIdentifier(channelArg)).toBe(true);
+    expect((channelArg as ts.Identifier).text).toBe('outputChannel');
+
+    // Argument two is a zero-argument call to merged on coverageReports.
+    // `coverageReports.merged() && null` is a binary expression whose value is
+    // null, and it contains the wanted text.
+    expect(ts.isCallExpression(reportArg)).toBe(true);
+    const call = reportArg as ts.CallExpression;
+    expect(call.arguments).toHaveLength(0);
+    expect(ts.isPropertyAccessExpression(call.expression)).toBe(true);
+    const access = call.expression as ts.PropertyAccessExpression;
+    expect(access.name.text).toBe('merged');
+    expect(ts.isIdentifier(access.expression)).toBe(true);
+    expect((access.expression as ts.Identifier).text).toBe('coverageReports');
   });
 });
