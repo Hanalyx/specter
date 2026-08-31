@@ -203,11 +203,45 @@ describe('[spec-vscode/AC-54] CoverageReportStore — two-folder isolation', () 
 
 // @ac AC-54
 describe('[spec-vscode/AC-54] CoverageReportStore — single-root regression', () => {
-  it('merged() with one folder IS that folder normalized report (identity, not a copy)', () => {
+  it('merged() with one folder is OBSERVATIONALLY that folder normalized report', () => {
     const store = new CoverageReportStore(ops);
     store.set('/ws/solo', makeReport([makeEntry('spec-a')]), '/ws/solo');
 
-    expect(store.merged()).toBe(store.get('/ws/solo'));
+    // Observational, not referential. This assertion used to require the same
+    // object by identity, which is stronger than AC-54 asks for: its expected
+    // output names only what the merged view contains.
+    //
+    // spec-vscode C-33 makes identity wrong rather than merely
+    // over-specified. merged() returns the aggregate type in every case, so a
+    // lone refused folder cannot return a CoverageReport carrying a singular
+    // stopReason, which is the ownerless aggregate reason C-33 forbids.
+    // Identity was an implementation detail a test pinned, and leaving it
+    // pinned would forbid the fix.
+    const solo = store.get('/ws/solo')!;
+    const merged = store.merged()!;
+    expect(merged.entries).toEqual(solo.entries);
+    expect(merged.summary).toEqual(solo.summary);
+    expect(merged.parseErrors).toEqual(solo.parseErrors);
+  });
+
+  it('merged() with one REFUSED folder owns the reason by folder and leaks no singular stopReason', () => {
+    // The single-folder path is the one that used to skip the merge entirely.
+    // If it still returns the stored report, a refusal arrives on the
+    // aggregate with no owner, which is what C-33 forbids and what an
+    // identity-return would reintroduce.
+    const store = new CoverageReportStore(ops);
+    const refused = {
+      ...makeReport([]),
+      stopReason: { kind: 'manifest_error', message: 'unknown settings key' },
+    } as unknown as Parameters<typeof store.set>[1];
+    store.set('/ws/solo', refused, '/ws/solo');
+
+    const merged = store.merged()! as unknown as Record<string, unknown>;
+    const byFolder = merged.folderStopReasons as Record<string, { kind: string }> | undefined;
+    expect(byFolder).toBeDefined();
+    expect(Object.keys(byFolder!)).toEqual(['/ws/solo']);
+    expect(byFolder!['/ws/solo'].kind).toBe('manifest_error');
+    expect(merged.stopReason).toBeUndefined();
   });
 
   it('merged() is null when no report has been stored (sidebar "not run yet" state preserved)', () => {

@@ -123,57 +123,99 @@ describe('spec-vscode/AC-79 a refused coverage run is not an empty workspace', (
 });
 
 // ---------------------------------------------------------------------------
-// AC-79, the product path. The assertions above read the converter and the
-// store directly, which is necessary and not sufficient: observing that
-// stopReason exists does not stop the sidebar rendering "nothing to show".
+// AC-79, the product path, through the scripted CLI.
+//
+// Observing that stopReason exists after conversion does not stop the sidebar
+// rendering "nothing to show", so the required evidence runs the client.
+//
+// Scripted, not the real binary. A describe.skip guarded on bin/specter lets a
+// clean checkout report this criterion covered while running none of it, and a
+// binary that happens to exist can be stale. The real-binary run is additional
+// evidence and lives in stopReasonIntegration.test.ts.
+//
+// The harness follows the clientExitCode.test.ts precedent, duplicated rather
+// than imported because those files export nothing.
 // ---------------------------------------------------------------------------
 
-const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
-const CLI = path.join(REPO_ROOT, 'bin', 'specter');
-const describeWithCLI = fs.existsSync(CLI) ? describe : describe.skip;
+interface ScriptedRun {
+  exitCode: number;
+  stdout: string;
+  stderr?: string;
+}
 
-describeWithCLI('spec-vscode/AC-79 the product path, through the real client', () => {
-  let ws: string;
+const scripted: { next?: ScriptedRun; calls: string[][] } = { calls: [] };
 
+jest.mock('child_process', () => {
+  const util = require('util');
+  const { EventEmitter } = require('events');
+
+  function execFile(file: string, ...rest: unknown[]): unknown {
+    const args = (Array.isArray(rest[0]) ? rest[0] : []) as string[];
+    const cb = rest.filter(a => typeof a === 'function').pop() as
+      | ((e: Error | null, so: string, se: string) => void)
+      | undefined;
+    scripted.calls.push(args);
+    const run = scripted.next ?? { exitCode: 0, stdout: '{}', stderr: '' };
+
+    const child = new EventEmitter();
+    (child as unknown as Record<string, unknown>).kill = () => true;
+    process.nextTick(() => {
+      if (!cb) return;
+      if (run.exitCode === 0) {
+        cb(null, run.stdout, run.stderr ?? '');
+        return;
+      }
+      // Node's own semantics: stdout is still delivered on a non-zero exit,
+      // with err.code carrying the numeric status.
+      const err: NodeJS.ErrnoException = new Error(`Command failed: ${file}`);
+      err.code = run.exitCode as unknown as string;
+      cb(err, run.stdout, run.stderr ?? '');
+    });
+    return child;
+  }
+  (execFile as unknown as Record<symbol, unknown>)[util.promisify.custom] = (
+    file: string,
+    args?: string[],
+  ) =>
+    new Promise((resolve, reject) => {
+      execFile(file, args ?? [], (e: Error | null, stdout: string, stderr: string) => {
+        if (e) {
+          (e as unknown as Record<string, unknown>).stdout = stdout;
+          (e as unknown as Record<string, unknown>).stderr = stderr;
+          reject(e);
+          return;
+        }
+        resolve({ stdout, stderr });
+      });
+    });
+
+  return { execFile, spawn: () => new (require('events').EventEmitter)() };
+});
+
+describe('spec-vscode/AC-79 the product path, through the scripted CLI', () => {
   beforeEach(() => {
-    ws = fs.mkdtempSync(path.join(os.tmpdir(), 'stopreason-'));
-    fs.mkdirSync(path.join(ws, 'specs'), { recursive: true });
-    // A manifest the loader rejects. Under --strictness annotation, which is
-    // what SpecterClient.coverage() passes, this still refuses.
-    fs.writeFileSync(
-      path.join(ws, 'specter.yaml'),
-      'schema_version: 1\nsystem:\n  name: s\nsettings:\n  bogus_key: 1\n',
-    );
-    fs.writeFileSync(
-      path.join(ws, 'specs', 'ok.spec.yaml'),
-      [
-        'spec:',
-        '  id: ok-spec',
-        '  version: "1.0.0"',
-        '  status: approved',
-        '  tier: 3',
-        '  context: {system: s, feature: f, description: "A valid spec beside a rejected manifest"}',
-        '  objective: {summary: "Reach the manifest loader"}',
-        '  constraints:',
-        '    - {id: C-01, description: "MUST hold", type: technical, enforcement: error}',
-        '  acceptance_criteria:',
-        '    - {id: AC-01, description: "It holds", references_constraints: ["C-01"], priority: critical}',
-        '',
-      ].join('\n'),
-    );
+    scripted.calls = [];
+    scripted.next = undefined;
   });
 
-  afterEach(() => fs.rmSync(ws, { recursive: true, force: true }));
-
   it('SpecterClient.coverage() returns a typed stopReason for a refused run', async () => {
-    // The real client, not the converter. A converter test cannot see a
-    // client that drops the field, throws, or never reaches the conversion.
+    // The CLI refuses and still writes the document; exit 1 is the real shape.
+    scripted.next = {
+      exitCode: 1,
+      stdout: JSON.stringify(rawRefused),
+      stderr: 'error: unknown settings key "settings.bogus_key"\n',
+    };
+
     const client = new SpecterClient({
-      binaryPath: CLI,
-      manifestPath: path.join(ws, 'specter.yaml'),
-      workspaceFolder: ws,
+      binaryPath: '/fake/specter',
+      manifestPath: '/ws/bad/specter.yaml',
+      workspaceFolder: '/ws/bad',
     });
     const report = (await client.coverage()) as CoverageReport & Loose;
+
+    // The client really ran, so a stub that returned a canned object cannot
+    // satisfy this.
+    expect(scripted.calls.some(a => a.includes('coverage') && a.includes('--json'))).toBe(true);
 
     const reason = report.stopReason as Loose | undefined;
     expect(reason).toBeDefined();
@@ -194,119 +236,158 @@ describeWithCLI('spec-vscode/AC-79 the product path, through the real client', (
       parse_errors: [{ file: 'specs/broken.spec.yaml', type: 'required', message: 'boom' }],
     }) as CoverageReport;
 
-    const refusedRoot = buildCoverageTreeRoot(refused);
-    const emptyRoot = buildCoverageTreeRoot(emptyWorkspace);
-    const parseFailedRoot = buildCoverageTreeRoot(parseFailed);
+    const refusedRoot = JSON.stringify(buildCoverageTreeRoot(refused));
+    const emptyRoot = JSON.stringify(buildCoverageTreeRoot(emptyWorkspace));
+    const parseFailedRoot = JSON.stringify(buildCoverageTreeRoot(parseFailed));
 
-    // The three states are distinguishable to a user. The refusal is the one
-    // that used to be indistinguishable from an empty workspace.
-    expect(JSON.stringify(refusedRoot)).not.toEqual(JSON.stringify(emptyRoot));
-    expect(JSON.stringify(refusedRoot)).not.toEqual(JSON.stringify(parseFailedRoot));
+    expect(refusedRoot).not.toEqual(emptyRoot);
+    expect(refusedRoot).not.toEqual(parseFailedRoot);
     // The negative control: a real empty workspace still says so.
-    expect(JSON.stringify(emptyRoot)).toContain('No specs found in this workspace');
+    expect(emptyRoot).toContain('No specs found in this workspace');
   });
 
-  it('the Output channel names the reason and the folder it came from', () => {
-    // Required through a dynamic lookup rather than a static import, so the
-    // absence is an ordinary failure rather than a compile error that takes
-    // the whole suite down and reads as a kill.
+  it('the Output channel receives the reason, with its folder, through the delivery path', () => {
+    // Delivery, not formatting. An exported formatter nobody calls would pass
+    // a direct-call assertion while the sidebar showed only "No specs found".
+    //
+    // The on-save handler itself is unreachable from this suite, since nothing
+    // imports ../extension. The highest reachable seam is the function that
+    // takes the merged report and writes to a channel, so that is what is
+    // required and driven here.
     const mod = require('../coverage') as Record<string, unknown>;
-    const format = mod.formatStopReasonNotice as
-      | ((folderKey: string, reason: { kind: string; message: string }) => string)
+    const report = mod.reportStopReasons as
+      | ((channel: { appendLine(v: string): void }, merged: unknown) => void)
       | undefined;
+    expect(typeof report).toBe('function');
 
-    expect(typeof format).toBe('function');
-    const line = format!('/ws/bad', { kind: 'manifest_error', message: 'unknown settings key' });
-    // An operator who cannot see which folder refused cannot act on it.
-    expect(line).toContain('/ws/bad');
-    expect(line).toContain('manifest_error');
-    expect(line).toContain('unknown settings key');
+    const store = new CoverageReportStore(noopOps);
+    store.set('/ws/good', snakeToCamelCoverage({
+      entries: [{ spec_id: 'ok-spec', total_acs: 1, covered_acs: ['AC-01'], passes_threshold: true }],
+      summary: { total_specs: 1, passing: 1, failing: 0 },
+      parse_errors: [],
+    }) as CoverageReport, '/ws/good');
+    store.set('/ws/bad', snakeToCamelCoverage(rawRefused) as CoverageReport, '/ws/bad');
+
+    const lines: string[] = [];
+    report!({ appendLine: (v: string) => lines.push(v) }, store.merged());
+
+    // One line, naming the folder that refused and why. The successful folder
+    // produces none, or an operator cannot tell which one needs attention.
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('/ws/bad');
+    expect(lines[0]).toContain('manifest_error');
+    expect(lines[0]).not.toContain('/ws/good');
   });
 });
 
 // ---------------------------------------------------------------------------
-// AC-79, the declarations. C-33 fixes the shapes; these bind them.
+// AC-79, the declarations, checked semantically.
 //
-// Read out of types.ts with the TypeScript compiler API at Jest runtime, so a
-// missing declaration is an ordinary test failure. Writing them as
-// `@ts-expect-error` against an imported type would not compile until the type
-// exists, which takes the suite down and reads as a kill, and writing them
-// against a copied union would be the second declaration of the four-kind
-// policy C-33 forbids.
+// Reading declared members and printed type text is syntactic, and four
+// mutants survive it: an aggregate that INHERITS the forbidden singular
+// stopReason through `extends`, a fifth kind, a kind widened with `| string`,
+// and a folder map whose value merely mentions the shared type rather than
+// resolving to it.
+//
+// So the checker is asked instead: properties are resolved including inherited
+// ones, the union is enumerated from its resolved members, and widening is
+// tested by assignability rather than by text.
 // ---------------------------------------------------------------------------
 
-describe('spec-vscode/AC-79 the stop-reason declarations', () => {
+describe('spec-vscode/AC-79 the stop-reason declarations, semantically', () => {
   const typesPath = path.resolve(__dirname, '..', 'types.ts');
 
-  /** The printed type of a named member on a named interface, or undefined. */
-  function memberType(iface: string, member: string): string | undefined {
-    const program = ts.createProgram([typesPath], {
+  function program(): { checker: ts.TypeChecker; src: ts.SourceFile } {
+    const prog = ts.createProgram([typesPath], {
       target: ts.ScriptTarget.ES2020,
       strict: true,
       noEmit: true,
     });
-    const checker = program.getTypeChecker();
-    const source = program.getSourceFile(typesPath);
-    if (!source) throw new Error(`types.ts not found at ${typesPath}`);
-
-    let printed: string | undefined;
-    ts.forEachChild(source, node => {
-      if (!ts.isInterfaceDeclaration(node) || node.name.text !== iface) return;
-      for (const m of node.members) {
-        if (!m.name || m.name.getText(source) !== member) continue;
-        const sym = checker.getSymbolAtLocation(m.name);
-        if (!sym) continue;
-        const optional = (m as ts.PropertySignature).questionToken ? '?' : '';
-        printed = optional + checker.typeToString(
-          checker.getTypeOfSymbolAtLocation(sym, m),
-        );
-      }
-    });
-    return printed;
+    const src = prog.getSourceFile(typesPath);
+    if (!src) throw new Error(`types.ts not found at ${typesPath}`);
+    return { checker: prog.getTypeChecker(), src };
   }
 
-  function aliasText(name: string): string | undefined {
-    const program = ts.createProgram([typesPath], { noEmit: true });
-    const source = program.getSourceFile(typesPath);
-    if (!source) return undefined;
-    let out: string | undefined;
-    ts.forEachChild(source, node => {
+  /** The declared type of a named interface, resolved. */
+  function typeOf(name: string): { checker: ts.TypeChecker; type: ts.Type } | undefined {
+    const { checker, src } = program();
+    let found: ts.Type | undefined;
+    ts.forEachChild(src, node => {
       if (ts.isInterfaceDeclaration(node) && node.name.text === name) {
-        out = node.getText(source);
+        found = checker.getTypeAtLocation(node.name);
       }
     });
-    return out;
+    return found ? { checker, type: found } : undefined;
   }
 
-  it('CoverageStopReason declares exactly the four kinds and a required message', () => {
-    const decl = aliasText('CoverageStopReason');
-    expect(decl).toBeDefined();
-    for (const kind of ['manifest_error', 'invalid_flag', 'unknown_scope', 'unmet_precondition']) {
-      expect(decl).toContain(`'${kind}'`);
-    }
-    // message is required, not optional. An optional message lets a producer
-    // name a kind and explain nothing.
-    expect(memberType('CoverageStopReason', 'message')).toBe('string');
+  /** A property resolved through the type, so inherited members are visible. */
+  function prop(iface: string, name: string): { checker: ts.TypeChecker; sym: ts.Symbol } | undefined {
+    const t = typeOf(iface);
+    if (!t) return undefined;
+    const sym = t.checker.getPropertyOfType(t.type, name);
+    return sym ? { checker: t.checker, sym } : undefined;
+  }
+
+  it('CoverageStopReason.kind resolves to exactly the four literals', () => {
+    const p = prop('CoverageStopReason', 'kind');
+    expect(p).toBeDefined();
+    const kindType = p!.checker.getTypeOfSymbolAtLocation(p!.sym, p!.sym.valueDeclaration!);
+
+    // Enumerated from the resolved union, so `| string` shows up as a
+    // non-literal member rather than hiding inside printed text.
+    const members = kindType.isUnion() ? kindType.types : [kindType];
+    const literals = members.map(m =>
+      m.isStringLiteral() ? m.value : `NON_LITERAL:${p!.checker.typeToString(m)}`,
+    );
+    expect(literals.sort()).toEqual(
+      ['invalid_flag', 'manifest_error', 'unknown_scope', 'unmet_precondition'].sort(),
+    );
+
+    const message = prop('CoverageStopReason', 'message');
+    expect(message).toBeDefined();
+    // Required, not optional. An optional message names a kind and explains
+    // nothing.
+    expect((message!.sym.flags & ts.SymbolFlags.Optional) !== 0).toBe(false);
   });
 
-  it('CoverageReport.stopReason is optional and reuses the shared type', () => {
-    // Optional: present only on a refused run, so a consumer keys on presence.
-    expect(memberType('CoverageReport', 'stopReason')).toBe('?CoverageStopReason | undefined');
+  it('CoverageReport.stopReason is optional and is the shared type', () => {
+    const p = prop('CoverageReport', 'stopReason');
+    expect(p).toBeDefined();
+    expect((p!.sym.flags & ts.SymbolFlags.Optional) !== 0).toBe(true);
+
+    const shared = typeOf('CoverageStopReason');
+    const declared = p!.checker.getTypeOfSymbolAtLocation(p!.sym, p!.sym.valueDeclaration!);
+    const nonUndefined = declared.isUnion()
+      ? declared.types.filter(x => (x.flags & ts.TypeFlags.Undefined) === 0)
+      : [declared];
+    expect(nonUndefined).toHaveLength(1);
+    // Identity against the resolved shared type, so a structurally identical
+    // second declaration does not satisfy it.
+    expect(nonUndefined[0]).toBe(shared!.type);
   });
 
-  it('MergedCoverageReport owns the folder map and not a singular reason', () => {
-    // The map reuses the same exported type rather than restating it.
-    const folderMap = memberType('MergedCoverageReport', 'folderStopReasons');
-    expect(folderMap).toBeDefined();
-    expect(folderMap).toContain('CoverageStopReason');
-    // A singular reason on the aggregate would have no owner, which is the
-    // shape the map exists to prevent.
-    expect(memberType('MergedCoverageReport', 'stopReason')).toBeUndefined();
+  it('MergedCoverageReport owns the folder map and does not inherit a singular reason', () => {
+    const map = prop('MergedCoverageReport', 'folderStopReasons');
+    expect(map).toBeDefined();
+
+    // Resolve the map's VALUE type to the shared type. A value that merely
+    // mentions the name in printed text would pass a text check.
+    const mapType = map!.checker.getTypeOfSymbolAtLocation(map!.sym, map!.sym.valueDeclaration!);
+    const nonUndefined = mapType.isUnion()
+      ? mapType.types.filter(x => (x.flags & ts.TypeFlags.Undefined) === 0)
+      : [mapType];
+    expect(nonUndefined).toHaveLength(1);
+    const index = map!.checker.getIndexInfoOfType(nonUndefined[0], ts.IndexKind.String);
+    expect(index).toBeDefined();
+    expect(index!.type).toBe(typeOf('CoverageStopReason')!.type);
+
+    // getPropertyOfType resolves INHERITED members too, so an aggregate that
+    // gains stopReason through `extends CoverageReport` fails here. That is
+    // the mutant a declared-members-only read cannot see.
+    expect(prop('MergedCoverageReport', 'stopReason')).toBeUndefined();
   });
 
   it('declares the four kinds once, in types.ts and nowhere else', () => {
-    // A second literal union is a copy of policy that cannot know when the set
-    // changes. This repository records eight instances of that shape.
     const srcDir = path.resolve(__dirname, '..');
     const offenders: string[] = [];
     const walk = (dir: string): void => {
@@ -325,8 +406,7 @@ describe('spec-vscode/AC-79 the stop-reason declarations', () => {
     walk(srcDir);
 
     // The control. Without it this passes while NOTHING declares the union,
-    // which is the state before the implementation lands, and the check would
-    // read as satisfied when it is merely vacuous.
+    // which is the state before the implementation lands.
     expect(fs.readFileSync(typesPath, 'utf8')).toContain("'unmet_precondition'");
     expect(offenders).toEqual([]);
   });

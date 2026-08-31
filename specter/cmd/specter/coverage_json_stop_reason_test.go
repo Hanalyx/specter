@@ -440,5 +440,31 @@ func TestCoverageRendersThroughOneDiscoveredOwner(t *testing.T) {
 		if n := callees[owners[0]]; n < 8 {
 			t.Errorf("AC-74: coverageCmd routes to its render owner %s at %d site(s), want at least 8: seven refusals and the ordinary path", owners[0], n)
 		}
+
+		// The verdict half. Encoding ownership alone would let gate
+		// evaluation stay in the command, or be copied there, so the owner
+		// becomes a JSON wrapper around several verdict paths and the codes
+		// diverge again. C-10 puts rendering AND the verdict in one place, and
+		// the existing shared gate function is that policy: it is reused, not
+		// reimplemented.
+		callsGates := func(n ast.Node) bool {
+			ce, ok := n.(*ast.CallExpr)
+			if !ok {
+				return false
+			}
+			id, ok := ce.Fun.(*ast.Ident)
+			return ok && id.Name == "coverageExitGates"
+		}
+		// Positive control: the function is called somewhere, so a zero below
+		// is absence rather than a renamed gate the matcher cannot see.
+		if len(funcSitesMatching(fset, files, callsGates)) == 0 {
+			t.Fatalf("AC-74: coverageExitGates is called nowhere, so the gate-ownership claims below are vacuous")
+		}
+		if got := sitesIn("coverageCmd", callsGates); len(got) != 0 {
+			t.Errorf("AC-74: coverageCmd evaluates the exit gates itself at %v. The verdict belongs with the renderer; a command that keeps its own gate call is a second verdict path, which is how the text and JSON codes diverged in bugs/SP-SP-066", got)
+		}
+		if got := sitesIn(owners[0], callsGates); len(got) != 1 {
+			t.Errorf("AC-74: the render owner %s calls coverageExitGates at %d site(s), want exactly 1. Zero makes it a JSON wrapper with no verdict; more than one is two verdicts for one run", owners[0], len(got))
+		}
 	})
 }
