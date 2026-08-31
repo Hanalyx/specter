@@ -298,6 +298,14 @@ describe('spec-vscode/AC-79 the product path, through the scripted CLI', () => {
 describe('spec-vscode/AC-79 the stop-reason declarations, semantically', () => {
   const typesPath = path.resolve(__dirname, '..', 'types.ts');
 
+  /** The four-value policy, named once here so the checks below share it. */
+  const KINDS = new Set([
+    'manifest_error',
+    'invalid_flag',
+    'unknown_scope',
+    'unmet_precondition',
+  ]);
+
   // ONE compiler world for the whole block. Building a Program per lookup gave
   // every call its own universe, so an identity comparison between two
   // resolved types compared objects from different programs and could never
@@ -385,8 +393,13 @@ describe('spec-vscode/AC-79 the stop-reason declarations, semantically', () => {
     const sym = prop('CoverageStopReason', 'message');
     expect(sym).toBeDefined();
     const t = typeOfProp(sym!);
-    // Assignability both ways is what rules out `unknown`, which accepts
-    // string but is not accepted by it, and `string | null`, which is wider.
+    // `any` is assignable in both directions, so bidirectional assignability
+    // alone accepts `message: any` and the field explains nothing while
+    // type-checking everywhere. Reject it on the flags first.
+    expect((t.flags & ts.TypeFlags.Any) !== 0).toBe(false);
+    expect((t.flags & ts.TypeFlags.String) !== 0).toBe(true);
+    // Then assignability, which is what rules out `unknown`, accepted by
+    // nothing narrower, and `string | null`, which is wider.
     const stringType = checker.getStringType();
     expect(checker.isTypeAssignableTo(t, stringType)).toBe(true);
     expect(checker.isTypeAssignableTo(stringType, t)).toBe(true);
@@ -423,6 +436,31 @@ describe('spec-vscode/AC-79 the stop-reason declarations, semantically', () => {
   });
 
   it('declares the four kinds once, in types.ts and nowhere else', () => {
+    // Parsed, not grepped. A text search for one spelling misses a second
+    // union written with double quotes, which is the same policy declared
+    // twice and reads as clean:
+    //
+    //   type PrivateStopKind = "manifest_error" | "invalid_flag" | ...
+    //
+    // String-literal VALUES are quote-independent, so the parse sees both.
+    const kindValues = (file: string): Set<string> => {
+      const source = ts.createSourceFile(
+        file,
+        fs.readFileSync(file, 'utf8'),
+        ts.ScriptTarget.ES2020,
+        true,
+      );
+      const found = new Set<string>();
+      const visit = (n: ts.Node): void => {
+        if (ts.isStringLiteral(n) || ts.isStringLiteralLike(n)) {
+          if (KINDS.has(n.text)) found.add(n.text);
+        }
+        ts.forEachChild(n, visit);
+      };
+      visit(source);
+      return found;
+    };
+
     const srcDir = path.resolve(__dirname, '..');
     const offenders: string[] = [];
     const walk = (dir: string): void => {
@@ -433,7 +471,9 @@ describe('spec-vscode/AC-79 the stop-reason declarations, semantically', () => {
           continue;
         }
         if (!name.endsWith('.ts') || full === typesPath) continue;
-        if (fs.readFileSync(full, 'utf8').includes("'unmet_precondition'")) {
+        // A file that spells out the whole policy is a second declaration of
+        // it. One kind alone is an ordinary use, such as a branch on a value.
+        if (kindValues(full).size === KINDS.size) {
           offenders.push(path.relative(srcDir, full));
         }
       }
@@ -442,7 +482,7 @@ describe('spec-vscode/AC-79 the stop-reason declarations, semantically', () => {
 
     // The control. Without it this passes while NOTHING declares the union,
     // which is the state before the implementation lands.
-    expect(fs.readFileSync(typesPath, 'utf8')).toContain("'unmet_precondition'");
+    expect(kindValues(typesPath)).toEqual(KINDS);
     expect(offenders).toEqual([]);
   });
 });
@@ -496,6 +536,43 @@ describe('spec-vscode/AC-79 the coverage run reports refusals', () => {
     return calls;
   }
 
+  /** The argument source text of each call to `callee` inside `fnName`. */
+  function callArgsInFunction(fnName: string, callee: string): string[][] {
+    const source = ts.createSourceFile(
+      EXT_TS,
+      fs.readFileSync(EXT_TS, 'utf8'),
+      ts.ScriptTarget.ES2020,
+      true,
+    );
+    const out: string[][] = [];
+    const visit = (node: ts.Node): void => {
+      if (
+        (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) &&
+        node.name &&
+        node.name.getText(source) === fnName
+      ) {
+        const collect = (n: ts.Node): void => {
+          if (ts.isCallExpression(n)) {
+            const fn = n.expression;
+            const name = ts.isIdentifier(fn)
+              ? fn.text
+              : ts.isPropertyAccessExpression(fn)
+                ? fn.name.text
+                : '';
+            if (name === callee) {
+              out.push(n.arguments.map(a => a.getText(source)));
+            }
+          }
+          ts.forEachChild(n, collect);
+        };
+        ts.forEachChild(node, collect);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    return out;
+  }
+
   it('runCoverageForFolder reports stop reasons exactly once, after storing the report', () => {
     const calls = callsInFunction('runCoverageForFolder');
 
@@ -510,5 +587,21 @@ describe('spec-vscode/AC-79 the coverage run reports refusals', () => {
     // After storing. Reporting before the store would read the previous run's
     // state, which is the wrong folder's answer on the first run of a folder.
     expect(calls.indexOf('reportStopReasons')).toBeGreaterThan(calls.indexOf('set'));
+  });
+
+  it('runCoverageForFolder passes the real channel and the post-write aggregate', () => {
+    // Position alone is not wiring. `reportStopReasons(outputChannel, null)`
+    // satisfies the ordering check and leaves the channel silent, and passing
+    // this folder's own report instead of the aggregate loses the multi-root
+    // ownership the folder map exists to carry. So the arguments are read.
+    const args = callArgsInFunction('runCoverageForFolder', 'reportStopReasons');
+    expect(args).toHaveLength(1);
+    const [channelArg, reportArg] = args[0];
+
+    // The module's own Output channel, not a literal and not a fresh object.
+    expect(channelArg).toContain('outputChannel');
+    // The aggregate, read after the store write. A folder's own report has no
+    // folder map on it at all.
+    expect(reportArg).toContain('coverageReports.merged()');
   });
 });

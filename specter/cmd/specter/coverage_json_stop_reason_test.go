@@ -463,26 +463,22 @@ func TestCoverageRendersThroughOneDiscoveredOwner(t *testing.T) {
 			return ok && pkg.Name == "coverage"
 		}
 
+		// CALL SITES, not owning functions. Counting owners lets one function
+		// compute two verdicts:
+		//
+		//	coverage.GateVerdict(firstInputs)
+		//	return coverage.GateVerdict(secondInputs)
+		//
+		// One owner, two decisions for one workspace. That is the SP-SP-073
+		// distinction between sharing a decision function and sharing a
+		// decision, and only the site count can see it.
 		policySites := funcSitesMatching(fset, files, callsSharedPolicy)
-		if len(policySites) == 0 {
-			t.Fatalf("AC-74: coverage.GateVerdict is called nowhere in this package, so the gate owner cannot be discovered and every claim below is vacuous")
+		if len(policySites) != 1 {
+			t.Fatalf("AC-74: coverage.GateVerdict is called at %d site(s): %v, want exactly 1. Zero leaves the gate owner undiscoverable and every claim below vacuous; more than one is more than one verdict for one workspace, whichever functions they sit in", len(policySites), policySites)
 		}
-		gateOwners := map[string]bool{}
-		for _, s := range policySites {
-			gateOwners[strings.SplitN(s, ":", 2)[0]] = true
-		}
-		if len(gateOwners) != 1 {
-			names := make([]string, 0, len(gateOwners))
-			for k := range gateOwners {
-				names = append(names, k)
-			}
-			sort.Strings(names)
-			t.Fatalf("AC-74: %d functions call coverage.GateVerdict: %v. One workspace gets one verdict, and a second owner is a second answer", len(gateOwners), names)
-		}
-		var gateOwner string
-		for k := range gateOwners {
-			gateOwner = k
-		}
+		// The owner is derived FROM the single site, so it is discovered
+		// rather than named and cannot be pinned to today's spelling.
+		gateOwner := strings.SplitN(policySites[0], ":", 2)[0]
 
 		callsGateOwner := func(n ast.Node) bool {
 			ce, ok := n.(*ast.CallExpr)
