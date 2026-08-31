@@ -1,0 +1,5 @@
+exit=1
+--- stdout ---
+--- stderr ---
+error: --strict requires settings.strictness >= threshold; current strictness is annotation
+       set settings.strictness to 'threshold' or 'zero-tolerance' in specter.yaml, or pass --strictness <level>

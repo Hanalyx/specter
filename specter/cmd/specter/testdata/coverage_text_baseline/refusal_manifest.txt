@@ -1,0 +1,4 @@
+exit=1
+--- stdout ---
+--- stderr ---
+error: invalid <WS>/specter.yaml: unknown settings key "settings.bogus_key" (valid keys: annotation, coverage, exclude, specs_dir, strict, strictness, tests_glob, tier_overrides, warn_on_draft)
