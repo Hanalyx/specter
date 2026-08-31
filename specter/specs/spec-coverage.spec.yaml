@@ -387,9 +387,7 @@ A shape is required rather than left to the implementation because asserting onl
         measurements: the run counted nothing. Their meaning is guarded by
         `stop_reason`, which is the only field separating a refusal from a clean
         empty workspace, so a consumer that reads them without reading it
-        reports the wrong thing. An earlier draft of this criterion said a
-        refusal must not fabricate entries or a summary, which contradicted the
-        required shape rather than describing it. A run that reaches the report is required beside
+        reports the wrong thing. A run that reaches the report is required beside
         them, so the criterion cannot be met by a command that emits an empty
         document and never measures anything. The gates keep their codes: a
         document is emitted at 1, 2, 3 and 20 alike, and the code is unchanged

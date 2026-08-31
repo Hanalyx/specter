@@ -461,6 +461,35 @@ spec:
         a single `stopReason`: a lone reason on an aggregate has no owner, and
         concatenating several loses which folder each belongs to, which is what
         an operator needs in order to fix one.
+
+        **The shapes are declared here, not left to a test to invent.** One
+        exported type carries the reason:
+
+        ```ts
+        interface CoverageStopReason {
+          kind: 'manifest_error' | 'invalid_flag' | 'unknown_scope' | 'unmet_precondition';
+          message: string;
+        }
+        ```
+
+        `CoverageReport.stopReason` is an optional `CoverageStopReason`, present
+        only on a refused run. The aggregate is a distinct
+        `MergedCoverageReport`, so a single-folder report and a merged one are
+        not the same type wearing different fields, and it carries
+        `folderStopReasons`, an optional map from the store's folder key, the
+        value `createClientKey(folder.uri.fsPath)` produces, to the same
+        `CoverageStopReason`. The key is the store's own identity rather than a
+        display name, because that is what the caller already holds when it
+        needs to act on one folder.
+
+        **The four kinds are declared once.** No second literal union, no
+        widening to `string`, and no private copy in a test fixture: a duplicate
+        declaration is a copy of policy that will not know when the set changes,
+        which is the failure this repository records eight times over. A test
+        MUST reject an unknown kind, MUST reject a `kind` widened to `string`,
+        and MUST reject a merged report whose reason survives without its
+        folder, since that last shape is the one the aggregate exists to
+        prevent.
       type: technical
       enforcement: error
 
@@ -1554,7 +1583,12 @@ spec:
         stop_reason_text_reaches_the_output_channel: true
         merged_report_keeps_the_refusal: true
         merged_refusal_names_its_folder: true
+        merged_refusal_is_keyed_by_the_store_folder_key: true
         successful_folder_entries_survive_the_merge: true
+        unknown_kind_is_rejected: true
+        kind_widened_to_string_is_rejected: true
+        reason_without_its_folder_is_rejected: true
+        four_kinds_declared_once: true
       references_constraints: ["C-33"]
       priority: critical
 
@@ -1580,7 +1614,7 @@ spec:
       date: "2026-08-30"
       author: "specter-team"
       type: minor
-      description: "C-33 and AC-79 carry the consumer half of spec-coverage C-10. That constraint chose the additive shape for a refused coverage run: the document still emits entries [] and a zeroed summary, as uncomputed placeholders, with stop_reason as the only field that distinguishes them. This extension keys its empty state on exactly that pair, an empty entries list with no parse errors, so the producer fix arrives here as a new way to be wrong: the sidebar would report nothing to show for a workspace whose manifest was rejected, which leaves bugs/SP-SP-032 semantically open while the CLI half is closed. C-33 requires stop_reason to be read before entries or summary are interpreted, requires the state to be distinguishable from both the empty and the parse-failed states, and requires the reason to reach the Output channel so an operator can tell which of the seven refusals fired. AC-79 carries a negative control: the same document without stop_reason must still render as nothing to show, since the two are identical on every other field and asserting only the refusal case would pass on an implementation that merely renamed the empty state. The spec-coverage floor rises from ^1.23.0 to ^1.26.0, because stop_reason does not exist below it. C-33 also binds the two boundaries the first draft left open. The wire boundary: the CLI emits stop_reason and this extension speaks camelCase, and client.ts FIELD_MAP had no entry for it, so the raw key would have survived untyped and AC-79 could have passed while the real client returned it. The criterion now reads the document through SpecterClient rather than handing it to the tree builder, which is the only way to see that. The multi-root boundary: the store merges per-folder reports by reconstructing the document field by field, so a field not named there is silently dropped. One refused folder must not erase a successful one, and the merged report carries a per-folder map of refusals rather than one aggregate reason, because a lone reason on an aggregate has no owner and concatenating several loses which folder each belongs to. Minor per the classifier: specter diff reports [additive]."
+      description: "C-33 and AC-79 carry the consumer half of spec-coverage C-10. That constraint chose the additive shape for a refused coverage run: the document still emits entries [] and a zeroed summary, as uncomputed placeholders, with stop_reason as the only field that distinguishes them. This extension keys its empty state on exactly that pair, an empty entries list with no parse errors, so the producer fix arrives here as a new way to be wrong: the sidebar would report nothing to show for a workspace whose manifest was rejected, which leaves bugs/SP-SP-032 semantically open while the CLI half is closed. C-33 requires stop_reason to be read before entries or summary are interpreted, requires the state to be distinguishable from both the empty and the parse-failed states, and requires the reason to reach the Output channel so an operator can tell which of the seven refusals fired. AC-79 carries a negative control: the same document without stop_reason must still render as nothing to show, since the two are identical on every other field and asserting only the refusal case would pass on an implementation that merely renamed the empty state. The spec-coverage floor rises from ^1.23.0 to ^1.26.0, because stop_reason does not exist below it. C-33 also binds the two boundaries the first draft left open. The wire boundary: the CLI emits stop_reason and this extension speaks camelCase, and client.ts FIELD_MAP had no entry for it, so the raw key would have survived untyped and AC-79 could have passed while the real client returned it. The criterion now reads the document through SpecterClient rather than handing it to the tree builder, which is the only way to see that. The multi-root boundary: the store merges per-folder reports by reconstructing the document field by field, so a field not named there is silently dropped. One refused folder must not erase a successful one, and the merged report carries a per-folder map of refusals rather than one aggregate reason, because a lone reason on an aggregate has no owner and concatenating several loses which folder each belongs to. Both shapes are declared in the constraint rather than left to a test to invent: an exported CoverageStopReason with kind and message, an optional stopReason on CoverageReport, and a distinct MergedCoverageReport carrying folderStopReasons keyed by the store's own folder key, the value createClientKey produces. A distinct merged type keeps a single-folder report and an aggregate from being one type wearing different fields. The four kinds are declared once, with no second union, no widening to string, and no private copy in a fixture, because a duplicate declaration is a copy of policy that will not know when the set changes. Minor per the classifier: specter diff reports [additive]."
 
     - version: "5.0.2"
       date: "2026-08-30"
