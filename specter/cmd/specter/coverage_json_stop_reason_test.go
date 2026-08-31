@@ -12,6 +12,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +25,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/Hanalyx/specter/internal/coverage"
 )
 
 // stopReasonKinds maps each scenario to the kind its document must carry, or
@@ -532,6 +535,47 @@ func TestCoverageRendersThroughOneDiscoveredOwner(t *testing.T) {
 		}
 		if got := sitesIn(owners[0], callsGateOwner); len(got) != 1 {
 			t.Errorf("AC-74: the render owner %s calls the gate owner %s at %d site(s), want exactly 1. Zero makes the renderer a JSON wrapper with no verdict; more than one is two verdicts for one run", owners[0], gateOwner, len(got))
+		}
+	})
+}
+
+// failingWriter refuses every write, so json.Encoder.Encode returns an error.
+type failingWriter struct{ err error }
+
+func (f failingWriter) Write([]byte) (int, error) { return 0, f.err }
+
+// @spec spec-coverage
+// @ac AC-74
+//
+// An unwritable document is the failure C-10 exists to prevent, one layer
+// down: the caller gets a truncated stream and, if the error is discarded, a
+// verdict computed as though the document had been written whole.
+//
+// A unit test on the owner, because the branch is unreachable through the CLI.
+// That is also why it went unguarded: a mutation discarding the error survived
+// the entire suite until the writer became a parameter.
+func TestCoverageRenderReportsAnEncoderFailure(t *testing.T) {
+	t.Run("spec-coverage/AC-74 a failed write is reported, and no verdict is computed", func(t *testing.T) {
+		report := &coverage.CoverageReport{Entries: []coverage.SpecCoverageEntry{}}
+
+		// Gates that would otherwise return nil, so a run that ignored the
+		// encoder error would exit 0 and look like a pass.
+		gates := &coverageGateInputs{strictness: "annotation"}
+
+		err := renderCoverageResult(failingWriter{err: errors.New("disk full")}, true, report, gates, nil)
+		if err == nil {
+			t.Fatalf("AC-74: the document could not be written and the run returned nil. A discarded encoder error gives a caller a truncated document and a passing verdict")
+		}
+
+		// The positive control. The same inputs through a writer that works
+		// must reach the gates and return their verdict, or this test would
+		// pass on a renderer that always fails.
+		var ok bytes.Buffer
+		if err := renderCoverageResult(&ok, true, report, gates, nil); err != nil {
+			t.Errorf("AC-74 (control): a writable document returned %v, want nil. Every assertion above would pass on a renderer that always errors", err)
+		}
+		if ok.Len() == 0 {
+			t.Errorf("AC-74 (control): nothing was written to a working writer, so the failure case proves nothing")
 		}
 	})
 }

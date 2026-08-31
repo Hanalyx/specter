@@ -1013,11 +1013,15 @@ type coverageGateInputs struct {
 // renderText prints the human table. It runs only when the run measured and
 // the format is text, which is what keeps text output byte-identical: a
 // refusal has always printed to stderr alone.
-func renderCoverageResult(jsonOutput bool, report *coverage.CoverageReport,
+// The document writer is a parameter so an encoder failure is reachable from a
+// test. Writing straight to os.Stdout made the error branch unguarded: a
+// mutation that discarded the error survived the whole suite, because nothing
+// could make Encode fail through the CLI.
+func renderCoverageResult(w io.Writer, jsonOutput bool, report *coverage.CoverageReport,
 	gates *coverageGateInputs, renderText func()) error {
 
 	if jsonOutput {
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(report); err != nil {
 			// Reported, not discarded. A dropped encoder error leaves a
@@ -1062,7 +1066,7 @@ func refuseCoverage(jsonOutput bool, kind coverage.StopKind, msg string, extraSt
 		Entries:    []coverage.SpecCoverageEntry{},
 		StopReason: &coverage.StopReason{Kind: kind, Message: msg},
 	}
-	return renderCoverageResult(jsonOutput, report, nil, nil)
+	return renderCoverageResult(os.Stdout, jsonOutput, report, nil, nil)
 }
 
 // coverageExitGates runs the coverage exit gates in the order C-38(b)
@@ -1545,7 +1549,7 @@ func coverageCmd() *cobra.Command {
 				// severity and nothing else, per SSRB-104 section 7.4.
 			}
 
-			return renderCoverageResult(jsonOutput, report, gates, renderText)
+			return renderCoverageResult(os.Stdout, jsonOutput, report, gates, renderText)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
