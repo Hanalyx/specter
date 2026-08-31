@@ -30,7 +30,7 @@ const validSpec = `spec:
   status: approved
   tier: 3
   context: {system: s, feature: f, description: A valid fixture used beside the failing ones.}
-  objective: {summary: Parse, resolve and reach the checker.}
+  objective: {summary: "Parse, resolve, and reach the checker"}
   constraints:
     - {id: C-01, description: "MUST hold", type: technical, enforcement: error}
   acceptance_criteria:
@@ -144,10 +144,18 @@ func TestCheckJSONWritesADocumentOnEveryEarlyReturn(t *testing.T) {
 	for _, tc := range []struct {
 		state string
 		why   string
+		// stage is a string only the intended failure stage emits. It is not
+		// decoration: the manifest fixture once carried a spec whose objective
+		// read `{summary: Parse, resolve and reach the checker.}`, where the
+		// comma splits the flow mapping into two keys. That spec did not parse,
+		// so the "manifest" case exercised the parse branch, passed, and went on
+		// passing when the manifest branch was reverted. A mutation found it;
+		// the green suite could not.
+		stage string
 	}{
-		{"parse", "one spec in the workspace fails to parse"},
-		{"resolver", "the resolver reports a dangling reference"},
-		{"manifest", "the manifest fails to load"},
+		{"parse", "one spec in the workspace fails to parse", "FAIL specs/bad.spec.yaml"},
+		{"resolver", "the resolver reports a dangling reference", "dangling_reference"},
+		{"manifest", "the manifest fails to load", "unknown settings key"},
 	} {
 		t.Run("spec-check/AC-46 "+tc.state+" failure still writes a document", func(t *testing.T) {
 			// Three subtests rather than one loop assertion, because these are
@@ -157,6 +165,13 @@ func TestCheckJSONWritesADocumentOnEveryEarlyReturn(t *testing.T) {
 
 			textOut, _, textCode := runCLISplit(t, dir, "check")
 			stdout, stderr, jsonCode := runCLISplit(t, dir, "check", "--json")
+
+			// The fixture reaches the branch it names, before anything else is
+			// asserted. Without this, a fixture that fails earlier tests some
+			// other branch twice and reports success for this one.
+			if !strings.Contains(stderr, tc.stage) {
+				t.Fatalf("AC-46: the %s fixture did not reach the %s stage. stderr should name %q, so this case is exercising a different early return than the one it claims.\nstderr:\n%s", tc.state, tc.state, tc.stage, stderr)
+			}
 
 			if len(strings.TrimSpace(stdout)) == 0 {
 				t.Fatalf("AC-46: stdout is empty when %s. C-14 requires the document to be written in full before the exit-code decision, so a caller reading stdout cannot tell a broken workspace from a crashed process.\nstderr:\n%s", tc.why, stderr)
