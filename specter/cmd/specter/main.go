@@ -737,10 +737,66 @@ func checkCmd() *cobra.Command {
 		Use:   "check",
 		Short: "Run type-checking rules across the spec graph",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// spec-check C-14 / AC-46: one render path, defined before the
+			// pipeline so every exit from it goes through here.
+			//
+			// The document is written in full, then the exit code is taken
+			// from checkExitVerdict, the same function the text path ends on.
+			// The verdict is a function of the diagnostics the run produced,
+			// not of how they are rendered, so the two formats share one
+			// definition and cannot drift apart.
+			//
+			// `reached` says whether the run got as far as the checker. Text
+			// mode prints nothing to stdout when it did not, because stderr
+			// already carries the human-readable reason and a second account
+			// of it would change output that existing callers parse. `--json`
+			// writes the document either way, which is the point:
+			// bugs/SP-SP-032 is stdout being empty in exactly those states.
+			render := func(result *checker.CheckResult, reached bool, nodeCount int) error {
+				if jsonOutput {
+					enc := json.NewEncoder(os.Stdout)
+					enc.SetIndent("", "  ")
+					_ = enc.Encode(result)
+					return checkExitVerdict(result)
+				}
+				if !reached {
+					return checkExitVerdict(result)
+				}
+				if len(result.Diagnostics) == 0 {
+					fmt.Printf("All %d specs passed structural checks.\n", nodeCount)
+					return nil
+				}
+				for _, d := range result.Diagnostics {
+					prefix := "error"
+					if d.Severity == "warning" {
+						prefix = "warn"
+					} else if d.Severity == "info" {
+						prefix = "info"
+					}
+					cid := ""
+					if d.ConstraintID != "" {
+						cid = " " + d.ConstraintID
+					}
+					ctype := ""
+					if d.ConstraintType != "" {
+						ctype = " (" + d.ConstraintType + ")"
+					}
+					fmt.Printf("%s [%s] %s%s%s: %s\n", prefix, d.Kind, d.SpecID, cid, ctype, d.Message)
+				}
+				fmt.Printf("\n%d error(s), %d warning(s), %d info\n", result.Summary.Errors, result.Summary.Warnings, result.Summary.Info)
+				return checkExitVerdict(result)
+			}
+
 			files := discoverSpecs()
 			inputs, _, hasErrors := parseAllSpecs(files)
 			if hasErrors {
-				return errSilent
+				// AC-46: parseAllSpecs already named every violation on
+				// stderr. The document says the run stopped, and why.
+				return render(earlyCheckResult(strict, checker.CheckDiagnostic{
+					Kind:     "parse_error",
+					Severity: "error",
+					Message:  "one or more specs failed to parse; the schema violations are on stderr",
+				}), false, 0)
 			}
 
 			graph := resolver.ResolveSpecs(inputs)
@@ -755,13 +811,33 @@ func checkCmd() *cobra.Command {
 			}
 			if resolverErrors > 0 {
 				fmt.Fprintf(os.Stderr, "\n%d resolver error(s) — fix dependency issues before running check\n", resolverErrors)
-				return errSilent
+				// AC-46: the resolver's own diagnostics carry the document
+				// rather than a synthesized summary of them. A consumer that
+				// cannot resolve a reference wants the reference named.
+				var rd []checker.CheckDiagnostic
+				for _, d := range graph.Diagnostics {
+					if d.Severity != "error" {
+						continue
+					}
+					rd = append(rd, checker.CheckDiagnostic{
+						Kind:     d.Kind,
+						Severity: d.Severity,
+						Message:  d.Message,
+					})
+				}
+				return render(earlyCheckResult(strict, rd...), false, 0)
 			}
 
 			m, _, mErr := loadManifest()
 			if mErr != nil {
+				// The stderr line stays: text mode's output is unchanged by
+				// AC-46, which is about what stdout carries.
 				fmt.Fprintln(os.Stderr, "error:", mErr)
-				return errSilent
+				return render(earlyCheckResult(strict, checker.CheckDiagnostic{
+					Kind:     "manifest_error",
+					Severity: "error",
+					Message:  mErr.Error(),
+				}), false, 0)
 			}
 			warnAnnotationStrictnessConflict(m)
 
@@ -874,48 +950,10 @@ func checkCmd() *cobra.Command {
 				opts.TierOverride = tierOverride
 			}
 
-			result := checker.CheckSpecs(graph, opts)
-
-			// C-09: opt-in test-annotation cross-reference.
-			// spec-check C-14: `--json` writes the document to stdout in
-			// full, then takes its exit code from checkExitVerdict, the
-			// same function the text path below ends on. The verdict is a
-			// function of the diagnostics the run produced, not of how
-			// they are rendered, so the two formats share one definition
-			// of it and cannot drift apart when that definition changes.
-			if jsonOutput {
-				enc := json.NewEncoder(os.Stdout)
-				enc.SetIndent("", "  ")
-				_ = enc.Encode(result)
-				return checkExitVerdict(result)
-			}
-
-			if len(result.Diagnostics) == 0 {
-				fmt.Printf("All %d specs passed structural checks.\n", len(graph.Nodes))
-				return nil
-			}
-
-			for _, d := range result.Diagnostics {
-				prefix := "error"
-				if d.Severity == "warning" {
-					prefix = "warn"
-				} else if d.Severity == "info" {
-					prefix = "info"
-				}
-				cid := ""
-				if d.ConstraintID != "" {
-					cid = " " + d.ConstraintID
-				}
-				ctype := ""
-				if d.ConstraintType != "" {
-					ctype = " (" + d.ConstraintType + ")"
-				}
-				fmt.Printf("%s [%s] %s%s%s: %s\n", prefix, d.Kind, d.SpecID, cid, ctype, d.Message)
-			}
-
-			fmt.Printf("\n%d error(s), %d warning(s), %d info\n", result.Summary.Errors, result.Summary.Warnings, result.Summary.Info)
-
-			return checkExitVerdict(result)
+			// AC-46: the ordinary path ends at the same renderer the three
+			// early returns use. One render site, so a state added later
+			// cannot quietly acquire an empty stdout.
+			return render(checker.CheckSpecs(graph, opts), true, len(graph.Nodes))
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
@@ -925,6 +963,24 @@ func checkCmd() *cobra.Command {
 		"Report acceptance criteria carrying neither inputs nor expected_output (error at Tier 1, warning at Tier 2, info at Tier 3)")
 	cmd.Flags().BoolVarP(&testAnnotations, "test", "t", false, "Cross-reference test-file @spec/@ac annotations against parsed specs")
 	return cmd
+}
+
+// earlyCheckResult builds the document for a run that stopped before the
+// structural rules ran, spec-check C-14 and AC-46.
+//
+// Routed through CheckSpecs rather than assembling a CheckResult here, for two
+// reasons. The summary is computed by the one function allowed to compute it,
+// which AC-45 asserts is called exactly once. And `strict` still governs, so a
+// caller cannot get a different verdict for the same failure by adding a flag.
+//
+// An empty graph is deliberate: there are no specs to check. Every rule in
+// CheckSpecs iterates the graph's nodes, so all of them produce nothing, and
+// the diagnostics handed in are the whole document.
+func earlyCheckResult(strict bool, diags ...checker.CheckDiagnostic) *checker.CheckResult {
+	return checker.CheckSpecs(&resolver.SpecGraph{}, &checker.CheckOptions{
+		Strict:           strict,
+		ExtraDiagnostics: diags,
+	})
 }
 
 // coverageExitGates runs the coverage exit gates in the order C-38(b)
