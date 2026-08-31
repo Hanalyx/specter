@@ -8,8 +8,12 @@
  * workspace. This extension keys its empty state on exactly that pair, so the
  * producer's fix arrives here as a new way to be wrong.
  *
- * The behavioral half runs here. The compile-time half, which needs the
- * exported type to reject against, lands with the implementation.
+ * The binding evidence for this criterion lives here. The real-binary run in
+ * stopReasonIntegration.test.ts is additional, and a criterion whose only
+ * annotation owner can skip is a criterion that can go unrun.
+ *
+ * @spec spec-vscode
+ * @ac AC-79
  */
 
 import * as fs from 'fs';
@@ -22,14 +26,11 @@ import { CoverageReportStore, buildCoverageTreeRoot } from '../coverage';
 import type { CoverageReport } from '../types';
 
 /**
- * The red commit reads the new fields structurally rather than through the
- * types it will introduce. A test that imports a type before it exists is a
- * compile failure, which takes the whole suite down and reads as a kill.
- *
- * The compile-time rejections C-33 requires, an unknown kind and a kind
- * widened to string, land with the implementation, where the exported type
- * exists to reject against. Writing them here against a copied union would be
- * the second declaration of the four-kind policy C-33 forbids.
+ * The behavioral assertions read the new fields structurally rather than
+ * through the types they will introduce: importing a type before it exists is
+ * a compile failure, which takes the suite down and reads as a kill. The
+ * declarations themselves are checked semantically further down, through the
+ * TypeScript checker, so a missing one is an ordinary failure.
  */
 type Loose = Record<string, unknown>;
 
@@ -297,93 +298,127 @@ describe('spec-vscode/AC-79 the product path, through the scripted CLI', () => {
 describe('spec-vscode/AC-79 the stop-reason declarations, semantically', () => {
   const typesPath = path.resolve(__dirname, '..', 'types.ts');
 
-  function program(): { checker: ts.TypeChecker; src: ts.SourceFile } {
-    const prog = ts.createProgram([typesPath], {
-      target: ts.ScriptTarget.ES2020,
-      strict: true,
-      noEmit: true,
-    });
-    const src = prog.getSourceFile(typesPath);
-    if (!src) throw new Error(`types.ts not found at ${typesPath}`);
-    return { checker: prog.getTypeChecker(), src };
-  }
+  // ONE compiler world for the whole block. Building a Program per lookup gave
+  // every call its own universe, so an identity comparison between two
+  // resolved types compared objects from different programs and could never
+  // hold, however correct the declaration. The test would have stayed red
+  // after a correct implementation.
+  const prog = ts.createProgram([typesPath], {
+    target: ts.ScriptTarget.ES2020,
+    strict: true,
+    noEmit: true,
+  });
+  const checker = prog.getTypeChecker();
+  const src = prog.getSourceFile(typesPath);
 
-  /** The declared type of a named interface, resolved. */
-  function typeOf(name: string): { checker: ts.TypeChecker; type: ts.Type } | undefined {
-    const { checker, src } = program();
+  /** The declared type of a named interface, resolved in the shared world. */
+  function typeOf(name: string): ts.Type | undefined {
+    if (!src) return undefined;
     let found: ts.Type | undefined;
     ts.forEachChild(src, node => {
       if (ts.isInterfaceDeclaration(node) && node.name.text === name) {
         found = checker.getTypeAtLocation(node.name);
       }
     });
-    return found ? { checker, type: found } : undefined;
+    return found;
+  }
+
+  function decl(name: string): ts.InterfaceDeclaration | undefined {
+    if (!src) return undefined;
+    let found: ts.InterfaceDeclaration | undefined;
+    ts.forEachChild(src, node => {
+      if (ts.isInterfaceDeclaration(node) && node.name.text === name) found = node;
+    });
+    return found;
   }
 
   /** A property resolved through the type, so inherited members are visible. */
-  function prop(iface: string, name: string): { checker: ts.TypeChecker; sym: ts.Symbol } | undefined {
+  function prop(iface: string, name: string): ts.Symbol | undefined {
     const t = typeOf(iface);
-    if (!t) return undefined;
-    const sym = t.checker.getPropertyOfType(t.type, name);
-    return sym ? { checker: t.checker, sym } : undefined;
+    return t ? checker.getPropertyOfType(t, name) : undefined;
   }
 
-  it('CoverageStopReason.kind resolves to exactly the four literals', () => {
-    const p = prop('CoverageStopReason', 'kind');
-    expect(p).toBeDefined();
-    const kindType = p!.checker.getTypeOfSymbolAtLocation(p!.sym, p!.sym.valueDeclaration!);
+  function typeOfProp(sym: ts.Symbol): ts.Type {
+    return checker.getTypeOfSymbolAtLocation(sym, sym.valueDeclaration ?? sym.declarations![0]);
+  }
 
-    // Enumerated from the resolved union, so `| string` shows up as a
+  function nonUndefinedMembers(t: ts.Type): ts.Type[] {
+    return t.isUnion()
+      ? t.types.filter(x => (x.flags & ts.TypeFlags.Undefined) === 0)
+      : [t];
+  }
+
+  it('CoverageStopReason is exported and declares kind and message as required', () => {
+    const d = decl('CoverageStopReason');
+    expect(d).toBeDefined();
+    // Exported, or no consumer can name the shared type and every one of them
+    // ends up declaring its own.
+    const exported = d!.modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
+    expect(exported).toBe(true);
+
+    for (const member of ['kind', 'message']) {
+      const sym = prop('CoverageStopReason', member);
+      expect(sym).toBeDefined();
+      // Required. An optional kind or message lets a producer emit a reason
+      // that names nothing or explains nothing.
+      expect((sym!.flags & ts.SymbolFlags.Optional) !== 0).toBe(false);
+    }
+  });
+
+  it('kind resolves to exactly the four literals', () => {
+    const sym = prop('CoverageStopReason', 'kind');
+    expect(sym).toBeDefined();
+    const kindType = typeOfProp(sym!);
+
+    // Enumerated from the resolved union, so `| string` appears as a
     // non-literal member rather than hiding inside printed text.
     const members = kindType.isUnion() ? kindType.types : [kindType];
     const literals = members.map(m =>
-      m.isStringLiteral() ? m.value : `NON_LITERAL:${p!.checker.typeToString(m)}`,
+      m.isStringLiteral() ? m.value : `NON_LITERAL:${checker.typeToString(m)}`,
     );
     expect(literals.sort()).toEqual(
       ['invalid_flag', 'manifest_error', 'unknown_scope', 'unmet_precondition'].sort(),
     );
+  });
 
-    const message = prop('CoverageStopReason', 'message');
-    expect(message).toBeDefined();
-    // Required, not optional. An optional message names a kind and explains
-    // nothing.
-    expect((message!.sym.flags & ts.SymbolFlags.Optional) !== 0).toBe(false);
+  it('message is exactly string, not unknown and not nullable', () => {
+    const sym = prop('CoverageStopReason', 'message');
+    expect(sym).toBeDefined();
+    const t = typeOfProp(sym!);
+    // Assignability both ways is what rules out `unknown`, which accepts
+    // string but is not accepted by it, and `string | null`, which is wider.
+    const stringType = checker.getStringType();
+    expect(checker.isTypeAssignableTo(t, stringType)).toBe(true);
+    expect(checker.isTypeAssignableTo(stringType, t)).toBe(true);
   });
 
   it('CoverageReport.stopReason is optional and is the shared type', () => {
-    const p = prop('CoverageReport', 'stopReason');
-    expect(p).toBeDefined();
-    expect((p!.sym.flags & ts.SymbolFlags.Optional) !== 0).toBe(true);
+    const sym = prop('CoverageReport', 'stopReason');
+    expect(sym).toBeDefined();
+    expect((sym!.flags & ts.SymbolFlags.Optional) !== 0).toBe(true);
 
-    const shared = typeOf('CoverageStopReason');
-    const declared = p!.checker.getTypeOfSymbolAtLocation(p!.sym, p!.sym.valueDeclaration!);
-    const nonUndefined = declared.isUnion()
-      ? declared.types.filter(x => (x.flags & ts.TypeFlags.Undefined) === 0)
-      : [declared];
-    expect(nonUndefined).toHaveLength(1);
-    // Identity against the resolved shared type, so a structurally identical
-    // second declaration does not satisfy it.
-    expect(nonUndefined[0]).toBe(shared!.type);
+    const members = nonUndefinedMembers(typeOfProp(sym!));
+    expect(members).toHaveLength(1);
+    // Identity in one shared world, so a structurally identical second
+    // declaration does not satisfy it.
+    expect(members[0]).toBe(typeOf('CoverageStopReason'));
   });
 
   it('MergedCoverageReport owns the folder map and does not inherit a singular reason', () => {
-    const map = prop('MergedCoverageReport', 'folderStopReasons');
-    expect(map).toBeDefined();
+    const sym = prop('MergedCoverageReport', 'folderStopReasons');
+    expect(sym).toBeDefined();
 
-    // Resolve the map's VALUE type to the shared type. A value that merely
-    // mentions the name in printed text would pass a text check.
-    const mapType = map!.checker.getTypeOfSymbolAtLocation(map!.sym, map!.sym.valueDeclaration!);
-    const nonUndefined = mapType.isUnion()
-      ? mapType.types.filter(x => (x.flags & ts.TypeFlags.Undefined) === 0)
-      : [mapType];
-    expect(nonUndefined).toHaveLength(1);
-    const index = map!.checker.getIndexInfoOfType(nonUndefined[0], ts.IndexKind.String);
+    const members = nonUndefinedMembers(typeOfProp(sym!));
+    expect(members).toHaveLength(1);
+    // Resolve the map's VALUE type. A value that merely mentions the name in
+    // printed text would pass a text check.
+    const index = checker.getIndexInfoOfType(members[0], ts.IndexKind.String);
     expect(index).toBeDefined();
-    expect(index!.type).toBe(typeOf('CoverageStopReason')!.type);
+    expect(index!.type).toBe(typeOf('CoverageStopReason'));
 
-    // getPropertyOfType resolves INHERITED members too, so an aggregate that
-    // gains stopReason through `extends CoverageReport` fails here. That is
-    // the mutant a declared-members-only read cannot see.
+    // getPropertyOfType resolves INHERITED members, so an aggregate gaining
+    // stopReason through `extends CoverageReport` fails here. That is the
+    // mutant a declared-members-only read cannot see.
     expect(prop('MergedCoverageReport', 'stopReason')).toBeUndefined();
   });
 
@@ -409,5 +444,71 @@ describe('spec-vscode/AC-79 the stop-reason declarations, semantically', () => {
     // which is the state before the implementation lands.
     expect(fs.readFileSync(typesPath, 'utf8')).toContain("'unmet_precondition'");
     expect(offenders).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-79, the production wiring.
+//
+// The behavioral test above proves the reporter works. It cannot prove anyone
+// calls it, and an exported-but-unused reporter leaves users with no reason in
+// the Output channel while every behavioral assertion passes.
+//
+// extension.ts cannot be imported by this suite, but it can be read, and
+// commands.test.ts and csp.test.ts already establish static analysis over it
+// as the way to bind what lives there.
+// ---------------------------------------------------------------------------
+
+describe('spec-vscode/AC-79 the coverage run reports refusals', () => {
+  const EXT_TS = path.resolve(__dirname, '..', 'extension.ts');
+
+  /** Every identifier called inside the named top-level function. */
+  function callsInFunction(fnName: string): string[] {
+    const source = ts.createSourceFile(
+      EXT_TS,
+      fs.readFileSync(EXT_TS, 'utf8'),
+      ts.ScriptTarget.ES2020,
+      true,
+    );
+    const calls: string[] = [];
+    let found = false;
+    const visit = (node: ts.Node): void => {
+      if (
+        (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) &&
+        node.name &&
+        node.name.getText(source) === fnName
+      ) {
+        found = true;
+        const collect = (n: ts.Node): void => {
+          if (ts.isCallExpression(n)) {
+            const fn = n.expression;
+            if (ts.isIdentifier(fn)) calls.push(fn.text);
+            else if (ts.isPropertyAccessExpression(fn)) calls.push(fn.name.text);
+          }
+          ts.forEachChild(n, collect);
+        };
+        ts.forEachChild(node, collect);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    if (!found) throw new Error(`${fnName} not found in extension.ts`);
+    return calls;
+  }
+
+  it('runCoverageForFolder reports stop reasons exactly once, after storing the report', () => {
+    const calls = callsInFunction('runCoverageForFolder');
+
+    // Positive control: the function was really read. An empty call list would
+    // make every claim below pass on nothing.
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls).toContain('set');
+
+    const reporterCalls = calls.filter(c => c === 'reportStopReasons');
+    expect(reporterCalls).toHaveLength(1);
+
+    // After storing. Reporting before the store would read the previous run's
+    // state, which is the wrong folder's answer on the first run of a folder.
+    expect(calls.indexOf('reportStopReasons')).toBeGreaterThan(calls.indexOf('set'));
   });
 });
