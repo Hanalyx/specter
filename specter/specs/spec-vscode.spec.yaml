@@ -490,6 +490,24 @@ spec:
         and MUST reject a merged report whose reason survives without its
         folder, since that last shape is the one the aggregate exists to
         prevent.
+
+        **`merged()` returns the aggregate type in every case, including one
+        folder.** A single-folder workspace has historically been served by
+        returning that folder's own report, and a test asserts it by reference
+        identity. That assertion is stronger than AC-54, whose expected output
+        asks only that the merged view contain both folders' specs, and it
+        conflicts with this constraint: a lone refused folder would return a
+        `CoverageReport` carrying a singular `stopReason`, which is precisely
+        the ownerless aggregate reason forbidden above. Returning one type
+        always is what stops a singular reason leaking into an aggregate on the
+        one path that skips the merge.
+
+        The single-folder promise is preserved as **observational** rather than
+        referential: the aggregate carries the same entries, the same summary,
+        and the same parse errors as that folder's report. AC-54 is satisfied by
+        that, since it never asked for the same object. Identity was an
+        implementation detail a test pinned, and pinning it here would forbid
+        the fix.
       type: technical
       enforcement: error
 
@@ -826,6 +844,7 @@ spec:
         folder_a_report_survives_folder_b_run: true
         folder_a_parse_error_uri: "/ws/alpha/specs/broken.spec.yaml"
         merged_view_contains: ["spec-a", "spec-b"]
+        single_folder_merge_is_observationally_identical: true
       references_constraints: ["C-05", "C-06"]
       priority: high
 
