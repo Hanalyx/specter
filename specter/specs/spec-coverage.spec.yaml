@@ -84,7 +84,7 @@ spec:
       enforcement: error
 
     - id: C-10
-      description: "`specter coverage --json` MUST always emit a CoverageReport JSON document to stdout, including when one or more spec files fail to parse. The report's parse_errors array carries per-file failures; pass/fail is signalled by process exit code, not by the presence or absence of JSON output. Rationale: downstream consumers (VS Code extension, CI jobs) need a structured document in every state to distinguish 'no specs yet' from 'specs present but failed to parse'. **The boundary of \"always\" is the command function.** Once Cobra has accepted the invocation and entered `coverageCmd`'s RunE, every return in JSON mode MUST emit a complete document. Failures Cobra itself rejects, an unknown flag or a malformed argument, are outside this promise, because the command never ran. Naming the boundary is what makes \"always\" checkable: without it the rule was read as covering the parse case alone, and seven other early returns wrote nothing. **The document MUST carry a structured field naming why the run stopped**, distinct from `parse_errors`. Overloading `parse_errors` would report a rejected manifest or an invalid flag value as a spec that failed to parse, which is a different fault with a different fix, and a consumer grouping by parse-error pattern would group them together. Fabricating entries or a summary for a run that computed neither is worse: a report claiming 0 of 0 criteria covered is indistinguishable from an empty workspace. The states the field MUST cover are the ones the command already refuses on: a manifest that fails to load, an invalid flag value or flag combination, an unknown `--scope` domain, and an unmet results precondition. **Every return MUST route through one rendering and verdict path**, for the reason spec-check C-14 gives: an emitter per early return satisfies every observable assertion while leaving the next early return to be forgotten. Text output and exit codes are unchanged by this rule, which governs what stdout carries in JSON mode and nothing else."
+      description: "`specter coverage --json` MUST always emit a CoverageReport JSON document to stdout, including when one or more spec files fail to parse. The report's parse_errors array carries per-file failures; pass/fail is signalled by process exit code, not by the presence or absence of JSON output. Rationale: downstream consumers (VS Code extension, CI jobs) need a structured document in every state to distinguish 'no specs yet' from 'specs present but failed to parse'. **The boundary of \"always\" is the command function.** Once Cobra has accepted the invocation and entered `coverageCmd`'s RunE, every return in JSON mode MUST emit a complete document. Failures Cobra itself rejects, an unknown flag or a malformed argument, are outside this promise, because the command never ran. Naming the boundary is what makes \"always\" checkable: without it the rule was read as covering the parse case alone, and seven other early returns wrote nothing. **The document MUST carry a structured field naming why the run stopped**, distinct from `parse_errors`. Overloading `parse_errors` would report a rejected manifest or an invalid flag value as a spec that failed to parse, which is a different fault with a different fix, and a consumer grouping by parse-error pattern would group them together. **The shape is additive, and that is a decision rather than an inference.** `entries` and `summary` stay required and always present, so every existing consumer keeps parsing. On a refusal they carry `[]` and a zeroed summary, and those values are **uncomputed placeholders, not measurements**: the run never counted anything. `stop_reason` is what distinguishes them, so a consumer MUST read `stop_reason` before interpreting `entries` or `summary`, and MUST NOT report a refusal as an empty or fully covered workspace. The alternative considered and rejected was a discriminated union whose refusal arm omits the measurements. It is the cleaner shape and it is breaking: it would change a published document for every consumer at once, in a release closing on a defect this rule exists to fix. The cost of the additive choice is real and is named here rather than discovered later: a zeroed summary beside an empty entries list is exactly what a clean empty workspace looks like, so the placeholder is indistinguishable from a measurement unless `stop_reason` is read. That obligation does not live only in this constraint; `spec-vscode` carries the consumer half, because a rule stated for a consumer in the producer's spec is a rule nothing checks. The states the field MUST cover are the ones the command already refuses on: a manifest that fails to load, an invalid flag value or flag combination, an unknown `--scope` domain, and an unmet results precondition. **Every return MUST route through one rendering and verdict path**, for the reason spec-check C-14 gives: an emitter per early return satisfies every observable assertion while leaving the next early return to be forgotten. Text output and exit codes are unchanged by this rule, which governs what stdout carries in JSON mode and nothing else."
       type: technical
       enforcement: error
 
@@ -388,8 +388,18 @@ A shape is required rather than left to the implementation because asserting onl
         them, so the criterion cannot be met by a command that emits an empty
         document and never measures anything. The gates keep their codes: a
         document is emitted at 1, 2, 3 and 20 alike, and the code is unchanged
-        by this rule. Text output is unchanged, asserted by comparison against
-        the previous build rather than by inspection.
+        by this rule.
+
+        Each gate asserts its own cause before it reads its exit code. The gates
+        are ordered, so a fixture that trips an earlier one reports that gate's
+        code and reads as a pass for the gate it names: a below-threshold
+        workspace with no results artifact is refused for the missing artifact
+        and never reaches the threshold gate at all. This is the precedence
+        lesson already recorded for the streams gate.
+
+        Text compatibility is asserted against a baseline pinned in the
+        repository, not by comparing two builds by hand. A manual comparison
+        binds nothing once the person who ran it moves on.
       inputs:
         manifest_failure: "a specter.yaml the manifest loader rejects"
         invalid_strictness: "--strictness bogus"
@@ -397,19 +407,24 @@ A shape is required rather than left to the implementation because asserting onl
         unknown_domain: "--scope no-such-domain --strict"
         missing_results: "strictness threshold with no .specter-results.json"
         zero_tolerance_no_annotations: "--strictness zero-tolerance over a workspace whose test files carry no annotations"
+        strict_against_annotation: "--strict with settings.strictness annotation, the seventh refusal"
         control_success: "a workspace that parses and meets its tier threshold"
-        gate_1: "a spec below its tier threshold"
-        gate_2: "settings.annotation declared and one criterion with no test"
-        gate_3: "zero-tolerance and one approval_gate criterion with no approval_date"
-        gate_20: "a results file whose streams block is inconsistent"
+        gate_1: "a spec below its tier threshold, WITH a results artifact covering one of its two criteria, so the run reaches the threshold gate instead of the missing-results refusal"
+        gate_2: "settings.annotation declared, a results artifact present, and one criterion carrying no test at all"
+        gate_3: "zero-tolerance, every annotated criterion passing in the results artifact so code 2 does not precede code 3, plus one approval_gate criterion with no approval_date"
+        gate_20: "a results artifact whose streams block is inconsistent, over a workspace otherwise at threshold so no earlier gate fires"
       expected_output:
         every_state_emits_a_parseable_document: true
+        all_seven_refusals_bound_independently: true
         refusal_reason_field_is_present_and_non_empty: true
         refusal_reason_is_not_parse_errors: true
-        refusal_does_not_fabricate_entries: true
+        refusal_entries_is_empty_and_summary_is_zeroed: true
+        refusal_reason_names_the_state_that_stopped_the_run: true
         control_emits_entries: true
+        control_has_no_stop_reason: true
+        each_gate_asserts_its_own_cause_before_its_exit_code: true
         gate_exit_codes_unchanged: "1, 2, 3, 20"
-        text_output_unchanged_against_previous_build: true
+        text_output_byte_identical_to_a_pinned_baseline: true
         render_owner_functions: 1
         command_encodes_directly_at_zero_sites: true
       references_constraints: ["C-10"]
@@ -1243,6 +1258,12 @@ A shape is required rather than left to the implementation because asserting onl
       priority: critical
 
   changelog:
+    - version: "1.26.0"
+      date: "2026-08-30"
+      author: "specter-team"
+      type: minor
+      description: "C-10 said `coverage --json` MUST always emit a document. The word was read as covering the parse case it names, and seven other early returns in coverageCmd write nothing: a rejected manifest, an invalid --strictness value, --scope without --strict, --strict against annotation strictness, an unknown --scope domain, zero-tolerance with no annotated test files, and an unmet results precondition. C-10 now names the boundary that makes always checkable: once Cobra has entered RunE, every JSON-mode return emits a document, and what Cobra itself rejects is outside the promise because the command never ran. The document gains stop_reason, distinct from parse_errors, because reporting a rejected manifest as a spec that failed to parse is a different fault with a different fix. The wire shape is additive by decision and not by inference: entries and summary stay required and carry an empty list and a zeroed summary on a refusal, as uncomputed placeholders. The discriminated union was considered and rejected as breaking for every consumer at once. The cost of that choice is stated rather than left to be discovered: a zeroed summary beside an empty entries list is exactly what a clean empty workspace looks like, so spec-vscode C-33 carries the consumer obligation to read stop_reason first. AC-74 binds all seven refusals independently, a control, and the four gates, each asserting its own cause before its exit code so an earlier gate cannot stand in for a later one. Additive per the classifier: specter diff reports [additive]."
+
     - version: "1.25.0"
       date: "2026-08-26"
       author: "specter-team"

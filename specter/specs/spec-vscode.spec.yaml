@@ -1,6 +1,6 @@
 spec:
   id: spec-vscode
-  version: "5.0.2"
+  version: "5.1.0"
   status: draft
   tier: 2
 
@@ -416,6 +416,30 @@ spec:
         any kind. The arithmetic on those fields yields `NaN`, and no test
         could see it, because the mock always supplied `line: 7` and
         `column: 3` and the suite's comparison helper never read `col`.
+      type: technical
+      enforcement: error
+
+    - id: C-33
+      description: >-
+        The extension MUST read `stop_reason` on a coverage report before it
+        interprets `entries` or `summary`, and MUST NOT present a run that
+        carried one as an empty workspace or as a fully covered one.
+
+        `spec-coverage` C-10 chose the additive shape: a refused run still emits
+        `entries: []` and a zeroed summary, and those are uncomputed
+        placeholders rather than measurements. That shape is indistinguishable
+        from a clean empty workspace on every field except `stop_reason`, and
+        this extension already keys its empty state on exactly that pair, an
+        empty `entries` with no parse errors. So the producer's fix arrives here
+        as a new way to be wrong: the sidebar would report "nothing to show" for
+        a workspace whose manifest was rejected.
+
+        A rule stated for a consumer inside the producer's spec is a rule
+        nothing checks, which is why it is restated here against the surface
+        that has to honor it. The state MUST be distinguishable to the user from
+        both an empty workspace and a parse failure, and the reason MUST reach
+        the Output channel, because an operator who cannot see which of the
+        seven refusals fired cannot act on it.
       type: technical
       enforcement: error
 
@@ -1480,6 +1504,31 @@ spec:
       references_constraints: ["C-32", "C-10"]
       priority: high
 
+    - id: AC-79
+      description: >-
+        A coverage report carrying `stop_reason` is not rendered as an empty
+        workspace. Given a report with `stop_reason` set, `entries: []`, a
+        zeroed summary and no parse errors, the sidebar shows a state distinct
+        from both the nothing-to-show state and the parse-failed state, and the
+        reason text reaches the Output channel.
+
+        The negative control is the point: the same document without
+        `stop_reason` must still render as nothing-to-show, because that is a
+        real empty workspace and the two are identical on every other field.
+        Asserting only the refusal case would pass on an implementation that
+        renamed the empty state.
+      inputs:
+        refused: "a report with stop_reason set, entries [], summary zeroed, parse_errors []"
+        empty_workspace: "the same document with no stop_reason"
+        parse_failed: "entries [], no stop_reason, parse_errors non-empty"
+      expected_output:
+        refused_state_differs_from_nothing_to_show: true
+        refused_state_differs_from_parse_failed: true
+        empty_workspace_still_renders_nothing_to_show: true
+        stop_reason_text_reaches_the_output_channel: true
+      references_constraints: ["C-33"]
+      priority: critical
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.1.0"
@@ -1488,7 +1537,7 @@ spec:
       version_range: "^4.0.0"
       relationship: requires
     - spec_id: spec-coverage
-      version_range: "^1.23.0"
+      version_range: "^1.26.0"
       relationship: requires
     - spec_id: spec-diff
       version_range: ">=1.0.0 <3.0.0"
@@ -1498,6 +1547,12 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "5.1.0"
+      date: "2026-08-30"
+      author: "specter-team"
+      type: minor
+      description: "C-33 and AC-79 carry the consumer half of spec-coverage C-10. That constraint chose the additive shape for a refused coverage run: the document still emits entries [] and a zeroed summary, as uncomputed placeholders, with stop_reason as the only field that distinguishes them. This extension keys its empty state on exactly that pair, an empty entries list with no parse errors, so the producer fix arrives here as a new way to be wrong: the sidebar would report nothing to show for a workspace whose manifest was rejected, which leaves bugs/SP-SP-032 semantically open while the CLI half is closed. C-33 requires stop_reason to be read before entries or summary are interpreted, requires the state to be distinguishable from both the empty and the parse-failed states, and requires the reason to reach the Output channel so an operator can tell which of the seven refusals fired. AC-79 carries a negative control: the same document without stop_reason must still render as nothing to show, since the two are identical on every other field and asserting only the refusal case would pass on an implementation that merely renamed the empty state. The spec-coverage floor rises from ^1.23.0 to ^1.26.0, because stop_reason does not exist below it. Minor per the classifier: specter diff reports [additive]."
+
     - version: "5.0.2"
       date: "2026-08-30"
       author: "specter-team"
