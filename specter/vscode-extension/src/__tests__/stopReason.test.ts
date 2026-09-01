@@ -884,10 +884,17 @@ describe('spec-vscode/AC-79 refusal state does not depend on folder order', () =
     expect(hasAnyRefusal!(null)).toBe(false);
   });
 
-  it('updateStatusBar reads refusal state before entries or summary', () => {
+  it('updateStatusBar derives no verdict from entries before knowing about a refusal', () => {
     // Structural, because updateStatusBar is not exported. The behavioral half
-    // is the order-independence above; this is what stops the status bar
-    // reading the placeholders first and answering from them.
+    // is the order-independence above; this stops the status bar answering
+    // from the placeholders.
+    //
+    // The property is that no VERDICT is computed from entries before the
+    // refusal is known, not that the refusal check is the first statement.
+    // Binding statement order would forbid a harmless refactor: hoisting
+    // `const entries = report.entries ?? []` above the check changes nothing,
+    // because the early return still fires before entries are used. That
+    // mutant survives this guard, and it survives correctly.
     const calls = callsInFunction('updateStatusBar');
     expect(calls.length).toBeGreaterThan(0);
 
