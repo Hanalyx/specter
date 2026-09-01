@@ -830,3 +830,74 @@ describe('spec-vscode/AC-79 the aggregate reaches the real consumers', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// AC-79, the status bar. Run order must not change the visible verdict.
+//
+// updateStatusBar reads entries straight away. A refused folder sets the error
+// state, and then a folder that succeeds calls updateStatusBar with the
+// aggregate, which has entries and no singular reason, so the status bar goes
+// healthy while coverageErrorFolders still holds the refused key. Reverse the
+// order and the status stays errored. Same workspace, two answers.
+// ---------------------------------------------------------------------------
+
+describe('spec-vscode/AC-79 refusal state does not depend on folder order', () => {
+  const refusedReport = () => snakeToCamelCoverage(rawRefused) as CoverageReport;
+  const okReport = () =>
+    snakeToCamelCoverage({
+      entries: [
+        {
+          spec_id: 'ok-spec',
+          tier: 1,
+          total_acs: 1,
+          covered_acs: ['AC-01'],
+          coverage_pct: 100,
+          passes_threshold: true,
+        },
+      ],
+      summary: { total_specs: 1, passing: 1, failing: 0 },
+      parse_errors: [],
+    }) as CoverageReport;
+
+  const mod = () => require('../coverage') as Record<string, unknown>;
+
+  it('hasAnyRefusal is true whichever folder ran last', () => {
+    const hasAnyRefusal = mod().hasAnyRefusal as ((m: unknown) => boolean) | undefined;
+    expect(typeof hasAnyRefusal).toBe('function');
+
+    const refusedFirst = new CoverageReportStore(noopOps);
+    refusedFirst.set('/ws/bad', refusedReport(), '/ws/bad');
+    refusedFirst.set('/ws/good', okReport(), '/ws/good');
+
+    const successFirst = new CoverageReportStore(noopOps);
+    successFirst.set('/ws/good', okReport(), '/ws/good');
+    successFirst.set('/ws/bad', refusedReport(), '/ws/bad');
+
+    expect(hasAnyRefusal!(refusedFirst.merged())).toBe(true);
+    expect(hasAnyRefusal!(successFirst.merged())).toBe(true);
+
+    // The negative control. Without it a function returning true always would
+    // pass, and every workspace would read as refused.
+    const clean = new CoverageReportStore(noopOps);
+    clean.set('/ws/good', okReport(), '/ws/good');
+    expect(hasAnyRefusal!(clean.merged())).toBe(false);
+    expect(hasAnyRefusal!(null)).toBe(false);
+  });
+
+  it('updateStatusBar reads refusal state before entries or summary', () => {
+    // Structural, because updateStatusBar is not exported. The behavioral half
+    // is the order-independence above; this is what stops the status bar
+    // reading the placeholders first and answering from them.
+    const calls = callsInFunction('updateStatusBar');
+    expect(calls.length).toBeGreaterThan(0);
+
+    const refusalAt = calls.indexOf('hasAnyRefusal');
+    expect(refusalAt).toBeGreaterThanOrEqual(0);
+    for (const later of ['formatStatusBar', 'some', 'filter', 'reduce']) {
+      const at = calls.indexOf(later);
+      if (at >= 0) {
+        expect(refusalAt).toBeLessThan(at);
+      }
+    }
+  });
+});
