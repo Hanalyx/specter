@@ -27,7 +27,6 @@ import {
   findNearestSpecAnnotation,
 } from './annotations';
 import {
-  formatStatusBar,
   classifyNotification,
   buildFileDecoration,
   buildACDecorations,
@@ -41,7 +40,6 @@ import {
   findEntryBySpecFile,
   reportStopReasons,
   isFolderRefused,
-  hasAnyRefusal,
   statusBarPresentation,
 } from './coverage';
 import { buildConstraintHover, resolveDefinitionTarget } from './navigation';
