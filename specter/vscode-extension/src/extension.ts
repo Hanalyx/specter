@@ -41,6 +41,7 @@ import {
   findEntryBySpecFile,
   reportStopReasons,
   isFolderRefused,
+  hasAnyRefusal,
 } from './coverage';
 import { buildConstraintHover, resolveDefinitionTarget } from './navigation';
 import { buildInsightCards, computeInsightsStatus, formatSpecContextForAI, shouldShowWalkthrough } from './insights';
@@ -52,6 +53,7 @@ import * as os from 'os';
 import type {
   SpecIndex,
   CoverageReport,
+  MergedCoverageReport,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -684,8 +686,18 @@ function updateSpecIndex(report: CoverageReport): void {
   }
 }
 
-function updateStatusBar(report: CoverageReport | null): void {
+function updateStatusBar(report: MergedCoverageReport | null): void {
   if (!statusBarItem || !report) return;
+
+  // spec-vscode C-33: refusal state before entries or summary. A refused
+  // folder contributes an empty entries list, so reading entries first lets a
+  // later successful folder erase the error state and makes the visible
+  // verdict depend on which folder ran last.
+  if (hasAnyRefusal(report)) {
+    setStatusBarError('Specter: coverage did not run for one or more folders. Click to view details.');
+    return;
+  }
+
   const entries = report.entries ?? [];
   const hasT1OrT2Failure = entries.some(
     e => !e.passesThreshold && (e.tier === 1 || e.tier === 2),

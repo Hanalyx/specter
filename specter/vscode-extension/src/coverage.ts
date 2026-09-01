@@ -178,9 +178,12 @@ export class CoverageReportStore {
 
   /**
    * Aggregate view for the status bar, Coverage sidebar, and Insights.
-   * Single-folder workspaces get their stored report back by identity —
-   * the pre-1.7.0 single-root behavior observationally, entry for entry. Not the stored object: spec-vscode C-33 requires the aggregate type in every case, so a lone refused folder cannot return a report carrying a singular stopReason. Returns null when
-   * nothing is stored (the sidebar's "coverage not run yet" state).
+   * A single-folder workspace gets the pre-1.7.0 behavior observationally,
+   * entry for entry, but NOT the stored object. spec-vscode C-33 requires the
+   * aggregate type in every case, because returning the folder's own report
+   * would hand back a singular stopReason on an aggregate, a reason with no
+   * owner. Returns null when nothing is stored (the sidebar's "coverage not
+   * run yet" state).
    * The optional fields (parseErrors, specCandidatesCount,
    * parseErrorPatterns) stay absent unless at least one folder's report
    * defined them. That distinction no longer reaches the sidebar: since C-31
@@ -405,6 +408,17 @@ export function reportStopReasons(
  * reachable from the tree or the status bar. Answering per folder is what lets
  * a caller mark the refused one errored without touching the others.
  */
+/**
+ * Whether any folder in the workspace refused, spec-vscode C-33.
+ *
+ * Order-independent by construction, which is the point: the aggregate holds
+ * every folder, so a later successful run cannot erase an earlier refusal.
+ * Reading entries instead makes the answer depend on which folder ran last.
+ */
+export function hasAnyRefusal(merged: MergedCoverageReport | null | undefined): boolean {
+  return Object.keys(merged?.folderStopReasons ?? {}).length > 0;
+}
+
 export function isFolderRefused(
   merged: MergedCoverageReport | null | undefined,
   folderKey: string,
