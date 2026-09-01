@@ -42,6 +42,7 @@ import {
   reportStopReasons,
   isFolderRefused,
   hasAnyRefusal,
+  statusBarPresentation,
 } from './coverage';
 import { buildConstraintHover, resolveDefinitionTarget } from './navigation';
 import { buildInsightCards, computeInsightsStatus, formatSpecContextForAI, shouldShowWalkthrough } from './insights';
@@ -687,42 +688,21 @@ function updateSpecIndex(report: CoverageReport): void {
 }
 
 function updateStatusBar(report: MergedCoverageReport | null): void {
-  if (!statusBarItem || !report) return;
+  if (!statusBarItem) return;
 
-  // spec-vscode C-33: refusal state before entries or summary. A refused
-  // folder contributes an empty entries list, so reading entries first lets a
-  // later successful folder erase the error state and makes the visible
-  // verdict depend on which folder ran last.
-  if (hasAnyRefusal(report)) {
-    setStatusBarError('Specter: coverage did not run for one or more folders. Click to view details.');
+  // The wrapper applies the decision and holds no policy of its own. The rule
+  // lives in statusBarPresentation, where its outcome is testable; a copy here
+  // would be a second rule that can disagree with the tested one.
+  const presentation = statusBarPresentation(report);
+  if (presentation.kind === 'hidden') return;
+  if (presentation.kind === 'error') {
+    setStatusBarError(presentation.message);
     return;
   }
-
-  const entries = report.entries ?? [];
-  const hasT1OrT2Failure = entries.some(
-    e => !e.passesThreshold && (e.tier === 1 || e.tier === 2),
-  );
-  const totalPct = entries.length === 0
-    ? 0
-    : Math.round(entries.reduce((s, e) => s + e.coveragePct, 0) / entries.length);
-  const failing = entries.filter(e => !e.passesThreshold).length;
-
-  const result = formatStatusBar({
-    totalSpecs: entries.length,
-    coveragePct: totalPct,
-    failing,
-    hasT1OrT2Failure,
-  });
-
-  if (typeof result === 'string') {
-    statusBarItem.text = result;
-    statusBarItem.backgroundColor = undefined;
-  } else {
-    statusBarItem.text = result.text;
-    statusBarItem.backgroundColor = result.colorToken
-      ? new vscode.ThemeColor(result.colorToken)
-      : undefined;
-  }
+  statusBarItem.text = presentation.text;
+  statusBarItem.backgroundColor = presentation.colorToken
+    ? new vscode.ThemeColor(presentation.colorToken)
+    : undefined;
 }
 
 // ---------------------------------------------------------------------------

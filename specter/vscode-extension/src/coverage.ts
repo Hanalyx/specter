@@ -402,13 +402,6 @@ export function reportStopReasons(
 
 
 /**
- * Whether one folder refused, read from the aggregate, spec-vscode C-33.
- *
- * The aggregate is what every consumer holds; a folder's own report is not
- * reachable from the tree or the status bar. Answering per folder is what lets
- * a caller mark the refused one errored without touching the others.
- */
-/**
  * Whether any folder in the workspace refused, spec-vscode C-33.
  *
  * Order-independent by construction, which is the point: the aggregate holds
@@ -419,6 +412,68 @@ export function hasAnyRefusal(merged: MergedCoverageReport | null | undefined): 
   return Object.keys(merged?.folderStopReasons ?? {}).length > 0;
 }
 
+/**
+ * What the status bar should show, spec-vscode C-33.
+ *
+ * A pure decision, separated from the VS Code item it drives, so the outcome
+ * is observable. A guard over call order alone left two mutants alive:
+ * inverting the refusal condition, and deleting the error message while
+ * keeping the early return. Both preserve the order and both leave the status
+ * wrong.
+ *
+ * Refusal is read before entries, and that ordering is a property rather than
+ * a style: a refused folder contributes an empty entries list, so a status
+ * derived from entries first would let a later successful folder erase an
+ * earlier refusal and make the answer depend on run order.
+ *
+ * A workspace that was measured and fell short is `measured`, not `error`. The
+ * two are different states, and conflating them sends an operator looking in
+ * the wrong place.
+ */
+export type StatusBarPresentation =
+  | { kind: 'hidden' }
+  | { kind: 'error'; message: string }
+  | { kind: 'measured'; text: string; colorToken?: string };
+
+export function statusBarPresentation(
+  merged: MergedCoverageReport | null | undefined,
+): StatusBarPresentation {
+  if (!merged) return { kind: 'hidden' };
+
+  if (hasAnyRefusal(merged)) {
+    return {
+      kind: 'error',
+      message: 'Specter: coverage did not run for one or more folders. Click to view details.',
+    };
+  }
+
+  const entries = merged.entries ?? [];
+  const hasT1OrT2Failure = entries.some(
+    e => !e.passesThreshold && (e.tier === 1 || e.tier === 2),
+  );
+  const totalPct = entries.length === 0
+    ? 0
+    : Math.round(entries.reduce((s, e) => s + e.coveragePct, 0) / entries.length);
+  const failing = entries.filter(e => !e.passesThreshold).length;
+
+  const result = formatStatusBar({
+    totalSpecs: entries.length,
+    coveragePct: totalPct,
+    failing,
+    hasT1OrT2Failure,
+  });
+  return typeof result === 'string'
+    ? { kind: 'measured', text: result }
+    : { kind: 'measured', text: result.text, colorToken: result.colorToken };
+}
+
+/**
+ * Whether one folder refused, read from the aggregate, spec-vscode C-33.
+ *
+ * The aggregate is what every consumer holds; a folder's own report is not
+ * reachable from the tree or the status bar. Answering per folder is what lets
+ * a caller mark the refused one errored without touching the others.
+ */
 export function isFolderRefused(
   merged: MergedCoverageReport | null | undefined,
   folderKey: string,
