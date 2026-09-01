@@ -884,27 +884,85 @@ describe('spec-vscode/AC-79 refusal state does not depend on folder order', () =
     expect(hasAnyRefusal!(null)).toBe(false);
   });
 
-  it('updateStatusBar derives no verdict from entries before knowing about a refusal', () => {
-    // Structural, because updateStatusBar is not exported. The behavioral half
-    // is the order-independence above; this stops the status bar answering
-    // from the placeholders.
+  it('the status decision is the same whichever folder ran last, and says so', () => {
+    // The call-order guard this replaces bound only that hasAnyRefusal was
+    // called first. Two mutants survived it: inverting the condition, and
+    // deleting setStatusBarError while keeping the early return. Both leave
+    // the call order intact and the visible status wrong.
     //
-    // The property is that no VERDICT is computed from entries before the
-    // refusal is known, not that the refusal check is the first statement.
-    // Binding statement order would forbid a harmless refactor: hoisting
-    // `const entries = report.entries ?? []` above the check changes nothing,
-    // because the early return still fires before entries are used. That
-    // mutant survives this guard, and it survives correctly.
+    // A pure decision makes the OUTCOME observable, so polarity and the error
+    // itself are bound rather than the shape of the code around them.
+    const decide = mod().statusBarPresentation as
+      | ((m: unknown) => { kind: string; message?: string; text?: string })
+      | undefined;
+    expect(typeof decide).toBe('function');
+
+    const refusedFirst = new CoverageReportStore(noopOps);
+    refusedFirst.set('/ws/bad', refusedReport(), '/ws/bad');
+    refusedFirst.set('/ws/good', okReport(), '/ws/good');
+
+    const successFirst = new CoverageReportStore(noopOps);
+    successFirst.set('/ws/good', okReport(), '/ws/good');
+    successFirst.set('/ws/bad', refusedReport(), '/ws/bad');
+
+    const a = decide!(refusedFirst.merged());
+    const b = decide!(successFirst.merged());
+
+    // Same workspace, same answer, whichever order the folders ran in.
+    expect(a).toEqual(b);
+    expect(a.kind).toBe('error');
+    // The error carries text a person sees. Deleting the message while
+    // keeping the branch would leave the status bar silent.
+    expect(String(a.message)).toMatch(/coverage did not run/i);
+
+    // Polarity. A clean aggregate must NOT be the error state, or inverting
+    // the condition would pass every assertion above.
+    const clean = new CoverageReportStore(noopOps);
+    clean.set('/ws/good', okReport(), '/ws/good');
+    const cleanResult = decide!(clean.merged());
+    expect(cleanResult.kind).not.toBe('error');
+    expect(String(cleanResult.text)).toContain('Specter');
+
+    // A measured workspace that FAILS is still measured, not refused. The two
+    // are different states and the status bar must not conflate them.
+    const failing = new CoverageReportStore(noopOps);
+    failing.set(
+      '/ws/fail',
+      snakeToCamelCoverage({
+        entries: [
+          {
+            spec_id: 'bad-spec',
+            tier: 1,
+            total_acs: 2,
+            covered_acs: ['AC-01'],
+            coverage_pct: 50,
+            passes_threshold: false,
+          },
+        ],
+        summary: { total_specs: 1, passing: 0, failing: 1 },
+        parse_errors: [],
+      }) as CoverageReport,
+      '/ws/fail',
+    );
+    const failingResult = decide!(failing.merged());
+    expect(failingResult.kind).not.toBe('error');
+    expect(String(failingResult.text)).toContain('Specter');
+
+    // Nothing stored at all is neither.
+    expect(decide!(null).kind).toBe('hidden');
+  });
+
+  it('updateStatusBar only applies the decision', () => {
+    // The wrapper holds no policy of its own: it calls the decision and
+    // renders it. Without this a second copy of the rule could grow in
+    // extension.ts and disagree with the tested one.
     const calls = callsInFunction('updateStatusBar');
     expect(calls.length).toBeGreaterThan(0);
-
-    const refusalAt = calls.indexOf('hasAnyRefusal');
-    expect(refusalAt).toBeGreaterThanOrEqual(0);
-    for (const later of ['formatStatusBar', 'some', 'filter', 'reduce']) {
-      const at = calls.indexOf(later);
-      if (at >= 0) {
-        expect(refusalAt).toBeLessThan(at);
-      }
+    expect(calls).toContain('statusBarPresentation');
+    // The arithmetic over entries moved into the decision, so none of it is
+    // left here to drift.
+    for (const gone of ['formatStatusBar', 'some', 'filter', 'reduce']) {
+      expect(calls).not.toContain(gone);
     }
   });
 });
