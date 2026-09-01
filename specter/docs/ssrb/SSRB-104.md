@@ -112,7 +112,7 @@ percentages are reported and absent where diagnostics are reported.**
 
 A five-agent consensus panel ran on the naming question and found the term
 incoherent by measurement rather than by opinion. That work is recorded in
-`docs/SPECTER_LEXICON.md`.
+`specs/spec-manifest.spec.yaml` C-24 and `docs/CLI_REFERENCE.md`.
 
 ## 3. Universality
 
@@ -146,7 +146,7 @@ anything else in the manifest.
 | CLI surface | Two `--strictness` registrations retire, `main.go:1241` and `:1412`. **Nothing replaces them.** The new setting is manifest only |
 | VS Code extension | `client.ts:180` hardcodes `--strictness annotation` against a user-pinnable binary. It breaks in one direction or the other unless the old flag is accepted through the window, which this request requires |
 | Exit codes | 2 and 3 fire only under `zero-tolerance` (`docs/EXIT_CODES.md`). Both go unreachable unless a new trigger is named |
-| Docs | `CLI_REFERENCE.md` flag tables, `TEST_ANNOTATION_REFERENCE.md`, `EXIT_CODES.md`, `SPECTER_LEXICON.md` |
+| Docs | `CLI_REFERENCE.md` flag tables, `TEST_ANNOTATION_REFERENCE.md`, `EXIT_CODES.md` |
 | Dogfood | `make dogfood-strict` already does not exercise the level it names (`bugs/SP-SP-046`) and needs retargeting regardless |
 | Tests | `cmd/specter/cli_docs_parity_test.go` fails until the flag tables match |
 
@@ -579,7 +579,6 @@ argument for option 3: the least code, on a path that is going away.
 - `features/SP-006`, the request this brief formalizes.
 - `features/SP-005`, `settings.strict` coherence. A separate axis and a separate
   decision; the two should not be bundled.
-- `docs/SPECTER_LEXICON.md`, `strictness` entry and the RETIRING section.
 - `docs/ssrb/SSRB-101.md`, which rejected source-file annotation.
 - `docs/ssrb/SSRB-102.md`, per-rule severity, NEEDS-DESIGN.
 - `bugs/SP-SP-038`, surfaces computing coverage from a different input than the

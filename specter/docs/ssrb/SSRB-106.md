@@ -231,4 +231,3 @@ migration for four removals.
 - `docs/ssrb/SSRB-105.md`, retiring the registry. Deletes one of the two
   `ResolveTier` call sites and shares the deprecate-then-remove shape.
 - `docs/ssrb/SSRB-104.md`, whose v1.0.0 removal this joins.
-- `docs/SPECTER_LEXICON.md`, `tier`, `tier override` and `tier conflict` entries.

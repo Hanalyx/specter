@@ -151,5 +151,6 @@ as the last orphan of a retired subsystem.
 - `bugs/SP-SP-054`, the P1 defect this closes.
 - `bugs/SP-SP-049`, the tier cascade. Decided alongside, answered separately.
 - `docs/ssrb/SSRB-104.md`, whose deprecate-then-remove shape this follows.
-- `docs/SPECTER_LEXICON.md` Part 5, which records that the registry block parses
-  and no command reads or regenerates it.
+- `internal/manifest/manifest.go`, where `registry` remains in
+  `validTopLevelKeys` and its value is discarded, and `bugs/done/SP-SP-054`,
+  which recorded that no command read or regenerated it.
