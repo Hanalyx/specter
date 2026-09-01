@@ -111,8 +111,12 @@ command that knows. **The fact the setting exists to enforce is computed where
 percentages are reported and absent where diagnostics are reported.**
 
 A five-agent consensus panel ran on the naming question and found the term
-incoherent by measurement rather than by opinion. That work is recorded in
-`specs/spec-manifest.spec.yaml` C-24 and `docs/CLI_REFERENCE.md`.
+incoherent by measurement rather than by opinion. **That panel's own record is
+not in this repository.** It was written up in a reference document held out of
+v0.15.0 for re-verification, and this brief is now the only shipped account of
+it. Section 5's table carries the figures the panel produced, 492 lines
+mentioning `strictness` against 34 for `settings.strict`, and the sections above
+carry the argument. Read those as the evidence; nothing else here restates it.
 
 ## 3. Universality
 

@@ -1,6 +1,6 @@
 # SSRB-103: multi-stream evidence in ingest and coverage
 
-Status: ACCEPT. **The accepted foundation shipped 2026-08-27**: `ingest --stream` and `--merge`, the `streams` block, the merge key gaining `stream`, and exit code 20 for an inconsistent block. Sections 2 and 5 describe the gap as it stood at decision time, not as it stands now for the foundation; policies NEEDS-DESIGN.
+Status: ACCEPT. **The accepted foundation shipped 2026-08-26**: `ingest --stream` and `--merge`, the `streams` block, the merge key gaining `stream`, and exit code 20 for an inconsistent block. Sections 2 and 5 describe the gap as it stood at decision time, not as it stands now for the foundation; policies NEEDS-DESIGN.
 Decided: 2026-08-24 for the foundation.
 Source: `features/SP-002-ingest-live-host-verification` (Kensa, 2026-07-01), plus an unfiled OpenWatch request drafted 2026-08-14
 

@@ -350,7 +350,7 @@ spec-ingest                               T1     18       18        100%       P
 spec-parse                                T1     19       19        100%       PASS
 spec-resolve                              T1     15       15        100%       PASS
 spec-coverage                             T2     74       74        100%       PASS
-spec-diff                                 T2     19       18        95%        PASS
+spec-diff                                 T2     19       18        94%        PASS
 ...
 
 15 specs: 15 passing, 0 failing

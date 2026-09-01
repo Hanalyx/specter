@@ -88,17 +88,16 @@ against the binary before this entry was rewritten.
 `src/specs/spec-x.spec.yaml` is found and parsed. And when nothing is found, the
 run says why it looked where it did:
 
-```
-No .spec.yaml files found.
-  Searched: current directory and subdirectories (no specter.yaml found)
-  - Point specter at a different directory:     add specs_dir to specter.yaml
-```
+It names where it searched and what it searched for, then lists three
+remedies: generate drafts with `specter reverse`, scaffold from a template with
+`specter init --template`, or point it elsewhere by adding `specs_dir` to
+`specter.yaml`. The literal block is not reproduced here; an earlier revision
+of this entry quoted it and silently changed a bullet character, which is the
+same drift this file exists to warn about.
 
 **The rule that remains:** if you are editing manifest-loading code, keep the
 hint when defaults are in play. A discovery that reports zero files should say
 where it looked, which is what makes this no longer a gotcha.
-
-**Rule:** if you're editing manifest-loading code, preserve (or add) a clear hint when defaults are in play. `discoverSpecs` should be able to say "I looked at `specs/` and found 0 files".
 
 ---
 
