@@ -133,6 +133,8 @@ Four manifest surfaces are on a removal path for v1.0.0. Three of them resolve n
 
 ### Changed
 
+- **`settings.strict: true` no longer runs the test-annotation scan on `sync`.** The key promotes warning and info check diagnostics to errors, and that is now all it does. It used to also switch on the `@spec`/`@ac` cross-reference that `sync --strict` runs, which meant a severity setting decided which defects were found: on a workspace whose test file referenced a spec id that does not exist, `sync` exited 1 with the key and 0 without it, and no promotion was involved because `unknown_spec_ref` is always an error. **Action: this can quietly reduce what you check.** If you relied on the key for annotation checking, pick the migration that matches what you want. Use `sync --strict` if you also want zero-tolerance coverage for that run, since the flag still does all three things. Run `specter check --test` as its own step if you want the annotation check without changing coverage strictness. `sync --strict` is unchanged, and so is what the key does on `check`, where the two were always the same thing.
+
 - British spellings corrected in `README.md`, `GOTCHAS.md`, `docs/CLI_REFERENCE.md`, `vscode-extension/README.md`, and three VS Code extension source comments. One decorative symbol removed from `docs/explainer/v0.10-ci-gated-coverage.md`. No behavior change.
 
 ---
