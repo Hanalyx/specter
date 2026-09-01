@@ -255,7 +255,7 @@ unreachable by construction rather than by discipline. The precedence question
 disappears with it, and so does the `Changed()` hazard: today `strict` combines
 flag and manifest as `strict || m.Settings.Strict` at **three** sites,
 `main.go:711`, `:1313` and `:1347`, so `--strict=false` cannot turn off a
-manifest `true`, and **no flag in the codebase uses `cmd.Flags().Changed()`**. A
+manifest `true`, and **one flag uses `cmd.Flags().Changed()`**, `ingest --stream`, at two sites, added by the SSRB-103 work in this same cycle. A
 fourth site, `:3003`, reads `m.Settings.Strict` alone, because `watch` accepts
 no flag at all.
 

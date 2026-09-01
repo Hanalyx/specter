@@ -8,11 +8,12 @@ Specter is content-agnostic. A `.spec.yaml` can describe runtime behavior, data 
 
 ```
 $ specter sync
+Specter Sync
 
-  PASS  parse     5 spec(s) parsed — no schema violations
-  PASS  resolve   5 specs, 8 dependencies — no cycles or broken refs
-  PASS  check     0 errors, 0 orphan constraints
-  PASS  coverage  5 spec(s) meet coverage thresholds
+  PASS parse: 15 spec(s) parsed successfully
+  PASS resolve: 15 specs, 23 dependencies resolved
+  PASS check: 0 warning(s), 0 info
+  PASS coverage: 15 spec(s) meet coverage thresholds
 
 All checks passed.
 ```
@@ -124,10 +125,11 @@ Specter runs five stages in sequence. Each stage catches a different class of pr
 **`specter parse`.** Catches malformed specs before anything else runs. Missing required fields, IDs that don't match the allowed pattern, invalid enum values, wrong types. Like a compiler catching syntax errors.
 
 ```bash
-specter parse specs/auth.spec.yaml
+specter parse
 
-# ERROR: spec-auth.spec.yaml [required] missing required field: 'acceptance_criteria'
-# ERROR: spec-auth.spec.yaml [pattern]  constraint ID 'constraint-1' does not match C-NN format
+# FAIL specs/auth.spec.yaml
+#   error [required] spec: Missing required field 'acceptance_criteria'. Add at least one AC with id (AC-01 format) and description
+#   error [pattern] spec.constraints[0].id: Constraint ID must match the C-NN pattern (e.g. C-01, C-02). Use uppercase C followed by a dash and two digits
 ```
 
 **`specter resolve`.** Builds the dependency graph across all specs and validates it. Catches circular dependencies and references to specs that don't exist.
@@ -135,16 +137,18 @@ specter parse specs/auth.spec.yaml
 ```bash
 specter resolve
 
-# ERROR: circular dependency: spec-a → spec-b → spec-a
-# ERROR: spec-auth depends on spec-session@^1.0.0 but spec-session is not found
+# Spec Graph: 1 specs, 0 dependencies
+#
+# error [dangling_reference] Spec "spec-auth" depends on "spec-session" which does not exist
+# error [circular_dependency] Circular dependency detected: spec-a -> spec-b -> spec-a
 ```
 
-**`specter check`.** Finds structural problems within and between specs. An orphan constraint, one that no acceptance criterion references, is a constraint that can never be tested. A tier conflict catches a spec whose declared `tier:` disagrees with the deprecated `settings.tier_overrides`. The declared tier governs and the override is not applied, so the warning tells you the setting is doing nothing.
+**`specter check`.** Finds structural problems within and between specs. An orphan constraint, one that no acceptance criterion references, is a constraint that can never be tested. A tier conflict catches a spec whose declared `tier:` disagrees with the deprecated `settings.tier_overrides`. The declared tier governs and the override is not applied. The warning is not cosmetic: `--strict` promotes it to an error, so a disagreement fails a strict build.
 
 ```bash
 specter check
 
-# warn: settings.tier_overrides is deprecated and has no effect. Set tier: in each .spec.yaml file. It is removed at v1.0.0.
+# warn: settings.tier_overrides is deprecated and resolves no tier. Its value is still compared: one that disagrees with a spec's declared tier warns, and --strict makes that an error. Set tier: in each .spec.yaml file. It is removed at v1.0.0.
 # error [orphan_constraint] spec-auth C-04 (security): Constraint C-04 in "spec-auth" is not referenced by any acceptance criterion
 # warn [tier_conflict] spec-payments: spec "spec-payments" declares tier: 2 but specter.yaml tier_overrides assigns tier: 1. The declared tier governs; tier_overrides is not applied.
 #
@@ -152,6 +156,11 @@ specter check
 ```
 
 **`specter coverage`.** Reads `@spec` and `@ac` annotations from your test files and produces a traceability matrix. Enforces tier-based coverage thresholds.
+
+The default strictness is `threshold`, which is outcome-verified: it requires
+`.specter-results.json` and refuses without one. On a fresh workspace, run
+`specter ingest` first, or pass `--strictness annotation` to count annotations
+alone.
 
 ```bash
 specter coverage
@@ -260,7 +269,7 @@ Coverage thresholds scale with risk:
 | **T2**, business logic | Booking flow, pricing rules | 80% |
 | **T3**, utility | Formatters, helpers | 50% |
 
-A Tier 1 spec below threshold is a CI failure. A Tier 3 spec below threshold is a warning.
+A spec below its threshold fails at every tier. The tier sets how much coverage is demanded, not how the shortfall is treated: `coverage` exits 1 and the row reads FAIL whether the spec is Tier 1 or Tier 3.
 
 ---
 
@@ -285,12 +294,17 @@ Specs map to programming type concepts one-for-one:
 specter/
   cmd/specter/       CLI entry point (Cobra)
   internal/
-    parser/          M1: YAML → validated SpecAST
+    parser/          M1: YAML to validated SpecAST
     resolver/        M2: Dependency graph, cycle detection
     checker/         M3: Orphan constraints, structural conflicts
     coverage/        M4: Spec-to-test traceability matrix
     sync/            M5: CI pipeline orchestrator
     reverse/         M6: Reverse-compile specs from existing code
+    ingest/          Test-runner output to .specter-results.json
+    diff/            Semantic diff between two specs
+    explain/         Read-only reference surfaces
+    manifest/        specter.yaml parsing and validation
+    migrate/         Schema migration paths
     schema/          Canonical types + embedded JSON Schema
   specs/             Specter's own specs (dogfooding)
   testdata/          Test fixtures
@@ -302,19 +316,24 @@ specter/
 ## Development
 
 ```bash
-make check           # go vet + go test + go build — the CI gate
+make check           # gofmt-check, go vet, golangci-lint, go test, go build. The CI gate
 make dogfood         # run specter against its own specs (annotation-counting gate)
 make dogfood-strict  # mechanical eval gate: go test -json + jest → specter ingest → coverage --strict
 make build-all       # cross-compile for linux/darwin/windows
 ```
 
-Every package in `internal/` is a pure function: no I/O, no CLI dependencies.
+No package in `internal/` imports the CLI framework; `cmd/specter/` owns flag parsing and process exit. Most are pure: `internal/ingest` is the exception, because reading a test-runner artifact and writing `.specter-results.json` is what it is for.
 
 ---
 
 ## Dogfooding
 
 Specter validates its own specs. The current dogfood set has 15 specs covering the CLI pipeline and VS Code extension. The strict gate verifies test results with `go test -json`, Jest JUnit output, `specter ingest`, and `coverage --strict`.
+
+These figures are outcome-verified: they come from `make dogfood-strict`, which
+runs the tests, feeds the results through `specter ingest`, and gates on them. A
+coverage number means nothing without its strictness level, because the same
+workspace reports differently under each.
 
 ```
 $ specter coverage
@@ -326,11 +345,12 @@ Spec Coverage Report — 15 specs · 99% avg coverage
 
 Spec ID                                   Tier   ACs      Covered   Coverage   Status
 ----------------------------------------------------------------------------------
-spec-check                                T1     8        8         100%       PASS
-spec-parse                                T1     13       13        100%       PASS
-spec-resolve                              T1     9        9         100%       PASS
-spec-coverage                             T2     33       33        100%       PASS
-spec-diff                                 T2     10       10        100%       PASS
+spec-check                                T1     46       46        100%       PASS
+spec-ingest                               T1     18       18        100%       PASS
+spec-parse                                T1     19       19        100%       PASS
+spec-resolve                              T1     15       15        100%       PASS
+spec-coverage                             T2     74       74        100%       PASS
+spec-diff                                 T2     19       18        95%        PASS
 ...
 
 15 specs: 15 passing, 0 failing

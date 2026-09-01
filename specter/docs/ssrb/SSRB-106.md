@@ -175,8 +175,11 @@ ships with the defect already filed against the old one.
 Accepted with a warning in v0.15, removed at v1.0.0. With domains carrying a
 checked tier, a workspace-wide default adds a level and decides nothing.
 
-`init` stops writing it. `refresh.go:99` stops copying it into a synthesized
-domain.
+`init` should stop writing it, and `refresh` should stop copying it into a
+synthesized default domain. **Neither has landed as of v0.15.0.** `specter init`
+still writes `system.tier: 2` and `domains.default.tier: 2`, so a freshly
+scaffolded workspace warns on its own first `check`. Filed as
+`bugs/SP-SP-056`. The rest of this section shipped.
 
 ### 7.3 `settings.tier_overrides` is deprecated, and its message is corrected now
 

@@ -54,7 +54,7 @@ Specter SDD surfaces both problems in the editor, continuously, as you work.
 
 ### Know what's covered without running a report
 
-Color-coded icons appear next to every requirement in your spec file the moment you open it, **green** means at least one test covers it, **red** means nothing does, **gray** means it's intentionally excluded. The status bar shows the aggregate across all specs at all times.
+A CodeLens above each requirement in your spec file tells you whether a test covers it: a check mark when at least one does, a slashed circle when none does. There are two states, not three. An earlier version of this page promised a gray "intentionally excluded" state, and spec-vscode 5.0.0 retracted it: `coverage --json` emits no such classification, so the extension has nothing to render it from. The Coverage sidebar shows the same two states as green and red icons, and the status bar shows the aggregate across all specs.
 
 ### Catch spec errors before you save
 
@@ -70,7 +70,7 @@ Hover over `// @ac AC-03` in a test to see the requirement's full description, i
 
 ### Get warned when a spec changes under your tests
 
-If a spec requirement changes after you annotated a test against it, a **drift warning** icon appears in the gutter next to the annotation. Hover to see the original requirement and the current one side by side, classified as a breaking change, a new addition, or a wording clarification.
+If a spec requirement changes after you annotated a test against it, a **drift warning** appears inline after the annotation, reading `spec changed`, with a marker in the overview ruler at the right edge of the editor. Hover to see the original requirement and the current one side by side, classified as a breaking change, a new addition, or a wording clarification.
 
 ### Navigate specs like code
 
@@ -94,11 +94,11 @@ A hint appears above any test function not yet linked to a spec, suggesting the 
 
 **1. Write the spec.** Create a `.spec.yaml` file. Specter validates it immediately, schema errors appear in the Problems panel before you save.
 
-**2. Annotate the test.** Use `// @spec` and `// @ac` completions to link your test function to a requirement. The gutter icon next to that requirement turns green.
+**2. Annotate the test.** Use `// @spec` and `// @ac` completions to link your test function to a requirement. The CodeLens above that requirement turns into a check mark.
 
 **3. Implement with the contract.** Run **Copy Spec Context for AI** before prompting your AI assistant. It receives the exact requirements and constraints, not a paraphrase.
 
-**4. See gaps instantly.** Any requirement still red in the gutter after implementation is a coverage gap. The status bar shows the count. The Insights panel explains what's missing.
+**4. See gaps instantly.** Any requirement still showing a slashed circle after implementation is a coverage gap. The status bar shows the count. The Insights panel explains what's missing.
 
 **5. Stay aligned as specs evolve.** When a spec changes, drift warnings appear on any test whose annotation now references a different requirement than it did when it was written.
 

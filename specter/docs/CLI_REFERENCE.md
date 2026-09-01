@@ -197,6 +197,8 @@ specter check [--json] [--tier <n>] [--strict] [--test] [--concrete]
 | `unknown_spec_ref` | error (under `--test`) | A test annotates `@spec <id>` but no spec with that ID was parsed. Emitted only under `--test`. |
 | `unknown_ac_ref` | error (under `--test`) | A test annotates `@ac AC-NN` but the spec has no AC with that ID. Emitted only under `--test`. |
 | `unreachable_annotation` | by `settings.strictness`: annotation→suppressed, threshold→warning, zero-tolerance→error. `--strict` promotes it to error | Source-comment `@ac` whose enclosing test produces no runner-visible `<spec-id>/AC-NN` token (Convention A) and no runtime print (Convention B). Such annotations would silently demote under `coverage --strict`. Per-file off-switch: `// @reachable manual` (`# @reachable manual` for Python). Added in v0.13.0. |
+| `annotation_conflict` | warning | The manifest declares both `settings.strictness` and a `settings.annotation` block. The block takes precedence and the strictness value is ignored. Emitted by `check`, `coverage` and `sync`. The exit code is unchanged by it. |
+| `dependency_coverage` | info | Reported by `coverage` and `sync` about a spec whose dependency is itself below threshold. |
 | `unreachable_annotation_unknown` | warning (regardless of strictness) | The reachability scanner could not recognize the test shape (custom helper, non-Go/TS/Python language, dynamically-generated tests). Soft form of the above; never fails a gate. Same off-switch suppresses it. Added in v0.13.0. |
 
 When a constraint has a `type` (e.g. `security`, `performance`), it appears in parentheses after the constraint ID so diagnostics can be grouped by category.
@@ -367,7 +369,11 @@ All 2 specs at 100% coverage.
 
 **Example (`--json`):**
 
-Since v0.9.0, `--json` **always emits a CoverageReport JSON document to stdout**, including when one or more spec files fail to parse. The process exit code signals pass/fail; the presence of JSON does not. This is a breaking change from earlier versions which emitted no JSON on parse failure.
+Since v0.9.0, `--json` **always emits a CoverageReport JSON document to stdout**, including when one or more spec files fail to parse. The process exit code signals pass/fail; the presence of JSON does not.
+
+As of v0.15.0 "always" covers every return the command can take, not only the parse case. A run that stops before measuring anything, a rejected manifest, an invalid flag value, an unknown `--scope` domain, or an unmet results precondition, still writes a document. It carries `stop_reason`, an object with `kind` and `message`, where `kind` is one of `manifest_error`, `invalid_flag`, `unknown_scope` or `unmet_precondition`.
+
+**Read `stop_reason` before `entries` or `summary`.** On a refusal those two are present and empty, as placeholders rather than measurements, so a report with `stop_reason` set is indistinguishable from a clean empty workspace on every other field.
 
 ```json
 {
@@ -406,11 +412,9 @@ When specs fail to parse, the report carries a `parse_errors` array and a groupe
   "parse_errors": [
     {
       "file": "specs/broken.spec.yaml",
-      "path": "spec.objective",
+      "path": "spec",
       "type": "required",
-      "message": "Missing required field 'objective'",
-      "line": 12,
-      "column": 3
+      "message": "Missing required field 'objective'. Add an objective block with a summary"
     }
   ],
   "parse_error_patterns": [
@@ -444,7 +448,7 @@ When specs fail to parse, the report carries a `parse_errors` array and a groupe
 - `0`: all specs parsed AND all meet their coverage thresholds
 - `1`: one or more specs failed to parse, OR one or more specs are below threshold, OR `.specter-results.json` is missing under a strict mode (`--strict`, or effective strictness `threshold`/`zero-tolerance`)
 - `2`: under `zero-tolerance` strictness, an annotated AC has a results-file status other than `passed`. **Under a declared `settings.annotation` block, code 2 means something narrower**: an acceptance criterion has no test at all. The two triggers do not overlap, because a criterion with no test has no results-file status to be wrong
-- `3`: an AC carries `approval_gate: true` with an unset `approval_date`
+- `3`: an AC carries `approval_gate: true` with an unset `approval_date`, under `zero-tolerance` strictness or a declared `settings.annotation` block. Not under the default strictness alone
 
 **Codes 1 and 2 answer different questions under `settings.annotation`.** Code 2
 is the annotation rule: a criterion has no test, and the tier threshold does not
@@ -517,7 +521,7 @@ All checks passed.
   run: specter sync
 ```
 
-**Exit codes:** `0` = all phases pass. `1` = any phase fails. Under an effective `zero-tolerance` strictness (the `--strictness` flag, the `--strict` alias, or the manifest setting), the coverage phase refines the failure exit to match `coverage`: `2` = an annotated AC did not pass, `3` = `approval_gate: true` with unset `approval_date`.
+**Exit codes:** `0` = all phases pass. `1` = any phase fails. Under an effective `zero-tolerance` strictness (the `--strictness` flag, the `--strict` alias, or the manifest setting) **or a declared `settings.annotation` block**, the coverage phase refines the failure exit to match `coverage`: `2` = an annotated AC has no test or did not pass, `3` = `approval_gate: true` with unset `approval_date`. A results file whose `streams` block is inconsistent exits `20`. See [EXIT_CODES.md](EXIT_CODES.md) for the full set and its precedence.
 
 ---
 
@@ -870,7 +874,7 @@ Future cycles add more kinds (e.g., `ingest`, `check`) under the same `specter d
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--exit-code` | false | Exit with code 10 when the change is breaking. Without it `diff` always exits 0, because it is a diagnostic surface rather than a gate. Code 10 is in the orchestration band; see [EXIT_CODES.md](EXIT_CODES.md). |
+| `--exit-code` | false | **Spec diff only**; `diff coverage` does not register the flag and rejects it. Exit with code 10 when the change is breaking. Without it `diff` always exits 0, because it is a diagnostic surface rather than a gate. Code 10 is in the orchestration band; see [EXIT_CODES.md](EXIT_CODES.md). |
 
 **spec kind, change classes:**
 
@@ -918,7 +922,7 @@ $ specter diff coverage baseline.json current.json
 ~spec-auth coverage_pct: 80.0 → 90.0 (passes_threshold: true → true)
 ```
 
-Exit code is always 0 for both kinds. Diff is a diagnostic surface, not a gate.
+Without `--exit-code`, exit is 0 for both kinds: `diff` is a diagnostic surface by default. With the flag, a breaking spec change exits 10. See [EXIT_CODES.md](EXIT_CODES.md).
 
 ---
 
@@ -1043,7 +1047,9 @@ settings:
   specs_dir: specs
   strict: false
   warn_on_draft: false
-  strictness: threshold
+  # Declare ONE of these two. A manifest carrying both warns on every run,
+  # because settings.annotation takes precedence and settings.strictness is
+  # then ignored. See the note below the example.
   annotation:
     permissive: false
   tests_glob:
@@ -1126,7 +1132,14 @@ specs/generated/
 
 ## Exit Codes
 
-| Code | Meaning |
-|------|---------|
-| `0` | All checks passed. |
-| `1` | One or more errors, or no spec files found. |
+**[EXIT_CODES.md](EXIT_CODES.md) is the allocation authority.** It lists every
+code, which command emits it, the condition, and its stability. No command may
+emit a code that is not allocated there.
+
+This page deliberately keeps no second registry. It carried one, listing two of
+the six codes the binary emits, and a reader who trusted it would not have known
+that `coverage` and `sync` can exit `2`, `3` or `20`, or that `diff --exit-code`
+exits `10`. Two registries drift, and the one nobody tests drifts first.
+
+Command sections below explain what a code means for that command. For the set
+itself, read the authority.

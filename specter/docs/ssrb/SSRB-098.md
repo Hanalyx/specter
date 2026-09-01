@@ -1,6 +1,6 @@
 # SSRB-098: AC-level lifecycle `status` field
 
-Status: REJECT
+Status: NEEDS-DESIGN (REJECT 2026-04-26, reopened 2026-08-15; see section 11)
 Decided: 2026-04-26
 Updated: 2026-04-29 (addendum §10, broader per-AC lifecycle question)
 Source: GH #98

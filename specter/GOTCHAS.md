@@ -80,11 +80,23 @@ find src -name '*.ts' -newer out/extension.js
 
 ## 7. `specter.yaml` being optional means silent defaults
 
-**Symptom:** User puts specs in `src/specs/`, runs `specter sync`, sees "No .spec.yaml files found", has no idea why.
+**Symptom (fixed):** this described discovery falling back to `specs/` and
+saying nothing about it. Neither half holds any more, and both were checked
+against the binary before this entry was rewritten.
 
-**Cause:** When no `specter.yaml` is found, Specter silently uses `specs_dir: specs` default. Nothing tells the user this happened.
+**What happens now.** With no `specter.yaml`, discovery is recursive: a spec at
+`src/specs/spec-x.spec.yaml` is found and parsed. And when nothing is found, the
+run says why it looked where it did:
 
-**Partial mitigation:** `specter doctor` reports manifest status. Full mitigation is pending (see improvement backlog in the session log).
+```
+No .spec.yaml files found.
+  Searched: current directory and subdirectories (no specter.yaml found)
+  - Point specter at a different directory:     add specs_dir to specter.yaml
+```
+
+**The rule that remains:** if you are editing manifest-loading code, keep the
+hint when defaults are in play. A discovery that reports zero files should say
+where it looked, which is what makes this no longer a gotcha.
 
 **Rule:** if you're editing manifest-loading code, preserve (or add) a clear hint when defaults are in play. `discoverSpecs` should be able to say "I looked at `specs/` and found 0 files".
 

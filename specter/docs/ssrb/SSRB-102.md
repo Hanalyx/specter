@@ -25,9 +25,15 @@ Two unrelated threads converged on the same missing capability.
 
 The first is SP-004. The structural conflict scan matches substrings rather than
 meaning, and produces reproducible false errors on ordinary phrasing. It is an
-error-severity diagnostic, so it fails the build. An adopter hitting it today has
-no way to silence it. The only remedies are to patch the tool, reword a correct
-spec to satisfy a string matcher, or stop running `check`.
+error-severity diagnostic, so it failed the build, and an adopter hitting it had
+no way to silence it.
+
+**That is no longer true, and this paragraph is kept as the argument that was
+made rather than as a description of today.** `spec-check` C-15 makes
+`structural_conflict` advisory: severity `info` regardless of the upstream
+`enforcement` field, not promoted by `--strict`, and never contributing to a
+non-zero exit. The corpus went from 34 fires to 0. The gap the brief argues
+about is real; the urgency it describes is spent.
 
 The second is the concreteness gate proposed by an adopter for acceptance
 criteria. That proposal carried its own two-axis severity configuration. Working
@@ -55,7 +61,7 @@ whose proposal surfaced the gap did not request suppression and would not need i
 at the tier their corpus occupies. A capability justified only by its author's
 analysis has not met the bar this project applies to every other request.
 
-A decision to ship requires the same evidence SSRB-101 waits on: a request from
+A decision to ship requires the same evidence SSRB-101 was held to before it closed: a request from
 a project that is not the filer.
 
 ## 4. Cost of acceptance
@@ -126,7 +132,7 @@ to prevent.
 
 Section 3 is the blocker. The universality case rests on tooling precedent and on
 the filer's own analysis, with zero requests from any project, which is the same
-standard that holds SSRB-101 open. Section 5 confirms the gap is real and that the
+standard SSRB-101 was held to before it was closed not-planned on 2026-08-16. Section 5 confirms the gap is real and that the
 layer is already being invented piecemeal, which is why this is held for design
 rather than rejected. Section 4 records a cost that is not paid in surfaces: a
 per-project severity map lets a project silence true defects and weakens the
@@ -159,9 +165,9 @@ the reason to leave SP-004 unfixed.
 
 ## 9. References
 
-- `bugs/SP-SP-004-structural-conflict-scan-produces-false-positives-against-c-05`
+- `bugs/done/SP-SP-004-structural-conflict-scan-produces-false-positives-against-c-05`
   in the Context Plane; carried as open item 4 in the project memory.
-- Related SSRBs: SSRB-101 (source-file governance, NEEDS-DESIGN on the same
+- Related SSRBs: SSRB-101 (source-file governance, REJECT and closed not-planned 2026-08-16, on the same
   universality standard); SSRB-104, which decided that the marker rule carries
   its own severity switch rather than routing through an existing mechanism, and
   so supplies this brief's counting threshold.
