@@ -178,7 +178,7 @@ specter check [--json] [--tier <n>] [--strict] [--test] [--concrete]
 |--------|-------------|
 | `--json` | Output diagnostics as JSON. |
 | `--tier <n>` | Override the tier enforcement level for all specs (1, 2, or 3). |
-| `--strict` | Treat warnings as errors. Also configurable via `settings.strict` in `specter.yaml`. |
+| `--strict` | Promote warning and info diagnostics to errors. Also configurable via `settings.strict` in `specter.yaml`, which on this command does exactly the same thing. Neither runs the test-annotation scan; that is `--test`. |
 | `--test`, `-t` | Cross-reference test-file `@spec` / `@ac` annotations against parsed specs. |
 | `--concrete` | Report acceptance criteria carrying neither `inputs` nor `expected_output`. Opt-in: both fields are optional in the schema, so a criterion without them is valid and the rule does not run unless asked. `--strict` does not enable it. |
 
@@ -492,7 +492,7 @@ specter sync [--json] [--tests <glob>] [--only <phase>] [--strict] [--strictness
 | `--json` | Output the pipeline result as JSON. |
 | `--tests <glob>` | Glob pattern for test files. |
 | `--only <phase>` | Run only one phase: `parse`, `resolve`, `check`, or `coverage`. Prerequisites run without halting on failure. |
-| `--strict` | Treat warnings as errors. Alias for `--strictness zero-tolerance` when `--strictness` is not set. |
+| `--strict` | Three things at once, and they are separable: promote warning and info check diagnostics to errors, run the test-annotation cross-reference in the check phase, and act as `--strictness zero-tolerance` for the coverage phase when `--strictness` is not set. **`settings.strict: true` is not equivalent to this flag.** The manifest key does the first only. It does not run the scan and does not affect coverage strictness, because a severity setting cannot decide which defects are discovered or how coverage is counted (`bugs/SP-SP-047`). |
 | `--strictness <level>` | Override `settings.strictness` for the coverage phase. Values: `annotation`, `threshold`, `zero-tolerance`. Matches `coverage --strictness` semantics exactly. Sync's coverage phase delegates to the strict path so demotions match. When both `--strict` and `--strictness` are passed, `--strictness` wins. |
 
 **Example:**

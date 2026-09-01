@@ -908,7 +908,7 @@ func checkCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
 	cmd.Flags().IntVar(&tierOverride, "tier", 0, "Override tier enforcement level")
-	cmd.Flags().BoolVar(&strict, "strict", false, "Treat warnings as errors (also set via settings.strict in specter.yaml)")
+	cmd.Flags().BoolVar(&strict, "strict", false, "Promote warning and info diagnostics to errors (also set via settings.strict in specter.yaml). Does not run the test-annotation scan; use --test for that")
 	cmd.Flags().BoolVar(&concrete, "concrete", false,
 		"Report acceptance criteria carrying neither inputs nor expected_output (error at Tier 1, warning at Tier 2, info at Tier 3)")
 	cmd.Flags().BoolVarP(&testAnnotations, "test", "t", false, "Cross-reference test-file @spec/@ac annotations against parsed specs")
@@ -1753,7 +1753,7 @@ func syncCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
 	cmd.Flags().StringVar(&testsGlob, "tests", "", "Glob pattern for test files")
 	cmd.Flags().StringVar(&onlyPhase, "only", "", "Run only this phase (parse|resolve|check|coverage); prerequisites run without halting")
-	cmd.Flags().BoolVar(&strict, "strict", false, "Treat warnings as errors (also set via settings.strict in specter.yaml). Alias for --strictness zero-tolerance when --strictness is not set.")
+	cmd.Flags().BoolVar(&strict, "strict", false, "Promote warning and info check diagnostics to errors, run the test-annotation scan, and act as --strictness zero-tolerance for the coverage phase when --strictness is not set. settings.strict in specter.yaml sets the promotion only.")
 	cmd.Flags().StringVar(&strictnessFlag, "strictness", "", "Override settings.strictness for the coverage phase. Values: annotation, threshold, zero-tolerance. Matches `coverage --strictness` semantics. When set, wins over --strict.")
 	return cmd
 }
