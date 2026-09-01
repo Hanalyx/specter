@@ -389,7 +389,7 @@ func TestNoSiteFeedsSettingsStrictIntoTheScan(t *testing.T) {
 
 		// returnsTainted answers whether any value fn RETURNS depends on the
 		// key, given the taint of its parameters. Statements are walked in
-		// order so a later binding does not colour an earlier read.
+		// order so a later binding does not color an earlier read.
 		returnsTainted = func(fd *ast.FuncDecl, env map[string]bool, depth int) bool {
 			if fd == nil || fd.Body == nil {
 				return false
@@ -403,8 +403,7 @@ func TestNoSiteFeedsSettingsStrictIntoTheScan(t *testing.T) {
 				local[k] = v
 			}
 			tainted := false
-			var walk func(ast.Node) bool
-			walk = func(n ast.Node) bool {
+			walk := func(n ast.Node) bool {
 				switch v := n.(type) {
 				case *ast.FuncLit:
 					return false // a nested closure returns to its own caller
@@ -447,8 +446,7 @@ func TestNoSiteFeedsSettingsStrictIntoTheScan(t *testing.T) {
 				// The enclosing function's locals, built in source order up to
 				// each literal, so assignment order is respected.
 				env := map[string]bool{}
-				var walk func(ast.Node) bool
-				walk = func(n ast.Node) bool {
+				walk := func(n ast.Node) bool {
 					switch v := n.(type) {
 					case *ast.AssignStmt:
 						for i, lhs := range v.Lhs {

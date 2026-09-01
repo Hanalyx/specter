@@ -1671,7 +1671,13 @@ func syncCmd() *cobra.Command {
 				Strictness:           effectiveStrictness,          // spec-sync C-06: route coverage phase per strictness
 				AnnotationDeclared:   m.Settings.Annotation != nil, // spec-sync C-11
 				AnnotationPermissive: m.Settings.Annotation != nil && m.Settings.Annotation.Permissive,
-				CheckTestAnnotations: strict || m.Settings.Strict, // spec-check C-09/AC-12: sync --strict (or settings.strict) routes through
+				// spec-check C-09/AC-12: the flag routes the scan through, and
+				// only the flag. settings.strict used to be ORed in here, which
+				// made a severity setting decide which defects were discovered:
+				// removing one manifest key made a broken spec reference
+				// invisible, and no promotion was involved because
+				// unknown_spec_ref is hardcoded to error. bugs/SP-SP-047.
+				CheckTestAnnotations: strict,
 			})
 
 			// spec-sync C-10: zero-tolerance violations exit with the same
