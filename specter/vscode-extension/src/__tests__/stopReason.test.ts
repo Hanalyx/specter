@@ -551,6 +551,41 @@ describe('spec-vscode/AC-79 the stop-reason declarations, semantically', () => {
 
 const EXT_TS = path.resolve(__dirname, '..', 'extension.ts');
 
+/** Like callArgsInFunction, for a function declared with `function` or `const`. */
+function callArgsInFunctionOf(fnName: string, callee: string): ts.Expression[][] {
+  const source = ts.createSourceFile(
+    EXT_TS,
+    fs.readFileSync(EXT_TS, 'utf8'),
+    ts.ScriptTarget.ES2020,
+    true,
+  );
+  const out: ts.Expression[][] = [];
+  const visit = (node: ts.Node): void => {
+    const isTarget =
+      (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) &&
+      node.name &&
+      node.name.getText(source) === fnName;
+    if (isTarget) {
+      const collect = (n: ts.Node): void => {
+        if (ts.isCallExpression(n)) {
+          const fn = n.expression;
+          const name = ts.isIdentifier(fn)
+            ? fn.text
+            : ts.isPropertyAccessExpression(fn)
+              ? fn.name.text
+              : '';
+          if (name === callee) out.push([...n.arguments]);
+        }
+        ts.forEachChild(n, collect);
+      };
+      ts.forEachChild(node, collect);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return out;
+}
+
 /** The initializer expressions bound to `name` inside `fnName`. */
 function initializersInFunction(fnName: string, name: string): ts.Expression[] {
   const source = ts.createSourceFile(
@@ -964,5 +999,17 @@ describe('spec-vscode/AC-79 refusal state does not depend on folder order', () =
     for (const gone of ['formatStatusBar', 'some', 'filter', 'reduce']) {
       expect(calls).not.toContain(gone);
     }
+
+    // And it APPLIES the decision. Holding no policy is not enough: dropping
+    // setStatusBarError while keeping the early return leaves the decision
+    // correct, the call order intact, and the status bar silent. That mutant
+    // survived until this assertion existed.
+    const errorCalls = callArgsInFunctionOf('updateStatusBar', 'setStatusBarError');
+    expect(errorCalls).toHaveLength(1);
+    const [arg] = errorCalls[0];
+    // The decision's own message, not a literal restated here, or the wrapper
+    // would carry a second copy of the wording.
+    expect(ts.isPropertyAccessExpression(arg)).toBe(true);
+    expect((arg as ts.PropertyAccessExpression).name.text).toBe('message');
   });
 });
