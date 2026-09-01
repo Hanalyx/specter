@@ -1,6 +1,6 @@
 spec:
   id: spec-sync
-  version: "2.5.1"
+  version: "2.5.2"
   status: approved
   tier: 2
 
@@ -111,7 +111,7 @@ spec:
       version_range: "^1.0.0"
       relationship: requires
     - spec_id: spec-check
-      version_range: "^4.0.0"
+      version_range: "^5.0.0"
       relationship: requires
     - spec_id: spec-coverage
       version_range: "^1.23.0"
@@ -372,6 +372,12 @@ spec:
       references_constraints: ["C-13"]
       priority: high
   changelog:
+    - version: "2.5.2"
+      date: "2026-09-01"
+      author: "specter-team"
+      type: patch
+      description: "Raises the spec-check floor from ^4.0.0 to ^5.0.0. spec-check 5.0.0 adds a MUST NOT to C-09: settings.strict does not enable the test-annotation scan. That narrows scope in a way that invalidates the implementation in syncCmd's SyncInput.CheckTestAnnotations initializer, which docs/SPEC_SCHEMA_REFERENCE.md classifies as MAJOR even though specter diff reads the change as additive. The old range excluded the version this spec is now checked against. Patch: only the dependency range moved, with no constraint or criterion touched here."
+
     - version: "2.5.1"
       date: "2026-08-30"
       author: "specter-team"

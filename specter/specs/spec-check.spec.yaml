@@ -1,6 +1,6 @@
 spec:
   id: spec-check
-  version: "4.0.0"
+  version: "5.0.0"
   status: approved
   tier: 1
 
@@ -69,7 +69,7 @@ spec:
       enforcement: error
 
     - id: C-07
-      description: "MUST support strict mode (CheckOptions.Strict=true) that upgrades all warning-severity and info-severity diagnostics to error severity, with a **named set of non-promotable kinds**: `structural_conflict` per C-15, and `unreachable_annotation_unknown` per C-10. The set is enumerated in this constraint rather than decided per call site, so adding a kind to it is a deliberate amendment here and not a local choice. Without the first the advisory posture would hold only until someone passed --strict, which is what CI passes. The second is stated in C-10's own terms, that the soft form is always a warning regardless of strictness mode, and this constraint agrees with it rather than overriding it: a scanner that could not recognize a test shape has found no defect to report, so promoting it would fail a build on the checker's own blind spot. **The upgrade MUST apply to every diagnostic the run reports, whatever stage assembled it, and exactly one place MUST apply it.** A diagnostic added to the result after the upgrade has run is silently exempt, and nothing fails when that happens: the kind keeps its own severity, the summary counts it as a warning, and `--strict` returns 0 on a workspace this constraint says it should fail. That is not a hypothetical. `tier_conflict` and `domain_tier_conflict` are computed from the manifest, and `unreachable_annotation` and the other `--test` diagnostics from test file contents, and all of them were appended by the command after the checker returned. What that cost differed by kind, and the accurate account is narrower than the route suggests. The two tier kinds escaped the rule outright and were fixed on 2026-08-28. Of the `--test` diagnostics, only `unreachable_annotation` at threshold severity did: the reference kinds are error severity, so promotion was a no-op for them and they failed the run either way, and `unreachable_annotation_unknown` is in the non-promotable set by design. That one case was fixed on 2026-08-29. The route was wrong for all of them, which is why the fix is structural rather than per-kind, but only two kinds ever reported the wrong severity because of it. One owner rather than a promotion step per assembly site, because a second site is how the non-promotable set drifts, and a private copy elsewhere would not know what the set contains. **The summary is computed once, from the final diagnostics, in the same place.** Counting at each assembly site is the same defect wearing different clothes: a count taken before the upgrade reports as a warning what the run reports as an error."
+      description: "MUST support strict mode (CheckOptions.Strict=true) that upgrades all warning-severity and info-severity diagnostics to error severity, with a **named set of non-promotable kinds**: `structural_conflict` per C-15, and `unreachable_annotation_unknown` per C-10. The set is enumerated in this constraint rather than decided per call site, so adding a kind to it is a deliberate amendment here and not a local choice. Without the first the advisory posture would hold only until someone passed --strict, which is what CI passes. The second is stated in C-10's own terms, that the soft form is always a warning regardless of strictness mode, and this constraint agrees with it rather than overriding it: a scanner that could not recognize a test shape has found no defect to report, so promoting it would fail a build on the checker's own blind spot. **The upgrade MUST apply to every diagnostic the run reports, whatever stage assembled it, and exactly one place MUST apply it.** A diagnostic added to the result after the upgrade has run is silently exempt, and nothing fails when that happens: the kind keeps its own severity, the summary counts it as a warning, and `--strict` returns 0 on a workspace this constraint says it should fail. That is not a hypothetical. `tier_conflict` and `domain_tier_conflict` are computed from the manifest, and `unreachable_annotation` and the other `--test` diagnostics from test file contents, and all of them were appended by the command after the checker returned. What that cost differed by kind, and the accurate account is narrower than the route suggests. The two tier kinds escaped the rule outright and were fixed on 2026-08-28. Of the `--test` diagnostics, only `unreachable_annotation` at threshold severity did: the reference kinds are error severity, so promotion was a no-op for them and they failed the run either way, and `unreachable_annotation_unknown` is in the non-promotable set by design. That one case was fixed on 2026-08-29. The route was wrong for all of them, which is why the fix is structural rather than per-kind, but only two kinds ever reported the wrong severity because of it. One owner rather than a promotion step per assembly site, because a second site is how the non-promotable set drifts, and a private copy elsewhere would not know what the set contains. **The summary is computed once, from the final diagnostics, in the same place.** Counting at each assembly site is the same defect wearing different clothes: a count taken before the upgrade reports as a warning what the run reports as an error. **The manifest key reaches this option, on every surface that checks.** There are three: `check`, `sync`'s check phase, and `watch`'s check phase. Each MUST route `settings.strict: true` to `CheckOptions.Strict = true`. Naming them is the point rather than saying every command: an unnamed surface is one a criterion forgets, and `watch` was missing from the first draft of this clause even though it already routed the key. Without that clause here, a criterion asserting the key promotes severity would be inventing the rule it verifies, and an implementation that dropped the routing would be violating nothing. `spec-manifest` C-11 owns parsing the key and says explicitly that where the parsed value is carried is the reading command's business; this is that business, stated by the constraint that owns what strict mode does. The routing is all the key does: it does not enable the test-annotation scan, which C-09 names and forbids it."
       type: technical
       enforcement: error
 
@@ -79,7 +79,7 @@ spec:
       enforcement: error
 
     - id: C-09
-      description: "MUST support opt-in test-annotation cross-reference mode (`check --test` / `-t`) that scans test files for `@spec <id>` and `@ac AC-NN` source comments, and emits diagnostics for references that do not resolve. Diagnostic kinds: `unknown_spec_ref` (no spec with that id), `unknown_ac_ref` (spec exists but AC id is not declared), `malformed_ac_id` (AC id fails `^AC-\\d{2,}$`). Scanner skips lines inside multi-line string literals (TS/JS template, Python triple-quote) — annotations there are payload. Cascade rule: when `@spec` is unknown, child `@ac` lines under it are not separately checked. Ordering rule: `@ac` lines before any `@spec` are not checked. Repeat `@ac` mentions of the same id emit one diagnostic per occurrence (no dedup)."
+      description: "MUST support opt-in test-annotation cross-reference mode (`check --test` / `-t`) that scans test files for `@spec <id>` and `@ac AC-NN` source comments, and emits diagnostics for references that do not resolve. Diagnostic kinds: `unknown_spec_ref` (no spec with that id), `unknown_ac_ref` (spec exists but AC id is not declared), `malformed_ac_id` (AC id fails `^AC-\\d{2,}$`). Scanner skips lines inside multi-line string literals (TS/JS template, Python triple-quote) — annotations there are payload. Cascade rule: when `@spec` is unknown, child `@ac` lines under it are not separately checked. Ordering rule: `@ac` lines before any `@spec` are not checked. Repeat `@ac` mentions of the same id emit one diagnostic per occurrence (no dedup). **What enables the scan is named here, and `settings.strict` is not one of them.** The scan runs when `check --test` is passed, and on `sync` when `--strict` is passed. The manifest key `settings.strict` MUST NOT enable it. Rationale, and it is a scope rule rather than a preference: `settings.strict` is a severity setting, and a severity setting cannot decide which defects are discovered. Measured before this clause existed, at 96c75ad: a workspace whose test file references a spec id that does not exist failed `sync` with `settings.strict: true` and passed it with the key removed, because the key alone decided whether the cross-reference ran. `unknown_spec_ref` carries a hardcoded error severity, so no promotion was involved; removing one manifest key made a broken reference invisible. That is the defect `bugs/SP-SP-047` finding 3 records, and it lives at one site: `sync`. `check` gates the scan on its own `--test` flag alone and never reads the key. So there are two supported ways to enter the scan, `check --test` and `sync --strict`, and one defective one. The flag keeps its own behavior: `sync --strict` still routes the scan through, which AC-12 binds and this clause does not weaken. The two are therefore **not** equivalent, and any documentation saying they are is wrong."
       type: technical
       enforcement: error
 
@@ -653,6 +653,133 @@ spec:
       references_constraints: ["C-14"]
       priority: critical
 
+    - id: AC-47
+      description: >-
+        `settings.strict` does not enable the test-annotation scan. The scan's
+        own diagnostic is what is asserted, not the exit code: a run that
+        exits 0 has not proved the scan stayed off, because a scan that ran
+        and had its findings suppressed exits 0 too, and a run that exits 1
+        has not proved the scan is why.
+
+        `sync` is the defective consumption site and the only one. `check`
+        gates the scan on its own `--test` flag and never reads the key.
+
+        **How presence is observed, stated because the two commands differ.**
+        `check --test --json` names diagnostic kinds, so `unknown_spec_ref` is
+        asserted there directly. `sync` names no kind in any output mode: its
+        check phase reports counts only. So on `sync` the scan is observed
+        through the check phase's error count, made attributable by two
+        controls on the same workspace: `check --test` produces exactly one
+        `unknown_spec_ref`, and `check` without the flag produces no
+        diagnostics at all. The scan is therefore the only thing that error
+        count can be about.
+
+        Both supported entries are exercised under BOTH manifests, so the
+        claim that they do not depend on the key is asserted rather than
+        assumed from one run. They are also the control: without them a build
+        that deleted the scan entirely would satisfy everything else here.
+
+        The count of sites feeding the key into the scan's enable input is
+        asserted at zero, as a guard against future wiring rather than the
+        present one, since no behavioral case can catch a site added later.
+
+        That guard follows return flow rather than a spelling: a helper counts
+        only when the value it returns depends on the key, and named callees
+        are followed with the caller's arguments substituted. **It is syntactic
+        and its limit is part of the criterion rather than an implementation
+        note.** It does not resolve types, so it cannot follow the key through
+        a struct field, a slice element, a closure capture, an interface
+        method, or a value crossing a package boundary, and a regression taking one
+        of those routes passes it silently.
+
+        **It reports on exactly one kind of uncertainty, and that distinction
+        matters.** An exhausted depth budget fails, because there the analysis
+        knows it stopped looking. Everything else outside the supported set,
+        an unresolvable call, a closure, a method, a cross-package value, is
+        indistinguishable from an untainted expression and returns clean. So
+        the count below is zero SUPPORTED flows, not zero flows.
+
+        The claim is therefore narrow, and stated narrowly on purpose: this
+        catches the shapes a refactor of the present code would plausibly take.
+        The behavioral cases above are what bind the rule; this sits under
+        them as a tripwire, and a criterion that implied soundness here would
+        be promising what no test in this repository delivers.
+      inputs:
+        workspace: "one spec, one test annotating it correctly, and a second test annotating @spec bogus-spec"
+        manifest_with_key: "settings.strict: true, settings.strictness: annotation"
+        manifest_without_key: "the same manifest with settings.strict removed"
+        invocations: "specter sync, specter sync --strict, specter check --test --json, specter check --json, each under both manifests"
+      expected_output:
+        attribution_check_test_unknown_spec_ref_count: 1
+        attribution_plain_check_diagnostic_count: 0
+        sync_with_the_key_check_phase_errors: 0
+        sync_with_the_key_exit_code: 0
+        sync_without_the_key_check_phase_errors: 0
+        sync_without_the_key_exit_code: 0
+        sync_strict_check_phase_errors_under_both_manifests: 1
+        sync_strict_exit_code_under_both_manifests: 1
+        check_test_unknown_spec_ref_count_under_both_manifests: 1
+        check_test_exit_code_under_both_manifests: 1
+        supported_syntactic_flows_assigning_the_key_to_the_scan_input: 0
+      references_constraints: ["C-09"]
+      priority: critical
+
+    - id: AC-48
+      description: >-
+        `settings.strict` promotes severity, and that is what it does. The same
+        workspace with and without the key produces the SAME diagnostics; only
+        their severity and the verdict change.
+
+        Bound separately from AC-47 because that criterion cannot see it. Every
+        diagnostic AC-47 observes is either absent or `unknown_spec_ref`, whose
+        severity is hardcoded, so an implementation that removed the key's
+        routing to `CheckOptions.Strict` would satisfy all of it. Stating a
+        rule as "only X" needs the X asserted, not just the not-X. C-07 owns
+        that routing, so this criterion verifies a rule rather than inventing
+        one.
+
+        **Identity, not kind equality.** The two diagnostic lists are compared
+        whole after normalizing severity alone. Comparing kinds would let the
+        message, the constraint id, the spec id or the cardinality change
+        under the key, and a setting that rewrites what a diagnostic says has
+        not merely promoted it.
+
+        Observed through `check --json`, which is the only surface that emits
+        the full diagnostic list. `sync` reports counts, so its half is bound
+        as the check phase's error and warning counts plus its exit code, and
+        that difference is stated rather than papered over.
+
+        All three surfaces, because the key reaches promotion through a
+        separate consumption site in each and a regression in one would not
+        show in the others. `watch` is the one an earlier draft missed: it
+        already routed the key, so deleting that routing would have left this
+        criterion green.
+
+        `watch` runs a loop, so it is observed from its first cycle, which
+        completes before any file changes. Its passing line is also a control
+        the other two do not need: it reports coverage, which means the run
+        reached past the check phase, so parse, resolve and coverage cannot be
+        what supplies the failure seen under the key.
+      inputs:
+        workspace: "one Tier 3 spec with two constraints, one referenced by an acceptance criterion and one not, and a test file annotating that criterion"
+        manifest_without_key: "settings.strictness: annotation"
+        manifest_with_key: "the same manifest plus settings.strict: true"
+        invocations: "specter check --json, specter check, specter sync --json, specter sync, and specter watch interrupted after its first cycle"
+      expected_output:
+        check_json_diagnostics_without_the_key: "exactly one orphan_constraint, severity info"
+        check_json_diagnostics_with_the_key: "exactly one orphan_constraint, severity error"
+        check_json_lists_identical_after_normalizing_severity: true
+        check_exit_code_without_the_key: 0
+        check_exit_code_with_the_key: 1
+        sync_check_phase_counts_without_the_key: "0 error(s), 0 warning(s)"
+        sync_check_phase_counts_with_the_key: "1 error(s), 0 warning(s)"
+        sync_exit_code_without_the_key: 0
+        sync_exit_code_with_the_key: 1
+        watch_first_cycle_without_the_key: "PASS, reporting coverage, so the cycle reached past the check phase"
+        watch_first_cycle_with_the_key: "FAIL  check  (1 error(s))"
+      references_constraints: ["C-07"]
+      priority: critical
+
     - id: AC-36
       description: "The advisory posture does not weaken the other structural checks. A workspace carrying an orphan constraint on a Tier 1 spec still fails, and `--strict` still upgrades a Tier 3 orphan to an error, in the same run that reports a structural conflict at info."
       inputs:
@@ -753,6 +880,12 @@ spec:
 
 
   changelog:
+    - version: "5.0.0"
+      date: "2026-09-01"
+      author: "specter-team"
+      type: major
+      description: "C-09 names what enables the test-annotation scan, `check --test` and `sync --strict`, and states that `settings.strict` is not one of them. AC-47 binds that and AC-48 binds the other half, that the key promotes severity and changes nothing about which diagnostics are discovered. Measured at 96c75ad, on a workspace whose test file references a spec id that does not exist: `sync` with `settings.strict: true` exits 1 and the same workspace with the key removed exits 0, because the key alone decided whether the cross-reference ran. `unknown_spec_ref` carries a hardcoded error severity, so no promotion was involved: removing one manifest key made a broken reference invisible. A severity setting cannot decide which defects are discovered. MAJOR, and this is the point on which the classifier and the rule disagree. `specter diff` reports [additive], because structurally this adds a clause and two criteria. `docs/SPEC_SCHEMA_REFERENCE.md` lists 'narrowing scope in a way that invalidates existing implementations' as MAJOR, and the new MUST NOT invalidates syncCmd's `SyncInput.CheckTestAnnotations` initializer today. The document governs; the classifier sees structure and cannot see an implementation it invalidates. Both dependents cascade: spec-sync and spec-vscode raise their floors from ^4.0.0 to ^5.0.0 and take patch bumps. `resolve dependents spec-check` names exactly those two, checked rather than assumed. C-07 names the three surfaces that check rather than saying every command, because an unnamed surface is one a criterion forgets: `watch` was missing from the first draft of the clause even though it already routes the key, and AC-48 would have stayed green if that routing were deleted. Measured on `watch` for the same fixture: without the key the first cycle reports coverage, which means it reached past the check phase, and with the key it reports FAIL check (1 error(s)). `bugs/SP-SP-047` finding 3."
+
     - version: "4.0.0"
       date: "2026-08-30"
       author: "specter-team"
