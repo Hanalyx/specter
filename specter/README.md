@@ -15,6 +15,7 @@ Specter Sync
   PASS check: 0 warning(s), 0 info
   PASS coverage: 15 spec(s) meet coverage thresholds
 
+
 All checks passed.
 ```
 
@@ -32,7 +33,7 @@ The intended workflow is a collaboration between you and your AI coding assistan
 4. **You review:** the spec and tests are the approval gate; you validate that the AI correctly captured your intent before any implementation begins
 5. **The AI implements:** with the spec as the contract and the tests as the verification
 
-Specter enforces the discipline at every step: the spec must exist before code, tests must trace to ACs, and coverage must meet the tier threshold before `specter sync` passes. It makes the process infrastructure, not a suggestion.
+Specter validates the artifacts in front of it, not the order you wrote them in. It checks that every spec parses and resolves. It measures coverage from the `@spec` and `@ac` annotations in your tests, and fails `specter sync` when a spec sits below its tier threshold. That makes the rules infrastructure rather than a suggestion.
 
 **The core mission: guide your AI coding assistant through spec → test → implement → eval in the right order, every time, with your intent preserved throughout.**
 
@@ -104,7 +105,7 @@ If you prefer clicking, every asset is listed on the [Releases page](https://git
 
 ## The Pipeline
 
-Specter runs five stages in sequence. Each stage catches a different class of problem:
+Specter runs four stages in sequence, and `specter sync` runs all four for you. Each stage catches a different class of problem:
 
 ```
 .spec.yaml files
@@ -116,8 +117,8 @@ Specter runs five stages in sequence. Each stage catches a different class of pr
    [check]      Structural analysis — orphan constraints, spec conflicts
       │
   [coverage]    Traceability — ACs without tests, below-threshold tiers
-      │
-   [sync]       CI gate — runs all four, exits non-zero on any failure
+
+  specter sync  Runs all four in this order. Exits non-zero on any failure.
 ```
 
 ### What each stage catches
@@ -263,13 +264,15 @@ For `coverage --strict`, the test runner must also expose the same `(spec_id, ac
 
 Coverage thresholds scale with risk:
 
-| Tier | Examples | Coverage required |
+| Tier | Examples | Default coverage required |
 |---|---|---|
 | **T1**, security and money | Auth, payments, encryption | 100% |
 | **T2**, business logic | Booking flow, pricing rules | 80% |
 | **T3**, utility | Formatters, helpers | 50% |
 
-A spec below its threshold fails at every tier. The tier sets how much coverage is demanded, not how the shortfall is treated: `coverage` exits 1 and the row reads FAIL whether the spec is Tier 1 or Tier 3.
+A spec below its threshold fails at every tier. The tier sets how much coverage is demanded, not how the shortfall is treated: the row reads FAIL whether the spec is Tier 1 or Tier 3. The threshold gate itself exits 1, but it runs after the annotation, zero-tolerance, and approval gates. A run that trips one of those exits 2 or 3 instead. The [exit codes reference](docs/EXIT_CODES.md) carries the full order.
+
+These thresholds are defaults. `settings.coverage.tier1` through `tier3` change them per workspace, and `coverage_threshold` on a spec overrides its tier.
 
 ---
 
@@ -335,8 +338,11 @@ runs the tests, feeds the results through `specter ingest`, and gates on them. A
 coverage number means nothing without its strictness level, because the same
 workspace reports differently under each.
 
+Three `hint:` lines about annotations with no matching result precede the report
+and are elided below, as are some table rows, marked `...`.
+
 ```
-$ specter coverage
+$ specter coverage --strict
 
 Spec Coverage Report — 15 specs · 99% avg coverage
   Tier 1: 4/4 passing (100%)
@@ -345,15 +351,19 @@ Spec Coverage Report — 15 specs · 99% avg coverage
 
 Spec ID                                   Tier   ACs      Covered   Coverage   Status
 ----------------------------------------------------------------------------------
+spec-diff                                 T2     19       18        94%        PASS
+  uncovered: AC-11
+  no test: AC-11
+spec-manifest                             T2     62       61        98%        PASS
+  uncovered: AC-29
+  no test: AC-29
+...
 spec-check                                T1     46       46        100%       PASS
 spec-ingest                               T1     18       18        100%       PASS
-spec-parse                                T1     19       19        100%       PASS
-spec-resolve                              T1     15       15        100%       PASS
-spec-coverage                             T2     74       74        100%       PASS
-spec-diff                                 T2     19       18        94%        PASS
 ...
 
 15 specs: 15 passing, 0 failing
+warn: 3 acceptance criterion(s) have no test. settings.annotation.permissive is true, so this does not fail the run
 ```
 
 ---

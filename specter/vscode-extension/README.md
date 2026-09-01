@@ -2,7 +2,7 @@
 
 **Bring the spec→test→implement loop into your editor.**
 
-In Spec-Driven Development, the specification is the source of truth, not the code. Every requirement has a test. Every test traces to a spec. Every spec is validated before the AI writes a line. This extension makes that discipline visible and low-friction: you see what's covered, what drifted, and what your AI assistant needs, without switching windows.
+In Spec-Driven Development, the specification is the source of truth, not the code. Tests trace to acceptance criteria through `@spec` and `@ac` annotations, and each spec has to meet its tier threshold before the pipeline passes. This extension makes that discipline visible and low-friction: you see what's covered, what drifted, and what your AI assistant needs, without switching windows.
 
 ---
 
@@ -32,7 +32,7 @@ The intended workflow is a collaboration between you and your AI coding assistan
 4. **You review**, the spec and tests are the approval gate; you validate that the AI correctly captured your intent before any implementation begins
 5. **The AI implements**, with the spec as the contract and the tests as the verification
 
-Specter enforces the discipline at every step: the spec must exist before code, tests must trace to ACs, and coverage must meet the tier threshold before `specter sync` passes. It makes the process infrastructure, not a suggestion.
+Specter validates the artifacts in front of it, not the order you wrote them in. It checks that every spec parses and resolves. It measures coverage from the `@spec` and `@ac` annotations in your tests, and fails `specter sync` when a spec sits below its tier threshold. That makes the rules infrastructure rather than a suggestion.
 
 **The core mission: guide your AI coding assistant through spec → test → implement → eval in the right order, every time, with your intent preserved throughout.**
 
