@@ -8,6 +8,10 @@ Unreleased changes accumulate under `## Unreleased`. Every user-visible change a
 
 ## Unreleased
 
+---
+
+## v0.15.0 - 2026-09-02
+
 ### Added
 
 - **`domains.<name>.tier` is now a checked assertion.** A domain's `tier` declares the risk level it asserts, and a spec listed in that domain whose declared `tier` disagrees produces a `domain_tier_conflict` warning naming both values. It does **not** change the spec's tier: the declared tier still governs. The warning appears in both text and `--json` output. **Action:** none under a plain run. Under `--strict` the warning is promoted to an error and fails the build, so a workspace declaring a domain tier that disagrees with a spec's own needs one of the two corrected. If you had set a domain tier expecting it to apply, it never did, and now it says so.
