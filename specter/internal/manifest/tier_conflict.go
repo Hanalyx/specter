@@ -41,9 +41,16 @@ func CheckTierConflicts(specs []schema.SpecAST, m *Manifest) []TierConflictWarni
 			SpecID:       spec.ID,
 			SpecTier:     spec.Tier,
 			OverrideTier: override,
+			// C-14 / AC-60: the override is parsed and compared and never
+			// applied, so the message states what actually governs. It
+			// previously ended "using override (%d)", which was false on every
+			// run: coverage reported the declared tier for the same spec while
+			// this line claimed the override was in use. See
+			// docs/ssrb/SSRB-106.md section 7.3 and bugs/SP-SP-001.
 			Message: fmt.Sprintf(
-				"spec %q declares tier: %d but specter.yaml tier_overrides assigns tier: %d — using override (%d)",
-				spec.ID, spec.Tier, override, override,
+				"spec %q declares tier: %d but specter.yaml tier_overrides assigns tier: %d. "+
+					"The declared tier governs; tier_overrides is not applied.",
+				spec.ID, spec.Tier, override,
 			),
 		})
 	}

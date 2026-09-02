@@ -210,7 +210,7 @@ jobs:
             --adapter=${{ matrix.adapter }} \
             --dry-run \
             --json \
-            /tmp/target-repo/${{ matrix.path }} > /tmp/result.json 2>&1 || true
+            /tmp/target-repo/${{ matrix.path }} > /tmp/result.json || true
 
       - name: Validate results
         run: |

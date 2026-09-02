@@ -4,6 +4,8 @@ import type {
   ACDecoration,
   SpecCoverageEntry,
   CoverageReport,
+  CoverageStopReason,
+  MergedCoverageReport,
   SpecTreeNode,
   SpecTreeRootNode,
   ACNode,
@@ -176,17 +178,47 @@ export class CoverageReportStore {
 
   /**
    * Aggregate view for the status bar, Coverage sidebar, and Insights.
-   * Single-folder workspaces get their stored report back by identity —
-   * byte-for-byte the pre-1.7.0 single-root behavior. Returns null when
-   * nothing is stored (the sidebar's "coverage not run yet" state).
-   * Optional fields (parseErrors, specCandidatesCount,
+   * A single-folder workspace gets the pre-1.7.0 behavior observationally,
+   * entry for entry, but NOT the stored object. spec-vscode C-33 requires the
+   * aggregate type in every case, because returning the folder's own report
+   * would hand back a singular stopReason on an aggregate, a reason with no
+   * owner. Returns null when nothing is stored (the sidebar's "coverage not
+   * run yet" state).
+   * The optional fields (parseErrors, specCandidatesCount,
    * parseErrorPatterns) stay absent unless at least one folder's report
-   * defined them, preserving the tri-state sidebar logic (AC-28/29/30).
+   * defined them. That distinction no longer reaches the sidebar: since C-31
+   * shipped, the client normalizes every array field, so a client-produced
+   * report carries `[]` rather than nothing, and every consumer reads through
+   * `?? []` and then `.length`. Absent and empty read the same (AC-28/29/30).
    */
-  merged(): CoverageReport | null {
+  merged(): MergedCoverageReport | null {
     if (this.reports.size === 0) return null;
     const all = Array.from(this.reports.values());
-    if (all.length === 1) return all[0];
+
+      // Refusals, keyed by the folder that produced them, built before the
+      // single-folder shortcut. That path used to return the stored report
+      // itself, which would hand back a singular stopReason on an aggregate:
+      // a reason with no owner, which C-33 forbids.
+      const byFolder: Record<string, CoverageStopReason> = {};
+      for (const [key, report] of this.reports) {
+        if (report.stopReason) byFolder[key] = report.stopReason;
+      }
+      const refusals = Object.keys(byFolder).length > 0 ? byFolder : undefined;
+
+      // One folder is OBSERVATIONALLY the same report, not the same object.
+      // AC-54 asked only that the merged view contain the folder's specs.
+      if (all.length === 1) {
+        const only = all[0];
+        return {
+          entries: only.entries,
+          summary: only.summary,
+          parseErrors: only.parseErrors,
+          specCandidatesCount: only.specCandidatesCount,
+          parseErrorPatterns: only.parseErrorPatterns,
+          resultsValidationErrors: only.resultsValidationErrors,
+          folderStopReasons: refusals,
+        };
+      }
 
     const withParseErrors = all.filter(r => r.parseErrors !== undefined);
     const withCandidates = all.filter(r => r.specCandidatesCount !== undefined);
@@ -213,6 +245,7 @@ export class CoverageReportStore {
       parseErrorPatterns: withPatterns.length > 0
         ? withPatterns.flatMap(r => r.parseErrorPatterns ?? [])
         : undefined,
+      folderStopReasons: refusals,
     };
   }
 }
@@ -286,7 +319,6 @@ export function resolveCoveringFiles(
 export interface BuildACDecorationsInput {
   coveredACs: string[];
   uncoveredACs: string[];
-  gapACs: string[];
   testCountByAC?: Record<string, number>;
 }
 
@@ -310,9 +342,9 @@ export function buildACDecorations(input: BuildACDecorationsInput): ACDecoration
     decs.push({ acID: id, kind: 'uncovered' });
   }
 
-  for (const id of input.gapACs) {
-    decs.push({ acID: id, kind: 'gap' });
-  }
+  // No gap branch. spec-vscode 5.0.0 retracted the gray-dash promise from
+  // C-07 and AC-05: `coverage --json` emits no gap criterion ids, so this loop
+  // only ever ran over an empty list (bugs/SP-SP-019).
 
   return decs;
 }
@@ -336,7 +368,122 @@ export function buildACDecorations(input: BuildACDecorationsInput): ACDecoration
  *        → ParseErrorGroupNode (if parseErrors present) + one spec node
  *          per entry. Either list can be empty; we still render the other.
  */
-export function buildCoverageTreeRoot(report: CoverageReport | null): SpecTreeRootNode[] {
+/**
+ * Format one folder's refusal for the Output channel, spec-vscode C-33.
+ *
+ * The folder is named because an operator who cannot see which of the seven
+ * refusals fired, and where, cannot act on it. The kind sits beside the
+ * message so the line is greppable by the same value a consumer branches on.
+ */
+export function formatStopReasonNotice(
+  folderKey: string,
+  reason: CoverageStopReason,
+): string {
+  return `coverage refused for ${folderKey} [${reason.kind}]: ${reason.message}`;
+}
+
+/**
+ * Write one line per refused folder to the Output channel, C-33.
+ *
+ * Takes the aggregate rather than a single report, so a refusal always arrives
+ * with the folder that produced it. A successful folder contributes nothing,
+ * or an operator cannot tell which one needs attention.
+ */
+export function reportStopReasons(
+  channel: { appendLine(value: string): void },
+  merged: MergedCoverageReport | null,
+): void {
+  const byFolder = merged?.folderStopReasons;
+  if (!byFolder) return;
+  for (const key of Object.keys(byFolder).sort()) {
+    channel.appendLine(formatStopReasonNotice(key, byFolder[key]));
+  }
+}
+
+
+/**
+ * Whether any folder in the workspace refused, spec-vscode C-33.
+ *
+ * Order-independent by construction, which is the point: the aggregate holds
+ * every folder, so a later successful run cannot erase an earlier refusal.
+ * Reading entries instead makes the answer depend on which folder ran last.
+ */
+export function hasAnyRefusal(merged: MergedCoverageReport | null | undefined): boolean {
+  return Object.keys(merged?.folderStopReasons ?? {}).length > 0;
+}
+
+/**
+ * What the status bar should show, spec-vscode C-33.
+ *
+ * A pure decision, separated from the VS Code item it drives, so the outcome
+ * is observable. A guard over call order alone left two mutants alive:
+ * inverting the refusal condition, and deleting the error message while
+ * keeping the early return. Both preserve the order and both leave the status
+ * wrong.
+ *
+ * Refusal is read before entries, and that ordering is a property rather than
+ * a style: a refused folder contributes an empty entries list, so a status
+ * derived from entries first would let a later successful folder erase an
+ * earlier refusal and make the answer depend on run order.
+ *
+ * A workspace that was measured and fell short is `measured`, not `error`. The
+ * two are different states, and conflating them sends an operator looking in
+ * the wrong place.
+ */
+export type StatusBarPresentation =
+  | { kind: 'hidden' }
+  | { kind: 'error'; message: string }
+  | { kind: 'measured'; text: string; colorToken?: string };
+
+export function statusBarPresentation(
+  merged: MergedCoverageReport | null | undefined,
+): StatusBarPresentation {
+  if (!merged) return { kind: 'hidden' };
+
+  if (hasAnyRefusal(merged)) {
+    return {
+      kind: 'error',
+      message: 'Specter: coverage did not run for one or more folders. Click to view details.',
+    };
+  }
+
+  const entries = merged.entries ?? [];
+  const hasT1OrT2Failure = entries.some(
+    e => !e.passesThreshold && (e.tier === 1 || e.tier === 2),
+  );
+  const totalPct = entries.length === 0
+    ? 0
+    : Math.round(entries.reduce((s, e) => s + e.coveragePct, 0) / entries.length);
+  const failing = entries.filter(e => !e.passesThreshold).length;
+
+  const result = formatStatusBar({
+    totalSpecs: entries.length,
+    coveragePct: totalPct,
+    failing,
+    hasT1OrT2Failure,
+  });
+  return typeof result === 'string'
+    ? { kind: 'measured', text: result }
+    : { kind: 'measured', text: result.text, colorToken: result.colorToken };
+}
+
+/**
+ * Whether one folder refused, read from the aggregate, spec-vscode C-33.
+ *
+ * The aggregate is what every consumer holds; a folder's own report is not
+ * reachable from the tree or the status bar. Answering per folder is what lets
+ * a caller mark the refused one errored without touching the others.
+ */
+export function isFolderRefused(
+  merged: MergedCoverageReport | null | undefined,
+  folderKey: string,
+): boolean {
+  return Boolean(merged?.folderStopReasons?.[folderKey]);
+}
+
+export function buildCoverageTreeRoot(
+  report: CoverageReport | MergedCoverageReport | null,
+): SpecTreeRootNode[] {
   if (report === null) {
     return [{
       kind: 'message',
@@ -348,6 +495,36 @@ export function buildCoverageTreeRoot(report: CoverageReport | null): SpecTreeRo
 
   const entries = report.entries ?? [];
   const parseErrors = report.parseErrors ?? [];
+
+  // Refusals, C-33. Read from the AGGREGATE, because that is what the tree
+  // provider passes. An aggregate never carries a singular stopReason, so a
+  // check on that field alone cannot fire in production and a refused folder
+  // falls through to the empty-workspace message below.
+  //
+  // The singular field is still honored for a report handed in directly, keyed
+  // under an empty folder name because there is no folder to name.
+  const refusals: Record<string, CoverageStopReason> = {
+    ...('folderStopReasons' in report ? report.folderStopReasons ?? {} : {}),
+    ...('stopReason' in report && report.stopReason ? { '': report.stopReason } : {}),
+  };
+  const refusedFolders = Object.keys(refusals).sort();
+  const refusalNodes: SpecTreeRootNode[] = refusedFolders.map(folder => ({
+    kind: 'message' as const,
+    label: folder
+      ? `Coverage did not run for ${folder}: ${refusals[folder].message}`
+      : `Coverage did not run: ${refusals[folder].message}`,
+    detail: 'Specter stopped before measuring anything in this folder, so it is neither an empty workspace nor a parse failure. Fix the cause and run coverage again.',
+    iconId: 'warning',
+  }));
+
+  // Before the degenerate case, because a refusal carries an empty entries
+  // list and no parse errors and is otherwise identical to a clean empty
+  // workspace. Only when nothing else was measured: a refusal must not blank
+  // the folders that were.
+  if (refusedFolders.length > 0 && entries.length === 0 && parseErrors.length === 0) {
+    return refusalNodes;
+  }
+
 
   // Both empty: degenerate case. Name the likely cause.
   if (entries.length === 0 && parseErrors.length === 0) {
@@ -367,7 +544,9 @@ export function buildCoverageTreeRoot(report: CoverageReport | null): SpecTreeRo
     }];
   }
 
-  const roots: SpecTreeRootNode[] = [];
+  // Refusals first, so a folder that could not be measured is the first thing
+  // a reader sees, ahead of the folders that were.
+  const roots: SpecTreeRootNode[] = [...refusalNodes];
 
   // Parse-failure group goes first so it's the first thing the user sees
   // when there's work to do. Collapsible so a workspace with many failures

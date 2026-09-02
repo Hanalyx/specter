@@ -34,6 +34,37 @@ func matchExcludePattern(pattern, relPath, dirName string) bool {
 	return pattern == dirName
 }
 
+// manifestExcludesDir reports whether any manifest exclude pattern excludes
+// this directory. It is the single predicate C-29 requires every default
+// discovery walk to consult.
+//
+// One function rather than one loop per walk. bugs/SP-SP-016 is what the
+// second copy looks like: the rule was written once, implemented in
+// discoverSpecs, and never reached discoverTestFiles, so a workspace could
+// exclude a vendored copy from spec discovery and still have its test files
+// counted. A caller that walks and does not call this is now the only way to
+// reintroduce that, and it is visible at the call site.
+//
+// path is the raw walk path; the leading "./" is stripped here so callers do
+// not each have to remember to. name is the directory's own name, which the
+// bare-name branch compares against.
+//
+// Scope, per C-29. This covers manifest policy only. A walk MAY skip
+// directories of its own, and those stay at the call site: discoverTestFiles
+// skips node_modules, dist and .git whatever the manifest says. Those three are
+// also in the default list ExcludePatterns() returns, so they are redundant
+// until a custom settings.exclude replaces the defaults; moving them here would
+// change spec discovery under that configuration.
+func manifestExcludesDir(patterns []string, path, name string) bool {
+	relPath := strings.TrimPrefix(path, "./")
+	for _, pat := range patterns {
+		if matchExcludePattern(pat, relPath, name) {
+			return true
+		}
+	}
+	return false
+}
+
 // patternHasGlob reports whether a pattern contains any glob
 // metacharacter that selects path-match semantics over name-match.
 // Square brackets `[...]` are NOT included — they're rare in

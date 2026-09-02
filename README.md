@@ -1,9 +1,10 @@
 # Spec-Driven Development
 
-> *"Specs are not a crutch for weak models. They are safety equipment for powerful ones."*
-> — Mastering Spec-Driven Development, Chapter 1
+> *"Specs are not a crutch for weak models. They are safety equipment for powerful ones."* <!-- doc-style: allow --><!-- verbatim quotation from sddbook/MODULE_01/CHAPTER_01.md -->
+>
+> Mastering Spec-Driven Development, Chapter 1
 
-AI coding tools generate code faster than any human can review it. The bottleneck is no longer writing code — it is knowing whether the code does what you actually intended. Natural language prompts are ambiguous. AI fills every gap silently, confidently, and often incorrectly. The code works. The intent drifted.
+AI coding tools generate code faster than any human can review it. The bottleneck is no longer writing code. It is knowing whether the code does what you actually intended. Natural language prompts are ambiguous. AI fills every gap silently, confidently, and often incorrectly. The code works. The intent drifted.
 
 **Spec-Driven Development (SDD)** is the answer: write a structured specification before the AI writes a line of code. The spec resolves ambiguity, captures constraints, and defines what done looks like. The AI becomes an executor of a contract, not an interpreter of a wish.
 
@@ -11,36 +12,36 @@ This repository contains two things that work together:
 
 ---
 
-## Specter — The Toolchain
+## Specter: The Toolchain
 
 **Specter** validates, links, and type-checks `.spec.yaml` files the way `tsc` validates `.ts` files.
 
-Without Specter, a spec is just a document. With Specter, it is an enforced contract. Specter catches spec errors before code is generated, tracks which requirements are covered by tests, and blocks CI if your specs are broken or undertested.
+Without Specter, a spec is just a document. With Specter, a spec becomes a checkable contract. Run it before implementation to catch spec errors, and add `specter sync` to CI to gate broken or below-threshold specs.
 
 ```
 $ specter sync
+Specter Sync
 
-  PASS  parse     5 spec(s) parsed — no schema violations
-  PASS  resolve   5 specs, 8 dependencies — no cycles or broken refs
-  PASS  check     0 errors, 0 orphan constraints
-  PASS  coverage  5 spec(s) meet coverage thresholds
+  PASS parse: 15 spec(s) parsed successfully
+  PASS resolve: 15 specs, 23 dependencies resolved
+  PASS check: 0 warning(s), 0 info
+  PASS coverage: 15 spec(s) meet coverage thresholds
+
 
 All checks passed.
 ```
 
-![Specter VS Code extension showing the Coverage tree, the Insights view surfacing coverage gaps, and inline schema diagnostics on a 244-spec project.](specter/docs/images/specter-insights.png)
-
-Specter is content-agnostic. A `.spec.yaml` can describe runtime behavior, data invariants, security policy, schema contracts, architecture rules, or any other component contract — anything with constraints and acceptance criteria. The pipeline validates the shape, not the category.
+Specter is content-agnostic. A `.spec.yaml` can describe runtime behavior, data invariants, security policy, schema contracts, architecture rules, or any other component contract. Anything with constraints and acceptance criteria qualifies. The pipeline validates the shape, not the category.
 
 **→ [Get started with Specter](specter/README.md)**
 
 ---
 
-## Mastering SDD — The Book
+## Mastering SDD: The Book
 
 **Mastering Spec-Driven Development** is a 17-chapter course that teaches the full discipline: why natural language fails, how to write specs that AI can execute reliably, how to enforce the spec→test→implement loop, and how to scale SDD across teams and agents.
 
-The book is the methodology. Specter is the infrastructure that makes it non-optional.
+The book defines the methodology. Specter provides the infrastructure to enforce the checks you adopt.
 
 **→ [Read the book](sddbook/INDEX.md)**
 
@@ -48,17 +49,17 @@ The book is the methodology. Specter is the infrastructure that makes it non-opt
 
 ## Human Intent, AI Execution
 
-Specter's schema is deliberately detailed — constraints, acceptance criteria, tiers, provenance, coverage thresholds. Writing all of that by hand for every module would be impractical, and that was never the intention.
+Specter's schema is deliberately detailed: constraints, acceptance criteria, tiers, provenance, coverage thresholds. Writing all of that by hand for every module would be impractical, and that was never the intention.
 
 The intended workflow is a collaboration between you and your AI coding assistant:
 
-1. **You provide intent** — a brief description of what a module should do, its key constraints, and any non-obvious judgement calls or trade-offs
-2. **The AI writes the spec** — translating your intent into a fully structured `.spec.yaml` file with constraints, ACs, and tier assignments
-3. **The AI writes the tests** — derived directly from the ACs in the spec
-4. **You review** — the spec and tests are the approval gate; you validate that the AI correctly captured your intent before any implementation begins
-5. **The AI implements** — with the spec as the contract and the tests as the verification
+1. **You provide intent:** a brief description of what a module should do, its key constraints, and any non-obvious judgment calls or trade-offs
+2. **The AI writes the spec:** translating your intent into a fully structured `.spec.yaml` file with constraints, ACs, and tier assignments
+3. **The AI writes the tests:** derived directly from the ACs in the spec
+4. **You review:** the spec and tests are the approval gate; you validate that the AI correctly captured your intent before any implementation begins
+5. **The AI implements:** with the spec as the contract and the tests as the verification
 
-Specter enforces the discipline at every step: the spec must exist before code, tests must trace to ACs, and coverage must meet the tier threshold before `specter sync` passes. It makes the process infrastructure, not a suggestion.
+Specter validates the artifacts in front of it, not the order you wrote them in. It checks that every spec parses and resolves. It measures coverage from the `@spec` and `@ac` annotations in your tests, and fails `specter sync` when a spec sits below its tier threshold. That makes the rules infrastructure rather than a suggestion.
 
 **The core mission: guide your AI coding assistant through spec → test → implement → eval in the right order, every time, with your intent preserved throughout.**
 
@@ -79,8 +80,8 @@ Every step in this loop has a Specter command behind it:
 | Validate spec | `specter parse` | Schema correctness, required fields, valid IDs |
 | Link specs | `specter resolve` | Dependencies, no cycles, version compatibility |
 | Check structure | `specter check` | Orphan constraints, structural conflicts |
-| Enforce coverage | `specter coverage` | Every AC has a test; tiers met |
-| Gate CI | `specter sync` | All of the above — exits non-zero on any failure |
+| Enforce coverage | `specter coverage` | Tests trace to ACs by annotation; each spec meets its tier threshold |
+| Gate CI | `specter sync` | All of the above; exits non-zero on any failure |
 
 ---
 
@@ -88,11 +89,11 @@ Every step in this loop has a Specter command behind it:
 
 The book documents three failure modes that appear again and again in AI-assisted development:
 
-**Ambiguity becomes decisions.** "Make a settings page" contains dozens of unanswered questions. The AI answers all of them — silently, based on training data, not your intent. A spec forces those decisions to be made by a human before the AI starts.
+**Ambiguity becomes decisions.** "Make a settings page" contains dozens of unanswered questions. The AI answers all of them silently, based on training data, not your intent. A spec forces those decisions to be made by a human before the AI starts.
 
 **Code drifts from intent.** Tests pass. The feature ships. But the AI used a pattern you didn't want, skipped a constraint you cared about, or satisfied the letter of a requirement while violating its spirit. Without a spec, there is no reference to drift from. With a spec and Specter, drift is detectable.
 
-**Knowledge evaporates between sessions.** Every new AI session starts from zero. The constraints you hammered out last sprint, the architectural decisions you made last month — gone. A spec file is persistent memory that travels with the code and can be injected into any AI session as a contract.
+**Knowledge evaporates between sessions.** Every new AI session starts from zero. The constraints you hammered out last sprint, the architectural decisions you made last month, all gone. A spec file is persistent memory that travels with the code and can be injected into any AI session as a contract.
 
 ---
 
@@ -130,4 +131,4 @@ The **Specter SDD** extension brings the SDD loop into the editor: live coverage
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT. See [LICENSE](LICENSE)

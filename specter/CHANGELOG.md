@@ -2,13 +2,162 @@
 
 All notable changes to Specter (CLI + VS Code extension) documented here. The project is pre-1.0; breaking changes go in MINOR releases per semver conventions for 0.x.
 
+Unreleased changes accumulate under `## Unreleased`. Every user-visible change adds its entry in the same pull request. At release the heading becomes `## vX.Y.Z - YYYY-MM-DD` and a fresh empty `## Unreleased` opens above it.
+
 ---
 
-## v0.14.1 — 2026-06-13
+## Unreleased
 
-**Theme: stable-channel promotion — no functional change from v0.14.0.**
+---
 
-The 0.13.0 → 0.14.0 line shipped to the VS Code Marketplace pre-release channel only; the last stable release users on the default channel received was v0.12.1. This patch carries no code change from v0.14.0 — it exists solely to obtain a fresh version number, because the Marketplace forbids republishing an already-published version (0.14.0) without its pre-release flag. v0.14.1 is the first **stable** release carrying the full 0.13 + 0.14 body of work (strict-coverage routing, resolver all-cycles, sync test-file cap, VS Code per-folder coverage). The packaged VSIX is byte-for-byte equivalent to the published 0.14.0 pre-release apart from the version string.
+## v0.15.0 - 2026-09-02
+
+### Added
+
+- **`domains.<name>.tier` is now a checked assertion.** A domain's `tier` declares the risk level it asserts, and a spec listed in that domain whose declared `tier` disagrees produces a `domain_tier_conflict` warning naming both values. It does **not** change the spec's tier: the declared tier still governs. The warning appears in both text and `--json` output. **Action:** none under a plain run. Under `--strict` the warning is promoted to an error and fails the build, so a workspace declaring a domain tier that disagrees with a spec's own needs one of the two corrected. If you had set a domain tier expecting it to apply, it never did, and now it says so.
+
+- **`settings.annotation` in `specter.yaml`.** A new manifest block carrying one sub-key, `permissive` (boolean, default `false`), which warns where the same configuration would otherwise fail. Declaring the block is what counts: `annotation: {}` and a bare `annotation:` both register as declared. A manifest carrying no `annotation` key behaves exactly as it did in v0.14, so nothing changes on upgrade unless you opt in. **Action:** none required. This is the replacement for `settings.strictness`, deprecated below, which keeps working until v1.0.0.
+
+  Two behaviors worth knowing before you declare the block. When a manifest carries **both** `settings.strictness` and an `annotation` block, the block wins and `check`, `coverage` and `sync` each warn on stderr naming the ignored key; the exit code is unchanged by the warning. And a declared block currently resolves to the strict path, so a workspace on `settings.strictness: annotation` that declares one moves from the lenient path to the strict one and may go red.
+
+  **The rule it enables now ships too.** With a block declared, every acceptance criterion must have a test, and the tier threshold does not excuse one that has none. A criterion with no test is listed on a `no test:` line, appears in `coverage --json` as `no_test_acs`, and exits **2**. A pass rate below the tier threshold exits **1**. Those are different failures and the strictness ladder had one code for both. **`specter sync` returns the same code and names the same cause**, because it is the CI entry point and a code that fires on `coverage` alone would tell CI a different story from a developer running locally. **Action:** if you declare the block, expect criteria with no test to fail where they previously passed on tier arithmetic. Set `permissive: true` to warn instead while you close the gap.
+
+  `settings.annotation.scope` is **not** accepted. The key is rejected with a message naming it as not implemented in this release, rather than one that reads as a typo. `docs/ssrb/SSRB-104.md`.
+
+- **Documentation style gate.** The shared Hanalyx checker (version 6) is vendored at `scripts/check-doc-style.py` and runs on every commit through the pre-commit hook. It enforces a grade 10 reading level, US English, no em dashes, no emojis, and no AI speak, across Markdown and whole-line code comments. Run it directly with `make doc-style-changed` (files changed against `main`), `make doc-style` (whole tree), or `make doc-style-grades` (the reading-level distribution). The failing gate is 11.0 against a writing target of 10.0. **Action:** run `make install-hooks` to pick up the new check. Existing debt does not block you; the gate applies to files you touch.
+
+- **`specter check --concrete`.** Reports every acceptance criterion carrying neither `inputs` nor `expected_output`, as a `vague_criterion` diagnostic: error at Tier 1, warning at Tier 2, info at Tier 3. The rule checks presence only. Whether a criterion's wording is testable is a judgment Specter does not make. **Action:** none unless you want the rule. It is opt-in and `--strict` does not enable it, because both fields are optional in the schema, so a criterion without them is valid and failing a build on it would be failing on correct input.
+
+- **`specter diff` compares the fields that make an acceptance criterion concrete.** It compared id and description only, so inverting an `expected_output` from `[1, 2, 3]` to `[3, 2, 1]`, flipping `approval_gate` from true to false, changing `priority`, or rewriting `inputs`, `error_cases` or `references_constraints` all reported `no changes` and exited 0. Each of those changes the contract a criterion's tests were written against, and each now reports and classifies as breaking. A priority change counts in both directions: a downgrade says a criterion matters less without touching a word of it. **Action:** a diff that reported no changes may now report a breaking one. That is the change being seen, not a new failure.
+
+- **`specter diff --exit-code`.** Opt-in. With the flag, a breaking change exits `10`; without it, `diff` exits 0 as before. Code `10` is the first allocation from the orchestration band. **Action:** none unless you want the gate. Add the flag where you want a breaking change to fail a pipeline.
+
+- **Multi-stream evidence: `specter ingest --stream`.** `--stream <name>` labels every entry a run produces, and the results file gains a top-level `streams` array with one row per stream carrying its `name`, `scanned` and `extracted` counts. Entries from different streams reporting on the same criterion are kept separately rather than collapsed to one. A stream that ran and extracted nothing appears in the array with `extracted: 0`, which is what separates it from a stream that never ran. **Action:** none. A run that reads runner output without `--stream`, meaning `--go-test` or `--junit`, writes no `streams` key and behaves exactly as it did in v0.14. `--merge` is the exception: it names no stream of its own and still writes the block its inputs declare.
+
+  On the outcome-verified paths, `--strictness threshold` and `zero-tolerance`, a criterion is covered when at least one stream holds an entry for it and every stream holding one reports passed. Splitting one job into two does not move the coverage number. Under `--strictness annotation` the results file is not consulted for the coverage percentage, so splitting a job does not move that number either way. Consistency checking still runs on that path, so an inconsistent block still changes the exit code.
+
+- **`specter ingest --merge`.** Builds the output from the named results files alone rather than accumulating into an existing one, so a criterion that passed in an earlier run and produces no entry now does not keep a stale pass. Each input is capped at 16 MiB, and so is the merged output. One input is enough to trip the output cap, because re-serializing adds indentation and the back-compat `passed` field: a 15.7 MB input produced a 22.5 MB output and was refused. Two inputs that each fit can sum past it the same way. Either result would be a file `coverage` cannot read. The two refusals read differently, because a missing stream declaration can be added and a size cannot. **Action:** if you split your test run across jobs, have each job write its own file with `--stream`, then merge them in a final step. If any `--merge` run refuses on size, splitting further will not help: the cap is on the artifact `coverage` has to read back, so the prospective output itself has to come under 16 MiB. Narrow what the run ingests, or drop entries you do not need traced.
+
+- **A silent-package count on each stream.** `zero_test_event_packages` counts packages the test runner reported on that produced no test event. Omitted when zero. It originates only in a `--go-test` run that names a stream, because a JUnit report carries no package-level event to count, and `ingest --merge` carries a count forward from its inputs. **Action:** none. A non-zero count is a reason to look at that package rather than a diagnosis: it may have failed to build, had every test filtered out, or have no tests at all.
+
+- **`streams` blocks are checked for consistency, and an inconsistent one exits `20`.** `coverage` and `sync` refuse a results file whose `streams` block contradicts the entries beside it. Five rules: every stream an entry names must be declared, a stream name must not be empty and a non-empty one must not repeat, no count may be negative, and a stream's `extracted` must not be lower than the number of entries carrying its label. Higher is allowed. `default` never requires declaration, whether an entry reaches it by carrying no label or by naming it outright. **Action:** if you write results files by hand or with your own tool, an inconsistent block now fails a build that passed. Run `coverage --json` for the list. `specter ingest --merge` refuses to write one: it checks the artifact it is about to produce and, if `coverage` would reject it, exits non-zero without writing. An existing file at the output path is left untouched. **Action:** if any merged input declares a `streams` block, make sure the combined declarations cover every non-default label carried by any input. Otherwise the merge exits non-zero and leaves the output file untouched. When every input omits the block, labeled entries stay legacy-shaped and the merge succeeds.
+
+  **A file with no `streams` key is untouched.** A file carrying `streams: []` or `streams: null` is not that file: the key is present, so both are checked. **Action:** if a tool of yours emits an empty or null block beside labeled entries, either drop the key or declare the streams.
+
+  The refusal appears in `coverage --json` as a `results_validation_errors` array. Each element carries `kind`, `stream`, `message`, and exactly one coordinate: `result_index` for `undeclared_stream`, `stream_index` for every other kind. Indexes point into the file as written. A refusal still emits the whole document.
+
+  **A gate that shipped earlier keeps its code.** A workspace that is also below its tier threshold, or has a criterion with no test, or an unmet approval gate, exits with that gate's code, and the stream violations are still reported. Code `20` is what a workspace exits with when the block is the only thing wrong. The same code and the same cause line come back from `coverage`, `coverage --json`, `sync` and `sync --json`.
+
+### Fixed
+
+- **`--strict` did not promote warnings the command added after the check ran.** `tier_conflict`, `domain_tier_conflict` and `unreachable_annotation` were assembled after the strict upgrade had already run, so each stayed a warning and a run carrying only those exited **0** under `--strict`. `unreachable_annotation` only under `settings.strictness: threshold`, which is the level that routes it to warning; under `zero-tolerance` it was already an error. Error-severity diagnostics were never affected: they failed the run either way. Two kinds keep their own severity by design: `structural_conflict`, which reports at `info`, and `unreachable_annotation_unknown`, which stays a warning because the reachability scanner could not read the test shape and so has found nothing to report.
+
+  **Action:** `check --strict` and `check --test --strict` may fail where they passed. Measured on this repository, `check --test --strict` moves from exit 0 to exit 1: 44 `unreachable_annotation` promote and 25 unknown ones stay warnings. On this repository the diagnostics were already reported and did not fail the build; `specter.yaml` declares `settings.annotation`, which resolves to threshold. Under `settings.strictness: annotation` they are not reported at all, and under `zero-tolerance` they already failed it. Fix the annotations, or turn strictness off for that invocation while you do. Dropping the `--strict` flag may not be enough: `settings.strict: true` in `specter.yaml` enables the same promotion on its own, so check the manifest as well as the command line.
+
+- **Test-file discovery ignored `settings.exclude`.** Spec discovery honored the setting, including glob patterns, and test discovery did not. A directory you excluded still contributed its test files, and where the excluded copy held the only annotation for a criterion, that criterion counted as covered on the strength of a file you had put out of scope. Both default walks now apply the setting through one predicate.
+
+  **This changes test discovery for every workspace, including one with no `specter.yaml`.** The setting falls back to a built-in list when it is not declared, and that list is `node_modules`, `dist`, `.git`, `vendor`, `__pycache__`, `.next`. Test discovery previously hardcoded the first three only, so test files under `vendor/`, `__pycache__/` and `.next/` were counted in v0.14 and are not counted now.
+
+  `settings.tests_glob` is unchanged. It overrides discovery entirely and `settings.exclude` does not narrow it.
+
+  **Action:** `coverage`, `sync` and `check --test` may all report fewer test files and a lower percentage than they did in v0.14, whether or not your manifest declares `settings.exclude`. Measured on a two-criterion spec with one test under `vendor/` and no manifest present: 100 percent before, 50 percent after, and `sync` moves from exit 0 to exit 1. If you keep tests in one of those directories and want them counted, declare `settings.exclude` without it, or set `settings.tests_glob`. **If you have no `specter.yaml` today, creating one to do that also moves spec discovery.** Without a manifest, `specter` walks from the current directory; with one, it walks `settings.specs_dir`, which defaults to `specs`. Measured: a workspace whose spec lives in `contracts/` is found before the manifest exists and not found after, until `specs_dir` names the right root. Set it explicitly, `settings.specs_dir: .` to keep the recursive walk.
+
+- **`specter coverage --failing` returned before the exit gates when every spec was at 100 percent.** The filter left no rows, so the command printed `All N specs at 100% coverage.` and returned above the gates. A workspace that `specter coverage` exits 20 or 3 on exited 0 under `--failing`, with nothing on stderr. Both commands now take the same verdict and name the same cause. **Action:** a CI job gating on `coverage --failing` may start failing where it passed. That is the workspace failing, not the tool; run `coverage` without the flag for the detail.
+
+- **`specter parse --json` exited 0 on a spec that failed to parse.** Text mode exited 1 for the same spec, so the two modes disagreed about whether the run succeeded and a CI job reading `--json` got a green build on a workspace `parse` rejects. Both modes now take one verdict, and `--json` still writes its document on the failure. This is the last of the three commands in that family; `coverage` was fixed in v0.13 and `check` earlier in this cycle. **Action:** a CI job gating on `parse --json` may start failing where it passed. That is the workspace failing, not the tool.
+
+- **The coverage summary header averaged with float accumulation and could read one low.** Percentages were summed as `float64`, and the sum lands under the true total on common inputs: 33.3, 44.4 and 33.3 reach 110.99999999999999, a third of which floors to 36 where the exact mean is 37. The values are now summed as whole tenths, so the mean is exact. **Action:** none, unless you assert on the header text in a test. The figure may rise by one. The header still floors rather than rounds, deliberately, so it agrees with the per-spec column: a workspace with one spec at 100 percent and one at 33 reads 66 and always did.
+
+- **`specter diff` printed the same description twice on a contract-only change.** A criterion whose `expected_output` changed but whose wording did not rendered `~AC-01: same text → same text` under a `[breaking]` header. The line now names the fields that differ: `~AC-01: expected_output changed (description unchanged)`. A criterion that changed both shows the transition and names the fields.
+
+- **Two acceptance criteria sharing an id passed `check`, and coverage then reported 100 percent from a single annotation.** `check` now reports `duplicate_ac_id` at error severity, naming the id, how many times it is declared, and the positions. **Action:** a spec with a repeated criterion id now fails `check`. Its reported coverage was overstated before the fix, so the number may drop once the ids are made unique.
+
+- **`structural_conflict` fired on sentences that merely mentioned the subject and an absence word.** The check fired on 34 pairs in Specter's own specs, none of them a genuine conflict. It now requires the absence expression to predicate the subject, and matches on whole words. The same specs produce zero. **Action:** none. A diagnostic you were ignoring may stop appearing. **Note:** this does not make the check sound, and it is still advisory for that reason. It cannot tell a contradiction from a criterion testing the constraint being enforced, because `Process checkout when email is absent` and `Registration fails when email is absent` differ only in the outcome verb.
+
+- **The `structural_conflict` diagnostic named the wrong spec's constraint.** The header reads `<spec> <constraint-id>`, the spec was the downstream one, and the constraint id belonged to the upstream spec, so looking that id up in the named spec found nothing or found a different constraint sharing it. The id is now qualified with its owner: `spec-app spec-core/C-01`. **Action:** if you parse `constraint_id` from `check --json`, it now carries `<spec>/<id>` for this diagnostic kind.
+
+- **Structural-conflict detection skipped `extends` and `conflicts_with` edges.** It scanned only `requires`, so the one relationship where a contradiction check has the strongest reason to look was the one place it did not look. It now scans every dependency edge. **Action:** none. No workspace in the corpus declares such an edge, so no existing output changes.
+
+- **`specter check` no longer fails a build on a structural conflict.** The `structural_conflict` diagnostic is a lexical heuristic: it fires when a downstream criterion mentions an upstream constraint's subject near a word like `absent` or `without`. It cannot tell a genuine contradiction from a criterion that tests the constraint being enforced, because `Process checkout when email is absent` and `Registration fails when email is absent` differ only in the outcome verb, which the rule never looks at. It now reports at `info`, is not raised by the constraint's `enforcement` field, is not promoted by `--strict`, and never contributes to a non-zero exit. The diagnostic still appears and still names a real tension worth reading. **Action:** a build that failed on `structural_conflict` now passes. If you were suppressing it by rewording criteria, you can stop. If you relied on it as a gate, nothing replaces it. `spec-check` C-05 and C-22 record why: no lexical rule separates a contradiction from a criterion testing the constraint being enforced, because the two differ only in the polarity of the outcome verb, which the rule never reads.
+
+- **`specter coverage --json` exited 0 on a workspace `specter coverage` failed.** With `settings.annotation` declared and a criterion carrying no test, text mode exits 2. Under `--json` the same workspace exited 0 whenever the tier threshold was otherwise met, so a CI job reading `--json` got a green build. It also stayed silent: the warning naming the criteria went to the text path only. Both modes now return the same code and name the same cause. **Action:** a CI job gating on `coverage --json` may start failing where it passed. That is the workspace failing, not the tool; run `coverage` for the criteria involved.
+
+- **The zero-tolerance approval-gate demotion left three things wrong in the report it edited.** Three things in the report were wrong. A demoted criterion was appended to the end of the uncovered list instead of appearing in declaration order. An entry whose every covered criterion was demoted reported `covered_acs` as `null` rather than an empty array, against a JSON contract that declares it non-nullable. And `fully_covered` and `partially_covered` were never recomputed, so one document could report a spec as fully covered while showing it at 50 percent beside that count. All three are fixed. **Action:** none, unless you parse `covered_acs` and depended on the null, or on the append ordering. Both were defects.
+
+- **`specter reverse --json` reported specs it never wrote.** The JSON branch returned before the write loop, so `--json` was an unconditional dry run and `--output` was accepted and ignored. The command reported `SpecsGenerated: 43`, wrote nothing, and exited 0. `--json` now selects the report format only, and `--dry-run` is the only flag that stops files being written. Under `--json`, stdout carries exactly one JSON document and the per-spec `GENERATED` and `SKIPPED` lines go to stderr, so machine-readable output stays parseable. A write that fails exits non-zero without emitting JSON. **Action:** if you used `--json` as a report-only mode, add `--dry-run`. This includes runs with no `--output`, which now write to the default `specs` directory.
+
+- **`specter reverse` told you to run a command that does not do what it said.** The handoff line read `Run 'specter explain <id>' to triage gaps in each generated draft`, and `specter explain` has no gap handling. The line now says review the criteria, which is what `explain` does: it lists every acceptance criterion with its coverage status. **Action:** none.
+
+- **The gap count included criteria that are not gaps.** When extraction found nothing for a spec, `reverse` synthesized a placeholder acceptance criterion and flagged it `gap: true`, which the summary counted alongside real findings. `go-chi/chi` reported `0 constraints, 21 gaps`. The placeholder no longer carries the flag. Across a 12-repository corpus the reported total dropped from 7,311 to 7,149, and every repository now reports gaps at or below its constraint count, where six previously reported more gaps than constraints. **Action:** none. **Note:** the remaining count is still not a measure of test coverage. A constraint counts as covered only when an assertion's text contains the constraint's field name, and real test names rarely do.
+
+- **Under `--group-by file`, `specter reverse` put a test file in its own spec instead of with the source it tests.** Every file was its own group, so `user.go` and `user_test.go` became two specs. Gap detection compares a group's constraints against that group's assertions, so a source file grouped apart from its test was compared against nothing and every constraint it carried was reported `UNTESTED`, whether or not a test existed. A test file now joins the source it names, when the adapter can name it and that source is present in the run. A test whose source is absent, or that the adapter cannot map (a Python `conftest.py`, for example), keeps its own spec as before. `--group-by directory` is unchanged. **Action:** a regenerated workspace has fewer specs, and criteria derived from a test now sit in the same spec as the constraints from its source.
+
+  **This does not repair gap detection on its own.** Measured across 12 repositories, it removed 49 false gaps out of 7,360. Treat the gap count as a prompt to look rather than as a coverage measure.
+
+- **`specter reverse` generated colliding spec ids, and `specter resolve` rejected the result.** Two files called `coverage.go` in different packages both became the spec id `coverage`, with no warning, and the next command in the pipeline refused the workspace. Ids are now unique within a run: every member of a colliding set gains parent directory segments, one at a time, until the set is distinct, and each rename is reported as an `id_collision` warning naming the old id and the file. **Action:** ids in a regenerated workspace may differ from ids you generated earlier. The warning names every one that changed. If you pinned a generated id somewhere, check it against the new output.
+
+  The same change ends a silent loss of generated specs. `reverse` reported 43 specs for one repository and wrote 37. Reported and written counts now agree.
+
+  Measured across 12 repositories: none produced a workspace the pipeline accepts before, and all 12 do now.
+
+- **`specter reverse` generated specs that `specter check` rejected.** It wrote `enforcement: error` on every constraint it produced, including the placeholder it synthesizes when extraction finds nothing to constrain. That field overrides the tier-based severity `check` gives an unreferenced constraint, so every generated constraint no acceptance criterion happened to reference failed the build at error severity. Generated specs are `status: draft` and `tier: 3`, whose default for that diagnostic is `info`. The field is now omitted, and the tier default applies. **Action:** regenerate to pick this up, or delete the `enforcement:` line from constraints in specs you generated earlier. Specs you wrote by hand are unaffected; `enforcement` still means what it always did when you set it yourself.
+
+  Measured across 12 repositories: every generated workspace that reaches `check` now passes it, where none did before.
+
+- **`tier_conflict` asserted something false on every run.** The warning ended `using override (N)` while nothing applied the override, so `check` claimed one tier was in use while `coverage` reported another for the same spec on the same run. It now states that the declared tier governs.
+
+- **`tier_conflict` never reached `specter check --json`.** No JSON consumer had ever seen it, including the VS Code extension, and the two output modes disagreed on the warning count for the same workspace. Both `tier_conflict` and the new `domain_tier_conflict` now appear in `--json`, and the counts agree. **Action:** if you parse `check --json` and had compensated for the missing diagnostic, remove the workaround.
+
+- **32 Dependabot alerts closed in the VS Code extension's dependency tree.** A lockfile-only refresh with no version-range changes. **No release was affected:** the extension declares zero runtime dependencies, and the published VSIX contains zero `node_modules` entries, so none of the flagged packages has ever shipped to a user. The exposure was to CI and developer machines, where these run during `npm ci`, `tsc`, `jest` and `vsce package`. **Action:** none. Run `npm ci` in `vscode-extension/` if you build the extension locally.
+
+- **`specter check` documentation described a diagnostic that does not exist.** The README and `docs/CLI_REFERENCE.md` said `tier_conflict` catches "a Tier 1 spec depends on a Tier 3 spec", and the README printed it as an ERROR. It fires only when a spec's declared `tier:` disagrees with an entry in `settings.tier_overrides`. It is a warning, and it does appear in `--json` output. `--strict` promotes it to an error, which it did not do until the strictness fix recorded above. `settings.tier_overrides` does not change a spec's effective tier. **Action:** if you set `tier_overrides` expecting a stricter or looser gate, it is not in effect. Set `tier:` in the spec instead.
+- **The pre-commit hook ran no checks once installed.** `gofmt` and `go vet` were skipped on every commit after `make install-hooks`. **Action:** run `make install-hooks`, then `make check` on any branch you have in flight.
+
+### Removed
+
+- **The tier inheritance cascade.** A spec's `tier` was documented as inheritable from its domain or from `system.tier`. It never was: the declared `tier:` has always governed, and the schema requires it. **Action:** none. No shipped behavior changes. `docs/ssrb/SSRB-106.md`.
+
+### Deprecated
+
+Four manifest surfaces are on a removal path for v1.0.0. Three of them resolve nothing, so removing them changes no workspace's tier or coverage. `settings.strictness` carries behavior and needs a migration. `settings.tier_overrides` needs a second look: it resolves no tier, but its value is still compared, and a value disagreeing with a spec's declared `tier:` fails a `--strict` run.
+
+- **`system.tier` and `settings.tier_overrides` now warn on every run**, name themselves, and state that they are removed at v1.0.0. Neither resolves a tier, and neither said so before. The deprecation line changes no exit code for either. **`settings.tier_overrides` is not inert beyond that, and its line now says so.** Its value is still compared against each spec's declared `tier:`, and a value that disagrees produces a `tier_conflict` warning, which `--strict` promotes to an error. Measured: a **mismatching** override fails `check --strict`; a **matching** one prints the deprecation line and exits 0. Declaring the key is not what fails a strict run; disagreeing with the declared tier is. **Action:** set `tier:` in the `.spec.yaml` file, the only place that has ever governed a spec's tier.
+
+- **The `registry` section is retired.** Its key is still accepted so an existing manifest parses, and its value is discarded. The key is removed at v1.0.0. **Action:** delete the block. Nothing is lost: the section never held anything a command read. `docs/ssrb/SSRB-105.md`.
+
+- **`settings.strictness` and `--strictness` will be retired at v1.0.0.** Both keep their current behavior unchanged for every release before then, so nothing in your manifest or your CI stops working now. This is advance notice, not a migration you have to run today.
+
+  The replacement is `settings.annotation`, which ships in this release and is described under Added. It carries one sub-key, `permissive`. `settings.annotation.scope` is not accepted in v0.15.0. It is set in `specter.yaml` only; there is no `--annotation` flag.
+
+  Under a declared block, every acceptance criterion must have a test, and a criterion with no test fails regardless of any threshold. The `settings.coverage.tier1`, `tier2` and `tier3` thresholds you already have set the allowed failure rate among criteria that do have tests, so `tier2: 80` means 80 percent must pass. `permissive` sets severity, not scope. The decision record is `docs/ssrb/SSRB-104.md`.
+
+  **Action:** none required for this release. If you set `settings.strictness` today, keep it; it works unchanged until v1.0.0. To move now, declare a `settings.annotation` block. Both are accepted until v1.0.0, and a manifest carrying both warns and applies the block.
+
+  **Worth knowing now if you run `--strict`:** it is a separate setting from `--strictness` despite the names, and it means something different on each of the three commands that accept it.
+
+### Changed
+
+- **`settings.strict: true` no longer runs the test-annotation scan on `sync`.** The key promotes warning and info check diagnostics to errors, and that is now all it does. It used to also switch on the `@spec`/`@ac` cross-reference that `sync --strict` runs, which meant a severity setting decided which defects were found: on a workspace whose test file referenced a spec id that does not exist, `sync` exited 1 with the key and 0 without it, and no promotion was involved because `unknown_spec_ref` is always an error. **Action: this can quietly reduce what you check.** If you relied on the key for annotation checking, pick the migration that matches what you want. Use `sync --strict` if you also want zero-tolerance coverage for that run, since the flag still does all three things. Run `specter check --test` as its own step if you want the annotation check without changing coverage strictness. `sync --strict` is unchanged, and so is what the key does on `check`, where the two were always the same thing.
+
+- British spellings corrected in `README.md`, `GOTCHAS.md`, `docs/CLI_REFERENCE.md`, `vscode-extension/README.md`, and three VS Code extension source comments. One decorative symbol removed from `docs/explainer/v0.10-ci-gated-coverage.md`. No behavior change.
+
+### Security
+
+- **Two Go standard library vulnerabilities are fixed by building on Go 1.25.13.** Both were reachable from code Specter runs, so both applied to the released binary.
+
+  [`GO-2026-6218`](https://pkg.go.dev/vuln/GO-2026-6218) is quadratic complexity in `net/url`. Specter reached it while resolving schema references during spec parsing.
+
+  [`GO-2026-6088`](https://pkg.go.dev/vuln/GO-2026-6088) is a missing recursion depth guard when decoding XML. Specter reached it in `specter ingest` when reading a JUnit report, where deep nesting could exhaust the stack.
+
+  **Action:** none if you use a released binary. If you build from source, the minimum Go version is now 1.25.13. The `go` directive in `go.mod` enforces it, so an older pinned toolchain fails the build instead of producing a binary that still carries both.
+
+---
+
+## v0.14.1 - 2026-06-13
+
+**Theme: stable-channel promotion, no functional change from v0.14.0.**
+
+The 0.13.0 → 0.14.0 line shipped to the VS Code Marketplace pre-release channel only; the last stable release users on the default channel received was v0.12.1. This patch carries no code change from v0.14.0, it exists solely to obtain a fresh version number, because the Marketplace forbids republishing an already-published version (0.14.0) without its pre-release flag. v0.14.1 is the first **stable** release carrying the full 0.13 + 0.14 body of work (strict-coverage routing, resolver all-cycles, sync test-file cap, VS Code per-folder coverage). The packaged VSIX is byte-for-byte equivalent to the published 0.14.0 pre-release apart from the version string.
 
 This also re-anchors release traceability: the `v0.14.0` tag was cut before #147 (`fix(vscode): exclude jest-junit output from the VSIX`); the `v0.14.1` tag points at the current `main` HEAD, which includes that fix.
 
@@ -18,22 +167,22 @@ This also re-anchors release traceability: the `v0.14.0` tag was cut before #147
 
 ---
 
-## v0.14.0 — 2026-06-11
+## v0.14.0 - 2026-06-11
 
-**Theme: strictness enforcement parity — a correctness bundle from the 2026-06-11 six-finding review.**
+**Theme: strictness enforcement parity, a correctness bundle from the 2026-06-11 six-finding review.**
 
 An adversarially-verified review of the toolchain surfaced six findings; all six were confirmed against the code and fixed across four PRs (#140, #141, #144, #145). Per the pre-1.0 critical-issue handling, this minor is themed around the correctness bundle; the originally planned v0.14 headline feature moves to the next minor. This ships as a MINOR (not a patch) because the default behavior of `specter coverage` changes.
 
-### Changed — action may be required
+### Changed (action may be required)
 
-- **`coverage --strictness threshold` / `zero-tolerance` now route through the same strict path as `--strict`** (spec-coverage 1.14.0 → 1.15.0, C-31/C-32 + AC-36/AC-37; #140). Previously the strict path keyed solely on the `--strict` boolean: `coverage --strictness threshold` — and plain `specter coverage` under the manifest default `threshold` — silently tolerated a missing `.specter-results.json` and counted failed Tier 2/3 annotated ACs as covered, while `sync` failed the same workspace. Now an effective strictness of `threshold` or `zero-tolerance` (flag or manifest) requires `.specter-results.json` and demotes non-passed annotated ACs across all tiers, matching `sync`'s routing since v0.13. When the strict mode comes from `--strictness` or the manifest (not the `--strict` flag), a missing results file fails with a mode-aware message: `strictness "threshold" requires .specter-results.json — run 'specter ingest' first, or use --strictness annotation for structural coverage`. **Migration:** pipelines running plain `specter coverage` without a results file should run `specter ingest` first (outcome-gated coverage), pass `--strictness annotation`, or set `settings.strictness: annotation` (structural coverage). The repo's own lightweight CI gates and `make dogfood` switched to `--strictness annotation`; `--strict` behavior is unchanged.
+- **`coverage --strictness threshold` / `zero-tolerance` now route through the same strict path as `--strict`** (spec-coverage 1.14.0 → 1.15.0, C-31/C-32 + AC-36/AC-37; #140). Previously the strict path keyed solely on the `--strict` boolean: `coverage --strictness threshold`, and plain `specter coverage` under the manifest default `threshold`, silently tolerated a missing `.specter-results.json` and counted failed Tier 2/3 annotated ACs as covered, while `sync` failed the same workspace. Now an effective strictness of `threshold` or `zero-tolerance` (flag or manifest) requires `.specter-results.json` and demotes non-passed annotated ACs across all tiers, matching `sync`'s routing since v0.13. When the strict mode comes from `--strictness` or the manifest (not the `--strict` flag), a missing results file fails with a mode-aware message: `strictness "threshold" requires .specter-results.json, run 'specter ingest' first, or use --strictness annotation for structural coverage`. **Migration:** pipelines running plain `specter coverage` without a results file should run `specter ingest` first (outcome-gated coverage), pass `--strictness annotation`, or set `settings.strictness: annotation` (structural coverage). The repo's own lightweight CI gates and `make dogfood` switched to `--strictness annotation`; `--strict` behavior is unchanged.
 - **The VS Code extension pins `--strictness annotation` on its `coverage --json` calls** (#140), preserving the sidebar's structural coverage view and its "JSON document on every run" contract byte-for-byte under the new default.
 
 ### Fixed
 
 - **`sync --strictness zero-tolerance` false-green** (spec-sync 1.3.0 → 1.4.0, C-09 + AC-12/AC-13; #140). Sync routed zero-tolerance through the strict report path but gated only on tier thresholds: a Tier 3 spec with one passing and one failing annotated AC passed sync at 50% while `coverage --strictness zero-tolerance` exited 2 on the same workspace, and `approval_gate` violations were never checked in sync at all. Sync's coverage phase now enforces both zero-tolerance gates with the same exit codes as `coverage` (2 = non-passed annotated AC, 3 = `approval_gate: true` with unset `approval_date`), demotes approval-gate violations in its report, and applies both identically under `--json`. The counting/demotion logic is shared (`internal/coverage/zero_tolerance.go`) so the parity is mechanical, not a review-time promise.
-- **Resolver now reports ALL overlapping cycles** (spec-resolve 1.2.0 → 1.3.0, strengthened C-03 + AC-15; #141). The white/grey/black DFS silently skipped edges into fully-processed nodes, so two cycles sharing an edge (theta graph) dropped one cycle nondeterministically (~60% of runs, map-iteration-order dependent). `findCycles` is now Tarjan SCC decomposition + Johnson's simple-cycle enumeration with deterministic canonical output: each cycle starts at its lexicographically smallest spec ID and the set is sorted. Enumeration is capped at 1000 simple cycles (documented in C-03). Diagnostic kind and message format unchanged.
-- **`sync` applies the 4 MiB test-file cap** (spec-sync 1.4.0 → 1.5.0, C-10 + AC-14; #144). Sync read every discovered test file with an unguarded `os.ReadFile`, bypassing the `MaxTestFileBytes` cap that `check --test`, `coverage`, and `explain` apply — the v0.13 H5 hardening commit claimed the sync site but never touched it, so a single large test artifact could OOM the primary CI command. Sync now stat-guards before reading (oversized files skip with a stderr warning, never failing the run) and unreadable test files warn + skip instead of silently becoming empty content.
+- **Resolver now reports ALL overlapping cycles** (spec-resolve 1.2.0 → 1.3.0, strengthened C-03 + AC-15; #141). The white/gray/black DFS silently skipped edges into fully-processed nodes, so two cycles sharing an edge (theta graph) dropped one cycle nondeterministically (~60% of runs, map-iteration-order dependent). `findCycles` is now Tarjan SCC decomposition + Johnson's simple-cycle enumeration with deterministic canonical output: each cycle starts at its lexicographically smallest spec ID and the set is sorted. Enumeration is capped at 1000 simple cycles (documented in C-03). Diagnostic kind and message format unchanged.
+- **`sync` applies the 4 MiB test-file cap** (spec-sync 1.4.0 → 1.5.0, C-10 + AC-14; #144). Sync read every discovered test file with an unguarded `os.ReadFile`, bypassing the `MaxTestFileBytes` cap that `check --test`, `coverage`, and `explain` apply, the v0.13 H5 hardening commit claimed the sync site but never touched it, so a single large test artifact could OOM the primary CI command. Sync now stat-guards before reading (oversized files skip with a stderr warning, never failing the run) and unreadable test files warn + skip instead of silently becoming empty content.
 - **VS Code: per-folder coverage reports + on-save whole-report refresh** (spec-vscode 1.6.0 → 1.7.0, amended AC-22/AC-33, new AC-54/AC-55; #145). Two extension-state bugs: (a) multi-root workspaces kept clients and diagnostic collections per folder but stored ONE module-global coverage report (last folder wins) and resolved CLI-relative paths against `workspaceFolders[0]`, so folder B's parse-error diagnostics pointed into folder A; (b) the on-save handler regex-scanned saved spec YAML for `// @spec` slash comments and spliced the fresh report's `entries[0]` into the matched spec's slot, corrupting coverage/status/notifications whenever the saved spec wasn't the report's first entry. Reports are now stored per folder with paths normalized to absolute against the owning folder's CLI cwd at ingestion time; the status bar/sidebar/Insights read a merged view (identity-returning for single-root); saving a spec re-runs coverage for its folder through the same path activation uses. Side effects: on-save now actually refreshes coverage (the old trigger almost never fired on real spec files), and sidebar tooltips show absolute paths.
 
 ### Docs
@@ -43,37 +192,37 @@ An adversarially-verified review of the toolchain surfaced six findings; all six
 
 ---
 
-## v0.13.3 — 2026-06-10
+## v0.13.3 - 2026-06-10
 
-**Theme: DX patch — a non-misleading `sync` missing-results message.**
+**Theme: DX patch, a non-misleading `sync` missing-results message.**
 
-External adopter (Kensa) feedback on the v0.13 strict-coverage behavior. Under a strict mode, `specter sync`'s coverage phase fails when `.specter-results.json` is absent — but the error reused `coverage --strict`'s wording (`--strict requires .specter-results.json …`), naming a `--strict` flag the sync operator usually never passed. Under `sync` the strict mode comes from the manifest default (`threshold`), not an explicit flag, so the message pointed at the wrong lever. Patch-trigger: documentation/UX correction that materially misleads users.
+External adopter (Kensa) feedback on the v0.13 strict-coverage behavior. Under a strict mode, `specter sync`'s coverage phase fails when `.specter-results.json` is absent, but the error reused `coverage --strict`'s wording (`--strict requires .specter-results.json …`), naming a `--strict` flag the sync operator usually never passed. Under `sync` the strict mode comes from the manifest default (`threshold`), not an explicit flag, so the message pointed at the wrong lever. Patch-trigger: documentation/UX correction that materially misleads users.
 
 ### Fixed
 
-- **`sync` missing-results message now names the active strictness mode and offers both remedies** (spec-sync 1.2.0 → 1.3.0, C-08/AC-10; `internal/sync/sync.go`). Under `threshold` / `zero-tolerance` with no `.specter-results.json`, sync now emits `strictness "threshold" requires .specter-results.json — run 'specter ingest' first, or use --strictness annotation for structural coverage`. The rewrite is gated on `errors.Is(err, coverage.ErrMissingResults)`, so **`coverage --strict`'s own message is unchanged**. Also corrects spec-sync C-06's stale parenthetical: the manifest default is `threshold` (per spec-manifest C-24), not `annotation`.
+- **`sync` missing-results message now names the active strictness mode and offers both remedies** (spec-sync 1.2.0 → 1.3.0, C-08/AC-10; `internal/sync/sync.go`). Under `threshold` / `zero-tolerance` with no `.specter-results.json`, sync now emits `strictness "threshold" requires .specter-results.json, run 'specter ingest' first, or use --strictness annotation for structural coverage`. The rewrite is gated on `errors.Is(err, coverage.ErrMissingResults)`, so **`coverage --strict`'s own message is unchanged**. Also corrects spec-sync C-06's stale parenthetical: the manifest default is `threshold` (per spec-manifest C-24), not `annotation`.
 
 ### Added
 
-- **`docs/explainer/v0.13-sync-strict-coverage.md`** — a developer explainer for the v0.13 `sync` strict-coverage results-file requirement: the intent (v0.13 closed the gap where `sync` ignored `strictness` while `coverage` honored it), the local-vs-CI hazard during a partial-version upgrade, and three remedies (ingest before `sync`, split a structural `sync --strictness annotation` gate from a separate `coverage --strict` gate, or set `strictness: annotation`).
+- **`docs/explainer/v0.13-sync-strict-coverage.md`.** A developer explainer for the v0.13 `sync` strict-coverage results-file requirement: the intent (v0.13 closed the gap where `sync` ignored `strictness` while `coverage` honored it), the local-vs-CI hazard during a partial-version upgrade, and three remedies (ingest before `sync`, split a structural `sync --strictness annotation` gate from a separate `coverage --strict` gate, or set `strictness: annotation`).
 
 ---
 
-## v0.13.2 — 2026-05-18
+## v0.13.2 - 2026-05-18
 
-**Theme: post-ship review patch — close two remaining spec-vs-code drift instances + one user-facing docs gap.**
+**Theme: post-ship review patch, close two remaining spec-vs-code drift instances + one user-facing docs gap.**
 
 A four-agent post-ship review of v0.13.0 + v0.13.1 surfaced 22 findings. Three meet the CLAUDE.md patch-trigger criteria ("documentation correction that materially misleads users"); they ship in this patch. The remaining 19 are cosmetic, design-pending, or in-scope for v0.14.
 
 ### Fixed
 
-- **`approval_gate` schema description corrected** (`internal/parser/spec-schema.json:319`). The embedded schema claimed *"Specter does not enforce approval semantics — teams wire this into their own PR/CI gates."* Since v0.11.1 (GH #94 hotfix), `coverage` actually enforces `approval_gate` under zero-tolerance — an AC with `approval_gate: true` and unset `approval_date` is demoted and exits with code 3. `SPEC_SCHEMA_REFERENCE.md:221` already carried the correct text; the embedded schema was missed by the v0.11.1 update. Same shape as the v0.13.1 fix for `spec.status` — completes the b0ba292 sweep across all schema-field descriptions. `specter explain schema spec.acceptance_criteria.items.approval_gate` and the VS Code schema tooltip now match the documented behavior.
+- **`approval_gate` schema description corrected** (`internal/parser/spec-schema.json:319`). The embedded schema claimed *"Specter does not enforce approval semantics, teams wire this into their own PR/CI gates."* Since v0.11.1 (GH #94 hotfix), `coverage` actually enforces `approval_gate` under zero-tolerance, an AC with `approval_gate: true` and unset `approval_date` is demoted and exits with code 3. `SPEC_SCHEMA_REFERENCE.md:221` already carried the correct text; the embedded schema was missed by the v0.11.1 update. Same shape as the v0.13.1 fix for `spec.status`, completes the b0ba292 sweep across all schema-field descriptions. `specter explain schema spec.acceptance_criteria.items.approval_gate` and the VS Code schema tooltip now match the documented behavior.
 
-- **`specter diff spec <a> <b>` ghost form retracted** (spec-diff 2.1.0 → 2.2.0, AC-12 removed; `cmd/specter/main.go:3029-3046`). v0.13.0 promised an explicit `diff spec <a> <b>` form parallel to the implicit `diff <a> <b>`. The form was never implemented: cobra `ExactArgs(2)` rejects 3-arg invocations, and 2-arg `diff spec foo.yaml` misroutes `args[0]="spec"` into `readSpecAtRef` (which fails with "no such file"). The implicit form (AC-11) is the only invocation users have been using and is sufficient. Retracting the false promise is preferred over adding code because re-introducing a `spec` subcommand would collide with the polymorphic subcommand-dispatch pattern (where `coverage` is the registered kind). This is the third instance of the same drift class F3 surfaced in this cycle — spec-vs-code parity is now closed across every v0.13 spec change.
+- **`specter diff spec <a> <b>` ghost form retracted** (spec-diff 2.1.0 → 2.2.0, AC-12 removed; `cmd/specter/main.go:3029-3046`). v0.13.0 promised an explicit `diff spec <a> <b>` form parallel to the implicit `diff <a> <b>`. The form was never implemented: cobra `ExactArgs(2)` rejects 3-arg invocations, and 2-arg `diff spec foo.yaml` misroutes `args[0]="spec"` into `readSpecAtRef` (which fails with "no such file"). The implicit form (AC-11) is the only invocation users have been using and is sufficient. Retracting the false promise is preferred over adding code because re-introducing a `spec` subcommand would collide with the polymorphic subcommand-dispatch pattern (where `coverage` is the registered kind). This is the third instance of the same drift class F3 surfaced in this cycle, spec-vs-code parity is now closed across every v0.13 spec change.
 
 ### Added
 
-- **`// @reachable manual` documented in user-facing docs** (`docs/TEST_ANNOTATION_REFERENCE.md`, `internal/explain/annotation_reference.md`, `docs/CLI_REFERENCE.md`). v0.13.0 shipped the file-level off-switch for `unreachable_annotation` but the marker was only documented inside the spec — a user encountering the diagnostic in CI had no docs path to the escape hatch. The reference doc now carries: (a) a new "Suppressing `unreachable_annotation` per-file" section with the marker syntax per language family, scope semantics, when to use vs. when not to use, and strictness routing; (b) two new "Troubleshooting" entries for both `unreachable_annotation` and `unreachable_annotation_unknown`. The embedded mirror used by `specter explain annotation` is byte-for-byte updated via the existing parity test. The `check` command's Diagnostics table in CLI_REFERENCE also gains rows for both new diagnostic kinds (plus the pre-existing-but-undocumented `unknown_spec_ref` / `unknown_ac_ref` under `--test`).
+- **`// @reachable manual` documented in user-facing docs** (`docs/TEST_ANNOTATION_REFERENCE.md`, `internal/explain/annotation_reference.md`, `docs/CLI_REFERENCE.md`). v0.13.0 shipped the file-level off-switch for `unreachable_annotation` but the marker was only documented inside the spec, a user encountering the diagnostic in CI had no docs path to the escape hatch. The reference doc now carries: (a) a new "Suppressing `unreachable_annotation` per-file" section with the marker syntax per language family, scope semantics, when to use vs. when not to use, and strictness routing; (b) two new "Troubleshooting" entries for both `unreachable_annotation` and `unreachable_annotation_unknown`. The embedded mirror used by `specter explain annotation` is byte-for-byte updated via the existing parity test. The `check` command's Diagnostics table in CLI_REFERENCE also gains rows for both new diagnostic kinds (plus the pre-existing-but-undocumented `unknown_spec_ref` / `unknown_ac_ref` under `--test`).
 
 ### Not in this patch (tracked for v0.14)
 
@@ -89,11 +238,11 @@ Post-ship review used four parallel general-purpose agents covering: (1) feature
 
 ---
 
-## v0.13.1 — 2026-05-17
+## v0.13.1 - 2026-05-17
 
-**Theme: hotfix — finish the v0.12.1 status-claim docs/code parity work.**
+**Theme: hotfix, finish the v0.12.1 status-claim docs/code parity work.**
 
-The v0.12.1 cycle (commit `b0ba292`, 2026-05-07) updated `SPEC_SCHEMA_REFERENCE.md` and `FAQ.md` to drop the misleading claim that "only 'approved' specs are enforced by spec-sync" — Specter's actual behavior is that every parseable spec is checked. That fix landed on the human-facing docs but **missed the embedded JSON schema description at `internal/parser/spec-schema.json:39`**, which is the source `specter explain schema spec.status` and the VS Code extension's schema tooltip read from.
+The v0.12.1 cycle (commit `b0ba292`, 2026-05-07) updated `SPEC_SCHEMA_REFERENCE.md` and `FAQ.md` to drop the misleading claim that "only 'approved' specs are enforced by spec-sync", Specter's actual behavior is that every parseable spec is checked. That fix landed on the human-facing docs but **missed the embedded JSON schema description at `internal/parser/spec-schema.json:39`**, which is the source `specter explain schema spec.status` and the VS Code extension's schema tooltip read from.
 
 Bug report from a third-party adopter (the Yoke project) running v0.13.0 surfaced the gap: `specter explain schema spec.status` still output the misleading claim, and operators reading it assumed `coverage --strict` would honor `status: draft`. It doesn't (and never did).
 
@@ -103,75 +252,75 @@ Bug report from a third-party adopter (the Yoke project) running v0.13.0 surface
 
 ### Not in this patch
 
-The bug reporter's secondary ask — a way to have `coverage --strict` *actually* exempt draft specs from CI gates ("scaffolding lands first, per-area implementation is staged over weeks or months") — is a legitimate adoption-time feature request, but not a docs bug. Status-aware gating (e.g., `coverage --enforce-status approved` or `--exclude-status draft`) is a feature design discussion for a future minor release, gated on the feature-universality test from the project memory (does this generalize beyond one adopter?). Tracked as a follow-up; not blocking the v0.13.1 docs correction.
+The bug reporter's secondary ask, a way to have `coverage --strict` *actually* exempt draft specs from CI gates ("scaffolding lands first, per-area implementation is staged over weeks or months"), is a legitimate adoption-time feature request, but not a docs bug. Status-aware gating (e.g., `coverage --enforce-status approved` or `--exclude-status draft`) is a feature design discussion for a future minor release, gated on the feature-universality test from the project memory (does this generalize beyond one adopter?). Tracked as a follow-up; not blocking the v0.13.1 docs correction.
 
 ---
 
-## v0.13.0 — 2026-05-16
+## v0.13.0 - 2026-05-16
 
 **Theme: unreachable_annotation diagnostic + cycle cleanup.**
 
-Headline feature: F3 — `unreachable_annotation` diagnostic. When a test file carries `// @ac AC-NN` but the test produces no runner-visible spec-id/AC-NN token (neither in the subtest title nor as a runtime print of `// @spec` / `// @ac`), `specter check --test` now emits the diagnostic naming `file:line`. Pre-v0.13 the annotation would silently demote under `coverage --strict` with no signal — the same docs-vs-code drift class the v0.10.x CHANGELOG flagged. Covers Go (via `go/ast` + `ast.CommentMap`), TypeScript / Jest / Vitest (regex + block-comment state machine), and Python (regex + indentation). File-level off-switch: `// @reachable manual` (`# @reachable manual` for Python) suppresses both `unreachable_annotation` and `unreachable_annotation_unknown` for every `@ac` in the file.
+Headline feature: F3, `unreachable_annotation` diagnostic. When a test file carries `// @ac AC-NN` but the test produces no runner-visible spec-id/AC-NN token (neither in the subtest title nor as a runtime print of `// @spec` / `// @ac`), `specter check --test` now emits the diagnostic naming `file:line`. Pre-v0.13 the annotation would silently demote under `coverage --strict` with no signal, the same docs-vs-code drift class the v0.10.x CHANGELOG flagged. Covers Go (via `go/ast` + `ast.CommentMap`), TypeScript / Jest / Vitest (regex + block-comment state machine), and Python (regex + indentation). File-level off-switch: `// @reachable manual` (`# @reachable manual` for Python) suppresses both `unreachable_annotation` and `unreachable_annotation_unknown` for every `@ac` in the file.
 
 ### Added
 
-#### F3 — unreachable_annotation diagnostic (spec-check 1.3.0 → 1.5.0, C-10/C-11/C-12, AC-13..AC-20)
+#### F3, unreachable_annotation diagnostic (spec-check 1.3.0 → 1.5.0, C-10/C-11/C-12, AC-13..AC-20)
 
 - `specter check --test` now runs the language-aware reachability scanner. Severity routes per `settings.strictness`: `annotation` suppresses; `threshold` (default) emits a warning (exit 0); `zero-tolerance` emits an error (exit non-zero).
-- `unreachable_annotation_unknown` (always a warning, never an error) fires when the test shape is not recognized by any language-aware parser — operator may add `// @reachable manual` to assert manual verification.
+- `unreachable_annotation_unknown` (always a warning, never an error) fires when the test shape is not recognized by any language-aware parser, operator may add `// @reachable manual` to assert manual verification.
 - New CLI integration tests (`cmd/specter/check_test.go::TestCheckTest_UnreachableAnnotationFiresFromCLI` + `TestCheckTest_ReachableManualSuppressesFromCLI`) pin the wiring so future refactors can't re-orphan the diagnostic.
 
 #### `specter diff coverage <baseline.json> <current.json>` (spec-diff 1.x → 2.1.0)
 
-Polymorphic `diff` verb. First new kind is `coverage` — compares two `coverage --json` snapshots, emits per-spec AC delta (`+SpecID/AC-NN` gained, `-SpecID/AC-NN` lost, `~SpecID coverage_pct: X → Y`). Useful for tracking AC drift between CI runs. Backward compat preserved: `specter diff <path> <path>` continues to invoke the spec-comparison kind.
+Polymorphic `diff` verb. First new kind is `coverage`, compares two `coverage --json` snapshots, emits per-spec AC delta (`+SpecID/AC-NN` gained, `-SpecID/AC-NN` lost, `~SpecID coverage_pct: X → Y`). Useful for tracking AC drift between CI runs. Backward compat preserved: `specter diff <path> <path>` continues to invoke the spec-comparison kind.
 
 #### `specter resolve dependents <spec-id>` (spec-resolve)
 
-Reverse dependency-graph query — "which specs depend on this one?" Companion to the existing `dependencies` operation.
+Reverse dependency-graph query, "which specs depend on this one?" Companion to the existing `dependencies` operation.
 
 #### Bundled enhancements
 
-- `specter sync --strictness <annotation|threshold|zero-tolerance>` — explicit per-invocation override. Sync's strict-mode behavior now matches `coverage`'s; pre-v0.13 was a silent gap.
+- `specter sync --strictness <annotation|threshold|zero-tolerance>`, explicit per-invocation override. Sync's strict-mode behavior now matches `coverage`'s; pre-v0.13 was a silent gap.
 - `settings.exclude` accepts glob patterns (`.claude/**`, `**/worktrees`, `tests/fixtures/*`) in addition to bare directory names. (spec-manifest C-29)
 - `specter reverse` emits a summary line and `specter explain` handoff at the end of a non-JSON run.
-- `specter check --test` now lifts AC-14..AC-18 onto spec-parse (v0.7.0 parse behaviors that had test annotations but no spec ACs — closes the spec-vs-code drift in the opposite direction from F3).
+- `specter check --test` now lifts AC-14..AC-18 onto spec-parse (v0.7.0 parse behaviors that had test annotations but no spec ACs, closes the spec-vs-code drift in the opposite direction from F3).
 - Auto-generated `specter help` subcommand suppressed (use `--help` or top-level `specter help`).
 - CLI-flags ↔ `docs/CLI_REFERENCE.md` parity test catches the class where a flag is registered but undocumented.
 
 ### Fixed
 
-- **D1 — `doctor --fix` no longer corrupts description-block prose** (spec-doctor 1.9.0, C-17). The v0.12 rewrite used a content-pattern regex over every source line; a `description: |` block scalar mentioning `trust_level: high` in prose would be falsely matched and the doc line stripped. Now uses `yaml.v3 Node.Line` for exact-line deletion. The BETA warning's "Known limitation" claim removed; the BETA prompt itself is retained for v0.13 as soak time on a destructive operation.
-- **D2 — Unrecognized `status` value diagnostic** (spec-coverage 1.14.0, C-30, AC-35). A `.specter-results.json` entry with `status: "pass"` (typo missing `ed`) previously demoted the AC silently under `--strict` with no signal. `coverage` now emits a stderr warning per unique unrecognized value (`warning: .specter-results.json contains N entries with status="pass" — not a recognized status (passed|failed|skipped|errored); treated as not-passed`) and exposes the data as a top-level `invalid_status_warnings` array under `--json`.
-- **D3 — `coverage --strict --json` exit-code parity** (spec-coverage 1.13.0, C-29, AC-34). Pre-v0.13, JSON mode exited 0 on zero-tolerance violations that text mode exited 2 (non-passed AC) or 3 (approval_gate unset). CI consumers reading `--json` could not gate on it. The JSON branch now runs the same exit checks text mode runs, after emitting the structured document.
-- **D4 — `internal/migrate/rewrite.go` C-10 → C-11 comment.** One-character documentation fix.
+- **D1, `doctor --fix` no longer corrupts description-block prose** (spec-doctor 1.9.0, C-17). The v0.12 rewrite used a content-pattern regex over every source line; a `description: |` block scalar mentioning `trust_level: high` in prose would be falsely matched and the doc line stripped. Now uses `yaml.v3 Node.Line` for exact-line deletion. The BETA warning's "Known limitation" claim removed; the BETA prompt itself is retained for v0.13 as soak time on a destructive operation.
+- **D2, Unrecognized `status` value diagnostic** (spec-coverage 1.14.0, C-30, AC-35). A `.specter-results.json` entry with `status: "pass"` (typo missing `ed`) previously demoted the AC silently under `--strict` with no signal. `coverage` now emits a stderr warning per unique unrecognized value (`warning: .specter-results.json contains N entries with status="pass", not a recognized status (passed|failed|skipped|errored); treated as not-passed`) and exposes the data as a top-level `invalid_status_warnings` array under `--json`.
+- **D3, `coverage --strict --json` exit-code parity** (spec-coverage 1.13.0, C-29, AC-34). Pre-v0.13, JSON mode exited 0 on zero-tolerance violations that text mode exited 2 (non-passed AC) or 3 (approval_gate unset). CI consumers reading `--json` could not gate on it. The JSON branch now runs the same exit checks text mode runs, after emitting the structured document.
+- **D4, `internal/migrate/rewrite.go` C-10 → C-11 comment.** One-character documentation fix.
 
 ### Security
 
 Three priority findings from the pre-release security audit closed this cycle (artifact at `docs/release-testing/v0.13.0-security.md`):
 
-- **H1 — `settings.specs_dir` workspace-scope** (spec-manifest 1.11.0, C-30, AC-46). `ParseManifest` refuses absolute paths, Windows drive-letter form (on every platform), `..` segments, and lexical-clean escapes. Closes the arbitrary-write path where a malicious workspace's `specter.yaml` with `settings.specs_dir: /home/victim` caused `filepath.Walk` and `doctor --fix` to operate outside the workspace.
-- **H5 — `MaxTestFileBytes` (4 MiB) cap on test files** (spec-check 1.5.0, C-12, AC-20). v0.13's F3 scanner reads every discovered test file via `os.ReadFile` and passes the full string to `go/parser.ParseFile` (Go), regex+state-machine (TS/JS), or regex+indentation (Python). A 4 GiB malicious test file would OOM the process; `go/parser` allocates an AST proportional to file size. The cap is enforced via `os.Stat` BEFORE `os.ReadFile`, so oversized files are never buffered into memory. Skip is per-file (not fatal); stderr warning names the file.
-- **M3 — `MaxCoverageReportBytes` (16 MiB) cap on `diff coverage` inputs** (spec-diff 2.1.0, C-12, AC-15). v0.13's new `diff coverage` subcommand previously did unbounded `os.ReadFile` followed by `json.Unmarshal`; multi-GiB JSON inputs would OOM CI. Now matches the existing `coverage.MaxResultsFileBytes` defense-in-depth pattern.
+- **H1, `settings.specs_dir` workspace-scope** (spec-manifest 1.11.0, C-30, AC-46). `ParseManifest` refuses absolute paths, Windows drive-letter form (on every platform), `..` segments, and lexical-clean escapes. Closes the arbitrary-write path where a malicious workspace's `specter.yaml` with `settings.specs_dir: /home/victim` caused `filepath.Walk` and `doctor --fix` to operate outside the workspace.
+- **H5, `MaxTestFileBytes` (4 MiB) cap on test files** (spec-check 1.5.0, C-12, AC-20). v0.13's F3 scanner reads every discovered test file via `os.ReadFile` and passes the full string to `go/parser.ParseFile` (Go), regex+state-machine (TS/JS), or regex+indentation (Python). A 4 GiB malicious test file would OOM the process; `go/parser` allocates an AST proportional to file size. The cap is enforced via `os.Stat` BEFORE `os.ReadFile`, so oversized files are never buffered into memory. Skip is per-file (not fatal); stderr warning names the file.
+- **M3, `MaxCoverageReportBytes` (16 MiB) cap on `diff coverage` inputs** (spec-diff 2.1.0, C-12, AC-15). v0.13's new `diff coverage` subcommand previously did unbounded `os.ReadFile` followed by `json.Unmarshal`; multi-GiB JSON inputs would OOM CI. Now matches the existing `coverage.MaxResultsFileBytes` defense-in-depth pattern.
 
 Defenses verified intact during the audit: GHA SHA pinning, BETA-gate TTY detection (not EOF-on-empty), pre-push hook SHA validation, manifest 64 KiB + results-file 16 MiB caps, XML DTD rejection, RE2 regex immunity to ReDoS across all 82 regex sites, webview CSP with per-render nonce, execFile (not exec), settings machine-scope, no extension telemetry.
 
 Two HIGH findings remain as v0.14 follow-ups:
-- **H3** — VS Code extension does not verify cosign signatures on the downloaded binary (signatures already published; consumer needs `sigstore-js` integration).
-- **H4** — VS Code `capabilities.untrustedWorkspaces.supported: "limited"` declared in `package.json` but no code path checks `vscode.workspace.isTrusted` before downloading/executing the binary.
+- **H3.** VS Code extension does not verify cosign signatures on the downloaded binary (signatures already published; consumer needs `sigstore-js` integration).
+- **H4.** VS Code `capabilities.untrustedWorkspaces.supported: "limited"` declared in `package.json` but no code path checks `vscode.workspace.isTrusted` before downloading/executing the binary.
 
 ### Pre-release validation
 
 - **Real-world test against 12 open-source repos** (`docs/release-testing/v0.13.0-realworld.md`): 0 crashes, 0 validation errors across 29,973 files / 4,156 generated specs / 32,752 extracted assertions. 5.5× the v0.2.x baseline of 5,434 files.
 - **Feature smoke test** (`docs/release-testing/v0.13.0-smoke.md`): 16/16 pass across D1/D2/D3/C2/C4/C5+C6/B/F3/A4 surfaces. Reproducible harness at `scripts/smoketest_v013.sh`.
-- **Spec coverage** via `make dogfood-strict`: 15/15 specs at 100% (spec-check 20/20 with the new AC-20, spec-diff 15/15 with AC-15, spec-manifest 45/46 — only pre-existing AC-29 uncovered).
+- **Spec coverage** via `make dogfood-strict`: 15/15 specs at 100% (spec-check 20/20 with the new AC-20, spec-diff 15/15 with AC-15, spec-manifest 45/46, only pre-existing AC-29 uncovered).
 
 ### Deferred to v0.14
 
-E1 / E2 / E3 — major-version migration PRs (`eslint` 8 → 10 flat-config, `typescript` 5 → 6, `jest` 29 → 30) bundled into v0.14 to keep v0.13 focused. v0.12.1 / v0.13 cumulatively absorbed 28 dependabot bumps; the three majors deserve dedicated revert paths.
+E1 / E2 / E3, major-version migration PRs (`eslint` 8 → 10 flat-config, `typescript` 5 → 6, `jest` 29 → 30) bundled into v0.14 to keep v0.13 focused. v0.12.1 / v0.13 cumulatively absorbed 28 dependabot bumps; the three majors deserve dedicated revert paths.
 
 ---
 
-## v0.12.1 — 2026-05-07
+## v0.12.1 - 2026-05-07
 
 **Theme: release-infra hardening + user-facing docs parity.**
 
@@ -187,7 +336,7 @@ New CI workflow at `.github/workflows/release-snapshot.yml`. Triggers on PRs tha
 - Cosign flag and bundle-format regressions (the cosign step actually executes on same-repo PRs).
 - Missing or malformed artifacts (verify-outputs step asserts ≥5 archives, ≥5 SBOMs, and the `dist/checksums.txt.sigstore.json` cosign bundle on same-repo PRs).
 
-Fork-PR handling: cosign keyless OIDC tokens are not issued for fork-PR runs, so fork PRs run with `--skip=sign`. Same-repo PRs run the full snapshot. This catches goreleaser config bugs from any contributor while accepting that cosign-flag changes are verified only on same-repo PRs (which is where signing changes actually land — fork PRs cannot push tags).
+Fork-PR handling: cosign keyless OIDC tokens are not issued for fork-PR runs, so fork PRs run with `--skip=sign`. Same-repo PRs run the full snapshot. This catches goreleaser config bugs from any contributor while accepting that cosign-flag changes are verified only on same-repo PRs (which is where signing changes actually land, fork PRs cannot push tags).
 
 All actions SHA-pinned to the same versions as the production `release.yml` for consistency. Concurrency guard cancels superseded runs on the same PR.
 
@@ -198,10 +347,10 @@ All actions SHA-pinned to the same versions as the production `release.yml` for 
 Six classes of doc-vs-code mismatches corrected in tracked user docs:
 
 - **Status lifecycle**: `SPEC_SCHEMA_REFERENCE.md` and `FAQ.md` no longer claim "only `approved` specs are enforced by sync." All discovered specs are checked; `settings.warn_on_draft` + `settings.strict` gate release posture.
-- **Approval gate**: `SPEC_SCHEMA_REFERENCE.md` now reflects the v0.11.1 enforcement contract — metadata under threshold, demoted under `strictness: zero-tolerance`.
-- **CLI catch-up**: `CLI_REFERENCE.md` now documents `check --test`, `coverage --strictness/--quiet`, `init --install-hook`, `init --ai`, `doctor --fix/--dry-run/--yes`, and `ingest --junit/--go-test` glob + repeated-flag support — flags that shipped in v0.10–v0.12 but the docs lagged. Manifest example updated to v0.11+ shape (`schema_version`, nested `system`, `domains`, `settings.coverage`).
+- **Approval gate**: `SPEC_SCHEMA_REFERENCE.md` now reflects the v0.11.1 enforcement contract, metadata under threshold, demoted under `strictness: zero-tolerance`.
+- **CLI catch-up**: `CLI_REFERENCE.md` now documents `check --test`, `coverage --strictness/--quiet`, `init --install-hook`, `init --ai`, `doctor --fix/--dry-run/--yes`, and `ingest --junit/--go-test` glob + repeated-flag support, flags that shipped in v0.10–v0.12 but the docs lagged. Manifest example updated to v0.11+ shape (`schema_version`, nested `system`, `domains`, `settings.coverage`).
 - **Test annotation realism for Python**: `GETTING_STARTED.md` teaches the runtime `print('// @spec ...')` form for pytest (function names cannot contain `/` or `:`) and shows the `pytest --junitxml -o junit_logging=all` invocation `ingest` actually requires.
-- **Content-agnostic positioning**: README + FAQ frame `.spec.yaml` as a component-contract format covering behavior, data invariants, security, schema, and architecture rules — not API behavior alone.
+- **Content-agnostic positioning**: README + FAQ frame `.spec.yaml` as a component-contract format covering behavior, data invariants, security, schema, and architecture rules, not API behavior alone.
 - **Install snippet correctness**: root README now detects OS+arch and resolves the latest release tag instead of always grabbing `specter_Linux_x86_64.tar.gz`.
 
 VS Code README clarifies `specter.binaryPath` and `specter.version` settings as machine-scoped per the v0.11 hardening; drops the de-listed `Open QuickStart` command row.
@@ -220,9 +369,9 @@ Embedded `specter explain annotation` reference and the public `TEST_ANNOTATION_
 
 Two stale planning docs deleted: `V0_11_PLAN.md` and `V0_12_PYTHON_FOLLOWUP_PLAN.md` (both explicitly marked themselves as temporary working documents to delete after their cycles shipped).
 
-#### SSRB-101 — source-file governance evaluation
+#### SSRB-101, source-file governance evaluation
 
-Combined evaluation of two competing proposals for "how does Specter know which source files a spec governs" — annotation-based (extend `@spec` to source files) and declarative (`governs: [string]` schema field). Status: `NEEDS-DESIGN`. Decision target: end of v0.16 cycle, with field evidence accumulated during v0.13–v0.16.
+Combined evaluation of two competing proposals for "how does Specter know which source files a spec governs", annotation-based (extend `@spec` to source files) and declarative (`governs: [string]` schema field). Status: `NEEDS-DESIGN`. Decision target: end of v0.16 cycle, with field evidence accumulated during v0.13–v0.16.
 
 ### Fixed
 
@@ -232,7 +381,7 @@ Combined evaluation of two competing proposals for "how does Specter know which 
 
 #### `internal/migrate/rewrite.go` package comment
 
-Comment said "C-10" should say "C-11" — the package implements the rewrite-table constraint, not the discovery-fallback one. One-character correction.
+Comment said "C-10" should say "C-11", the package implements the rewrite-table constraint, not the discovery-fallback one. One-character correction.
 
 #### `doctor --fix` BETA warning text
 
@@ -246,17 +395,17 @@ The pre-flight gate's design was specified in BACKLOG before becoming local-only
 
 ---
 
-## v0.12.0 — 2026-04-29
+## v0.12.0 - 2026-04-29
 
 **Theme: migration tooling + supply-chain hardening.** v0.12 ships the migration toolchain parked since v0.10 (`doctor --fix`, `schema_version` manifest field, VS Code quick-fix) so projects upgrading from older Specter releases can repair schema drift in-place. Paired with the M-tier security hardening bundle (size caps, webview CSP, SHA-pinned actions, sigstore signing, CycloneDX SBOM) so the supply chain catches up with the feature surface.
 
 ### Added
 
-#### `specter doctor --fix` — table-driven rewrite engine (BETA)
+#### `specter doctor --fix`, table-driven rewrite engine (BETA)
 
 Apply known-safe rewrites to spec files that fail parse against the current schema. v0.12 ships one rewrite (`strip-trust-level` for the v0.6.5-removed field) and the table is open for additions. Manifest canonicalization (`add-schema-version`) prepends `schema_version: 1` to a pre-v0.12 `specter.yaml`.
 
-`--fix` is gated as **BETA** because the regex deletion does not yet handle string-literal mentions of the deprecated field. The gate emits a `[BETA]` warning naming the known corruption gap, prompts `Continue? (y/N): ` on stdin, and proceeds only on affirmative input. `--yes` (or `-y`) bypasses for CI; `--dry-run` is exempt (preview mode is read-only). Non-TTY stdin without `--yes` is refused via TTY detection (`os.Stdin.Stat()` character-device check) BEFORE stdin content is read — `echo y | specter doctor --fix` cannot bypass the gate.
+`--fix` is gated as **BETA** because the regex deletion does not yet handle string-literal mentions of the deprecated field. The gate emits a `[BETA]` warning naming the known corruption gap, prompts `Continue? (y/N): ` on stdin, and proceeds only on affirmative input. `--yes` (or `-y`) bypasses for CI; `--dry-run` is exempt (preview mode is read-only). Non-TTY stdin without `--yes` is refused via TTY detection (`os.Stdin.Stat()` character-device check) BEFORE stdin content is read, `echo y | specter doctor --fix` cannot bypass the gate.
 
 The rewrite engine refuses structurally unsafe shapes via yaml.v3 inspection: block scalars, sequences, mapping values, anchored values, multi-line quoted scalars, and folded plain scalars all fall into the `needs-manual-edit` summary block rather than producing corrupted output.
 
@@ -268,19 +417,19 @@ spec-doctor 1.1.0 → 1.8.0 (C-10..C-16, AC-10..AC-29).
 
 spec-manifest 1.8.0 → 1.9.0 (C-27/28, AC-41/42/43).
 
-#### GH #77 — language-aware `specter explain`
+#### GH #77, language-aware `specter explain`
 
 When `discoverTestFiles` returns at least one `.py` file, `specter explain annotation` emits Python source-comment examples (`# @spec`, `# @ac`) and the autouse-fixture pattern alongside the JS/TS examples. Closes the Python-onboarding friction where users copying `// @spec` examples got "annotation not detected" despite the source comment being syntactically correct for their language.
 
 spec-explain 1.1.0 → 1.2.0 (C-13, AC-11/12/13).
 
-#### GH #80 — source-only diagnostic hint under `--strict`
+#### GH #80, source-only diagnostic hint under `--strict`
 
 When an annotated AC has source-file `@ac` comments but no matching `.specter-results.json` entry, `coverage --strict` now emits a per-AC stderr hint above the table:
 
 ```
 hint: my-spec/AC-01 has source annotation in tests/foo.py:13 but no
-matching pass in .specter-results.json — did your test runner emit a
+matching pass in .specter-results.json, did your test runner emit a
 runner-visible annotation (Convention A: spec-id/AC-NN in the test
 name; Convention B: print '// @spec'/'// @ac' from the test body)?
 ```
@@ -289,17 +438,17 @@ Limited to the first 5 affected pairs to keep CI logs compact. Suppressed by `--
 
 spec-coverage 1.11.0 → 1.12.0 (C-28, AC-31/32/33).
 
-#### VS Code — "Remove deprecated field" quick-fix
+#### VS Code ("Remove deprecated field" quick-fix)
 
-Lightbulb action on `Unknown field 'X'` parse errors offers "Remove deprecated field 'X'" when X is in the known-removed list (currently `trust_level`). The quick-fix performs YAML-shape inspection before rewriting — fields whose value spans multiple lines, lives inside a block scalar, or has unclosed quotes are silently refused (the parse error is still surfaced, just without a fix offer). Pairs with `doctor --fix` for the CLI path.
+Lightbulb action on `Unknown field 'X'` parse errors offers "Remove deprecated field 'X'" when X is in the known-removed list (currently `trust_level`). The quick-fix performs YAML-shape inspection before rewriting, fields whose value spans multiple lines, lives inside a block scalar, or has unclosed quotes are silently refused (the parse error is still surfaced, just without a fix offer). Pairs with `doctor --fix` for the CLI path.
 
 spec-vscode 1.4.0 → 1.6.0 (C-28/29, AC-51/52/53).
 
 ### Fixed
 
-#### GH #93 — `doctor` no-manifest discovery alignment
+#### GH #93, `doctor` no-manifest discovery alignment
 
-`specter doctor` returned "no specs" when run without `specter.yaml`, while `parse` discovered nested `*.spec.yaml` files recursively. The asymmetry confused first-run users. `doctor`'s no-manifest fallback now matches `parse`'s behavior — recursive discovery from the working directory.
+`specter doctor` returned "no specs" when run without `specter.yaml`, while `parse` discovered nested `*.spec.yaml` files recursively. The asymmetry confused first-run users. `doctor`'s no-manifest fallback now matches `parse`'s behavior, recursive discovery from the working directory.
 
 spec-doctor C-10/AC-10/AC-11.
 
@@ -307,13 +456,13 @@ spec-doctor C-10/AC-10/AC-11.
 
 Supply-chain hardening bundle. None of these change user-facing behavior; all are defense-in-depth for the build/release path.
 
-- **M1 — 16 MiB cap on `.specter-results.json`.** Prevents memory exhaustion when a malicious CI runner commits a multi-GB results file. `internal/coverage/results.go` rejects oversized input before `json.Unmarshal` allocates. New `results_test.go` exercises both the rejection and the at-limit acceptance paths.
-- **M2 — 64 KiB cap on `specter.yaml`.** Same shape for the manifest path — caps a malicious specter.yaml before `yaml.Unmarshal` exposes the parser to billion-laughs / anchor-expansion. New `TestParseManifest_RejectsOversizedInput` enforces.
-- **M4 — Webview CSP with per-render nonce.** `vscode-extension/src/extension.ts`'s insights webview now serves with `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';` and `localResourceRoots: []`. Nonce is `crypto.randomBytes(16)` per render. `csp.test.ts` enforces six source-level invariants (CSP meta tag presence, default-src 'none', script-src nonce template, inline `<script>` nonce attribute, randomBytes entropy, empty localResourceRoots) so a future regression that drops or weakens the CSP fails CI.
-- **M5 — GHA SHA-pinning + Dependabot config.** Every `uses:` line in every workflow is pinned to a 40-char SHA with the version comment preserved. `.github/dependabot.yml` resolves both the SHA and the version tag for ongoing maintenance.
-- **M6 — Sigstore cosign keyless signing + CycloneDX SBOM.** Releases now publish a `checksums.txt.sig` + `.pem` cert pair (verifiable with `cosign verify-blob --certificate-identity-regexp '...release.yml' --certificate-oidc-issuer https://token.actions.githubusercontent.com`) and a `<archive>.sbom.json` in CycloneDX format per release archive. `-trimpath` and reproducible `mod_timestamp` enabled in `.goreleaser.yml`.
-- **M7 — `release.yml` chained on Pre-Release Test Suite.** Releases trigger via `workflow_run` after the test suite completes successfully. Concurrency guard prevents overlapping releases. `id-token: write` declared for sigstore OIDC. The previously redundant in-release test job is removed.
-- **M8 — `jest-junit` ^16 → ^17.** Routine dev-dep bump; existing inline reporter config is forward-compatible.
+- **M1, 16 MiB cap on `.specter-results.json`.** Prevents memory exhaustion when a malicious CI runner commits a multi-GB results file. `internal/coverage/results.go` rejects oversized input before `json.Unmarshal` allocates. New `results_test.go` exercises both the rejection and the at-limit acceptance paths.
+- **M2, 64 KiB cap on `specter.yaml`.** Same shape for the manifest path, caps a malicious specter.yaml before `yaml.Unmarshal` exposes the parser to billion-laughs / anchor-expansion. New `TestParseManifest_RejectsOversizedInput` enforces.
+- **M4, Webview CSP with per-render nonce.** `vscode-extension/src/extension.ts`'s insights webview now serves with `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';` and `localResourceRoots: []`. Nonce is `crypto.randomBytes(16)` per render. `csp.test.ts` enforces six source-level invariants (CSP meta tag presence, default-src 'none', script-src nonce template, inline `<script>` nonce attribute, randomBytes entropy, empty localResourceRoots) so a future regression that drops or weakens the CSP fails CI.
+- **M5, GHA SHA-pinning + Dependabot config.** Every `uses:` line in every workflow is pinned to a 40-char SHA with the version comment preserved. `.github/dependabot.yml` resolves both the SHA and the version tag for ongoing maintenance.
+- **M6, Sigstore cosign keyless signing + CycloneDX SBOM.** Releases now publish a `checksums.txt.sig` + `.pem` cert pair (verifiable with `cosign verify-blob --certificate-identity-regexp '...release.yml' --certificate-oidc-issuer https://token.actions.githubusercontent.com`) and a `<archive>.sbom.json` in CycloneDX format per release archive. `-trimpath` and reproducible `mod_timestamp` enabled in `.goreleaser.yml`.
+- **M7, `release.yml` chained on Pre-Release Test Suite.** Releases trigger via `workflow_run` after the test suite completes successfully. Concurrency guard prevents overlapping releases. `id-token: write` declared for sigstore OIDC. The previously redundant in-release test job is removed.
+- **M8, `jest-junit` ^16 → ^17.** Routine dev-dep bump; existing inline reporter config is forward-compatible.
 
 ### Process
 
@@ -321,30 +470,30 @@ Supply-chain hardening bundle. None of these change user-facing behavior; all ar
 
 ### Internal
 
-- `internal/migrate/rewrite.go` — table-driven rewrite engine with yaml-aware safety predicates (`canSafelyStripTrustLevel`, `valueOccupiesOneSourceLine`, multi-doc iteration via `yaml.Decoder`).
-- `cmd/specter/doctor_fix_test.go` + `init_schema_version_test.go` + `migrate/rewrite_test.go` — comprehensive test coverage for the new rewrite paths.
-- `vscode-extension/src/quickFix.ts` — pure runtime-free helpers for the quick-fix YAML-shape inspection (16 chomp/indent variants tested).
+- `internal/migrate/rewrite.go`, table-driven rewrite engine with yaml-aware safety predicates (`canSafelyStripTrustLevel`, `valueOccupiesOneSourceLine`, multi-doc iteration via `yaml.Decoder`).
+- `cmd/specter/doctor_fix_test.go` + `init_schema_version_test.go` + `migrate/rewrite_test.go`, comprehensive test coverage for the new rewrite paths.
+- `vscode-extension/src/quickFix.ts`, pure runtime-free helpers for the quick-fix YAML-shape inspection (16 chomp/indent variants tested).
 - Spec/test parity tightening surfaced by the v0.12 review: AC-16 calls `ParseManifest`, AC-31 enforces `hintIdx < tableIdx` ordering, AC-43 parameterizes over `(1, 7, 42)` to assert byte-equality of the schema_version line.
 
 ### Behavior changes
 
-None for greenfield projects on v0.11.x. Pre-v0.12 projects without `schema_version` in their `specter.yaml`: `doctor --fix` will offer the `add-schema-version` manifest canonicalization (gated behind the BETA prompt). The default value of `schema_version` is `1` — `ParseManifest` defaults to 1 when the field is absent, so v0.11 manifests parse cleanly under v0.12.
+None for greenfield projects on v0.11.x. Pre-v0.12 projects without `schema_version` in their `specter.yaml`: `doctor --fix` will offer the `add-schema-version` manifest canonicalization (gated behind the BETA prompt). The default value of `schema_version` is `1`, `ParseManifest` defaults to 1 when the field is absent, so v0.11 manifests parse cleanly under v0.12.
 
 ---
 
-## v0.11.1 — 2026-04-26
+## v0.11.1 - 2026-04-26
 
 **Theme: post-v0.11.0 hotfix.** Two bugs reported within hours of v0.11.0 shipping; both fixed.
 
 ### Fixed
 
-#### GH #94 — `strictness=zero-tolerance` + `approval_gate` report demotion
+#### GH #94, `strictness=zero-tolerance` + `approval_gate` report demotion
 
-v0.11.0 fired exit code 3 when an AC carried `approval_gate: true` with unset `approval_date` under zero-tolerance, but the report cell continued to show the AC as PASS. Reporter expected the report to also reflect the demotion. v0.11.1 demotes such ACs in the report (moves them from `CoveredACs` to `UncoveredACs`, recomputes per-entry `CoveragePct` + `PassesThreshold`, recomputes `Summary.Passing` / `Summary.Failing`). Threshold mode unchanged — `approval_gate` stays metadata there per spec contract.
+v0.11.0 fired exit code 3 when an AC carried `approval_gate: true` with unset `approval_date` under zero-tolerance, but the report cell continued to show the AC as PASS. Reporter expected the report to also reflect the demotion. v0.11.1 demotes such ACs in the report (moves them from `CoveredACs` to `UncoveredACs`, recomputes per-entry `CoveragePct` + `PassesThreshold`, recomputes `Summary.Passing` / `Summary.Failing`). Threshold mode unchanged, `approval_gate` stays metadata there per spec contract.
 
 **Behavior change for `strictness: zero-tolerance` only:** a spec with an `approval_gate: true` AC and unset `approval_date` now shows as `NONE / uncovered` in the report (was `PASS` in v0.11.0). Exit code 3 unchanged.
 
-#### GH #95 — `check --test` false positive on multi-`@spec` test files
+#### GH #95, `check --test` false positive on multi-`@spec` test files
 
 Test files declaring two `@spec` headers at the top got the second header as the parent context for following `@ac` lines. An `@ac` legitimately in the FIRST declared spec was flagged `unknown_ac_ref`. Fix: each `@ac` is now validated against the union of declared specs in the file. Cross-cutting tests that bridge two specs work as expected.
 
@@ -360,7 +509,7 @@ Spec contracts unchanged from v0.11.0; the v0.11.1 fix aligns the implementation
 
 ---
 
-## v0.11.0 — 2026-04-26
+## v0.11.0 - 2026-04-26
 
 **Theme: AI loop discipline + adoption hardening.**
 
@@ -368,30 +517,30 @@ Five new features close order-of-operations gaps; four GH issues from real adopt
 
 ### Added
 
-#### `specter explain` — three new read-only surfaces
+#### `specter explain`, three new read-only surfaces
 
 Stdout-only. File writes are scoped to `init --ai <tool>` (below).
 
-- `specter explain annotation` — prints the test-annotation reference (Convention A title form, Convention B runtime-log form, source-comment annotations that pair with either).
-- `specter explain schema` — prints the full schema field reference. Walks JSON `$ref` into `$defs` so nested fields under `spec.acceptance_criteria.items.*` and `spec.constraints.items.*` resolve.
-- `specter explain schema <field-path>` — prints single-field detail (type, default, enum, description). Returns non-zero with a `did you mean?` suggestion within Levenshtein 3 on unknown paths.
-- `specter explain <spec-id>` (no AC suffix) — now renders a spec card: tier, coverage %, per-AC test files. Previously showed only COVERED/UNCOVERED labels.
+- `specter explain annotation`, prints the test-annotation reference (Convention A title form, Convention B runtime-log form, source-comment annotations that pair with either).
+- `specter explain schema`, prints the full schema field reference. Walks JSON `$ref` into `$defs` so nested fields under `spec.acceptance_criteria.items.*` and `spec.constraints.items.*` resolve.
+- `specter explain schema <field-path>`, prints single-field detail (type, default, enum, description). Returns non-zero with a `did you mean?` suggestion within Levenshtein 3 on unknown paths.
+- `specter explain <spec-id>` (no AC suffix), now renders a spec card: tier, coverage %, per-AC test files. Previously showed only COVERED/UNCOVERED labels.
 
 Spec: `spec-explain` 1.0.0 → 1.1.0 (C-09..C-12, AC-07..AC-10).
 
-#### `specter check --test` (`-t`) — test-annotation cross-reference
+#### `specter check --test` (`-t`), test-annotation cross-reference
 
 Opt-in flag. Scans test files for `@spec` / `@ac` source comments and emits diagnostics for references that don't resolve against parsed specs. Three diagnostic kinds:
 
-- `unknown_spec_ref` — `// @spec foo` where no spec with that id exists.
-- `unknown_ac_ref` — `// @spec real-spec` + `// @ac AC-99` where the named spec doesn't declare that AC.
-- `malformed_ac_id` — IDs failing `^AC-\d{2,}$` (`AC-1` not zero-padded, `ac-01` wrong case, `AC-1A` suffixed).
+- `unknown_spec_ref`, `// @spec foo` where no spec with that id exists.
+- `unknown_ac_ref`, `// @spec real-spec` + `// @ac AC-99` where the named spec doesn't declare that AC.
+- `malformed_ac_id`, IDs failing `^AC-\d{2,}$` (`AC-1` not zero-padded, `ac-01` wrong case, `AC-1A` suffixed).
 
 Skips lines inside multi-line string literals (TS template strings, Python triple-quoted strings). Cascade rule: when `@spec` is unknown, child `@ac` lines are not separately checked. `specter sync --strict` (and `settings.strict: true`) routes the check through.
 
 Spec: `spec-check` 1.1.0 → 1.2.0 (C-09, AC-09..AC-12).
 
-#### `specter init --install-hook` — git pre-push hook
+#### `specter init --install-hook`, git pre-push hook
 
 Writes `.git/hooks/pre-push` (mode 0755) that blocks pushes whose diff changes implementation files but adds or updates no `@spec` / `@ac` annotations. Hook delegates to a hidden `specter pre-push-check` subcommand that reads git's pre-push stdin format, runs `git diff` per ref, and exits non-zero on impl-only diffs.
 
@@ -404,7 +553,7 @@ Hook script wrapped in shell-comment fenced markers (`# specter:begin v1` / `# s
 
 Spec: `spec-manifest` C-22, AC-27..AC-29.
 
-#### `specter init --ai <tool>` — per-tool AI instruction file
+#### `specter init --ai <tool>`, per-tool AI instruction file
 
 Five tools, one command per tool:
 
@@ -424,7 +573,7 @@ Body teaches the AI to (1) read the spec before writing code, (2) use Convention
 
 Spec: `spec-manifest` C-23, AC-30..AC-36.
 
-#### `settings.strictness` — three-level coverage gate
+#### `settings.strictness`, three-level coverage gate
 
 ```yaml
 settings:
@@ -441,7 +590,7 @@ Override per invocation with `--strictness <level>`. CLI flag and manifest field
 
 Spec: `spec-manifest` C-24, AC-37..AC-38; `spec-coverage` C-24..C-26, AC-27..AC-29.
 
-#### `settings.tests_glob` — default test-discovery pattern
+#### `settings.tests_glob`, default test-discovery pattern
 
 ```yaml
 settings:
@@ -458,12 +607,12 @@ Spec: `spec-manifest` C-25, AC-39. Closes GH #78.
 
 ### Fixed
 
-#### GH #75 — silent 0% on empty test discovery (under `--strict`)
+#### GH #75, silent 0% on empty test discovery (under `--strict`)
 
 `specter coverage --strict` no longer falls through to `filepath.Walk(".")` when the configured glob matches zero files. Instead, it warns above the coverage table:
 
 ```
-warn: no test files contained @spec/@ac annotations — coverage will report 0% for every spec
+warn: no test files contained @spec/@ac annotations, coverage will report 0% for every spec
       set settings.tests_glob in specter.yaml or pass --tests <glob>
 ```
 
@@ -471,15 +620,15 @@ Under `strictness: zero-tolerance`, the warning escalates to a hard error.
 
 Spec: `spec-coverage` C-27, AC-30.
 
-#### GH #76 — `specter.yaml` settings block silently accepted unknown keys
+#### GH #76, `specter.yaml` settings block silently accepted unknown keys
 
-`ParseManifest` now errors on unknown top-level and `settings:` keys with did-you-mean suggestions (Levenshtein ≤ 3) and the full list of valid keys. Existing manifests with typo'd keys will start failing on parse — fix the typo or remove the field.
+`ParseManifest` now errors on unknown top-level and `settings:` keys with did-you-mean suggestions (Levenshtein ≤ 3) and the full list of valid keys. Existing manifests with typo'd keys will start failing on parse, fix the typo or remove the field.
 
 Spec: `spec-manifest` C-26, AC-40.
 
-#### GH #79 (cheap fix) — ingest body regex accepts `#` and `*`
+#### GH #79 (cheap fix), ingest body regex accepts `#` and `*`
 
-`specter ingest`'s body-text annotation extractor (used to scan JUnit `<system-out>`) previously accepted `//` only. Now accepts `//`, `#`, `*` — the same three markers the source-file scanner already accepts. Cross-language Convention B output flows through ingest without language-specific kludges.
+`specter ingest`'s body-text annotation extractor (used to scan JUnit `<system-out>`) previously accepted `//` only. Now accepts `//`, `#`, `*`, the same three markers the source-file scanner already accepts. Cross-language Convention B output flows through ingest without language-specific kludges.
 
 Pytest users can `print("# @spec my-spec")` from inside a test and ingest extracts identically to a Go test's `t.Log("// @spec my-spec")`.
 
@@ -491,9 +640,9 @@ Spec: `spec-ingest` 1.2.0 → 1.3.0 (C-12, AC-12).
 
 A pre-release security review identified hardening opportunities across the VS Code extension, the CLI, and the build. All addressed in v0.11.0:
 
-- **VS Code extension** — `specter.binaryPath` and `specter.version` are now declared `"scope": "machine"`, so workspace-level overrides are ignored. `specter.version` is additionally validated against strict semver (`^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$`) before being interpolated into download URLs. `package.json` declares `capabilities.untrustedWorkspaces` with `supported: "limited"`. The "View Diff" terminal command refuses paths containing shell metacharacters before reaching `terminal.sendText`. The `which` shim switched from `execSync` template strings to `execFileSync` array form.
-- **CLI — pre-push hook** (new in v0.11.0): `ParsePushSpecs` validates `local_sha` and `remote_sha` against git's canonical 40-char hex form. `init --install-hook` uses `os.Lstat` and refuses to write through a `.git` symlink or worktree pointer file.
-- **Build** — `go.mod` directive bumped from `1.25.8` to `1.25.9`, picking up five stdlib advisories (TLS, x509, archive/tar, html/template).
+- **VS Code extension.** `specter.binaryPath` and `specter.version` are now declared `"scope": "machine"`, so workspace-level overrides are ignored. `specter.version` is additionally validated against strict semver (`^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$`) before being interpolated into download URLs. `package.json` declares `capabilities.untrustedWorkspaces` with `supported: "limited"`. The "View Diff" terminal command refuses paths containing shell metacharacters before reaching `terminal.sendText`. The `which` shim switched from `execSync` template strings to `execFileSync` array form.
+- **CLI, pre-push hook** (new in v0.11.0): `ParsePushSpecs` validates `local_sha` and `remote_sha` against git's canonical 40-char hex form. `init --install-hook` uses `os.Lstat` and refuses to write through a `.git` symlink or worktree pointer file.
+- **Build.** `go.mod` directive bumped from `1.25.8` to `1.25.9`, picking up five stdlib advisories (TLS, x509, archive/tar, html/template).
 
 No CVEs were assigned; the findings were caught pre-release. The disclosure note in `docs/explainer/v0.11-ai-loop-discipline.md` covers the threat model and mitigations.
 
@@ -505,11 +654,11 @@ No CVEs were assigned; the findings were caught pre-release. The disclosure note
 
 ### Internal
 
-- New package `internal/explain` — pure functions for schema walking and annotation reference rendering.
-- New `internal/manifest/string_or_list.go` — custom `UnmarshalYAML` accepting scalar or sequence.
-- New `internal/manifest/fenced.go` — `ReplaceFencedRegion` helper for idempotent file regions, used by both `init --install-hook` and `init --ai <tool>`.
-- New `internal/manifest/{hook,ai_templates,prepush}.go` — pure logic for hook script, instruction templates, and pre-push diff classification.
-- New `cmd/specter/glob.go` — `**`-aware glob matcher (no new dependency); used by `discoverTestFiles` when an explicit glob is provided.
+- New package `internal/explain`, pure functions for schema walking and annotation reference rendering.
+- New `internal/manifest/string_or_list.go`, custom `UnmarshalYAML` accepting scalar or sequence.
+- New `internal/manifest/fenced.go`, `ReplaceFencedRegion` helper for idempotent file regions, used by both `init --install-hook` and `init --ai <tool>`.
+- New `internal/manifest/{hook,ai_templates,prepush}.go`, pure logic for hook script, instruction templates, and pre-push diff classification.
+- New `cmd/specter/glob.go`, `**`-aware glob matcher (no new dependency); used by `discoverTestFiles` when an explicit glob is provided.
 - `internal/parser.SchemaBytes()` exposes the embedded JSON schema for consumers that need to walk it.
 
 ### Spec versions
@@ -532,7 +681,7 @@ Python projects using pytest with `# @spec` source comments: `coverage` already 
 
 ---
 
-## v0.10.2 — 2026-04-23
+## v0.10.2 - 2026-04-23
 
 **Theme: docs/code parity fixes from jwtms Wave 0/1 integration.**
 
@@ -540,12 +689,12 @@ Two bugs surfaced during jwtms `--strict` rollout. Both are small; they ship tog
 
 ### Fixed
 
-#### BUG-2 — `specter ingest --junit` and `--go-test` accept globs and repeated flags
+#### BUG-2, `specter ingest --junit` and `--go-test` accept globs and repeated flags
 
 The v0.10.0 CHANGELOG claimed `--junit <path>` supports globs. The code used `os.ReadFile` on a single path with `StringVar`, so:
 
 - `specter ingest --junit 'test-results/*.xml'` failed with `open test-results/*.xml: no such file or directory`.
-- `specter ingest --junit a.xml --junit b.xml` silently overwrote — only the last file's results made it into the output.
+- `specter ingest --junit a.xml --junit b.xml` silently overwrote, only the last file's results made it into the output.
 
 v0.10.2 implements the documented behavior:
 
@@ -564,9 +713,9 @@ specter ingest --go-test 'go-*.json'
 
 spec-ingest 1.1.0 → **1.2.0** (+C-11/AC-11 covering multi-file input).
 
-#### BUG-3 part 1 — `approval_gate` docs parity
+#### BUG-3 part 1, `approval_gate` docs parity
 
-`docs/SPEC_SCHEMA_REFERENCE.md` claimed `specter coverage` demotes ACs with `approval_gate: true && approval_date == null`. The embedded JSON schema (the authoritative field definition) and the code both said the opposite — Specter does not enforce approval semantics; teams wire their own PR/CI gates. The human doc was the outlier.
+`docs/SPEC_SCHEMA_REFERENCE.md` claimed `specter coverage` demotes ACs with `approval_gate: true && approval_date == null`. The embedded JSON schema (the authoritative field definition) and the code both said the opposite, Specter does not enforce approval semantics; teams wire their own PR/CI gates. The human doc was the outlier.
 
 v0.10.2 updates the human doc to match:
 
@@ -586,7 +735,7 @@ No CLI behavior regressions from v0.10.1. `specter ingest`'s command surface gai
 
 ---
 
-## v0.10.1 — 2026-04-23
+## v0.10.1 - 2026-04-23
 
 **Theme: Fix the docs that taught the wrong convention for `--strict`.**
 
@@ -607,21 +756,21 @@ v0.10.0 shipped `specter coverage --strict`, but every foundational guide still 
 
 ### Changed
 
-- `docs/AI_PROMPTS.md` §3 (Spec → Tests) — teaches both source comments and runner-visible annotations. AI prompt block now asks for `[spec-id/AC-NN]` in test titles.
-- `docs/GETTING_STARTED.md` Phase 4 — same update. TypeScript/Python/Go examples updated. Python encodes the pair in the function name; Go uses `t.Run` subtests.
-- `docs/CLI_REFERENCE.md` coverage `--strict` section — adds the two-channel rule and the runner-visible format rules.
-- `vscode-extension/walkthrough/step3.md` — onboarding walkthrough updated.
+- `docs/AI_PROMPTS.md` §3 (Spec → Tests), teaches both source comments and runner-visible annotations. AI prompt block now asks for `[spec-id/AC-NN]` in test titles.
+- `docs/GETTING_STARTED.md` Phase 4, same update. TypeScript/Python/Go examples updated. Python encodes the pair in the function name; Go uses `t.Run` subtests.
+- `docs/CLI_REFERENCE.md` coverage `--strict` section, adds the two-channel rule and the runner-visible format rules.
+- `vscode-extension/walkthrough/step3.md`, onboarding walkthrough updated.
 - All four docs cross-link into `TEST_ANNOTATION_REFERENCE.md` rather than duplicating the rules.
 
 ### No code changes
 
-CLI and extension runtime unchanged from v0.10.0. This is a docs release — the version bump exists to mark "v0.10.0 shipped with misleading guidance, v0.10.1 corrects it." Extension version bumped from 0.10.0 to 0.10.1 to match.
+CLI and extension runtime unchanged from v0.10.0. This is a docs release, the version bump exists to mark "v0.10.0 shipped with misleading guidance, v0.10.1 corrects it." Extension version bumped from 0.10.0 to 0.10.1 to match.
 
 ---
 
-## v0.10.0 — 2026-04-22
+## v0.10.0 - 2026-04-22
 
-**Theme: CI-gated coverage — test outcome is mechanical.**
+**Theme: CI-gated coverage, test outcome is mechanical.**
 
 v0.9.x made test existence mechanical (`coverage` counts annotated ACs). v0.10 makes test outcome mechanical: `coverage --strict` demotes any annotated AC whose test did not pass. See `docs/explainer/v0.10-ci-gated-coverage.md` for the design rationale.
 
@@ -632,33 +781,33 @@ v0.9.x made test existence mechanical (`coverage` counts annotated ACs). v0.10 m
 - Converts test runner output into `.specter-results.json`, the canonical results file `coverage --strict` reads.
 - Flags: `--junit <path>` (JUnit XML, glob supported), `--go-test <path>` (`go test -json` output), `--output <path>` (defaults to `.specter-results.json`).
 - Flavor-specific parsing is isolated here; adding a new runner is a change to `ingest` only. `coverage --strict` stays runner-agnostic.
-- Reads the `(spec_id, ac_id)` pair from runner-visible surfaces — subtest names (`t.Run("spec-foo/AC-03 ...", ...)`) or runtime logs (`t.Log("// @spec ...")` / `t.Log("// @ac ...")`). Source-comment annotations are invisible to `ingest` by design.
+- Reads the `(spec_id, ac_id)` pair from runner-visible surfaces, subtest names (`t.Run("spec-foo/AC-03 ...", ...)`) or runtime logs (`t.Log("// @spec ...")` / `t.Log("// @ac ...")`). Source-comment annotations are invisible to `ingest` by design.
 
 #### `specter coverage --strict`
 
 - New flag. When passed, every annotated AC must have a `status: passed` entry in `.specter-results.json`. Anything else (`failed`, `skipped`, `errored`, or no entry) demotes the AC to uncovered.
 - Demotion applies to **all tiers**, not only Tier 1.
-- Missing or empty `.specter-results.json` is a hard error: `--strict requires .specter-results.json — run 'specter ingest' first`. Fails closed so the flag cannot silently degrade to annotation-only behavior.
+- Missing or empty `.specter-results.json` is a hard error: `--strict requires .specter-results.json, run 'specter ingest' first`. Fails closed so the flag cannot silently degrade to annotation-only behavior.
 
 #### `.specter-results.json` status enum
 
 - Adds `status` field: `passed` | `failed` | `skipped` | `errored`.
-- `errored` is distinct from `failed` — it means the framework itself failed (setup panic, compile error) rather than an assertion.
+- `errored` is distinct from `failed`, it means the framework itself failed (setup panic, compile error) rather than an assertion.
 - Worst-status-wins when the same `(spec_id, ac_id)` is observed across multiple tests: `errored > failed > skipped > passed`.
 - The boolean `passed` field is retained for pre-1.9.0 consumers; no forced migration.
 
 #### VS Code extension: CLI auto-download defaults to matching version
 
-- `specter.version` config default changed from `"latest"` to `""` (empty). With the empty default, `downloadBinary` reads `ctx.extension.packageJSON.version` and fetches the matching CLI — a v0.10.0 VSIX always pulls v0.10.0 CLI. `"latest"` remains available as an explicit opt-in; pinned semvers (e.g. `"0.9.2"`) still work as before.
+- `specter.version` config default changed from `"latest"` to `""` (empty). With the empty default, `downloadBinary` reads `ctx.extension.packageJSON.version` and fetches the matching CLI, a v0.10.0 VSIX always pulls v0.10.0 CLI. `"latest"` remains available as an explicit opt-in; pinned semvers (e.g. `"0.9.2"`) still work as before.
 - Why: the GoReleaser workflow creates a GitHub Release on tag push, so the v0.10.0 CLI archive was live on `/releases/latest` before any v0.10.0 extension shipped to the Marketplace. Any v0.9.x extension with `autoDownload: true` then pulled v0.10.0 CLI via the old `"latest"` default, producing split-brain installs (v0.9.2 extension + v0.10.0 CLI). Pinning to the extension's own version closes the gap.
 
 #### Adoption affordances: empty-results warning, `--scope`, `--verbose`
 
 Three diagnostic/staged-adoption features found during v0.10.0 shake-down on jwtms. Without them, `--strict` is technically functional but operationally unusable on a workspace that hasn't migrated every test to runner-visible annotations.
 
-- **`specter coverage --strict` empty-results warning.** When `.specter-results.json` parses cleanly but contains zero entries, the command now emits a stderr warning BEFORE the demotion report: *"no (spec_id, ac_id) pairs were extracted from test output — tests likely don't carry runner-visible annotations"* with a pointer to `docs/explainer/v0.10-ci-gated-coverage.md` (Conventions A and B). Prior behavior silently demoted 100% of annotated ACs with no clue why. (Note: missing file — as opposed to empty file — still errors per the existing AC-20 contract.)
+- **`specter coverage --strict` empty-results warning.** When `.specter-results.json` parses cleanly but contains zero entries, the command now emits a stderr warning BEFORE the demotion report: *"no (spec_id, ac_id) pairs were extracted from test output, tests likely don't carry runner-visible annotations"* with a pointer to `docs/explainer/v0.10-ci-gated-coverage.md` (Conventions A and B). Prior behavior silently demoted 100% of annotated ACs with no clue why. (Note: missing file, as opposed to empty file, still errors per the existing AC-20 contract.)
 - **`specter coverage --strict --scope <domain>`.** Narrows `--strict`'s demand set to specs listed under the named domain in `specter.yaml`. Specs outside the domain fall back to v0.9 boolean-passed logic (annotation alone counts for tier 2/3). Enables staged adoption: enforce `--strict` on one domain per wave instead of rewriting every annotated test before CI can pass. `--scope` without `--strict` fails fast. Combines with `--tests` as AND.
-- **`specter ingest` default summary + `--verbose`.** Every run now emits to stderr: *"Scanned N test cases; extracted M (spec_id, ac_id) pairs; dropped K with no runner-visible annotation."* Replaces the terse `Wrote N result entries`. `--verbose` adds a per-case drop reason line for each skipped testcase — off by default to keep CI logs compact.
+- **`specter ingest` default summary + `--verbose`.** Every run now emits to stderr: *"Scanned N test cases; extracted M (spec_id, ac_id) pairs; dropped K with no runner-visible annotation."* Replaces the terse `Wrote N result entries`. `--verbose` adds a per-case drop reason line for each skipped testcase, off by default to keep CI logs compact.
 
 ### Spec bumps
 
@@ -674,7 +823,7 @@ Three diagnostic/staged-adoption features found during v0.10.0 shake-down on jwt
 
 ---
 
-## v0.9.2 — 2026-04-20
+## v0.9.2 - 2026-04-20
 
 **Theme: UX polish from jwtms migration testing.**
 
@@ -686,7 +835,7 @@ Two items surfaced when running v0.9.1 against the fully-migrated jwtms workspac
 
 - **Summary header** above the table:
   ```
-  Spec Coverage Report — 249 specs · 97.2% avg coverage
+  Spec Coverage Report, 249 specs · 97.2% avg coverage
     Tier 1: 32/34 passing (94%)
     Tier 2: 168/192 passing (88%)
     Tier 3: 11/23 passing (48%)
@@ -694,11 +843,11 @@ Two items surfaced when running v0.9.1 against the fully-migrated jwtms workspac
   Gives one-glance visibility into the overall shape before scanning the table. Tiers with zero specs are omitted.
 - **Worst-first sort** in the default table: failing (below threshold) → partial (below 100% but passing threshold) → 100% covered. Within each bucket, tier descending (T1 > T2 > T3) so higher-risk work surfaces first.
 - **`--failing` flag** filters the table to entries below 100% coverage. Summary header still reflects the full report. When every spec is at 100%, emits a single-line confirmation (`All N specs at 100% coverage.`) instead of an empty table.
-- **Long spec ID truncation**: IDs over 40 characters are truncated with a trailing ellipsis (`…`) so the Tier column stays aligned. `--json` output is unaffected — it emits the full spec_id.
+- **Long spec ID truncation**: IDs over 40 characters are truncated with a trailing ellipsis (`…`) so the Tier column stays aligned. `--json` output is unaffected, it emits the full spec_id.
 
 #### `specter init --refresh` for non-greenfield workspaces
 
-- **`--refresh` flag**: updates only `domains.default.specs` in an existing `specter.yaml`. Preserves every other field — `settings`, `registry`, tier overrides, system metadata, and any custom domains the operator declared.
+- **`--refresh` flag**: updates only `domains.default.specs` in an existing `specter.yaml`. Preserves every other field, `settings`, `registry`, tier overrides, system metadata, and any custom domains the operator declared.
 - **Smart diff**: specs on disk that are claimed by a non-default domain stay in that domain (aren't duplicated into `default`). Specs that used to be in `default.specs` but are no longer on disk are removed.
 - **Summary line**: `updated specter.yaml: +A added, -B removed`.
 - **`--dry-run` variant**: `specter init --refresh --dry-run` prints the proposed diff without writing the file. Matches `git add -p` / `terraform plan` discipline.
@@ -713,7 +862,7 @@ Two items surfaced when running v0.9.1 against the fully-migrated jwtms workspac
 
 ---
 
-## v0.9.1 — 2026-04-19
+## v0.9.1 - 2026-04-19
 
 **Theme: post-ship audit fixes.**
 
@@ -740,8 +889,8 @@ Derived from `research/SPECTER_AUDIT_2026-04-19.md`. Five parallel audit agents 
 
 ### Spec bumps
 
-- `spec-vscode`: 1.2.0 → **1.3.0** — adds C-22 through C-26 (parity, disposables, activation, checksum, error surfacing) and AC-41 through AC-49.
-- `spec-coverage`: 1.6.0 → **1.7.0** — adds C-14 / AC-14 (empty array emits `[]`, never `null`).
+- `spec-vscode`: 1.2.0 → **1.3.0**, adds C-22 through C-26 (parity, disposables, activation, checksum, error surfacing) and AC-41 through AC-49.
+- `spec-coverage`: 1.6.0 → **1.7.0**, adds C-14 / AC-14 (empty array emits `[]`, never `null`).
 
 All 14 specs dogfood at 100% AC coverage. 209 TypeScript tests pass. All Go tests pass under Go 1.25.8 + golangci-lint v2.6.2.
 
@@ -751,11 +900,11 @@ From the audit's MEDIUM tier: HTTPS-redirect validation in `httpsGet`, cache-dir
 
 ---
 
-## v0.9.0 — 2026-04-19
+## v0.9.0 - 2026-04-19
 
 **Theme: coherent failure-handling and intelligent diagnosis.**
 
-When specs fail to parse, every seam of the tool used to lie in a different way: the coverage command swallowed JSON output, the VS Code sidebar pointed at `specter init` (wrong state), the Insights panel claimed "All specs passing ✓" on top of 17 broken files, and `specter doctor` printed 20 identical error lines that together named a schema mismatch nobody could see. v0.9.0 fixes the whole pipeline end-to-end.
+When specs fail to parse, every seam of the tool used to lie in a different way: the coverage command swallowed JSON output, the VS Code sidebar pointed at `specter init` (wrong state), the Insights panel claimed "All specs passing ✓" on top of 17 broken files, and `specter doctor` printed 20 identical error lines that together named a schema mismatch nobody could see. v0.9.0 fixes the whole pipeline end-to-end. <!-- doc-style: allow --><!-- quotes the literal string vscode-extension/src/insights.ts renders -->
 
 The trigger was a real workspace: `kensa-go` specs were written against the pre-v0.6.5 schema, and every tool in the suite disagreed about what that meant.
 
@@ -767,33 +916,33 @@ The trigger was a real workspace: `kensa-go` specs were written against the pre-
 
 #### CLI (`cmd/specter`, `internal/coverage`)
 
-- **`parse_errors` field** on `CoverageReport` — per-file schema violations (file, path, type, message, line, column).
-- **`parse_error_patterns` field** — errors grouped by `(type, path)` sorted by count descending. Enables one-sentence drift diagnosis: "20 specs: missing `objective` at `spec.objective`" instead of 20 individual messages.
-- **`spec_candidates_count` field** — count of `.spec.yaml` files on disk before any parse was attempted. Distinguishes "no specs exist" from "specs exist but drift."
-- **`spec_file` field** on each entry — path to the source `.spec.yaml`. Populated by the CLI from discovery; previously not exposed.
-- **`specter doctor` pattern analysis** — when the parse check fails, doctor prints a `Pattern analysis:` block that names schema version drift explicitly when every discovered spec hit the same error shape. Heterogeneous errors get a top-N list with counts.
-- **`specter init` discovers existing specs** — scans `specs/`, populates `domains.default.specs` from parseable spec IDs, prints a warning with pattern analysis for any that fail. Always emits a `domains:` section with a placeholder default domain when empty (fixes a silent-exclusion footgun where an empty domains map caused `specter sync` to ignore every later spec).
+- **`parse_errors` field** on `CoverageReport`, per-file schema violations (file, path, type, message, line, column).
+- **`parse_error_patterns` field.** Errors grouped by `(type, path)` sorted by count descending. Enables one-sentence drift diagnosis: "20 specs: missing `objective` at `spec.objective`" instead of 20 individual messages.
+- **`spec_candidates_count` field.** Count of `.spec.yaml` files on disk before any parse was attempted. Distinguishes "no specs exist" from "specs exist but drift."
+- **`spec_file` field** on each entry, path to the source `.spec.yaml`. Populated by the CLI from discovery; previously not exposed.
+- **`specter doctor` pattern analysis.** When the parse check fails, doctor prints a `Pattern analysis:` block that names schema version drift explicitly when every discovered spec hit the same error shape. Heterogeneous errors get a top-N list with counts.
+- **`specter init` discovers existing specs.** Scans `specs/`, populates `domains.default.specs` from parseable spec IDs, prints a warning with pattern analysis for any that fail. Always emits a `domains:` section with a placeholder default domain when empty (fixes a silent-exclusion footgun where an empty domains map caused `specter sync` to ignore every later spec).
 
 #### VS Code extension
 
-- **Parse errors populate the Problems panel** — each failing spec appears as a clickable `vscode.Diagnostic` entry at the reported line/column, prefixed with the error type (e.g. `[required] field is missing (at spec.objective)`).
-- **Mixed-render Coverage sidebar** — passing specs and a "Failed to parse" group render in the same tree. Each failing file is a clickable leaf that opens the file at the reported line. Previously the sidebar was all-or-nothing: tree OR error banner.
-- **Click-to-open on tree nodes** — spec nodes open their `.spec.yaml`, test-file leaves open the test file, failing spec leaves open the broken spec. Relative paths from the CLI are resolved against the workspace root.
-- **Honest Insights panel** — renders a `Parse failures` section listing each broken file with its error, alongside the normal `Coverage gaps` section. Header reflects the true mixed state ("17 parse error(s), 4 spec(s) parsing cleanly"). The "All specs passing ✓" headline now appears only when it's literally true.
-- **Clickable file-path headers** in Insights parse-error cards — webview posts an `{openFile, line}` message to the extension host, which opens the file.
-- **`specter.revealInTree` command wired end-to-end** — takes the active editor's file and reveals the matching node in the Coverage sidebar. Previously declared in `package.json` but never registered, surfacing as "command 'specter.revealInTree' not found."
-- **Honest `specter.runSync` completion toast** — info-level success vs warning-level "finished with errors in N folder(s)" with a "Show Output" button.
+- **Parse errors populate the Problems panel.** Each failing spec appears as a clickable `vscode.Diagnostic` entry at the reported line/column, prefixed with the error type (e.g. `[required] field is missing (at spec.objective)`).
+- **Mixed-render Coverage sidebar.** Passing specs and a "Failed to parse" group render in the same tree. Each failing file is a clickable leaf that opens the file at the reported line. Previously the sidebar was all-or-nothing: tree OR error banner.
+- **Click-to-open on tree nodes.** Spec nodes open their `.spec.yaml`, test-file leaves open the test file, failing spec leaves open the broken spec. Relative paths from the CLI are resolved against the workspace root.
+- **Honest Insights panel.** Renders a `Parse failures` section listing each broken file with its error, alongside the normal `Coverage gaps` section. Header reflects the true mixed state ("17 parse error(s), 4 spec(s) parsing cleanly"). The "All specs passing ✓" headline now appears only when it's literally true. <!-- doc-style: allow --><!-- quotes the literal string vscode-extension/src/insights.ts renders -->
+- **Clickable file-path headers** in Insights parse-error cards, webview posts an `{openFile, line}` message to the extension host, which opens the file.
+- **`specter.revealInTree` command wired end-to-end.** Takes the active editor's file and reveals the matching node in the Coverage sidebar. Previously declared in `package.json` but never registered, surfacing as "command 'specter.revealInTree' not found."
+- **Honest `specter.runSync` completion toast.** Info-level success vs warning-level "finished with errors in N folder(s)" with a "Show Output" button.
 - **`@ac` hover populates covering files** from the live CoverageReport instead of always rendering as "uncovered" (latent UX regression).
-- **Annotation extractor respects multi-line string literals** — `// @spec` inside a TypeScript template literal, Go raw string, or Python triple-quoted string is no longer treated as a real annotation.
+- **Annotation extractor respects multi-line string literals.** `// @spec` inside a TypeScript template literal, Go raw string, or Python triple-quoted string is no longer treated as a real annotation.
 - **Sidebar message names schema drift** when the pattern signature is unambiguous ("Every one of N .spec.yaml files hit the same failure: **required** at `spec.objective`").
 
 ### Fixed
 
 - **Latent runtime bug: `entry.specID` was always undefined at runtime.** The VS Code types declared camelCase (`specID`, `coveragePct`, `parseErrors`) but the CLI emits snake_case JSON. A new `snakeToCamelCoverage` converter in the client layer handles the mapping; every downstream consumer now sees the shape its types promise.
-- **Defensive guards against null arrays** — Go's `omitempty` emits `null` for empty slices, so `entry.coveredACs` could be `null` at runtime. Hardened every site that iterates entries/ACs/test files/parseErrors.
+- **Defensive guards against null arrays.** Go's `omitempty` emits `null` for empty slices, so `entry.coveredACs` could be `null` at runtime. Hardened every site that iterates entries/ACs/test files/parseErrors.
 - **Insights panel crashed with `entries is not iterable`** when parses failed (`entries` was `null`).
-- **Template-literal annotation bleed** — a `// @spec foo` mentioned inside a template literal (typical test-fixture content) no longer registers as a real annotation.
-- **Annotation regex anchored to line start** — a prose comment that happened to quote `// @spec other-spec` no longer hijacked the surrounding `currentSpecID`. Caught when spec-coverage's own regression tests described string-literal handling.
+- **Template-literal annotation bleed.** A `// @spec foo` mentioned inside a template literal (typical test-fixture content) no longer registers as a real annotation.
+- **Annotation regex anchored to line start.** A prose comment that happened to quote `// @spec other-spec` no longer hijacked the surrounding `currentSpecID`. Caught when spec-coverage's own regression tests described string-literal handling.
 
 ### Spec bumps
 
@@ -806,16 +955,16 @@ All 14 specs dogfood at 100% AC coverage. 192 TypeScript tests pass. All Go test
 
 ---
 
-## v0.8.3 — 2026-04-18
+## v0.8.3 - 2026-04-18
 
 ### Fixed
 
-- **`specter resolve --dot` and `specter resolve --mermaid` polluted stdout with a plain-English footer** (`No dependency issues found.`) after the structured output block. Piping to `dot -Tpng` or Mermaid renderers failed to parse. Fix: suppress the footer when `--dot`, `--mermaid`, or `--json` is set — the successful exit code already signals the no-issues status. Two regression tests added.
+- **`specter resolve --dot` and `specter resolve --mermaid` polluted stdout with a plain-English footer** (`No dependency issues found.`) after the structured output block. Piping to `dot -Tpng` or Mermaid renderers failed to parse. Fix: suppress the footer when `--dot`, `--mermaid`, or `--json` is set, the successful exit code already signals the no-issues status. Two regression tests added.
 
 ### Audit (no changes needed)
 
 Full CLI audit performed, no other flag bugs found:
-- `parse --json`, `check --json`, `coverage --json`, `sync --json` — all emit clean structured output, no trailing text
+- `parse --json`, `check --json`, `coverage --json`, `sync --json`, all emit clean structured output, no trailing text
 - Exit codes correct: unknown command / missing args / bad flag all exit 1
 - `--version` works on root and via `-v`
 - `sync --only <phase>` validates against the allowed set
@@ -825,11 +974,11 @@ Full CLI audit performed, no other flag bugs found:
 
 ---
 
-## v0.8.2 — 2026-04-18
+## v0.8.2 - 2026-04-18
 
 ### Fixed
 
-- **Critical: extension passed CLI flags that don't exist.** `SpecterClient` called `specter parse --json --manifest <path>`, `specter check --json --manifest <path>`, `specter coverage --json --manifest <path>`, and `specter diff --json --base <ref> <file>`. None of the `--manifest`, `--spec`, `--base`, or `--json` (on diff) flags exist in the CLI. Every invocation threw "unknown flag" and the try/catch in `runCoverageForFolder` surfaced it as "No coverage data loaded yet" in the sidebar — so users following v0.8.1's fix for the manifest-discovery bug would reload, the extension would find specter.yaml correctly, then fail to run any specter command because of the flag mismatch.
+- **Critical: extension passed CLI flags that don't exist.** `SpecterClient` called `specter parse --json --manifest <path>`, `specter check --json --manifest <path>`, `specter coverage --json --manifest <path>`, and `specter diff --json --base <ref> <file>`. None of the `--manifest`, `--spec`, `--base`, or `--json` (on diff) flags exist in the CLI. Every invocation threw "unknown flag" and the try/catch in `runCoverageForFolder` surfaced it as "No coverage data loaded yet" in the sidebar, so users following v0.8.1's fix for the manifest-discovery bug would reload, the extension would find specter.yaml correctly, then fail to run any specter command because of the flag mismatch.
 
   Fix: strip all fabricated flags. The CLI discovers `specter.yaml` by walking up from cwd, so `execFile` is now called with `cwd: path.dirname(manifestPath)`. Diff uses its actual positional `<path>[@<ref>]` syntax.
 
@@ -839,33 +988,33 @@ Full CLI audit performed, no other flag bugs found:
 
 ---
 
-## v0.8.1 — 2026-04-18
+## v0.8.1 - 2026-04-18
 
 ### Fixed
 
-- **Critical: "no specter.yaml found" when the file IS at the workspace root.** `resolveManifestPath` in the VS Code extension called `path.dirname()` on the workspace folder path before starting its search. `path.dirname("/home/user/project")` returns `/home/user` (the parent), so the resolver searched `/home/user/specter.yaml`, `/home/specter.yaml`, and so on — **never checking `/home/user/project/specter.yaml`** which is the canonical location the docs explicitly recommend. Affected every user since spec-vscode v1.0.
+- **Critical: "no specter.yaml found" when the file IS at the workspace root.** `resolveManifestPath` in the VS Code extension called `path.dirname()` on the workspace folder path before starting its search. `path.dirname("/home/user/project")` returns `/home/user` (the parent), so the resolver searched `/home/user/specter.yaml`, `/home/specter.yaml`, and so on, **never checking `/home/user/project/specter.yaml`** which is the canonical location the docs explicitly recommend. Affected every user since spec-vscode v1.0.
 
   Fix: `resolveManifestPath` now accepts an optional third argument `isDirectory` so the caller can say "this path IS the starting directory." The single runtime caller (`setupFolder`) supplies a real `statSync().isDirectory()` probe. Two regression tests pin both calling shapes.
 
   GOTCHAS #16 documents the trap.
 
-  After updating, reload your VS Code window — the Coverage sidebar will populate.
+  After updating, reload your VS Code window, the Coverage sidebar will populate.
 
 ---
 
-## v0.8.0 — 2026-04-18
+## v0.8.0 - 2026-04-18
 
 Followed the project's own SDD workflow: plan → specs first → failing tests → implement → validate → ship.
 
 ### Fixed
 
-- **Wrong GitHub URL in `specter init` scaffold.** The header comment pointed at `github.com/Hanalyx/spec-dd` (wrong slug — that's the parent monorepo, not the Specter project). Now correctly emits `github.com/Hanalyx/specter`. spec-manifest C-15/AC-21 pin the canonical URL.
+- **Wrong GitHub URL in `specter init` scaffold.** The header comment pointed at `github.com/Hanalyx/spec-dd` (wrong slug, that's the parent monorepo, not the Specter project). Now correctly emits `github.com/Hanalyx/specter`. spec-manifest C-15/AC-21 pin the canonical URL.
 
 ### Added
 
-- **Coverage sidebar state messages.** When the Coverage tree has no data to display (report not yet loaded, or every spec failed parse), the panel now shows a synthetic node with a state explanation and a concrete next step. Previously the panel was silently empty — a dead-end UX. Two states distinguished:
-  - *No coverage data loaded yet* — points at `specter init`, `specter reverse`, or `Specter: Run Sync`.
-  - *All discovered specs failed to parse* — points at the Problems panel where the parse errors surface.
+- **Coverage sidebar state messages.** When the Coverage tree has no data to display (report not yet loaded, or every spec failed parse), the panel now shows a synthetic node with a state explanation and a concrete next step. Previously the panel was silently empty, a dead-end UX. Two states distinguished:
+  - *No coverage data loaded yet*, points at `specter init`, `specter reverse`, or `Specter: Run Sync`.
+  - *All discovered specs failed to parse*, points at the Problems panel where the parse errors surface.
 
   spec-vscode C-21/AC-28/AC-29 pin the behavior. Pure `buildCoverageTreeRoot` function in `coverage.ts` carries the decision logic, unit-tested without VS Code mocks.
 
@@ -879,7 +1028,7 @@ Followed the project's own SDD workflow: plan → specs first → failing tests 
 
 ---
 
-## v0.7.1 — 2026-04-18
+## v0.7.1 - 2026-04-18
 
 ### Fixed
 
@@ -897,7 +1046,7 @@ Followed the project's own SDD workflow: plan → specs first → failing tests 
 
 ---
 
-## v0.7.0 — 2026-04-17
+## v0.7.0 - 2026-04-17
 
 ### Breaking
 
@@ -907,9 +1056,9 @@ Followed the project's own SDD workflow: plan → specs first → failing tests 
 
 ### Added
 
-- `acceptance_criterion.notes` — optional free-form narrative per AC. Complements the top-level `changelog` (which is version-over-version) with lifetime-of-the-AC annotation.
-- `acceptance_criterion.approval_gate` (bool) and `approval_criterion.approval_date` (date) — optional audit metadata for regulated work. Specter does not enforce approval semantics; teams wire this into their own CI/PR gates.
-- `spec.title` — optional human-readable display name. VS Code extension, tree views, `specter explain`, and PR renderings use this when present, falling back to `id`.
+- `acceptance_criterion.notes`, optional free-form narrative per AC. Complements the top-level `changelog` (which is version-over-version) with lifetime-of-the-AC annotation.
+- `acceptance_criterion.approval_gate` (bool) and `approval_criterion.approval_date` (date), optional audit metadata for regulated work. Specter does not enforce approval semantics; teams wire this into their own CI/PR gates.
+- `spec.title`, optional human-readable display name. VS Code extension, tree views, `specter explain`, and PR renderings use this when present, falling back to `id`.
 - Parse-time format validation for `date`-typed fields (`approval_date`, `changelog.date`, `generated_from.extraction_date`). Previously draft 2020-12's default was annotation-only; invalid dates slipped through.
 - Internal `schema.ValidateEnums()` method and exported enum constants (`StatusApproved`, `EnforcementError`, etc.) for Go code that constructs specs without going through `ParseSpec` (reverse compiler, migration scripts).
 
@@ -921,40 +1070,40 @@ Followed the project's own SDD workflow: plan → specs first → failing tests 
 
 ### Documentation
 
-- `SPEC_SCHEMA_REFERENCE.md` — context extension escape hatch removed from docs; replaced with "propose a new schema field."
+- `SPEC_SCHEMA_REFERENCE.md`, context extension escape hatch removed from docs; replaced with "propose a new schema field."
 - `GOTCHAS.md` #14 added: documents the silent-context-drop trap and its v0.7.0 fix.
 
 ### Migration notes
 
 - Specter's own dogfood: no changes needed. All 14 specs conform to the strict shape.
-- External projects: run `specter parse` with v0.7.0 on your spec corpus. Any `context.*` unknown keys or dangling `references_constraints` will now surface as errors — fix them or propose new fields.
+- External projects: run `specter parse` with v0.7.0 on your spec corpus. Any `context.*` unknown keys or dangling `references_constraints` will now surface as errors, fix them or propose new fields.
 - CI consumers: pin `specter@v0.6.9` if you can't adopt v0.7.0 yet; otherwise update pin and fix surfaced errors.
 
 ---
 
-## v0.6.9 — 2026-04-17
+## v0.6.9 - 2026-04-17
 
 - VS Code: on activation, offer existing users the new **Specter: Add CLI to Shell PATH** command when the detected shell's rc file doesn't reference `~/.specter/bin` (dismissable with persistent "Don't show again").
-- Docs: fixed broken install URLs across README, QUICKSTART, CLI_REFERENCE, GETTING_STARTED. Previously all used `uname`-based patterns that don't match goreleaser's lowercase `linux`/`amd64` naming — users got 9-byte "Not Found" files instead of binaries.
+- Docs: fixed broken install URLs across README, QUICKSTART, CLI_REFERENCE, GETTING_STARTED. Previously all used `uname`-based patterns that don't match goreleaser's lowercase `linux`/`amd64` naming, users got 9-byte "Not Found" files instead of binaries.
 - QUICKSTART: fixed misplaced `gap: true` example (was at spec level; schema only allows on ACs) and wrong coverage example (T2 33% was shown as PASS; threshold is 80%).
 - GOTCHAS #13 added: four-vocabulary arch/OS translation trap (uname / Node / VS Code runner / Go GOARCH).
 
-## v0.6.8 — 2026-04-17
+## v0.6.8 - 2026-04-17
 
 - VS Code: new **Specter: Add CLI to Shell PATH** command. Detects shell, appends idempotent export to the right rc file (`.bashrc`/`.bash_profile`/`.zshrc`/`config.fish`). Unknown shells get a clipboard fallback. 13 new unit tests.
-- Extension README refreshed — commands table had been missing 5 commands.
+- Extension README refreshed, commands table had been missing 5 commands.
 
-## v0.6.7 — 2026-04-17
+## v0.6.7 - 2026-04-17
 
 - VS Code: fixed arch mismatch that caused 404 on auto-download (`specter_0.6.6_linux_x64.tar.gz` → not found). `normaliseArch` now lowercases its input so `process.arch: "x64"` maps correctly to `amd64`.
 - GOTCHAS #13 added.
 
-## v0.6.6 — 2026-04-17
+## v0.6.6 - 2026-04-17
 
-- VS Code: fixed release pipeline — `vsce package` was shipping stale `out/*.js` because it doesn't run the build. Added `vscode:prepublish` hook so builds always run before packaging.
+- VS Code: fixed release pipeline, `vsce package` was shipping stale `out/*.js` because it doesn't run the build. Added `vscode:prepublish` hook so builds always run before packaging.
 - GOTCHAS.md introduced with 13 entries documenting traps hit during v0.6.x.
 
-## v0.6.5 — 2026-04-17
+## v0.6.5 - 2026-04-17
 
 - **Breaking**: `constraint.enforcement` now overrides tier-based severity in `specter check` diagnostics (previously parsed but unused).
 - **Breaking**: `gap: true` ACs count as uncovered for threshold purposes. Previously a 100%-gap spec auto-passed threshold; this hid real coverage gaps.

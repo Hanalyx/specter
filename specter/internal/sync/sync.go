@@ -33,19 +33,43 @@ type SyncResult struct {
 	CoverageReport      *coverage.CoverageReport             `json:"coverage_report,omitempty"`
 	DepCoverageWarnings []coverage.DependencyCoverageWarning `json:"dep_coverage_warnings,omitempty"`
 
+	// GateViolations and GateCode are the verdict this run computed, carried
+	// so the CLI reports and exits on the same decision rather than building a
+	// second one from a different set of inputs (bugs/SP-SP-073). Not
+	// serialized: the JSON document's shape is a published contract and the
+	// codes already reach a consumer through the process exit.
+	GateViolations []coverage.GateViolation `json:"-"`
+	GateCode       int                      `json:"-"`
+
 	// spec-sync C-09: zero-tolerance violation counts, mirrored from
 	// spec-coverage C-25/C-26. The CLI maps a non-zero
 	// ZeroToleranceNonPassed to exit code 2 and a non-zero
 	// ApprovalGateViolations to exit code 3, matching `coverage`.
 	ZeroToleranceNonPassed int `json:"zero_tolerance_non_passed,omitempty"`
 	ApprovalGateViolations int `json:"approval_gate_violations,omitempty"`
+
+	// spec-sync C-11: rule 1 of the SSRB-104 annotation model, mirrored from
+	// spec-coverage C-38 the same way the two fields above mirror C-25/C-26.
+	// The CLI maps a non-zero AnnotationRuleViolations to exit code 2 when
+	// AnnotationPermissive is false, matching `coverage`.
+	//
+	// bugs/SP-SP-058: 1D-b wired this decision into the coverage command
+	// alone, so `sync` returned 1 where `coverage` returned 2 for the same
+	// workspace, and named a different cause.
+	AnnotationRuleViolations int  `json:"annotation_rule_violations,omitempty"`
+	AnnotationPermissive     bool `json:"annotation_permissive,omitempty"`
 }
 
 // SyncInput provides spec and test file contents.
 type SyncInput struct {
-	SpecFiles            []FileContent // [filepath, content]
-	TestFiles            []FileContent
-	Thresholds           map[int]int           // optional coverage thresholds by tier; nil uses defaults
+	SpecFiles  []FileContent // [filepath, content]
+	TestFiles  []FileContent
+	Thresholds map[int]int // optional coverage thresholds by tier; nil uses defaults
+	// AnnotationDeclared reports whether the manifest declares a
+	// settings.annotation block, and AnnotationPermissive its value. Passed
+	// in rather than read here, because internal packages take no I/O.
+	AnnotationDeclared   bool
+	AnnotationPermissive bool
 	CheckOpts            *checker.CheckOptions // optional check options (strict, warn_on_draft)
 	OnlyPhase            string                // C-05: if set, run prerequisites without halting then run this phase
 	Results              *coverage.ResultsFile // optional: pass-rate-aware coverage for Tier 1
@@ -153,27 +177,37 @@ func RunSync(input SyncInput) *SyncResult {
 	}
 
 	// Phase 3: Check
-	checkResult := checker.CheckSpecs(graph, input.CheckOpts)
-
-	// spec-check C-09: opt-in test-annotation cross-reference pass.
+	//
+	// spec-check C-09: the opt-in test-annotation pass runs BEFORE the check,
+	// and its diagnostics are handed over rather than appended afterwards.
+	//
+	// C-07 requires one assembly, promotion and summary boundary. This used to
+	// finalize the check and then append and recount, which is the route that
+	// constraint forbids. No severity was wrong, because every diagnostic on
+	// this path is error severity and sync does not run the unreachable scan,
+	// and that is what made it invisible: the route was wrong and the output
+	// happened to be right, so nothing failed until a warning-severity kind
+	// were added here.
+	checkOpts := input.CheckOpts
 	if input.CheckTestAnnotations {
 		contents := make(map[string]string, len(input.TestFiles))
 		for _, f := range input.TestFiles {
 			contents[f.Path] = f.Content
 		}
-		taDiags := checker.CheckTestAnnotations(contents, specs)
-		checkResult.Diagnostics = append(checkResult.Diagnostics, taDiags...)
-		for _, d := range taDiags {
-			switch d.Severity {
-			case "error":
-				checkResult.Summary.Errors++
-			case "warning":
-				checkResult.Summary.Warnings++
-			case "info":
-				checkResult.Summary.Info++
-			}
+		// Copy before extending. CheckOpts is a pointer the caller still owns,
+		// so appending through it would leave the caller's options carrying
+		// this run's diagnostics, and a second run would start from the first
+		// one's list.
+		var opts checker.CheckOptions
+		if checkOpts != nil {
+			opts = *checkOpts
 		}
+		opts.ExtraDiagnostics = append(append([]checker.CheckDiagnostic(nil), opts.ExtraDiagnostics...),
+			checker.CheckTestAnnotations(contents, specs)...)
+		checkOpts = &opts
 	}
+
+	checkResult := checker.CheckSpecs(graph, checkOpts)
 
 	result.CheckResult = checkResult
 
@@ -223,7 +257,14 @@ func RunSync(input SyncInput) *SyncResult {
 
 	var coverageReport *coverage.CoverageReport
 	if useStrictPath {
-		report, strictErr := coverage.BuildCoverageReportStrict(specs, allAnnotations, thresholds, input.Results, true, nil)
+		// spec-sync C-09(b) / spec-coverage C-39: zero-tolerance reaches
+		// classification, so sync's report demotes identically to coverage's
+		// because it is the same function rather than the same follow-up call.
+		report, strictErr := coverage.BuildCoverageReportMode(specs, allAnnotations, thresholds, input.Results,
+			coverage.ClassifyMode{
+				Strict:        true,
+				ZeroTolerance: effectiveStrictness == "zero-tolerance",
+			})
 		if strictErr != nil {
 			// C-08: missing .specter-results.json under strict mode
 			// fails the coverage phase. Surface a sync-specific message
@@ -251,13 +292,6 @@ func RunSync(input SyncInput) *SyncResult {
 	}
 	result.CoverageReport = coverageReport
 
-	// spec-sync C-09 / spec-coverage GH #94: under zero-tolerance the
-	// report demotes approval_gate violations so the report and the
-	// exit signal agree — same demotion `coverage` applies.
-	if effectiveStrictness == "zero-tolerance" {
-		coverage.DemoteApprovalGateViolations(coverageReport, specs)
-	}
-
 	// Dependency coverage warnings (C-08 — spec-coverage, not spec-sync)
 	var edges []coverage.DepEdge
 	for _, e := range graph.Edges {
@@ -271,31 +305,53 @@ func RunSync(input SyncInput) *SyncResult {
 	// even when the demoted coverage still clears the tier threshold
 	// (the pre-1.4.0 false-green: one passing + one failing AC on a
 	// Tier 3 spec passed at 50%).
-	if effectiveStrictness == "zero-tolerance" {
-		if nonPassed := coverage.CountNonPassed(input.Results); nonPassed > 0 {
-			result.ZeroToleranceNonPassed = nonPassed
-			result.Phases = append(result.Phases, PhaseResult{
-				Phase: "coverage", Passed: false,
-				Message: fmt.Sprintf("zero-tolerance strictness — %d annotated AC(s) did not pass", nonPassed),
-			})
-			result.StoppedAt = "coverage"
-			return result
-		}
-		if gateViolations := coverage.CountApprovalGateViolations(specs); gateViolations > 0 {
-			result.ApprovalGateViolations = gateViolations
-			result.Phases = append(result.Phases, PhaseResult{
-				Phase: "coverage", Passed: false,
-				Message: fmt.Sprintf("zero-tolerance strictness — %d AC(s) carry approval_gate=true with unset approval_date", gateViolations),
-			})
-			result.StoppedAt = "coverage"
-			return result
-		}
+	// spec-sync C-11 / spec-coverage C-38: rule 1 runs before the tier
+	// arithmetic and before the zero-tolerance gates, in the same order
+	// `coverage` uses, because the threshold does not excuse a missing test.
+	// Every count first, then one verdict. This used to return at the first
+	// violation, which left the later counts at zero and made it impossible
+	// for the CLI to name more than one cause. spec-coverage C-40(e) requires
+	// both to be named in a single run.
+	zeroTolerance := effectiveStrictness == "zero-tolerance"
+	if input.AnnotationDeclared {
+		result.AnnotationRuleViolations = coverage.AnnotationRuleVerdict(coverageReport)
+		result.AnnotationPermissive = input.AnnotationPermissive
+	}
+	if zeroTolerance {
+		result.ZeroToleranceNonPassed = coverage.CountNonPassed(input.Results)
+	}
+	// spec-coverage C-40: the approval gate fires under both models. Counting
+	// it inside the zero-tolerance branch alone is what made it silent for a
+	// workspace declaring settings.annotation (bugs/SP-SP-071).
+	if input.AnnotationDeclared || zeroTolerance {
+		result.ApprovalGateViolations = coverage.CountApprovalGateViolations(specs)
 	}
 
-	if coverageReport.Summary.Failing > 0 {
+	// The ordering, the messages, and the codes all come from the shared
+	// verdict. sync used to carry its own copy of each, which is the shape of
+	// bugs/done/SP-SP-058 and bugs/done/SP-SP-066: a private sequence that was
+	// right when written and went stale when a gate was added beside it.
+	violations, code := coverage.GateVerdict(coverage.GateInputs{
+		AnnotationDeclared:       input.AnnotationDeclared,
+		AnnotationPermissive:     input.AnnotationPermissive,
+		AnnotationRuleViolations: result.AnnotationRuleViolations,
+		ZeroTolerance:            zeroTolerance,
+		ZeroToleranceNonPassed:   result.ZeroToleranceNonPassed,
+		ApprovalGateViolations:   result.ApprovalGateViolations,
+		ThresholdFailing:         coverageReport.Summary.Failing,
+		StreamValidationErrors:   coverageReport.ResultsValidationErrors,
+	})
+	// Carried on the result rather than recomputed at the exit site. The CLI
+	// used to build a second verdict of its own and omit ThresholdFailing from
+	// it, so the two disagreed the moment a gate ordered after the threshold
+	// existed. That is bugs/SP-SP-073, and stream validation is exactly the
+	// gate that would have exposed it.
+	result.GateViolations = violations
+	result.GateCode = code
+	if code != 0 {
 		result.Phases = append(result.Phases, PhaseResult{
 			Phase: "coverage", Passed: false,
-			Message: fmt.Sprintf("%d spec(s) below coverage threshold", coverageReport.Summary.Failing),
+			Message: coverage.FirstFailing(violations).Phase,
 		})
 		result.StoppedAt = "coverage"
 		return result

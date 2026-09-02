@@ -47,11 +47,16 @@ type AnnotationMatch struct {
 
 // SpecCoverageEntry is coverage data for a single spec.
 type SpecCoverageEntry struct {
-	SpecID          string   `json:"spec_id"`
-	Tier            int      `json:"tier"`
-	TotalACs        int      `json:"total_acs"`
-	CoveredACs      []string `json:"covered_acs"`
-	UncoveredACs    []string `json:"uncovered_acs"`
+	SpecID       string   `json:"spec_id"`
+	Tier         int      `json:"tier"`
+	TotalACs     int      `json:"total_acs"`
+	CoveredACs   []string `json:"covered_acs"`
+	UncoveredACs []string `json:"uncovered_acs"`
+	// NoTestACs lists criteria carrying no source annotation at all. C-38(a):
+	// a rule-1 violation is a different failure from an uncovered criterion
+	// and is reported separately. Always emitted as [] rather than null, per
+	// C-14's convention for arrays a consumer reads.
+	NoTestACs       []string `json:"no_test_acs"`
 	CoveragePct     float64  `json:"coverage_pct"`
 	Threshold       int      `json:"threshold"`
 	PassesThreshold bool     `json:"passes_threshold"`
@@ -65,10 +70,52 @@ type SpecCoverageEntry struct {
 }
 
 // CoverageReport is the full coverage result.
+// StopKind names why a run stopped before it measured anything,
+// spec-coverage C-10. The set is closed and lives here alone: a second
+// declaration is a copy of policy that cannot know when this one changes.
+type StopKind string
+
+const (
+	// StopManifestError: the manifest failed to load.
+	StopManifestError StopKind = "manifest_error"
+	// StopInvalidFlag: a flag value or a combination of flags is not usable.
+	StopInvalidFlag StopKind = "invalid_flag"
+	// StopUnknownScope: --scope named a domain the manifest does not declare.
+	StopUnknownScope StopKind = "unknown_scope"
+	// StopUnmetPrecondition: the run needs something it does not have, such as
+	// a results artifact or an annotated test file.
+	StopUnmetPrecondition StopKind = "unmet_precondition"
+)
+
+// StopReason says why a run produced no measurements.
+//
+// Two fields, both required. `kind` is what a consumer branches on and
+// `message` is what a person reads; collapsing them into one string forces
+// every consumer to parse prose to decide what happened.
+type StopReason struct {
+	Kind    StopKind `json:"kind"`
+	Message string   `json:"message"`
+}
+
 type CoverageReport struct {
-	Entries     []SpecCoverageEntry `json:"entries"`
-	Summary     CoverageSummary     `json:"summary"`
-	ParseErrors []ParseErrorEntry   `json:"parse_errors,omitempty"`
+	Entries []SpecCoverageEntry `json:"entries"`
+	Summary CoverageSummary     `json:"summary"`
+	// StopReason is present only when the run stopped before measuring, C-10.
+	//
+	// Entries and Summary stay required and are emitted as an empty list and a
+	// zeroed summary beside it. Those are uncomputed placeholders, and this
+	// field is the only thing that distinguishes them from a clean empty
+	// workspace, which is why a consumer must read it first.
+	StopReason  *StopReason       `json:"stop_reason,omitempty"`
+	ParseErrors []ParseErrorEntry `json:"parse_errors,omitempty"`
+	// Verdicts carries the per-criterion classification every field above was
+	// derived from, in spec order and then declaration order. It is how a
+	// caller computes a guard over the same answers the report used, rather
+	// than recomputing them from the specs and reaching a different one.
+	//
+	// Deliberately not serialized. It is an internal carrier, and adding it to
+	// the JSON would change a published contract for no consumer's benefit.
+	Verdicts []CriterionVerdict `json:"-"`
 	// SpecCandidatesCount is the number of .spec.yaml files discovered on
 	// disk before any parse was attempted. When > 0 but len(Entries) == 0,
 	// the workspace has specs but none parsed — almost certainly a schema
@@ -97,6 +144,14 @@ type CoverageReport struct {
 	// ResultsFile.InvalidStatuses() — the builder is pure and doesn't
 	// own the results-file lifecycle.
 	InvalidStatusWarnings []InvalidStatusWarning `json:"invalid_status_warnings,omitempty"`
+	// ResultsValidationErrors carries every spec-coverage C-44 violation the
+	// results file's streams block produced. Absent when the block is absent
+	// or consistent, which is why it is omitempty: a legacy artifact must
+	// marshal exactly as it did before this field existed.
+	//
+	// Validation records here rather than aborting, so C-10's document still
+	// exists in a refusal and the gates still have something to run on.
+	ResultsValidationErrors []ResultsValidationError `json:"results_validation_errors,omitempty"`
 }
 
 // MaxCoverageReportBytes caps the on-disk size of a CoverageReport JSON
@@ -231,10 +286,46 @@ type ParseErrorPattern struct {
 	Files       []string `json:"files,omitempty"`
 }
 
+// SortParseErrors returns a copy of the entries in a total order: by file,
+// then path, then type, then message. Pure: the input slice is not mutated.
+//
+// The schema validator reports the failures of one file by walking a tree
+// whose branches it visits in map order, so a file with three failures
+// emits them in a different order on each run. That reaches `coverage
+// --json` as the `parse_errors` array and breaks the byte-comparability
+// C-37 requires of the document, even after the arrays C-37 names by hand
+// are ordered. The four keys together are a total order, because two
+// entries alike in all four are indistinguishable to a reader.
+func SortParseErrors(errs []ParseErrorEntry) []ParseErrorEntry {
+	if len(errs) == 0 {
+		return errs
+	}
+	out := make([]ParseErrorEntry, len(errs))
+	copy(out, errs)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].File != out[j].File {
+			return out[i].File < out[j].File
+		}
+		if out[i].Path != out[j].Path {
+			return out[i].Path < out[j].Path
+		}
+		if out[i].Type != out[j].Type {
+			return out[i].Type < out[j].Type
+		}
+		return out[i].Message < out[j].Message
+	})
+	return out
+}
+
 // SummarizeParseErrors groups a flat list of parse errors by (type, path).
 // Patterns are returned sorted by count desc so the most widespread issue
 // surfaces first. The top pattern plus total-file count is usually enough
 // to name schema drift without further analysis.
+//
+// C-37: the order is total, not just by count. Ties break by type ascending
+// and then by path ascending, and the file list inside each pattern is sorted
+// ascending. Ordering by count alone left patterns with equal counts in map
+// order, so five runs on one workspace produced five different documents.
 func SummarizeParseErrors(errs []ParseErrorEntry) []ParseErrorPattern {
 	if len(errs) == 0 {
 		return nil
@@ -265,14 +356,19 @@ func SummarizeParseErrors(errs []ParseErrorEntry) []ParseErrorPattern {
 	}
 	out := make([]ParseErrorPattern, 0, len(order))
 	for _, k := range order {
-		out = append(out, *seen[k])
+		p := *seen[k]
+		sort.Strings(p.Files)
+		out = append(out, p)
 	}
-	// Sort by count desc, stable for ties by first-encountered order.
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j].Count > out[j-1].Count; j-- {
-			out[j-1], out[j] = out[j], out[j-1]
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
 		}
-	}
+		if out[i].Type != out[j].Type {
+			return out[i].Type < out[j].Type
+		}
+		return out[i].Path < out[j].Path
+	})
 	return out
 }
 
@@ -403,7 +499,8 @@ func BuildCoverageReportStrict(specs []schema.SpecAST, annotations []AnnotationM
 	if !strict {
 		return BuildCoverageReportWithResults(specs, annotations, thresholds, results), nil
 	}
-	return buildCoverageReportCore(specs, annotations, thresholds, results, true, scopedSpecs), nil
+	return buildCoverageReportCore(specs, annotations, thresholds, results,
+		ClassifyMode{Strict: true, ScopedSpecs: scopedSpecs}), nil
 }
 
 // BuildCoverageReportWithResults is like BuildCoverageReport but additionally
@@ -412,10 +509,24 @@ func BuildCoverageReportStrict(specs []schema.SpecAST, annotations []AnnotationM
 //
 // C-07: Pass-rate-aware coverage for Tier 1
 func BuildCoverageReportWithResults(specs []schema.SpecAST, annotations []AnnotationMatch, thresholds map[int]int, results *ResultsFile) *CoverageReport {
-	return buildCoverageReportCore(specs, annotations, thresholds, results, false, nil)
+	return buildCoverageReportCore(specs, annotations, thresholds, results, ClassifyMode{})
 }
 
-func buildCoverageReportCore(specs []schema.SpecAST, annotations []AnnotationMatch, thresholds map[int]int, results *ResultsFile, strict bool, scopedSpecs map[string]bool) *CoverageReport {
+// BuildCoverageReportMode is the entry point that carries the full
+// ClassifyMode, including zero-tolerance. The three older constructors are
+// wrappers over it and stay for callers that do not need the mode.
+//
+// C-39: zero-tolerance reaches classification here rather than through a
+// second pass over the finished report, which is what roadmap item 1C removed.
+// A nil results file under Strict is the same hard error C-20 describes.
+func BuildCoverageReportMode(specs []schema.SpecAST, annotations []AnnotationMatch, thresholds map[int]int, results *ResultsFile, mode ClassifyMode) (*CoverageReport, error) {
+	if mode.Strict && results == nil {
+		return nil, ErrMissingResults
+	}
+	return buildCoverageReportCore(specs, annotations, thresholds, results, mode), nil
+}
+
+func buildCoverageReportCore(specs []schema.SpecAST, annotations []AnnotationMatch, thresholds map[int]int, results *ResultsFile, mode ClassifyMode) *CoverageReport {
 	// Group annotations by spec ID
 	annotBySpec := make(map[string]struct {
 		acIDs map[string]bool
@@ -458,57 +569,60 @@ func buildCoverageReportCore(specs []schema.SpecAST, annotations []AnnotationMat
 		// consumers declare these as non-nullable arrays.
 		coveredACs := []string{}
 		uncoveredACs := []string{}
-		// C-23: under --scope, only specs in the scoped set get strict
-		// demotion semantics. Specs outside the set fall back to v0.9
-		// boolean-passed logic (tier 1 needs passing result; tier 2/3
-		// annotation alone). A nil/empty scopedSpecs means no scope
-		// restriction — strict applies to all specs, preserving the
-		// v0.10 default.
-		specInScope := strict && (len(scopedSpecs) == 0 || scopedSpecs[spec.ID])
+		// C-39 / roadmap 1C: one verdict per criterion, and one function
+		// deciding what it means. The covered and uncovered lists are built by
+		// walking the verdicts in declaration order, so a criterion demoted
+		// under zero-tolerance lands where it was declared rather than
+		// appended after the rest (AC-64).
+		verdicts := buildVerdicts(spec, ann.acIDs, results, mode)
+		report.Verdicts = append(report.Verdicts, verdicts...)
 
-		for _, id := range allACIDs {
-			annotationExists := ann.acIDs != nil && ann.acIDs[id]
-			var isCovered bool
-			switch {
-			case specInScope:
-				// C-19: --strict requires annotation AND status=passed, all tiers.
-				isCovered = annotationExists && results.status(spec.ID, id) == "passed"
-			case spec.Tier == 1:
-				// C-07: Tier 1 requires annotation AND passing result
-				isCovered = annotationExists && results.passed(spec.ID, id)
-			default:
-				// Tier 2/3: annotation alone is sufficient
-				isCovered = annotationExists
+		noTestACs := []string{}
+		for _, v := range verdicts {
+			// C-38(a): rule 1 asks only whether a test exists. It is
+			// evaluated for every spec; the CLI decides what to do with it
+			// based on whether an annotation block is declared.
+			if !v.HasAnnotation {
+				noTestACs = append(noTestACs, v.ACID)
 			}
-			if isCovered {
-				coveredACs = append(coveredACs, id)
+			if v.Covered(mode) {
+				coveredACs = append(coveredACs, v.ACID)
 			} else {
-				uncoveredACs = append(uncoveredACs, id)
+				uncoveredACs = append(uncoveredACs, v.ACID)
 			}
 		}
 
 		totalACs := len(allACIDs)
-		var coveragePct float64
-		if totalACs > 0 {
-			coveragePct = float64(len(coveredACs)) / float64(totalACs) * 100
-			// Round to 1 decimal
-			coveragePct = float64(int(coveragePct*10)) / 10
-		}
+		coveragePct := CoveragePercent(len(coveredACs), totalACs)
 
-		// C-06: Per-spec threshold override
-		threshold := thresholds[spec.Tier]
-		if threshold == 0 {
+		// C-06: Per-spec threshold override.
+		//
+		// C-36: presence decides whether an override applies, not a
+		// greater-than-zero test. A declared 0 means zero at both layers.
+		// The tier map is read with comma-ok for the same reason: a manifest
+		// setting settings.coverage.tier2 to 0 used to fall through to the
+		// built-in default. The !ok branch keeps the historical flat fallback
+		// for a tier the map does not name at all.
+		threshold, ok := thresholds[spec.Tier]
+		if !ok {
 			threshold = 80
 		}
-		if spec.CoverageThreshold > 0 {
+		// CoverageThresholdSet is only populated by the parser. Specs built in
+		// process (tests, the reverse compiler) leave it false, so the
+		// greater-than-zero test still honors an override set by hand.
+		if spec.CoverageThresholdSet || spec.CoverageThreshold > 0 {
 			threshold = spec.CoverageThreshold
 		}
 
+		// C-37: test_files ascending by path. The set is built from a map, so
+		// without the sort the array carries map iteration order and two runs
+		// on an unchanged workspace emit different documents.
 		testFiles := []string{}
 		if ann.files != nil {
 			for f := range ann.files {
 				testFiles = append(testFiles, f)
 			}
+			sort.Strings(testFiles)
 		}
 
 		// Schema requires minItems: 1 for acceptance_criteria, so totalACs
@@ -522,6 +636,7 @@ func buildCoverageReportCore(specs []schema.SpecAST, annotations []AnnotationMat
 			TotalACs:        totalACs,
 			CoveredACs:      coveredACs,
 			UncoveredACs:    uncoveredACs,
+			NoTestACs:       noTestACs,
 			CoveragePct:     coveragePct,
 			Threshold:       threshold,
 			PassesThreshold: passesThreshold,
@@ -546,6 +661,14 @@ func buildCoverageReportCore(specs []schema.SpecAST, annotations []AnnotationMat
 	}
 
 	report.Summary.TotalSpecs = len(specs)
+
+	// C-44, in the core rather than in a constructor. The annotation path
+	// reaches the builder through a different constructor than the two ladder
+	// paths, so a rule added one level up would reach two modes of three while
+	// a surface count still read four. That is bugs/done/SP-SP-058 one layer
+	// down, and spec-sync AC-20 exists to keep it from happening again.
+	report.ResultsValidationErrors = ValidateStreams(results)
+
 	return report
 }
 
@@ -756,18 +879,23 @@ func SortCoverageEntriesForDisplay(entries []SpecCoverageEntry) []SpecCoverageEn
 //	  Tier K: X/Y passing (Z%)
 //	  ...
 //
-// Tiers with zero specs are omitted. Avg coverage is the arithmetic mean of
-// per-spec CoveragePct values (not weighted by AC count — matches what the
-// old footer was effectively reporting).
+// Tiers with zero specs are omitted. Avg coverage is the exact arithmetic mean
+// of per-spec CoveragePct values (not weighted by AC count, which matches what
+// the old footer was effectively reporting).
+//
+// C-35(e): the average goes through FormatMeanCoveragePct, so the header
+// never disagrees with the Coverage column below it. It used to round while
+// the column floored, which read as 67% above a row of 66%. The header is not
+// a per-spec value, so it has its own rule and its own formatter.
 func BuildSummaryHeader(report *CoverageReport) string {
 	entries := report.Entries
 	if len(entries) == 0 {
 		return "Spec Coverage Report — 0 specs"
 	}
-	var totalPct float64
+	pcts := make([]float64, 0, len(entries))
 	byTier := map[int]*struct{ total, passing int }{}
 	for _, e := range entries {
-		totalPct += e.CoveragePct
+		pcts = append(pcts, e.CoveragePct)
 		t := byTier[e.Tier]
 		if t == nil {
 			t = &struct{ total, passing int }{}
@@ -778,9 +906,8 @@ func BuildSummaryHeader(report *CoverageReport) string {
 			t.passing++
 		}
 	}
-	avg := totalPct / float64(len(entries))
 	var b strings.Builder
-	fmt.Fprintf(&b, "Spec Coverage Report — %d specs · %.0f%% avg coverage\n", len(entries), avg)
+	fmt.Fprintf(&b, "Spec Coverage Report — %d specs · %s avg coverage\n", len(entries), FormatMeanCoveragePct(pcts))
 	for tier := 1; tier <= 3; tier++ {
 		t := byTier[tier]
 		if t == nil {

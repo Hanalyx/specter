@@ -1,0 +1,263 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+)
+
+// parityWorkspace builds one workspace carrying both failure conditions: an
+// annotated criterion whose result failed, and a criterion with no test at all.
+// One workspace exercises both so the two commands see byte-identical input.
+func parityWorkspace(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	spec := "spec:\n  id: z-spec\n  version: \"1.0.0\"\n  status: draft\n  tier: 3\n" +
+		"  context:\n    system: test\n" +
+		"  objective:\n    summary: One annotated failing criterion and one with no test.\n" +
+		"  constraints:\n    - id: C-01\n      description: \"MUST hold\"\n" +
+		"  acceptance_criteria:\n" +
+		"    - id: AC-01\n      description: \"annotated, failing\"\n      references_constraints: [\"C-01\"]\n" +
+		"    - id: AC-02\n      description: \"no test at all\"\n      references_constraints: [\"C-01\"]\n"
+	writeSpec(t, dir, "z-spec.spec.yaml", spec)
+
+	if err := os.MkdirAll(filepath.Join(dir, "tests"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	body := "package tests\n\nimport \"testing\"\n\n// @spec z-spec\n// @ac AC-01\n" +
+		"func TestZ(t *testing.T) {\n\tt.Run(\"z-spec/AC-01\", func(t *testing.T) {})\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "tests", "z_test.go"), []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+	writeResultsJSON(t, dir, `{"results":[{"spec_id":"z-spec","ac_id":"AC-01","status":"failed","test_name":"TestZ"}]}`)
+	return dir
+}
+
+func parityManifest(settings string) string {
+	return "system:\n  name: z\nsettings:\n  specs_dir: specs\n  tests_glob: \"tests/*_test.go\"\n" + settings
+}
+
+// causeLine returns the first stderr line beginning with error: or warn:, which
+// is where every coverage-contract gate names its cause.
+func causeLine(stderr string) string {
+	for _, l := range strings.Split(stderr, "\n") {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "error:") || strings.HasPrefix(t, "warn:") {
+			return t
+		}
+	}
+	return ""
+}
+
+// @spec spec-sync
+// @ac AC-15
+//
+// C-11: a coverage-contract exit code fires identically on sync and coverage,
+// cause line included. Comparing integers alone is not enough, because two
+// different conditions both map to code 2.
+func TestExitCodeParity_SyncMatchesCoverage(t *testing.T) {
+	t.Run("spec-sync/AC-15 sync exit codes match coverage", func(t *testing.T) {
+		cases := []struct {
+			name     string
+			settings string
+		}{
+			{"zero-tolerance, an annotated criterion did not pass", "  strictness: zero-tolerance\n"},
+			{"annotation block, a criterion has no test", "  annotation:\n    permissive: false\n"},
+		}
+		for _, c := range cases {
+			covDir := parityWorkspace(t)
+			putManifest(t, covDir, parityManifest(c.settings))
+			_, covErr, covCode := runCLISplit(t, covDir, "coverage")
+
+			syncDir := parityWorkspace(t)
+			putManifest(t, syncDir, parityManifest(c.settings))
+			_, syncErr, syncCode := runCLISplit(t, syncDir, "sync")
+
+			if covCode != syncCode {
+				t.Errorf("%s: coverage exited %d and sync exited %d on the same workspace. C-11 requires them to agree, and sync is the CI entry point",
+					c.name, covCode, syncCode)
+			}
+			cc, sc := causeLine(covErr), causeLine(syncErr)
+			if cc != "" && !strings.Contains(sc, strings.TrimPrefix(strings.TrimPrefix(cc, "error:"), "warn:")) {
+				t.Errorf("%s: the two commands name different causes.\n  coverage: %q\n  sync:     %q", c.name, cc, sc)
+			}
+		}
+	})
+}
+
+// @spec spec-sync
+// @ac AC-16
+//
+// C-12: every exit code the binary can emit is registered in
+// docs/EXIT_CODES.md.
+//
+// Scan scope, stated because this is a static scan: cmd/specter/*.go excluding
+// _test.go, every os.Exit call with its argument resolved per AC-17. A code
+// emitted from internal/ would not be found. That is a known limit; if one is
+// ever added there this criterion must widen with it.
+//
+// Both directions. Emitted codes must be registered, and every code the document
+// marks Stable must be reachable. The rules the second direction needs, including
+// why code 0 is exempt, are AC-18's. bugs/SP-SP-070 is where the converse was
+// missing.
+func TestExitCodeParity_EveryEmittedCodeIsRegistered(t *testing.T) {
+	t.Run("spec-sync/AC-16 every emitted exit code is registered", func(t *testing.T) {
+		scanned, err := exitScanFiles(".")
+		if err != nil {
+			t.Fatal(err)
+		}
+		emitted, _, _, err := exitScan(".")
+		if err != nil {
+			t.Fatalf("the scan refused: %v", err)
+		}
+		if scanned == 0 {
+			t.Fatal("scanned no source files; the scan scope is wrong and a pass here would be meaningless")
+		}
+		if len(emitted) == 0 {
+			t.Fatal("found no os.Exit calls; the scan is wrong and a pass here would be meaningless")
+		}
+
+		doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "EXIT_CODES.md"))
+		if err != nil {
+			t.Fatalf("cannot read the registry: %v", err)
+		}
+		// A registry row starts the line with the code cell. Matching the
+		// substring anywhere in the document is not the same assertion: the
+		// Code 10 section carries a measurement table whose second column holds
+		// the code, and that cell satisfied a substring check while the row it
+		// was supposed to prove was absent. Found by renaming the row and
+		// watching this assertion stay green.
+		for code := range emitted {
+			if !registryHasRow(string(doc), code) {
+				t.Errorf("C-12: the binary can exit %s and docs/EXIT_CODES.md has no row for it", code)
+			}
+		}
+
+		// The converse, which AC-16's expected_output has always claimed. AC-18
+		// carries the rules and the control case that proves this can fail.
+		unreachable, err := unreachableStableCodes(string(doc), emitted)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, code := range unreachable {
+			t.Errorf("C-12: docs/EXIT_CODES.md marks %s Stable and no os.Exit in cmd/specter can produce it", code)
+		}
+	})
+}
+
+// @spec spec-sync
+// @ac AC-18
+//
+// C-12: the rules the converse needs, and the control case that proves it can
+// fail. The converse is green against a correct registry and this tree's
+// registry is correct, so without the control this assertion would be
+// indistinguishable from one that checks nothing. bugs/SP-SP-070.
+func TestExitScan_TheConverseCanFail(t *testing.T) {
+	t.Run("spec-sync/AC-18 the Stable-reachability rules and their control", func(t *testing.T) {
+		// Differential precondition. A registry holding a Stable row nothing
+		// emits must be reported, and the three rules must each show in the
+		// answer: 0 exempt, 88 not Stable, 99 Stable on one of its two rows.
+		control := registryHeader + "\n|---|---|---|---|\n" +
+			"| `0` | all | success, never through os.Exit | Stable |\n" +
+			"| `77` | probe | nothing emits this | Stable |\n" +
+			"| `88` | probe | nothing emits this either | Accidental collision |\n" +
+			"| `99` | probe | one row of two is Stable | Shipped, overloaded, frozen |\n" +
+			"| `99` | probe | the other row | Stable |\n"
+		got, err := unreachableStableCodes(control, map[string]bool{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"77", "99"}
+		if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+			t.Fatalf("AC-18 control: expected %v and got %v. Until the control fires, the assertion on the real registry proves nothing", want, got)
+		}
+
+		// The real registry. Preconditions first, so an empty answer cannot pass
+		// for a clean one.
+		doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "EXIT_CODES.md"))
+		if err != nil {
+			t.Fatalf("cannot read the registry: %v", err)
+		}
+		stable, rows, err := registryStableCodes(string(doc))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rows == 0 || len(stable) == 0 {
+			t.Fatalf("parsed %d rows and %d Stable codes from Section 1; a pass here would be meaningless", rows, len(stable))
+		}
+
+		// AC-18(c): the exemption is guarded rather than assumed.
+		emitted, _, _, err := exitScan(".")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if emitted[exitCodeSuccess] {
+			t.Errorf("AC-18: something calls os.Exit(%s). Code %s is exempt from the converse only because success never goes through os.Exit, and that is no longer true",
+				exitCodeSuccess, exitCodeSuccess)
+		}
+	})
+}
+
+// @spec spec-sync
+// @ac AC-17
+//
+// C-12: the scan resolves a named-constant argument and refuses one it cannot
+// resolve. Skipping is the defect this criterion exists to prevent, because a
+// scan that drops what it cannot read reports the same result as a scan with
+// nothing to drop. bugs/SP-SP-069.
+func TestExitScan_ResolvesConstantsAndRefusesTheUnresolvable(t *testing.T) {
+	t.Run("spec-sync/AC-17 every exit site resolves or the scan refuses", func(t *testing.T) {
+		// Against the real binary sources. Every os.Exit call must resolve to a
+		// code, so the two counts agree.
+		_, sites, calls, err := exitScan(".")
+		if err != nil {
+			t.Fatalf("the scan refused on cmd/specter: %v", err)
+		}
+		if calls == 0 {
+			t.Fatal("found no os.Exit calls; a pass here would be meaningless")
+		}
+		if sites != calls {
+			t.Errorf("AC-17: the scan resolved %d of %d os.Exit sites in cmd/specter. The %d it could not read were dropped silently, so C-12 is unenforced for whatever they emit",
+				sites, calls, calls-sites)
+		}
+
+		// A named constant resolves to its value.
+		constDir := t.TempDir()
+		writeScanFixture(t, constDir, "probe.go",
+			"package probe\n\nimport \"os\"\n\nconst probeCode = 42\n\nfunc run() { os.Exit(probeCode) }\n")
+		codes, sites, calls, err := exitScan(constDir)
+		if err != nil {
+			t.Fatalf("the scan refused a resolvable constant: %v", err)
+		}
+		if !codes["42"] {
+			t.Errorf("AC-17: os.Exit(probeCode) with const probeCode = 42 did not resolve to 42. Found %v across %d of %d sites", sortedCodes(codes), sites, calls)
+		}
+
+		// An argument the scan cannot resolve fails the scan. It is never
+		// skipped, because a skipped site is invisible in the result.
+		badDir := t.TempDir()
+		writeScanFixture(t, badDir, "probe.go",
+			"package probe\n\nimport \"os\"\n\nfunc run(n int) { os.Exit(n + 1) }\n")
+		if _, _, _, err := exitScan(badDir); err == nil {
+			t.Error("AC-17: the scan accepted os.Exit(n + 1) without an error. An argument it cannot resolve must fail the scan, not vanish from it")
+		}
+	})
+}
+
+func writeScanFixture(t *testing.T, dir, name, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func sortedCodes(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}

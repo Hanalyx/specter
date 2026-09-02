@@ -1,11 +1,11 @@
 // @spec spec-vscode
 //
-// Integration test for SpecterClient — invokes the real `specter` CLI
+// Integration test for SpecterClient. It invokes the real `specter` CLI
 // binary. Catches flag-hallucination bugs (the v0.8.2 --manifest / --spec /
 // --base mismatch that shipped with every release v1.0 through v0.8.1).
 //
 // Requires the specter CLI built at ../bin/specter (relative to specter/).
-// Skipped if the binary isn't there — so CI needs `make build` first.
+// Skipped if the binary isn't there, so CI needs `make build` first.
 
 import * as fs from 'fs';
 import * as os from 'os';
@@ -99,14 +99,17 @@ describeOrSkip('SpecterClient integration (real CLI)', () => {
   // shape the extension consumes. Regression guard: if this breaks, every
   // access to entry.specID / coveragePct / parseErrors silently returns
   // undefined at runtime.
-  it('coverage() returns camelCase fields — the shape the rest of the extension expects', async () => {
+  it('coverage() returns camelCase fields, the shape the rest of the extension expects', async () => {
     const client = makeClient();
     const result = await client.coverage();
     if (result.entries.length > 0) {
       const e = result.entries[0];
       expect(typeof e.specID).toBe('string');
       expect(typeof e.tier).toBe('number');
-      // coveredACs is nullable in the CLI JSON (omitempty) — tolerate null/undefined
+      // coveredACs always marshals as an array. SpecCoverageEntry carries no
+      // omitempty on covered_acs, uncovered_acs, or test_files, and the builder
+      // initializes all three to empty slices, so the CLI never emits null here.
+      // The tolerance below is defensive, not a documented CLI shape.
       expect(e.coveredACs === null || Array.isArray(e.coveredACs)).toBe(true);
       expect(typeof e.coveragePct).toBe('number');
     }
@@ -115,7 +118,7 @@ describeOrSkip('SpecterClient integration (real CLI)', () => {
 
 // @spec spec-vscode
 // @ac AC-04
-describe('[spec-vscode/AC-04] snakeToCamelCoverage — shape conversion', () => {
+describe('[spec-vscode/AC-04] snakeToCamelCoverage, shape conversion', () => {
   it('rewrites snake_case keys at every depth', () => {
     const input = {
       entries: [

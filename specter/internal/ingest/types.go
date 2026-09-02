@@ -27,6 +27,25 @@ type TestResult struct {
 	ACID   string
 	Status Status
 	Name   string // original test name, for diagnostics
+
+	// Stream names the body of evidence this result came from. Empty means
+	// DefaultStream. spec-coverage C-41: the label is opaque, so nothing here
+	// branches on its value.
+	Stream string
+}
+
+// DefaultStream is what a result with no stream label belongs to, matching
+// spec-coverage C-41 so a file written here and a file read there agree.
+const DefaultStream = "default"
+
+// StreamOf resolves the empty label to DefaultStream. Callers compare through
+// this rather than the raw field, or an unlabeled result and one naming
+// default explicitly would merge as two streams instead of one.
+func (r TestResult) StreamOf() string {
+	if r.Stream == "" {
+		return DefaultStream
+	}
+	return r.Stream
 }
 
 // worstOrder ranks statuses from best (passed) to worst (errored). MergeResults

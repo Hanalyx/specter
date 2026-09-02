@@ -107,7 +107,7 @@ Describes **what system** this spec belongs to and **why it exists**.
 | `related_specs` | No | `array` of `string` | Other spec files that interact with this one. |
 | `assumptions` | No | `array` of `string` | Things taken as given. If wrong, the spec needs revision. |
 
-**Note:** All fields in the context object are declared above. Unknown fields are rejected at parse time — `specter parse` returns an error naming the offending key. If you need to capture additional metadata, use the spec-level `tags` array for categorical data, or `context.description` for free-form narrative. Extension by adding ad-hoc keys to `context` is not supported; propose a new schema field instead. (Changed in v0.7.0 — earlier versions silently dropped unknown context keys via `additionalProperties: true`, causing data loss for AI-assisted migrations.)
+**Note:** All fields in the context object are declared above. Unknown fields are rejected at parse time, and `specter parse` returns an error naming the offending key. If you need to capture additional metadata, use the spec-level `tags` array for categorical data, or `context.description` for free-form narrative. Extension by adding ad-hoc keys to `context` is not supported; propose a new schema field instead. Changed in v0.7.0: earlier versions silently dropped unknown context keys via `additionalProperties: true`, causing data loss for AI-assisted migrations.
 
 ```yaml
 context:
@@ -162,7 +162,7 @@ A constraint is an **inviolable rule** -- a hard boundary on the solution space.
 | `id` | **Yes** | `string` | Regex: `^C-\d{2,}$` (e.g., `C-01`, `C-02`, `C-10`) | Unique constraint ID within this spec. |
 | `description` | **Yes** | `string` | Should use RFC 2119 language (MUST, MUST NOT, SHOULD, MAY) | Human-readable constraint statement. |
 | `type` | No | `string` | Enum: `technical`, `security`, `performance`, `accessibility`, `business` | Category of constraint. Surfaces in `specter check` diagnostics so issues can be grouped by category. |
-| `enforcement` | No | `string` | Enum: `error`, `warning`, `info` | Overrides the tier-based default severity when Specter emits a diagnostic about this constraint (orphan, structural conflict). Omit to use the tier default (T1=error, T2=warning, T3=info for orphans). |
+| `enforcement` | No | `string` | Enum: `error`, `warning`, `info` | Overrides the tier-based default severity of an **orphan-constraint** diagnostic about this constraint. Omit to use the tier default (T1=error, T2=warning, T3=info). It does **not** affect `structural_conflict`, which is always `info` since v0.15: that diagnostic is a lexical heuristic and this field says how strictly a constraint binds the system, not how far to trust a text match. |
 | `validation` | No | [Constraint Validation](#constraint-validation-object) | Machine-readable validation rule | Enables deterministic checking by spec-check. |
 
 ```yaml
@@ -191,7 +191,7 @@ An optional machine-readable validation rule attached to a constraint. Enables d
 | Field | Required | Type | Description |
 |---|---|---|---|
 | `field` | **Yes** | `string` | The field this validation applies to. |
-| `rule` | **Yes** | `string` — enum: `type`, `min`, `max`, `pattern`, `enum`, `required`, `format`, `custom` | The type of validation rule. |
+| `rule` | **Yes** | `string`, enum: `type`, `min`, `max`, `pattern`, `enum`, `required`, `format`, `custom` | The type of validation rule. |
 | `value` | **Yes** | `string` or `number` or `boolean` or `string[]` | The value for the rule. Actual type depends on the rule type. |
 
 ```yaml

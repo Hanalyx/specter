@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "1.11.0"
+  version: "3.0.0"
   status: draft
   tier: 2
 
@@ -50,7 +50,7 @@ spec:
 
   constraints:
     - id: C-01
-      description: "MUST parse valid specter.yaml into a typed Manifest structure with system, domains, settings, and registry sections"
+      description: "MUST parse valid specter.yaml into a typed Manifest structure with system, domains, and settings sections. The `registry` key is still accepted so an existing manifest parses, and its value is discarded: docs/ssrb/SSRB-105.md retires the section and removes the key at v1.0.0"
       type: technical
       enforcement: error
 
@@ -65,18 +65,13 @@ spec:
       enforcement: error
 
     - id: C-04
-      description: "MUST resolve spec tiers via cascade: explicit spec tier -> domain tier -> system tier -> default 2"
+      description: "The tier declared in a spec governs every downstream decision. `tier` is required with enum [1, 2, 3] in the canonical spec schema, so a spec that parses always declares one, and no inheritance from a domain or from `system.tier` can occur. Nothing resolves a tier: every consumer reads the declared value directly. Rationale, per docs/ssrb/SSRB-106.md sections 7.1 and 7.4: this constraint previously described a four-step cascade, explicit tier then domain tier then system.tier then a default of 2, implemented by a ResolveTier function that nothing called. Steps two through four were unreachable twice over, because nothing invoked the cascade and because the schema forbids the input that would have reached them. The criteria asserting inheritance passed only by calling that function directly with a tier of zero, an input no parsed spec can produce."
       type: business
       enforcement: error
 
     - id: C-05
       description: "MUST return sensible defaults when no specter.yaml exists (specs_dir=specs, coverage T1=100 T2=80 T3=50)"
       type: technical
-      enforcement: error
-
-    - id: C-06
-      description: "MUST auto-update the registry section from the current set of parsed specs"
-      type: business
       enforcement: error
 
     - id: C-07
@@ -100,7 +95,7 @@ spec:
       enforcement: error
 
     - id: C-11
-      description: "MUST parse settings.strict (bool): when true, all warning-severity check diagnostics are treated as errors"
+      description: "MUST parse `settings.strict` (bool) into the manifest's `Settings.Strict` field. **This constraint owns parsing and nothing else.** What strict mode does is `spec-check` C-07, and where the parsed value is carried to is the business of the command that reads the manifest. Until 2026-08-30 this said strict mode treats all warning-severity check diagnostics as errors. That was a second copy of C-07's rule and wrong twice over: C-07 promotes warning and info, and it names two kinds it does not promote. The rule is that a constraint states what this spec can be held to on its own: where the parsed value is carried to is the business of the command that reads the manifest, and AC-15 tests what this constraint owns, which is parsing."
       type: technical
       enforcement: error
 
@@ -115,7 +110,7 @@ spec:
       enforcement: error
 
     - id: C-14
-      description: "MUST parse settings.tier_overrides (map[spec-id]int) and emit a tier_conflict warning when a spec's declared tier disagrees with its override value"
+      description: "MUST parse settings.tier_overrides (map[spec-id]int) and emit a tier_conflict warning when a spec's declared tier disagrees with its override value. The override is NOT applied as a tier source: the tier declared in the spec governs every downstream decision, and no command resolves a tier from it. **Its value is still read, by this rule.** `tier_conflict` exists because the two are compared, so the override is an input to conflict detection and resolves nothing anywhere else. Saying no command consults it is wrong and was the wording here until 2026-08-29. The warning MUST therefore state that the declared tier governs, and MUST NOT assert that the override is in use. Rationale, per docs/ssrb/SSRB-106.md section 7.3: the setting is deprecated and removed at v1.0.0, but the message is corrected now and independently, because a program that misdescribes itself defeats the reviewer who checks the program. The prior wording ended `using override (N)`, which is false on every run, and it was the only evidence behind a near-miss documentation fix that would have asserted the override wins."
       type: technical
       enforcement: error
 
@@ -130,7 +125,7 @@ spec:
       enforcement: error
 
     - id: C-17
-      description: "`specter init --refresh` MUST update only `domains.default.specs` in an existing `specter.yaml`, leaving every other manifest field untouched: `system`, `settings`, `registry`, `settings.tier_overrides`, and any custom domains the operator declared (anything under `domains.*` that isn't `default`). Rationale: after adding new specs, the operator needs a deterministic, non-destructive way to refresh the manifest; `--force` rewrites everything, losing manual configuration."
+      description: "`specter init --refresh` MUST update only `domains.default.specs` in an existing `specter.yaml`, leaving every other manifest field untouched: `system`, `settings`, `settings.tier_overrides`, and any custom domains the operator declared (anything under `domains.*` that isn't `default`). Rationale: after adding new specs, the operator needs a deterministic, non-destructive way to refresh the manifest; `--force` rewrites everything, losing manual configuration."
       type: business
       enforcement: error
 
@@ -190,7 +185,7 @@ spec:
       enforcement: error
 
     - id: C-29
-      description: "`settings.exclude` patterns MUST support glob matching when the pattern contains any glob metacharacter (`*`, `?`). Glob patterns match against the relative path of each candidate directory using the same `**`/`*`/`?` semantics as `settings.tests_glob` (cmd/specter/glob.go matchGlob). Patterns WITHOUT glob metacharacters continue to match by directory name exactly (back-compat with v0.x). Examples: `node_modules` matches any dir named `node_modules` at any depth (back-compat); `.claude/**` matches `.claude/` and everything under it; `**/worktrees` matches any `worktrees` dir at any depth; `tests/fixtures/*` matches direct children of `tests/fixtures/`. Walk implementation MUST exit a matched directory (filepath.SkipDir) the same way as a bare-name match — both forms behave identically in terms of stopping recursion when the matched node is a directory."
+      description: "`settings.exclude` patterns MUST support glob matching when the pattern contains any glob metacharacter (`*`, `?`). Glob patterns match against the relative path of each candidate directory using the same `**`/`*`/`?` semantics as `settings.tests_glob` (cmd/specter/glob.go matchGlob). Patterns WITHOUT glob metacharacters continue to match by directory name exactly (back-compat with v0.x). Examples: `node_modules` matches any dir named `node_modules` at any depth (back-compat); `.claude/**` matches `.claude/` and everything under it; `**/worktrees` matches any `worktrees` dir at any depth; `tests/fixtures/*` matches direct children of `tests/fixtures/`. Walk implementation MUST exit a matched directory (filepath.SkipDir) the same way as a bare-name match — both forms behave identically in terms of stopping recursion when the matched node is a directory. **Every default discovery walk MUST apply these patterns, and MUST apply them through one shared predicate.** Specter has two default walks, one for spec files and one for test files, and both are discovery over the same workspace, so a path the operator excluded is out of scope for both. One predicate rather than two conforming implementations: two copies of an exclusion decision drift, and this defect is what drift looks like. Spec discovery honored the setting and test discovery did not, so a workspace could exclude a git worktree or a vendored copy from spec discovery and still have its test files counted, which inflates coverage with files the operator believes are out of scope (`bugs/SP-SP-016`). **A walker MAY hold exclusions of its own, and those stay separate.** Test discovery skips `node_modules`, `dist` and `.git` whatever the manifest says. Be precise about what that adds, because the obvious reading is wrong: those three are already in the default list `ExcludePatterns()` returns, so with no `settings.exclude` declared both walks skip them anyway and the hardcoded skips are redundant. They matter only when a custom `settings.exclude` is declared, because a non-empty list **replaces** the defaults rather than extending them. In that case spec discovery stops skipping `node_modules` and test discovery does not. The rule here is therefore narrow: these are properties of the test walk, they are not manifest policy, and moving them into the shared predicate would change spec discovery's behavior under a custom exclude list. Whether a custom list should replace the defaults at all is a separate question this constraint does not settle. **`settings.tests_glob` is unchanged.** It overrides test discovery entirely, so this rule governs the default walk only."
       type: technical
       enforcement: error
 
@@ -199,6 +194,36 @@ spec:
       type: business
       enforcement: error
 
+    - id: C-31
+      description: "A command that loads `specter.yaml` MUST surface a rejection rather than discard it. When the manifest file exists and ParseManifest returns an error, the command writes two lines to stderr, the first naming the manifest path and the parser's reason, the second stating that the manifest was ignored and default settings are in effect, and then continues with defaults. This binds `parse`, `resolve`, and `explain`, which discard the error today and run against defaults with no signal. It does not bind the commands that already fail on a rejected manifest, `check`, `coverage`, `sync`, and `init --refresh`, which keep their current non-zero exit; this constraint may not be used to downgrade them to a warning. For those four the rejection must be the cause of the failure and not merely coincident with it, so the criterion pinning them runs on a workspace that succeeds once the manifest is removed. The exit code of the warn-and-continue commands is unchanged by the warning itself. Rationale, from the decision of 2026-06-10: silent fallback is the worst available behavior for a configuration error, because every later result is computed against settings the operator did not choose and cannot see. A manifest setting `specs_dir: customSpecs` and carrying one bad key made `parse` report two specs from a recursive walk instead of the one spec the operator configured, and exit 0."
+      type: business
+      enforcement: error
+
+    - id: C-32
+      description: "MUST parse `settings.annotation` as a block carrying one sub-key, `permissive` (bool, default `false`). `annotation` joins the valid settings keys so C-26 stops rejecting it. The parsed Manifest MUST distinguish a declared block from an absent one: `Settings.Annotation` is non-nil whenever the manifest carries the `annotation` key, and nil when it does not. Every declared form counts, including the two empty ones, `annotation: {}` and a bare `annotation:` with no sub-keys. Both empty forms carry `Permissive == false`, so declaredness and value stay separate facts. Declaredness MUST be read from the raw key set rather than from the decoded pointer, because gopkg.in/yaml.v3 leaves the pointer nil for a bare `annotation:` while allocating it for `annotation: {}` (measured 2026-08-22). An unknown sub-key under `settings.annotation` MUST be rejected with the C-26 error shape: the offending key, the closest valid sub-key by Levenshtein distance ≤ 3, and the valid sub-keys at that level. The block is manifest only. No command registers an `--annotation` flag, per SSRB-104 section 7.3, so `check`, `coverage`, and `sync` MUST reject `--annotation` as an unknown flag. Rationale: a manifest with no `annotation` block must behave exactly as it did in v0.14, and the coverage rule that consumes `permissive` can only stay opt-in if absence is observable at the manifest layer."
+      type: technical
+      enforcement: error
+
+    - id: C-33
+      description: "ParseManifest MUST reject a manifest carrying `settings.annotation.scope` with the staging message from SSRB-104 section 7.7, not with the generic unknown-key error of C-26. Every value is rejected, `test` and `all` alike, and the function returns an error and a nil Manifest. The message MUST state that the key is accepted in SSRB-104, that it is not implemented in v0.15.0, that annotation scope is test-only, and that the operator should remove the key. `scope` is not a valid sub-key and is not a schema field, so this is a validation rule and it adds nothing inert to the manifest surface. Rationale: SSRB-104 is public and its section 1 shows `scope: all` in the v1.0.0 target shape, so an adopter will write the key. A bare unknown-key error reads as a typo and sends that operator looking for the correct spelling of a key that does not exist yet."
+      type: technical
+      enforcement: error
+
+    - id: C-34
+      description: "When a manifest declares both `settings.strictness` and a `settings.annotation` block, the annotation block takes precedence and a warning names the ignored `settings.strictness`. Four parts. (a) The trigger is declaredness of both keys, not their values. C-24 rewrites an absent `strictness` to the default `threshold` at parse time, so a detector reading the parsed string cannot tell an absent key from an explicit `threshold`; declaredness of both keys must be recorded from the raw key set. (b) The detector is a pure function in the manifest package, `CheckAnnotationStrictnessConflict(m *Manifest)`, returning the warning or nil, with no I/O per C-10. The precedent is `CheckTierConflicts` (C-14). (c) `check`, `coverage`, and `sync` MUST write the warning to stderr. Those are the three commands that read a strictness level. The warning names `settings.strictness`, its declared value, and `settings.annotation` as the key that takes precedence. The exit code is not changed by the warning itself. (d) While the block is declared, no observable result may vary with the `settings.strictness` value. This constraint pins only that `strictness` stops mattering; what governs instead is set by the coverage rule in roadmap item 1D-b and is deliberately not decided here. The rule reads manifest keys only. The `--strictness` flag keeps its current behavior until v1.0.0 per SSRB-104 section 1, and this constraint does not define a conflict between that flag and the block. Rationale, from SSRB-104 section 7.1: `strictness: annotation` says markers alone are sufficient evidence, while an `annotation` block says every criterion must have a test. That is a lenient posture and a strict one in the same file. Silence is the worst available option, because the manifest would read as though `strictness` still applied."
+      type: business
+      enforcement: error
+
+
+    - id: C-35
+      description: "`domains.<name>.tier` is a checked assertion, not a tier source. It declares the risk level the domain asserts, and a spec listed in that domain whose declared `tier` disagrees MUST produce a `domain_tier_conflict` diagnostic naming the spec, its declared tier, the domain, and the domain's tier. The domain tier MUST NOT change the spec's effective tier: nothing resolves, and the declared tier stays what every consumer reads, per C-04. Severity is warning, which `--strict` promotes, because a disagreement is not always an error: a mostly-Tier-1 domain may legitimately hold one Tier 3 spec. The diagnostic MUST appear in `specter check --json` as well as in the text output, with the same count in both. Rationale, per docs/ssrb/SSRB-106.md section 7.1: the governing principle is that the spec declares its tier, the manifest may state a policy and be checked against it, and the manifest may not silently change it. Before this, a domain tier was validated, range-checked, and read by nothing, so a team setting tiers per domain got silence and no effect."
+      type: technical
+      enforcement: error
+
+    - id: C-36
+      description: "`system.tier` and `settings.tier_overrides` are deprecated and MUST warn on every run that reads the manifest. A manifest declaring either gets **exactly one stderr line per declared key**, naming that key and stating it is removed at v1.0.0. **Each line MUST state what is true of its own key, and the two are not the same.** `system.tier` has no effect, and its line says so. `settings.tier_overrides` resolves no tier, and its value is still compared under C-14, so a mismatching override produces a `tier_conflict` warning that `spec-check` C-07 promotes under `--strict`; its line says that instead. A single wording for both makes one of them false, which is what this constraint required until 3.0.0. The deprecation line itself MUST NOT change any exit code, and does not: a matching override produces the line alone and the run still exits 0. What can change an exit code is the conflict, not the deprecation. Both keys stay accepted so an existing manifest parses. Rationale, per docs/ssrb/SSRB-106.md sections 7.2 and 7.3: both are validated, neither resolves a tier, `specter init` has been writing `system.tier` into every new workspace, and an operator who configures either currently gets no signal that it did nothing. `settings.tier_overrides` additionally emitted a message asserting the override was in use, corrected under C-14 at spec-manifest 1.15.0."
+      type: technical
+      enforcement: error
   acceptance_criteria:
     - id: AC-01
       description: "Valid specter.yaml with all sections parses into Manifest struct"
@@ -228,47 +253,17 @@ spec:
       priority: high
 
     - id: AC-04
-      description: "Spec with explicit tier ignores domain and system tier"
+      description: "The declared tier governs. A spec declaring tier: 3, in a domain declaring tier: 1, in a manifest declaring system.tier: 2, is treated as Tier 3 by every surface that reads a tier: the coverage threshold it is held to, the severity of its orphan constraints, and the tier reported by coverage --json. This is asserted end to end through the CLI rather than against a resolver function, because there is no resolver: SSRB-106 section 7.4 deleted ResolveTier, and a unit test calling it was how three unreachable criteria stayed green."
       inputs:
         spec_tier: 3
         domain_tier: 1
         system_tier: 2
       expected_output:
-        resolved_tier: 3
+        coverage_json_tier: 3
+        threshold_applied: 50
+        orphan_severity: "info"
       references_constraints: ["C-04"]
       priority: critical
-
-    - id: AC-05
-      description: "Spec without tier inherits domain tier"
-      inputs:
-        spec_tier: 0
-        domain_tier: 1
-      expected_output:
-        resolved_tier: 1
-      references_constraints: ["C-04"]
-      priority: critical
-
-    - id: AC-06
-      description: "Spec without tier or domain inherits system tier"
-      inputs:
-        spec_tier: 0
-        domain_tier: 0
-        system_tier: 2
-      expected_output:
-        resolved_tier: 2
-      references_constraints: ["C-04"]
-      priority: high
-
-    - id: AC-07
-      description: "Spec without any tier info defaults to 2"
-      inputs:
-        spec_tier: 0
-        domain_tier: 0
-        system_tier: 0
-      expected_output:
-        resolved_tier: 2
-      references_constraints: ["C-04"]
-      priority: high
 
     - id: AC-08
       description: "Defaults() returns sensible manifest when no specter.yaml exists"
@@ -280,24 +275,6 @@ spec:
       references_constraints: ["C-05"]
       priority: high
 
-    - id: AC-09
-      description: "BuildRegistryFromSpecs produces entries for all parsed specs"
-      inputs:
-        specs: "3 specs with IDs checkout, login, blog"
-      expected_output:
-        registry_count: 3
-      references_constraints: ["C-06"]
-      priority: critical
-
-    - id: AC-10
-      description: "Specs in domains get correct domain field in registry"
-      inputs:
-        spec_id: "checkout"
-        domain: "payments"
-      expected_output:
-        registry_domain: "payments"
-      references_constraints: ["C-06"]
-      priority: high
 
     - id: AC-11
       description: "DomainCoverage aggregates per-spec coverage into per-domain summary"
@@ -369,12 +346,13 @@ spec:
       priority: high
 
     - id: AC-19
-      description: "settings.tier_overrides: {payment-intent: 1} parsed correctly — ResolveTier returns 1 for payment-intent"
+      description: "settings.tier_overrides parses into Settings.TierOverrides as a map of spec id to tier. A manifest declaring payment-intent: 1 and auth-login: 3 yields both entries with those values. This criterion pins parsing only. It does NOT assert that the override resolves a tier, because no command applies it; the prior wording claimed ResolveTier returns the override value, which it never has."
       inputs:
-        yaml: "settings:\n  tier_overrides:\n    payment-intent: 1"
-        spec_id: "payment-intent"
+        yaml: "settings:\n  tier_overrides:\n    payment-intent: 1\n    auth-login: 3"
       expected_output:
-        resolved_tier: 1
+        parsed_payment_intent: 1
+        parsed_auth_login: 3
+        resolution_asserted: false
       references_constraints: ["C-14"]
       priority: high
 
@@ -697,15 +675,393 @@ spec:
       references_constraints: ["C-30"]
       priority: critical
 
+    - id: AC-47
+      description: "`specter parse` in a workspace whose `specter.yaml` declares `specs_dir: customSpecs` and one unknown settings key writes a stderr warning naming the manifest path and the unknown key, plus a second line saying default settings are in effect, and then parses with defaults. Stdout still lists both `customSpecs/demo.spec.yaml` and `specs/decoy.spec.yaml`, because the default walk finds both, and the exit code is 0. Before this change the same run printed both files with nothing on stderr."
+      inputs:
+        manifest: "schema_version: 1, system.name: demo, settings.specs_dir: customSpecs, settings.test_glob: 'tests/**/*.go'"
+        workspace: "customSpecs/demo.spec.yaml and specs/decoy.spec.yaml, both valid"
+        command: "specter parse"
+      expected_output:
+        stderr_contains: ["specter.yaml", "settings.test_glob", "default settings"]
+        stdout_lists_specs: ["customSpecs/demo.spec.yaml", "specs/decoy.spec.yaml"]
+        exit_code: 0
+      references_constraints: ["C-31"]
+      priority: critical
+
+    - id: AC-48
+      description: "`specter resolve` in that same workspace writes the same two stderr lines and then builds the graph from defaults, reporting 2 specs and exiting 0. Before this change it reported 2 specs with nothing on stderr."
+      inputs:
+        workspace: "the AC-47 workspace"
+        command: "specter resolve"
+      expected_output:
+        stderr_contains: ["specter.yaml", "settings.test_glob", "default settings"]
+        stdout_contains: "2 specs"
+        exit_code: 0
+      references_constraints: ["C-31"]
+      priority: high
+
+    - id: AC-49
+      description: "`specter explain demo-spec` in that same workspace writes the same two stderr lines and still prints its coverage table for demo-spec, exiting 0. Before this change it printed the table with nothing on stderr."
+      inputs:
+        workspace: "the AC-47 workspace"
+        command: "specter explain demo-spec"
+      expected_output:
+        stderr_contains: ["specter.yaml", "settings.test_glob", "default settings"]
+        stdout_contains: "specter explain demo-spec"
+        exit_code: 0
+      references_constraints: ["C-31"]
+      priority: high
+
+    - id: AC-50
+      description: "A valid manifest produces no warning. With the unknown key removed and `specs_dir: customSpecs` kept, `specter parse` lists only `customSpecs/demo.spec.yaml`, writes nothing to stderr, and exits 0. A fix that warns unconditionally, or that ignores the manifest whether or not it parsed, fails this criterion."
+      inputs:
+        manifest: "schema_version: 1, system.name: demo, settings.specs_dir: customSpecs"
+        workspace: "customSpecs/demo.spec.yaml and specs/decoy.spec.yaml, both valid"
+        command: "specter parse"
+      expected_output:
+        stdout_lists_specs: ["customSpecs/demo.spec.yaml"]
+        stdout_spec_count: 1
+        stderr_empty: true
+        exit_code: 0
+      references_constraints: ["C-31"]
+      priority: critical
+
+    - id: AC-51
+      description: "The commands that already reject a bad manifest keep rejecting it, and the rejection is the only thing that can make them fail. This criterion runs on its own workspace, not the AC-47 one: the same manifest, but every declared criterion is annotated, so a run that merely ignored the manifest and continued against defaults exits 0. On that workspace `specter check`, `specter coverage --strictness annotation`, `specter sync --strictness annotation`, and `specter init --refresh` each exit non-zero with the parser's reason on stderr, and `init --refresh` leaves `specter.yaml` byte-unchanged. Turning any of these into a warn-and-continue path fails this criterion. The exit code is the discriminator, because the warning line a warn-and-continue path prints names `settings.test_glob` itself and satisfies the stderr check by another route. The AC-47 workspace cannot serve here: it declares two specs and no annotated tests, so under warn-and-continue `coverage` and `sync` still exit non-zero at 0 percent coverage, and both commands pass the criterion while doing the thing it forbids (`bugs/SP-SP-041`). AC-47 through AC-50 keep that workspace, which their own claims rest on."
+      inputs:
+        manifest: "schema_version: 1, system.name: demo, settings.specs_dir: customSpecs, settings.test_glob: 'tests/**/*.go' (the same rejected manifest AC-47 uses)"
+        workspace: "customSpecs/demo.spec.yaml (spec id demo-spec, tier 3, AC-01 and AC-02) and specs/decoy.spec.yaml (spec id decoy-spec, tier 3, AC-01 and AC-02), plus tests/all_test.go annotating all four criteria"
+        precondition: "with specter.yaml removed, `specter check`, `specter coverage --strictness annotation` and `specter sync --strictness annotation` each exit 0 on this workspace, because the default walk finds both specs and every criterion is annotated. `init --refresh` is the one command whose exit code is not the discriminator, since it reports a missing manifest as its own error; the byte-unchanged clause is what forbids it from refreshing against defaults."
+        commands: ["specter check", "specter coverage --strictness annotation", "specter sync --strictness annotation", "specter init --refresh"]
+      expected_output:
+        each_exit_code: "non-zero"
+        each_stderr_contains: "settings.test_glob"
+        manifest_byte_unchanged_after_init_refresh: true
+        precondition_exit_code_without_manifest: "0 for check, coverage and sync; init --refresh reports the missing manifest as its own error"
+      references_constraints: ["C-31"]
+      priority: high
+
+    - id: AC-52
+      description: "ParseManifest on `settings.annotation.permissive: true` returns a Manifest whose `Settings.Annotation` is non-nil with `Permissive == true`. On `settings.annotation.permissive: false` it returns non-nil with `Permissive == false`. On a manifest carrying no `annotation` key at all it returns `Settings.Annotation == nil`. The two empty forms, `annotation: {}` and a bare `annotation:` with no sub-keys, both return non-nil with `Permissive == false`, so a declared block is distinguishable from an absent one no matter how the operator wrote it. The bare form is the discriminating case: gopkg.in/yaml.v3 leaves the pointer nil there, so an implementation that reads declaredness from the decoded pointer alone fails this criterion while passing every other case."
+      inputs:
+        case_true: "settings.annotation.permissive: true"
+        case_false: "settings.annotation.permissive: false"
+        case_empty_map: "settings.annotation: {}"
+        case_bare_key: "settings.annotation: (no sub-keys, null value)"
+        case_absent: "settings with no annotation key"
+      expected_output:
+        true_annotation_non_nil: true
+        true_permissive: true
+        false_annotation_non_nil: true
+        false_permissive: false
+        empty_map_non_nil_permissive_false: true
+        bare_key_non_nil_permissive_false: true
+        absent_annotation_is_nil: true
+      references_constraints: ["C-32"]
+      priority: critical
+
+    - id: AC-53
+      description: "An unknown sub-key under `settings.annotation` is rejected with the C-26 error shape. `settings.annotation.permisive: true` (one s) returns an error naming `permisive`, suggesting `permissive`, and listing the valid sub-keys at that level. `settings.annotation.bogus: 1` returns an error naming `bogus` and listing the valid sub-keys. Both return a nil Manifest. This is the generic shape that AC-55 requires `scope` NOT to receive, so the two criteria together separate the special case from the general one."
+      inputs:
+        case_typo: "settings:\n  annotation:\n    permisive: true"
+        case_unrelated: "settings:\n  annotation:\n    bogus: 1"
+      expected_output:
+        typo_error_contains: "permisive"
+        typo_error_did_you_mean: "permissive"
+        unrelated_error_contains: "bogus"
+        both_list_valid_subkeys: true
+        both_return_nil_manifest: true
+      references_constraints: ["C-32"]
+      priority: high
+
+    - id: AC-54
+      description: "No command registers an `--annotation` flag. `specter check --annotation`, `specter coverage --annotation`, and `specter sync --annotation` each exit non-zero with an unknown-flag error from the CLI framework, and so does the value form `--annotation=true` on each. The assertion runs the three commands and reads their exit codes and stderr; it is not a source scan. Registering the flag later, in either the boolean or the string form, fails this criterion, which is the point: SSRB-104 section 7.3 makes flag-and-manifest divergence unreachable by having no flag."
+      inputs:
+        commands: ["specter check --annotation", "specter coverage --annotation", "specter sync --annotation"]
+        value_form: "--annotation=true on each of the three"
+      expected_output:
+        each_exit_code: "non-zero"
+        each_stderr_contains: "unknown flag"
+      references_constraints: ["C-32"]
+      priority: high
+
+    - id: AC-55
+      description: "ParseManifest rejects `settings.annotation.scope: test` and `settings.annotation.scope: all`, each with an error and a nil Manifest. Both values produce the same message, and that message contains `settings.annotation.scope`, `SSRB-104`, `not implemented in v0.15.0`, `test-only`, and `remove the key`. An implementation that routes `scope` through the generic unknown-key path of C-26 fails this criterion, because the AC-53 message contains none of those five substrings."
+      inputs:
+        case_test: "settings:\n  annotation:\n    scope: test"
+        case_all: "settings:\n  annotation:\n    scope: all"
+      expected_output:
+        both_return_error_and_nil_manifest: true
+        both_messages_identical: true
+        message_contains: ["settings.annotation.scope", "SSRB-104", "not implemented in v0.15.0", "test-only", "remove the key"]
+      references_constraints: ["C-33"]
+      priority: critical
+
+    - id: AC-56
+      description: "The conflict detector keys on declaredness, not on value. `CheckAnnotationStrictnessConflict` returns a warning for a manifest declaring both `settings.strictness: threshold` and `settings.annotation.permissive: false`. It returns nil for a manifest declaring the annotation block and no `strictness` key, and nil for a manifest declaring `settings.strictness: threshold` and no annotation block. The three manifests are one variable apart each. `threshold` is the chosen value on purpose: C-24 applies it as the default when the key is absent, so an implementation reading the parsed string rather than the raw key set returns a warning for the block-only manifest and fails here. The returned warning names `settings.strictness`, the declared value, and `settings.annotation`."
+      inputs:
+        case_both: "settings.strictness: threshold + settings.annotation.permissive: false"
+        case_block_only: "settings.annotation.permissive: false"
+        case_strictness_only: "settings.strictness: threshold"
+      expected_output:
+        both_returns_warning: true
+        block_only_returns_nil: true
+        strictness_only_returns_nil: true
+        warning_names: ["settings.strictness", "threshold", "settings.annotation"]
+      references_constraints: ["C-34"]
+      priority: critical
+
+    - id: AC-57
+      description: "The warning reaches the operator, and it changes no exit code. On a workspace whose manifest declares both `settings.strictness: annotation` and `settings.annotation.permissive: true`, `specter check`, `specter coverage`, and `specter sync` each write a stderr line containing `settings.strictness`, the declared value `annotation`, and `settings.annotation`. Each command is then run on the same workspace with only the `settings.strictness` line removed: no such stderr line appears, and the exit code matches the run that produced the warning, command by command. The second half is what pins the exit code to the ignored key rather than to the warning, and it also fails an implementation that prints the warning and then still applies the ladder. Each `sync` run is given a freshly written manifest. That is defensive rather than required: no command rewrites the manifest, and a passing `sync` leaves `specter.yaml` byte-identical. C-06, which had mandated a registry auto-update no command performed, was removed by docs/ssrb/SSRB-105.md."
+      inputs:
+        workspace: "one spec, one criterion, one annotated test file"
+        manifest_with_conflict: "settings.strictness: annotation + settings.annotation.permissive: true"
+        manifest_block_only: "settings.annotation.permissive: true"
+        commands: ["specter check", "specter coverage", "specter sync"]
+      expected_output:
+        conflict_run_stderr_contains: ["settings.strictness", "annotation", "settings.annotation"]
+        block_only_run_stderr_has_no_conflict_line: true
+        exit_codes_match_per_command: true
+      references_constraints: ["C-34"]
+      priority: critical
+
+    - id: AC-58
+      description: "While the annotation block is declared, the run does not vary with the `settings.strictness` value. Workspace: one spec with one acceptance criterion, one test file annotating it, and no `.specter-results.json`. Precondition, with no annotation block in the manifest, `specter coverage` exits 0 under `settings.strictness: annotation` and exits non-zero under `settings.strictness: threshold` with a message naming the results file, so the two values demonstrably diverge on this workspace. Assertion, with `settings.annotation.permissive: true` added and held byte-identical across the runs, `specter coverage` produces the same exit code and byte-identical stdout under `settings.strictness: annotation`, `threshold`, and `zero-tolerance`. Stdout is the comparison and stderr is not, because the C-34 warning names the declared value and therefore differs across the three runs by design. This criterion does not say what the common result is; the coverage rule in roadmap item 1D-b sets that."
+      inputs:
+        workspace: "one spec, one criterion, one annotated test file, no .specter-results.json"
+        precondition_runs: "no annotation block; settings.strictness: annotation, then threshold"
+        assertion_runs: "settings.annotation.permissive: true held constant; settings.strictness: annotation, then threshold, then zero-tolerance"
+      expected_output:
+        precondition_annotation_exit_code: 0
+        precondition_threshold_exit_code: "non-zero, message names .specter-results.json"
+        assertion_exit_codes_identical_across_three: true
+        assertion_stdout_byte_identical_across_three: true
+      references_constraints: ["C-34"]
+      priority: critical
+
+    - id: AC-59
+      description: "The conflict rule reads manifest keys only. On a workspace whose manifest declares `settings.annotation.permissive: true` and no `settings.strictness` key, `specter coverage --strictness threshold` writes no conflict warning to stderr. An implementation that computes the conflict from the effective strictness, after the flag has been merged with the manifest value, emits one here and fails. The criterion claims nothing about what the flag does to the run, only that it cannot trigger the warning: SSRB-104 section 1 preserves the flag's behavior until v1.0.0."
+      inputs:
+        manifest: "settings.annotation.permissive: true, no settings.strictness key"
+        command: "specter coverage --strictness threshold"
+      expected_output:
+        stderr_has_no_conflict_warning: true
+      references_constraints: ["C-34"]
+      priority: high
+
+    - id: AC-60
+      description: "The tier_conflict warning states that the declared tier governs and does not claim the override is applied. On a workspace whose spec declares `tier: 3` and whose manifest sets `tier_overrides: {lo: 1}`, `specter check` writes a tier_conflict warning naming both values, and that message does NOT contain the substring `using override`. It states that the declared tier governs. The negative half is the point: the prior message ended `using override (1)` while `coverage --json` reported `\"tier\": 3` for the same spec on the same run, so the two surfaces contradicted each other and only one of them was true."
+      inputs:
+        spec: "declares tier: 3"
+        manifest: "settings.tier_overrides: {lo: 1}"
+        command: "specter check"
+      expected_output:
+        warning_names_declared_tier: 3
+        warning_names_override_tier: 1
+        message_contains_using_override: false
+        message_states_declared_tier_governs: true
+        coverage_json_tier_unchanged: 3
+      references_constraints: ["C-14"]
+      priority: high
+
+    - id: AC-61
+      description: "C-34(d) holds on `check --test`, which is the surface where `settings.strictness` has its most visible effect. Workspace: one spec with one criterion, and one parseable Go test carrying `@spec` and `@ac` source comments whose name produces no runner-visible token, so a real `unreachable_annotation` fires rather than the `_unknown` fallback. Precondition, with no `annotation` block declared, the three strictness values MUST diverge: `annotation` suppresses the diagnostic at exit 0, `threshold` warns at exit 0, `zero-tolerance` errors at exit 1. Assertion, with `settings.annotation.permissive: false` declared and only `settings.strictness` varying across those same three values, every run MUST produce the same severity and the same exit code. The precondition is what makes the assertion a fact about the block rather than about the workspace. Measured 2026-08-22: the three diverge without the block and all warn at exit 0 with it."
+      inputs:
+        workspace: "one spec, one criterion, one Go test with source annotations and no runner-visible token"
+        precondition_runs: "check --test under strictness annotation, threshold, zero-tolerance, no annotation block"
+        assertion_runs: "the same three with settings.annotation.permissive: false declared"
+      expected_output:
+        precondition_severities: ["suppressed", "warning", "error"]
+        precondition_exit_codes: [0, 0, 1]
+        assertion_severities_all_equal: true
+        assertion_exit_codes_all_equal: true
+      references_constraints: ["C-34"]
+      priority: critical
+
+    - id: AC-62
+      description: "The `--strictness` flag outranks a declared `annotation` block, which is the v0.15.0 answer recorded in docs/ssrb/SSRB-104.md section 7.8. On a workspace whose manifest declares `settings.annotation.permissive: false` and NO `settings.strictness` key, and which has annotated tests but no `.specter-results.json`: plain `specter coverage` exits 1, because the block governs and resolves to the strict path; `specter coverage --strictness annotation` exits 0, because the flag wins and selects the lenient path. `specter sync` and `specter sync --strictness annotation` behave identically, 1 and 0. `check` is excluded because it registers no `--strictness` flag. This criterion pins the precedence in one direction only: an implementation in which the block outranks the flag gives 1 and 1 and fails. Before this criterion existed both readings passed the whole suite. SSRB-104 section 7.8 also records that 1D-b should choose the precedence again rather than inherit it, so expect this criterion to be revisited rather than assumed permanent."
+      inputs:
+        manifest: "settings.annotation.permissive: false, no settings.strictness key, no results file"
+        runs: ["coverage", "coverage --strictness annotation", "sync", "sync --strictness annotation"]
+      expected_output:
+        coverage_no_flag_exit: 1
+        coverage_with_flag_exit: 0
+        sync_no_flag_exit: 1
+        sync_with_flag_exit: 0
+      references_constraints: ["C-34"]
+      priority: high
+
+
+    - id: AC-63
+      description: "A domain tier that disagrees with a spec's declared tier warns, and changes nothing. Workspace: a spec declaring `tier: 3`, listed in a domain declaring `tier: 1`. `specter check` emits a `domain_tier_conflict` warning naming the spec, 3, the domain name, and 1. The exit code is 0, because a warning does not fail a run. `coverage --json` on the same workspace still reports tier 3 and threshold 50, so the assertion is a check and not a resolution. That last clause is what separates this from inheritance: an implementation that made the domain tier win would satisfy the warning and fail the tier assertion."
+      inputs:
+        spec: "declares tier: 3"
+        manifest: "domains.payments.tier: 1, listing the spec"
+      expected_output:
+        diagnostic_kind: "domain_tier_conflict"
+        severity: "warning"
+        exit_code: 0
+        coverage_json_tier: 3
+        coverage_json_threshold: 50
+      references_constraints: ["C-35"]
+      priority: critical
+
+    - id: AC-64
+      description: "The domain tier conflict reaches `check --json`, and the two output modes agree on the count. On the AC-63 workspace, `specter check --json` contains a diagnostic whose kind is `domain_tier_conflict`, and the warning count in its summary equals the warning count printed by `specter check` in text mode on the same workspace. This is the defect `bugs/SP-SP-002` records for the existing `tier_conflict`, which is computed after the JSON branch returns and so never reaches a JSON consumer, including the VS Code extension. Shipping a new diagnostic through the same path would inherit a defect already filed against the old one, so C-35 requires both to be fixed together."
+      inputs:
+        workspace: "identical to AC-63"
+        runs: ["check --json", "check"]
+      expected_output:
+        json_contains_kind: "domain_tier_conflict"
+        json_and_text_warning_counts_equal: true
+      references_constraints: ["C-35"]
+      priority: critical
+
+    - id: AC-65
+      description: "The deprecated tier keys warn without changing an exit code, and the deprecation line is not the whole story for one of them. A manifest declaring `system.tier: 2` produces exactly one stderr line naming `system.tier`, stating it has no effect and is removed at v1.0.0. A manifest declaring both keys produces exactly two lines, one per key, and no key produces two. A manifest declaring `settings.tier_overrides` produces the equivalent line for that key. A manifest declaring neither produces neither line, which is the control that stops the assertion passing on a run that warns about everything. Across the four deprecation fixtures, neither key declared, each alone, and both together, the exit code matches the same workspace with no deprecated key declared, so a deprecation line is advisory. Each declared key produces exactly one line and no key produces the other's, in both directions. **Two further cases separate the line from the conflict, and they are the point of this criterion.** A manifest whose override MATCHES the spec's declared tier produces the deprecation line, no `tier_conflict`, and exit 0 under `specter check --strict`. A manifest whose override MISMATCHES produces the deprecation line and a `tier_conflict`, which `spec-check` C-07 promotes, so the same invocation exits 1. Declaring the key is not what fails a strict run; disagreeing with the declared tier is."
+      inputs:
+        case_system_tier: "system.tier: 2 declared"
+        case_tier_overrides: "settings.tier_overrides declared"
+        case_neither: "neither declared"
+        case_both_keys: "system.tier and settings.tier_overrides declared together"
+        case_matching_override: "tier_overrides equal to the spec's declared tier, under --strict"
+        case_mismatching_override: "tier_overrides disagreeing with the spec's declared tier, under --strict"
+      expected_output:
+        system_tier_warns: true
+        tier_overrides_warns: true
+        neither_warns: false
+        exit_code_unchanged: true
+        matching_override_strict_exit_code: 0
+        mismatching_override_strict_exit_code: 1
+        lines_per_declared_key: 1
+        system_tier_line_says: "has no effect"
+        tier_overrides_line_says: "resolves no tier, still compared, error under --strict"
+      references_constraints: ["C-36"]
+      priority: high
+
+    - id: AC-66
+      description: "Both default discovery walks apply `settings.exclude`, through one predicate, with four controls that separate the claim from its neighbours. Given a workspace whose manifest declares `exclude: [\"vendored\"]`, a spec and a test file inside `vendored/`, and a matching pair outside it: (a) the bare-name case, the excluded test file is absent from the discovered test set, which is the defect this criterion closes; (b) the include control, the test file outside `vendored/` IS discovered, so the assertion cannot pass on a walk that discovers nothing; (c) the glob case, a manifest declaring `exclude: [\"**/vendored\"]` instead excludes the same test file, so the glob semantics C-29 already required for spec discovery reach test discovery too; (d) the tests_glob control, declaring `settings.tests_glob` overrides discovery and its result is unchanged by `settings.exclude`, so the override behavior is not quietly narrowed. Spec discovery keeps its existing behavior, and the criterion asserts it directly rather than assuming it, in **the bare-name and glob cases**: the excluded spec is absent and the in-scope spec is present. The `tests_glob` case does not, because `settings.tests_glob` governs test discovery alone. **The excluded spec MUST sit under `settings.specs_dir`.** `discoverSpecs` roots its walk there when a manifest is present, so a spec placed outside it is never visited and an assertion that it went undiscovered passes whether or not exclusion works. Measured 2026-08-28: with the fixture spec outside `specs_dir`, disabling the predicate inside `discoverSpecs` left the whole criterion green. **The shared-owner half is asserted structurally, because no runtime observation can see it.** Inlining an equivalent pattern loop into `discoverSpecs` produces identical output for every input, so every behavioral assertion above stays green while the second copy of exclusion policy is back. That is the defect this constraint exists to prevent, so the criterion reads the source: both default walks MUST call the shared predicate, and the loop over `matchExcludePattern` MUST appear in that predicate and nowhere else."
+      inputs:
+        manifest_bare: "exclude: [\"vendored\"]"
+        manifest_glob: "exclude: [\"**/vendored\"]"
+        workspace: "vendored/inner_test.go and outer_test.go; specs/demo.spec.yaml and specs/vendored/inner.spec.yaml, the excluded spec under specs_dir"
+      expected_output:
+        bare_excluded_test_discovered: false
+        bare_excluded_spec_discovered: false
+        bare_outside_test_discovered: true
+        bare_outside_spec_discovered: true
+        glob_excluded_test_discovered: false
+        glob_excluded_spec_discovered: false
+        glob_outside_test_discovered: true
+        glob_outside_spec_discovered: true
+        tests_glob_result_unchanged_by_exclude: true
+        both_default_walks_call_the_shared_predicate: true
+        pattern_match_loop_owned_by_predicate_only: true
+      references_constraints: ["C-29"]
+      priority: high
+
+    - id: AC-67
+      description: "`--strict` promotes the domain tier conflict, which C-35 states and nothing observed. On the AC-63 workspace, `specter check` reports `domain_tier_conflict` at `warning` and exits 0, and `specter check --strict` reports it at `error` and exits 1. The same holds under `--json`: the diagnostic carries `severity: error` and the summary reports zero warnings. The diagnostic is computed from the manifest and appended after the checker returns, so it sat past the upgrade loop and stayed a warning under `--strict` until 2026-08-28, and a CI job running `check --strict` passed a workspace this spec says it should fail. `spec-check` C-07 owns the upgrade rule and AC-45 binds the shared owner; this criterion binds the half C-35 states."
+      inputs:
+        workspace: "the AC-63 workspace: a spec declaring tier 3, listed in a domain declaring tier 1"
+        invocations: "check, check --strict, check --strict --json"
+      expected_output:
+        plain_severity: "warning"
+        plain_exit_code: 0
+        strict_severity: "error"
+        strict_exit_code: 1
+        strict_json_warning_count: 0
+      references_constraints: ["C-35"]
+      priority: high
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
       relationship: requires
     - spec_id: spec-sync
-      version_range: "^1.0.0"
+      version_range: ">=1.0.0 <3.0.0"
       relationship: requires
 
   changelog:
+    - version: "3.0.0"
+      date: "2026-08-30"
+      author: "specter-team"
+      type: major
+      description: "Three constraints now say what this spec owns. C-11 owns parsing `settings.strict` into `Settings.Strict`; what strict mode does belongs to `spec-check` C-07, which C-11 had restated as promotion of warning-severity diagnostics. That copy was wrong twice over: C-07 promotes warning and info, and names two kinds it does not promote. C-14 said no command consults `settings.tier_overrides`, in the same clause requiring a `tier_conflict` warning when its value disagrees with the declared tier; the override resolves no tier, and its value is read. C-36 required both deprecation lines to state the key has no effect. That is true of `system.tier` and false of `settings.tier_overrides`, whose value is still compared and whose mismatch `spec-check` C-07 promotes to an error under `--strict`, so each line now states what is true of its own key. AC-65 binds exactly one line per declared key, both keys declared together, the wording of each, and the two `--strict` cases that separate the line from the conflict: a matching override exits 0 and a mismatching one exits 1. Major: C-36 forbids a message a conforming implementation used to emit. C-11 and C-14 alone would have been a patch."
+    - version: "2.1.0"
+      date: "2026-08-28"
+      author: "specter-team"
+      type: minor
+      description: "AC-67 binds C-35's `--strict` clause, which the constraint stated and no criterion observed. `domain_tier_conflict` is computed from the manifest and appended after the checker returns, so it sat past the strict upgrade loop and stayed a warning under `--strict`: `check --strict` exited 0 on a workspace this spec says it should fail, which is a false green in the command CI runs. AC-63 and AC-64 bind the plain and `--json` paths and neither reaches strictness. The upgrade rule itself belongs to `spec-check` C-07, amended in 2.1.0 to require one owner over the complete assembled set; this criterion binds the half C-35 states. Minor: a new criterion, no requirement moves."
+    - version: "2.0.3"
+      date: "2026-08-28"
+      author: "specter-team"
+      type: patch
+      description: "Complete AC-66's expected_output. The prose and the test exercised spec discovery under both the bare-name and the glob pattern, and the structured output declared the result for the bare-name case only, so a reader taking `expected_output` as the contract would not know the glob case covers the spec walk at all. Each of the four results is now named for its case rather than shared: an include control written once reads as covering whichever case the reader happens to be looking at. No requirement moves and no implementation changes; this is the declared output catching up with what the criterion already asserts."
+    - version: "2.0.2"
+      date: "2026-08-28"
+      author: "specter-team"
+      type: patch
+      description: "Correct AC-66's spec-walk claim and pin where its fixture spec lives. The criterion said spec discovery is asserted directly in all four cases; only the bare-name case did so, and the `tests_glob` case never can, because `settings.tests_glob` governs test discovery alone. The glob case now asserts it too. More importantly, the excluded fixture spec MUST sit under `settings.specs_dir`: `discoverSpecs` roots its walk there when a manifest is present, so a spec outside it is never visited and an assertion that it went undiscovered passes whether or not exclusion works. Measured: with the fixture outside `specs_dir`, disabling `manifestExcludesDir` inside `discoverSpecs` left the whole criterion green. Requirement unchanged; this is the criterion learning to observe what C-29 already required."
+    - version: "2.0.1"
+      date: "2026-08-28"
+      author: "specter-team"
+      type: patch
+      description: "Correct C-29's walker-specific rationale and make AC-66 bind the shared-owner half C-29 already required. The rationale said moving `node_modules`, `dist` and `.git` into the shared predicate would newly apply them to spec discovery. That is wrong: all three are already in the default list `ExcludePatterns()` returns, so both walks skip them with no `settings.exclude` declared. They matter only under a custom exclude list, because a non-empty list replaces the defaults rather than extending them, and then spec discovery stops skipping them while the test walk does not. Whether a custom list should replace the defaults is a separate question this constraint does not settle. AC-66 gains the spec-walk assertions it declared but did not make, and the structural half: inlining an equivalent pattern loop into `discoverSpecs` produces identical output for every input, so no runtime observation can see the second copy of policy that C-29 forbids. Patch, not the breaking `specter diff` reports: the tool classifies any `expected_output` change structurally, C-29's requirement has not moved since 2.0.0, and no implementation conforming to it is affected. The counterargument, recorded: a non-conforming implementation that was passing AC-66 now fails it, which is the criterion detecting an existing violation rather than a new requirement."
+    - version: "2.0.0"
+      date: "2026-08-28"
+      author: "specter-team"
+      type: major
+      description: "C-29 now requires every default discovery walk to apply `settings.exclude`, through one shared predicate. Spec discovery honored the setting and test discovery did not, so a workspace could exclude a git worktree or a vendored copy from spec discovery and still have its test files counted, inflating coverage with files the operator believes are out of scope (`bugs/SP-SP-016`). One predicate rather than two conforming walks, because two copies of an exclusion decision drift and this defect is what that drift looks like. Walker-specific exclusions stay separate: test discovery skips `node_modules`, `dist` and `.git` whatever the manifest says. Those three are already in the default list `ExcludePatterns()` returns, so the hardcoded skips are redundant until a custom `settings.exclude` is declared, at which point the non-empty list replaces the defaults and only the test walk keeps skipping them. `settings.tests_glob` is unchanged and still overrides test discovery entirely, so the rule governs the default walk only. AC-66 binds all four with controls: the bare-name case, an include control so the assertion cannot pass on a walk that finds nothing, the glob case, and a `tests_glob` control. Major, by the rule in `docs/SPEC_SCHEMA_REFERENCE.md`: a new MUST could break implementations, and it breaks this one, which is the point. `spec-doctor` pins `^1.0.0` and moves with it."
+    - version: "1.19.1"
+      date: "2026-08-25"
+      author: "specter-team"
+      type: patch
+      description: "Widen the `spec-sync` dependency range to `>=1.0.0 <3.0.0`. spec-sync went to 2.0.0 for AC-17 and an `inputs` correction on AC-16, both internal to its exit-code registry scan, and nothing this spec depends on changed. Mechanical, and the same form spec-vscode already uses for its `spec-diff` range. Recorded rather than done silently, because a widened range is the one edit that makes a real future break invisible."
+    - version: "1.19.0"
+      date: "2026-08-22"
+      author: "specter-team"
+      type: minor
+      description: "The last two parts of docs/ssrb/SSRB-106.md. C-35 makes domains.<name>.tier a checked assertion rather than a tier source: a spec whose declared tier disagrees with its domain's produces a domain_tier_conflict warning, and nothing resolves, so the declared tier still governs per C-04. AC-63 pins both halves, and the second half is what separates a check from inheritance. C-35 also requires the diagnostic to reach check --json, which pulls bugs/SP-SP-002 into scope: tier_conflict is computed after the JSON branch returns and has never reached a JSON consumer including the VS Code extension, so a new diagnostic on the same path would inherit a filed defect. AC-64 pins both modes agreeing on the count. C-36 deprecates system.tier and settings.tier_overrides with per-key warnings that change no exit code, and AC-65 carries the neither-declared control so it cannot pass on a build that warns about everything."
+    - version: "1.18.0"
+      date: "2026-08-22"
+      author: "specter-team"
+      type: major
+      description: "Delete the tier cascade, per docs/ssrb/SSRB-106.md sections 7.1 and 7.4. C-04 described a four-step inheritance from explicit tier to domain tier to system.tier to a default of 2, implemented by ResolveTier, which nothing called. Steps two through four were unreachable twice over: nothing invoked the cascade, and the canonical spec schema makes tier required with enum [1, 2, 3], so the tier-of-zero input those steps needed cannot survive parsing. AC-05, AC-06 and AC-07 asserted that inheritance and passed only by calling ResolveTier directly with a tier of zero, so three criteria were green over behavior no user could reach. They are removed. C-04 now states what is true, that the declared tier governs and nothing resolves. AC-04 is rewritten to assert it end to end through the CLI across all three surfaces that read a tier, rather than against a resolver function that no longer exists."
+    - version: "1.17.0"
+      date: "2026-08-22"
+      author: "specter-team"
+      type: major
+      description: "Retire the manifest registry section, per docs/ssrb/SSRB-105.md. Removes C-06, which mandated an auto-update no command performed, and AC-09 and AC-10, which tested a builder whose only wrapper was never invoked. That combination is why coverage reported C-06 covered while nothing implemented it, filed as bugs/SP-SP-054 at P1. C-01 no longer names registry among the sections it parses, and C-13's init --refresh preservation list drops it. The `registry` key stays accepted so an existing manifest still parses, and its value is discarded; the key leaves the schema at v1.0.0 alongside settings.strictness, system.tier and settings.tier_overrides. Major because a constraint and two criteria are removed, which is a contract narrowing even though no shipped behavior changes: the behavior C-06 described never existed."
+    - version: "1.16.0"
+      date: "2026-08-22"
+      author: "specter-team"
+      type: minor
+      description: "Close the two coverage gaps in C-34 recorded as bugs/SP-SP-053. AC-61 observes C-34(d) on `check --test`, which C-34(d) covers and no criterion read: AC-58 exercises `coverage` alone, so reverting the routing at cmd/specter/main.go survived the whole suite while changing a user's severity and exit code. AC-62 pins the flag-over-block precedence that docs/ssrb/SSRB-104.md section 7.8 answers for v0.15.0; before it, rewriting both call sites so the block outranks the flag also passed the suite, so the precedence was unguarded in both directions. Both criteria carry a precondition or a negative half, because an invariance claim is vacuous without a demonstration that the inputs can diverge, and a precedence claim is vacuous unless the opposite reading fails."
+    - version: "1.15.0"
+      date: "2026-08-22"
+      author: "specter-team"
+      type: minor
+      description: "Correct two false claims about settings.tier_overrides, per docs/ssrb/SSRB-106.md section 7.3. C-14 now states that the override is not applied, that the declared tier governs, and that the warning must not assert otherwise. The prior message ended `using override (N)` on every run while coverage reported the declared tier for the same spec, so the two surfaces contradicted each other. AC-19 claimed `ResolveTier returns 1 for payment-intent` with `resolved_tier: 1` as its expected output; ResolveTier has never consulted overrides, and the test behind that criterion asserts only that the map parsed. AC-19 now describes parsing, which is what it checks. New AC-60 pins the corrected message, including the negative half that it must not contain `using override`. Minor rather than patch because C-14 gains a testable clause."
+    - version: "1.14.1"
+      date: "2026-08-22"
+      author: "specter-team"
+      type: patch
+      description: "Correct a false rationale clause in AC-57. It stated that each `sync` run needs a fresh manifest because C-06 has `sync` write the registry back into `specter.yaml`. Measured: a passing `sync` leaves the file byte-identical, `UpdateRegistry` has zero callers in the tree, and `cmd/specter/main.go` contains no occurrence of `registry` in any casing. So C-06 mandates behavior no command performs, filed as `bugs/SP-SP-054` at P1 because AC-09 tests the builder at unit level and coverage therefore reports C-06 covered. The rewrite-per-run precaution is kept as defensive; only its stated reason changes. No assertion in AC-57 depends on the clause, so no test changes."
+    - version: "1.14.0"
+      date: "2026-08-22"
+      author: "specter-team"
+      type: minor
+      description: "v0.15 item 1D-a, the settings.annotation manifest surface. Add C-32 and AC-52 through AC-54 for the block itself: one sub-key, `permissive`, default false, with declaredness recorded separately from value so a manifest carrying no block behaves exactly as it did in v0.14. The bare `annotation:` form is called out because gopkg.in/yaml.v3 leaves the pointer nil there and allocates it for `annotation: {}`, so a pointer-only implementation would treat one declared form as absent. Add C-33 and AC-55 for the staged rejection of `settings.annotation.scope`: SSRB-104 is public and names `scope: all`, so the message states the staging rather than reading as a typo. Add C-34 and AC-56 through AC-59 for the conflict rule of SSRB-104 section 7.1. The trigger is declaredness of both keys, because C-24 rewrites an absent `strictness` to `threshold` at parse time and a value-reading detector cannot tell the two apart. What the annotation block resolves to is left to the coverage rule in item 1D-b; C-34 pins only that `strictness` stops mattering, and AC-58 falsifies that as invariance of the run under the ignored value."
+    - version: "1.13.0"
+      date: "2026-08-17"
+      author: "specter-team"
+      type: minor
+      description: "v0.15 phase 1B loop-back. AC-51 pinned nothing it claimed: its shared workspace declared two specs and no annotated tests, so applying warn-and-continue to `coverage` or `sync` still exited non-zero at 0 percent coverage, and the stderr string the criterion demanded came from the warning the change itself printed. Both mutants passed the whole suite (`bugs/SP-SP-041`). AC-51 now runs on its own workspace, the same rejected manifest with every criterion annotated, so a run that ignored the manifest exits 0 and a non-zero exit can have no other cause. AC-47 through AC-50 keep the two-spec workspace their own claims rest on. C-31 gains one sentence stating that for the four hard-fail commands the rejection must be the cause of the failure rather than coincident with it."
+    - version: "1.12.0"
+      date: "2026-08-16"
+      author: "specter-team"
+      type: minor
+      description: "v0.15 phase 1B6. Add C-31 and AC-47 through AC-51: a command that loads specter.yaml must surface a rejection instead of discarding it. `parse`, `resolve`, and `explain` dropped the ParseManifest error at the call site and ran against defaults with nothing on stderr, so a manifest with one bad key looked like a working run against different settings. The roadmap item named `parse` and `doctor`; the sweep found `resolve` and `explain` with the identical shape and they are covered here, while `doctor` is covered by spec-doctor C-18 because its defect is a health-check line that reports PASS. AC-51 pins the four commands that already fail on a rejected manifest, so warn-and-continue cannot be applied to them by mistake. Decided 2026-06-10, tracked into v0.14, dropped when that cycle was re-themed, rehomed here."
     - version: "1.11.0"
       date: "2026-05-16"
       author: "specter-team"

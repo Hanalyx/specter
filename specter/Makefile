@@ -1,4 +1,4 @@
-.PHONY: build test test-race lint fmt fmt-check vulncheck check clean dogfood prerelease install-hooks version-sync publish-vscode release-check
+.PHONY: build test test-race lint fmt fmt-check vulncheck check clean dogfood prerelease install-hooks version-sync publish-vscode release-check doc-style doc-style-changed doc-style-grades
 
 BINARY := bin/specter
 VERSION := $(shell cat VERSION 2>/dev/null || echo "dev")
@@ -12,7 +12,7 @@ test:
 test-verbose:
 	go test -v ./...
 
-# Race condition detector — slower but catches concurrency bugs
+# Race condition detector, slower but catches concurrency bugs
 test-race:
 	go test -race ./...
 
@@ -38,6 +38,32 @@ lint: fmt-check
 # Check known vulnerabilities in dependencies
 vulncheck:
 	govulncheck ./...
+
+# Documentation style gate (shared Hanalyx checker, v6).
+# Enforces the prohibited list from dev/DEVELOPER_DOCUMENTATION_STYLE_GUIDE: em dashes, emojis,
+# AI speak, British spellings, and reading level. Grade 10 is the writing target; the failing
+# gate is 11.0, derived from this repo's own corpus (see the comment in the script).
+#
+# doc-style          the whole tree. 537 em-dash findings of existing debt, so it fails today.
+# doc-style-changed  only files changed against main. This is the ratchet, and what CI should run:
+#                    nobody has to clean the whole tree, but nobody can edit a file and leave it
+#                    below standard.
+# doc-style-grades   the reading-level distribution, for re-deriving the gate.
+doc-style:
+	python3 scripts/check-doc-style.py --selftest
+	python3 scripts/check-doc-style.py --all
+
+# MUST run from the repository root. `git diff --name-only` returns paths relative to the repo
+# root (`specter/README.md`), and the checker opens them relative to its own working directory.
+# Run it from `specter/` and every path resolves to nothing, whereupon it reports the files clean
+# instead of failing. Measured 2026-08-09: identical input gave "2 file(s) clean" from `specter/`
+# and 66 findings from the root. Filed as bugs/SP-HP-026.
+doc-style-changed:
+	python3 scripts/check-doc-style.py --selftest
+	cd .. && python3 specter/scripts/check-doc-style.py --changed
+
+doc-style-grades:
+	python3 scripts/check-doc-style.py --grades
 
 check: lint test build
 
@@ -80,7 +106,7 @@ build-all:
 # This is the lightweight annotation-counting gate: coverage and sync run
 # with --strictness annotation so the target stays independent of
 # .specter-results.json (the manifest default `threshold` routes both
-# commands through the strict path, which requires the results file —
+# commands through the strict path, which requires the results file,
 # spec-coverage C-31 / spec-sync C-06). The strict-pipeline variant is
 # `make dogfood-strict` below.
 dogfood: build
@@ -90,7 +116,7 @@ dogfood: build
 	./$(BINARY) coverage --strictness annotation
 	./$(BINARY) sync --strictness annotation
 
-# Mechanical eval gate — Specter dogfoods its own --strict on itself.
+# Mechanical eval gate. Specter dogfoods its own --strict on itself.
 # Runs go test -json and jest (with jest-junit reporter), feeds both
 # streams into specter ingest, then runs specter coverage --strict.
 # Every annotated AC must have a passing test result or the gate fails.
@@ -108,7 +134,7 @@ dogfood-strict: build
 	@echo "--- specter coverage --strict ---"
 	./$(BINARY) coverage --strict
 
-# Full pre-release gate — run this before every release
+# Full pre-release gate. Run this before every release
 prerelease: check test-race vulncheck dogfood
 	@echo ""
 	@echo "--- Cross-compiling for all platforms ---"
@@ -120,7 +146,7 @@ prerelease: check test-race vulncheck dogfood
 	@echo ""
 	@echo "--- All pre-release checks passed ---"
 
-# Release gate — packages the VSIX and prints the mandatory human-verification
+# Release gate. Packages the VSIX and prints the mandatory human-verification
 # checklist. Does NOT run vsce publish under any circumstance.
 # See CLAUDE.md > "Release discipline" for why every step matters.
 release-check: prerelease
@@ -140,7 +166,7 @@ release-check: prerelease
 	echo "       code --install-extension $$VSIX --force"; \
 	echo ""; \
 	echo "  2. Reload VS Code and open a KNOWN-WORKING workspace"; \
-	echo "     (the specter/ repo itself — 14 dogfood specs)."; \
+	echo "     (the specter/ repo itself, 15 dogfood specs)."; \
 	echo "     Verify: Coverage sidebar populates with spec entries."; \
 	echo ""; \
 	echo "  3. Reload VS Code and open a KNOWN-FAILING workspace"; \
@@ -159,6 +185,6 @@ release-check: prerelease
 	echo "       npx vsce publish --packagePath $$VSIX"; \
 	echo "     For non-trivial changes, prefer --pre-release first."; \
 	echo ""; \
-	echo "Skipping a step is not a shortcut — it's a commitment to"; \
+	echo "Skipping a step is not a shortcut, it's a commitment to"; \
 	echo "ship a broken version. See RELEASING.md for the full gate."; \
 	echo "============================================================"

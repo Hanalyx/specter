@@ -18,6 +18,16 @@ func (a *GoAdapter) IsTestFile(path string) bool {
 	return strings.HasSuffix(path, "_test.go")
 }
 
+// SourceKeyForTest maps foo_test.go to foo.go. Go requires a test to sit in
+// the same directory as its package, so the mapping is exact rather than a
+// guess. C-17.
+func (a *GoAdapter) SourceKeyForTest(path string) string {
+	if !strings.HasSuffix(path, "_test.go") {
+		return ""
+	}
+	return strings.TrimSuffix(path, "_test.go") + ".go"
+}
+
 // --- Route Extraction ---
 
 var (

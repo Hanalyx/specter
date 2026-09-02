@@ -31,6 +31,36 @@ func (a *PythonAdapter) IsTestFile(path string) bool {
 	return false
 }
 
+// SourceKeyForTest maps test_auth.py and auth_test.py to auth.py, and a file
+// under tests/ to the same name in the parent directory. C-17.
+//
+// Returns "" for a file that is only a test because it sits under tests/ and
+// carries no test naming, such as conftest.py or a shared helper. Those have
+// no source to name.
+func (a *PythonAdapter) SourceKeyForTest(path string) string {
+	dir, base := "", path
+	if idx := strings.LastIndex(path, "/"); idx >= 0 {
+		dir, base = path[:idx+1], path[idx+1:]
+	}
+
+	switch {
+	case strings.HasPrefix(base, "test_") && strings.HasSuffix(base, ".py"):
+		base = strings.TrimPrefix(base, "test_")
+	case strings.HasSuffix(base, "_test.py"):
+		base = strings.TrimSuffix(base, "_test.py") + ".py"
+	default:
+		// Under tests/ but not named as a test: conftest.py and friends.
+		return ""
+	}
+
+	if strings.HasSuffix(dir, "/tests/") {
+		dir = strings.TrimSuffix(dir, "tests/")
+	} else if dir == "tests/" {
+		dir = ""
+	}
+	return dir + base
+}
+
 // --- Route Extraction ---
 
 var (

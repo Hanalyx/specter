@@ -53,6 +53,30 @@ const watchDebounce = 150 * time.Millisecond
 
 const maxDescLen = 50
 
+// The coverage-contract exit codes, registered in docs/EXIT_CODES.md section 1.
+// Named rather than computed at the call site: `spec-sync` AC-17 refuses an
+// os.Exit argument it cannot resolve, so a computed code makes the set of codes
+// the binary can emit unknowable to the registry scan and C-12 unenforceable.
+// The refusal is the point. It fired on the first draft of this change.
+const (
+	exitCoverageNoTest       = 2
+	exitCoverageApprovalGate = 3
+)
+
+// exitDiffBreaking is the code `specter diff --exit-code` returns on a breaking
+// change. It sits in the orchestration band, 10 to 19, per docs/EXIT_CODES.md,
+// and is the first code allocated from it. spec-diff C-14.
+const exitDiffBreaking = 10
+
+// exitStreamValidation is the code a streams-block refusal returns. It is the
+// first allocation from the evidence-stream band, 20 to 29, per
+// docs/EXIT_CODES.md. spec-coverage C-44.
+//
+// It never preempts a gate that shipped before it. The shared verdict orders
+// it last, so a workspace that also fails an older gate exits with that gate's
+// code and the stream violations are still reported.
+const exitStreamValidation = 20
+
 // noSpecsMessage is used by parse/resolve/sync when discovery turns up
 // nothing. Explains where specter looked and what to try next — users often
 // keep specs in a non-default directory and need the hint.
@@ -311,13 +335,10 @@ func discoverSpecs(patterns ...string) []string {
 			return nil
 		}
 		if info.IsDir() {
-			// spec-manifest C-29: bare-name patterns match by directory
-			// name; glob patterns match against the relative path.
-			relPath := strings.TrimPrefix(path, "./")
-			for _, pat := range excludePatterns {
-				if matchExcludePattern(pat, relPath, info.Name()) {
-					return filepath.SkipDir
-				}
+			// spec-manifest C-29: the one shared exclusion predicate, which
+			// discoverTestFiles calls too.
+			if manifestExcludesDir(excludePatterns, path, info.Name()) {
+				return filepath.SkipDir
 			}
 			// Skip by path prefix for entries like "tests/fixtures", "testdata"
 			if strings.HasPrefix(path, filepath.Join("tests", "fixtures")) ||
@@ -334,9 +355,19 @@ func discoverSpecs(patterns ...string) []string {
 }
 
 func discoverTestFiles(glob string) []string {
+	// spec-manifest C-29 governs the default walk only. settings.tests_glob
+	// overrides discovery entirely, so exclude patterns are not applied to it:
+	// narrowing an explicit override with a separate setting would surprise
+	// anyone who set the glob precisely to say what they meant.
 	if glob != "" {
 		return globMatchWalk(glob)
 	}
+
+	// Load the manifest for settings.exclude. discoverSpecs honored it and this
+	// walk did not, which let a workspace exclude a vendored copy from spec
+	// discovery and still have its test files counted (bugs/SP-SP-016).
+	m, _, _ := loadManifest()
+	excludePatterns := m.ExcludePatterns()
 
 	// Default: walk the repo for all recognized test file suffixes.
 	var files []string
@@ -344,8 +375,24 @@ func discoverTestFiles(glob string) []string {
 		if err != nil {
 			return nil
 		}
-		if info.IsDir() && (info.Name() == "node_modules" || info.Name() == "dist" || info.Name() == ".git") {
-			return filepath.SkipDir
+		if info.IsDir() {
+			// This walk's own skips, deliberately not in the shared predicate.
+			//
+			// They add less than they look like they do: all three are already
+			// in the default list ExcludePatterns() returns, so with no
+			// settings.exclude declared the predicate below skips them anyway.
+			// They matter only under a custom settings.exclude, because a
+			// non-empty list REPLACES the defaults, and then spec discovery
+			// stops skipping node_modules while this walk keeps doing so.
+			// Moving them into the shared predicate would change spec
+			// discovery under exactly that configuration.
+			if info.Name() == "node_modules" || info.Name() == "dist" || info.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			// spec-manifest C-29, the same predicate discoverSpecs calls.
+			if manifestExcludesDir(excludePatterns, path, info.Name()) {
+				return filepath.SkipDir
+			}
 		}
 		for _, ext := range testFileExts {
 			if strings.HasSuffix(path, ext) {
@@ -417,6 +464,10 @@ func parseCmd() *cobra.Command {
 		Use:   "parse [files...]",
 		Short: "Parse and validate .spec.yaml files against the canonical schema",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// C-31: surface a rejected manifest before the run reports
+			// anything computed against defaults.
+			warnManifestRejected()
+
 			files := discoverSpecs(args...)
 			if len(files) == 0 {
 				fmt.Print(noSpecsMessage())
@@ -433,6 +484,15 @@ func parseCmd() *cobra.Command {
 				}
 
 				result := parser.ParseSpec(string(data))
+
+				// C-11: the verdict is taken before the rendering branch, so
+				// the two modes cannot disagree about it. It used to be set
+				// inside the text branch only, and the JSON branch continued
+				// past it (`bugs/SP-SP-022`).
+				if !result.OK {
+					hasErrors = true
+				}
+
 				if jsonOutput {
 					enc := json.NewEncoder(os.Stdout)
 					enc.SetIndent("", "  ")
@@ -443,7 +503,6 @@ func parseCmd() *cobra.Command {
 				if result.OK {
 					fmt.Printf("PASS %s — %s@%s\n", file, result.Value.ID, result.Value.Version)
 				} else {
-					hasErrors = true
 					fmt.Fprintf(os.Stderr, "FAIL %s\n", file)
 					for _, e := range result.Errors {
 						fmt.Fprintf(os.Stderr, "  error [%s] %s: %s\n", e.Type, e.Path, e.Message)
@@ -467,6 +526,10 @@ func resolveCmd() *cobra.Command {
 		Use:   "resolve",
 		Short: "Build and validate the spec dependency graph",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// C-31: surface a rejected manifest before the graph is built
+			// against defaults.
+			warnManifestRejected()
+
 			files := discoverSpecs()
 			if len(files) == 0 {
 				fmt.Print(noSpecsMessage())
@@ -603,6 +666,12 @@ Example:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			specID := args[0]
 
+			// C-31: this sub-subcommand discovers specs the same way its
+			// parent does, so it discards a rejected manifest the same way
+			// and needs the same warning. The notice goes to stderr, so
+			// --json output stays clean.
+			warnManifestRejected()
+
 			files := discoverSpecs()
 			if len(files) == 0 {
 				fmt.Print(noSpecsMessage())
@@ -642,11 +711,28 @@ Example:
 	return cmd
 }
 
+// checkExitVerdict maps a finished check run to its process exit. Per the
+// documented check contract, a run that reports one or more error-severity
+// diagnostics fails; warning and info do not. The count it reads is already
+// routed by tier (spec-check C-02) and already upgraded by `--strict` (C-07),
+// so the rule lives in one place and this function never restates it.
+//
+// spec-check C-14: `check` and `check --json` both end on this function, which
+// is what makes their exit codes equal for the same run. A second copy of the
+// rule in either branch is the defect C-14 exists to close, so keep it at one.
+func checkExitVerdict(result *checker.CheckResult) error {
+	if result.Summary.Errors > 0 {
+		return errSilent
+	}
+	return nil
+}
+
 func checkCmd() *cobra.Command {
 	var jsonOutput bool
 	var tierOverride int
 	var strict bool
 	var testAnnotations bool
+	var concrete bool
 	cmd := &cobra.Command{
 		Use:   "check",
 		Short: "Run type-checking rules across the spec graph",
@@ -654,7 +740,13 @@ func checkCmd() *cobra.Command {
 			files := discoverSpecs()
 			inputs, _, hasErrors := parseAllSpecs(files)
 			if hasErrors {
-				return errSilent
+				// AC-46: parseAllSpecs already named every violation on
+				// stderr. The document says the run stopped, and why.
+				return renderCheckResult(earlyCheckResult(strict, checker.CheckDiagnostic{
+					Kind:     "parse_error",
+					Severity: "error",
+					Message:  "one or more specs failed to parse; the schema violations are on stderr",
+				}), false, 0, jsonOutput)
 			}
 
 			graph := resolver.ResolveSpecs(inputs)
@@ -669,26 +761,80 @@ func checkCmd() *cobra.Command {
 			}
 			if resolverErrors > 0 {
 				fmt.Fprintf(os.Stderr, "\n%d resolver error(s) — fix dependency issues before running check\n", resolverErrors)
-				return errSilent
+				// AC-46: the resolver's own diagnostics carry the document
+				// rather than a synthesized summary of them. A consumer that
+				// cannot resolve a reference wants the reference named.
+				var rd []checker.CheckDiagnostic
+				for _, d := range graph.Diagnostics {
+					if d.Severity != "error" {
+						continue
+					}
+					rd = append(rd, checker.CheckDiagnostic{
+						Kind:     d.Kind,
+						Severity: d.Severity,
+						Message:  d.Message,
+					})
+				}
+				return renderCheckResult(earlyCheckResult(strict, rd...), false, 0, jsonOutput)
 			}
 
 			m, _, mErr := loadManifest()
 			if mErr != nil {
+				// The stderr line stays: text mode's output is unchanged by
+				// AC-46, which is about what stdout carries.
 				fmt.Fprintln(os.Stderr, "error:", mErr)
-				return errSilent
+				return renderCheckResult(earlyCheckResult(strict, checker.CheckDiagnostic{
+					Kind:     "manifest_error",
+					Severity: "error",
+					Message:  mErr.Error(),
+				}), false, 0, jsonOutput)
 			}
-			opts := &checker.CheckOptions{
-				Strict:      strict || m.Settings.Strict,
-				WarnOnDraft: m.Settings.WarnOnDraft,
-			}
-			if tierOverride > 0 {
-				opts.TierOverride = tierOverride
-			}
+			warnAnnotationStrictnessConflict(m)
 
-			result := checker.CheckSpecs(graph, opts)
-
-			// C-09: opt-in test-annotation cross-reference.
 			_, specs, _ := parseAllSpecs(files)
+
+			// Tier conflict warnings (spec-manifest C-14, qualified because
+			// spec-check C-14 elsewhere is a different constraint) and the
+			// domain-tier assertion (C-35).
+			//
+			// bugs/SP-SP-002: these were once computed after the checker
+			// returned, printed by the text path, and counted separately at
+			// the summary line, but never appended to result.Diagnostics, so
+			// no JSON consumer saw them and the two modes disagreed on the
+			// warning count. Appending them fixed that half.
+			//
+			// They are built here, before the check runs, because appending
+			// them afterwards put them past the C-07 strict upgrade: both kept
+			// severity warning under --strict and `check --strict` exited 0 on
+			// a workspace spec-manifest C-35 says it should fail. Handing them
+			// to CheckSpecs makes the upgrade own the complete set. Promoting
+			// them here instead would be a private copy of the exemption list,
+			// which is the shape C-07 now forbids.
+			var extra []checker.CheckDiagnostic
+			for _, tc := range manifest.CheckTierConflicts(specs, m) {
+				extra = append(extra, checker.CheckDiagnostic{
+					Kind:     "tier_conflict",
+					Severity: "warning",
+					Message:  tc.Message,
+					SpecID:   tc.SpecID,
+				})
+			}
+			for _, dc := range manifest.CheckDomainTierConflicts(specs, m) {
+				extra = append(extra, checker.CheckDiagnostic{
+					Kind:     "domain_tier_conflict",
+					Severity: "warning",
+					Message:  dc.Message,
+					SpecID:   dc.SpecID,
+				})
+			}
+
+			// C-09 and C-10: the opt-in test-annotation scans. They are
+			// computed here, before the check runs, for the reason the tier
+			// diagnostics above are: appending them to the result afterwards
+			// put them past the C-07 upgrade, so a threshold-severity
+			// unreachable_annotation stayed a warning and `check --test
+			// --strict` exited 0. They join `extra` and the checker owns both
+			// the upgrade and the summary.
 			if testAnnotations {
 				testFiles := discoverTestFiles("")
 				contents := make(map[string]string, len(testFiles))
@@ -710,18 +856,7 @@ func checkCmd() *cobra.Command {
 					}
 					contents[path] = string(data)
 				}
-				taDiags := checker.CheckTestAnnotations(contents, specs)
-				result.Diagnostics = append(result.Diagnostics, taDiags...)
-				for _, d := range taDiags {
-					switch d.Severity {
-					case "error":
-						result.Summary.Errors++
-					case "warning":
-						result.Summary.Warnings++
-					case "info":
-						result.Summary.Info++
-					}
-				}
+				extra = append(extra, checker.CheckTestAnnotations(contents, specs)...)
 
 				// spec-check C-10: under `check --test`, also run the
 				// unreachable_annotation scan. A source-comment @ac
@@ -739,70 +874,295 @@ func checkCmd() *cobra.Command {
 				// always a warning regardless of strictness, so the
 				// scan is safe to run even in annotation mode — the
 				// helper handles suppression internally.
-				uaDiags := checker.CheckUnreachableAnnotations(contents, m.Settings.Strictness)
-				result.Diagnostics = append(result.Diagnostics, uaDiags...)
-				for _, d := range uaDiags {
-					switch d.Severity {
-					case "error":
-						result.Summary.Errors++
-					case "warning":
-						result.Summary.Warnings++
-					case "info":
-						result.Summary.Info++
-					}
-				}
+				// spec-manifest C-34(d): a declared settings.annotation block
+				// governs the strictness routing, so the manifest's own
+				// strictness value stops changing this severity.
+				extra = append(extra, checker.CheckUnreachableAnnotations(contents, m.GoverningStrictness())...)
 			}
 
-			// Tier conflict warnings (C-14)
-			tierConflicts := manifest.CheckTierConflicts(specs, m)
-
-			if jsonOutput {
-				enc := json.NewEncoder(os.Stdout)
-				enc.SetIndent("", "  ")
-				_ = enc.Encode(result)
-				return nil
+			// spec-manifest C-36: the deprecated tier keys warn once per key.
+			// They change no exit code, so they are written to stderr and are
+			// not diagnostics.
+			for _, msg := range manifest.DeprecatedTierKeys(m) {
+				fmt.Fprintf(os.Stderr, "warn: %s\n", msg)
 			}
 
-			for _, tc := range tierConflicts {
-				fmt.Printf("warn [tier_conflict] %s\n", tc.Message)
+			opts := &checker.CheckOptions{
+				ExtraDiagnostics: extra,
+				Strict:           strict || m.Settings.Strict,
+				WarnOnDraft:      m.Settings.WarnOnDraft,
+				// C-17: opt-in, and deliberately not derived from --strict or
+				// from a manifest key. Both fields the rule reads are optional
+				// in the schema, so a criterion without them is valid.
+				Concrete: concrete,
+			}
+			if tierOverride > 0 {
+				opts.TierOverride = tierOverride
 			}
 
-			if len(result.Diagnostics) == 0 && len(tierConflicts) == 0 {
-				fmt.Printf("All %d specs passed structural checks.\n", len(graph.Nodes))
-				return nil
-			}
-
-			for _, d := range result.Diagnostics {
-				prefix := "error"
-				if d.Severity == "warning" {
-					prefix = "warn"
-				} else if d.Severity == "info" {
-					prefix = "info"
-				}
-				cid := ""
-				if d.ConstraintID != "" {
-					cid = " " + d.ConstraintID
-				}
-				ctype := ""
-				if d.ConstraintType != "" {
-					ctype = " (" + d.ConstraintType + ")"
-				}
-				fmt.Printf("%s [%s] %s%s%s: %s\n", prefix, d.Kind, d.SpecID, cid, ctype, d.Message)
-			}
-
-			fmt.Printf("\n%d error(s), %d warning(s), %d info\n", result.Summary.Errors, result.Summary.Warnings+len(tierConflicts), result.Summary.Info)
-
-			if result.Summary.Errors > 0 {
-				return errSilent
-			}
-			return nil
+			// AC-46: the ordinary path ends at the same renderer the three
+			// early returns use. One render site, so a state added later
+			// cannot quietly acquire an empty stdout.
+			return renderCheckResult(checker.CheckSpecs(graph, opts), true, len(graph.Nodes), jsonOutput)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
 	cmd.Flags().IntVar(&tierOverride, "tier", 0, "Override tier enforcement level")
-	cmd.Flags().BoolVar(&strict, "strict", false, "Treat warnings as errors (also set via settings.strict in specter.yaml)")
+	cmd.Flags().BoolVar(&strict, "strict", false, "Promote warning and info diagnostics to errors (also set via settings.strict in specter.yaml). Does not run the test-annotation scan; use --test for that")
+	cmd.Flags().BoolVar(&concrete, "concrete", false,
+		"Report acceptance criteria carrying neither inputs nor expected_output (error at Tier 1, warning at Tier 2, info at Tier 3)")
 	cmd.Flags().BoolVarP(&testAnnotations, "test", "t", false, "Cross-reference test-file @spec/@ac annotations against parsed specs")
 	return cmd
+}
+
+// renderCheckResult is the single owner of the check document and the check
+// verdict, spec-check C-14 and AC-46.
+//
+// A named function rather than a closure inside checkCmd, so the ownership is
+// something a guard can name. Every exit from the command routes here: the
+// three early returns that end a run before the structural rules execute, and
+// the ordinary path. An encoder per early return would produce identical output
+// for every input while leaving the next early return to be forgotten, which is
+// how bugs/SP-SP-032 began.
+//
+// The document is written in full, then the exit code is taken from
+// checkExitVerdict, the same function the text path ends on. The verdict is a
+// function of the diagnostics the run produced, not of how they are rendered.
+//
+// reached says whether the run got as far as the checker. Text mode prints
+// nothing to stdout when it did not, because stderr already carries the
+// human-readable reason and a second account of it would change output that
+// existing callers parse. --json writes the document either way, which is the
+// point: SP-SP-032 is stdout being empty in exactly those states.
+func renderCheckResult(result *checker.CheckResult, reached bool, nodeCount int, jsonOutput bool) error {
+	if jsonOutput {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(result)
+		return checkExitVerdict(result)
+	}
+	if !reached {
+		return checkExitVerdict(result)
+	}
+	if len(result.Diagnostics) == 0 {
+		fmt.Printf("All %d specs passed structural checks.\n", nodeCount)
+		return nil
+	}
+	for _, d := range result.Diagnostics {
+		prefix := "error"
+		if d.Severity == "warning" {
+			prefix = "warn"
+		} else if d.Severity == "info" {
+			prefix = "info"
+		}
+		cid := ""
+		if d.ConstraintID != "" {
+			cid = " " + d.ConstraintID
+		}
+		ctype := ""
+		if d.ConstraintType != "" {
+			ctype = " (" + d.ConstraintType + ")"
+		}
+		fmt.Printf("%s [%s] %s%s%s: %s\n", prefix, d.Kind, d.SpecID, cid, ctype, d.Message)
+	}
+	fmt.Printf("\n%d error(s), %d warning(s), %d info\n", result.Summary.Errors, result.Summary.Warnings, result.Summary.Info)
+	return checkExitVerdict(result)
+}
+
+// earlyCheckResult builds the document for a run that stopped before the
+// structural rules ran, spec-check C-14 and AC-46.
+//
+// Routed through CheckSpecs rather than assembling a CheckResult here, for two
+// reasons. The summary is computed by the one function allowed to compute it,
+// which AC-45 asserts is called exactly once. And `strict` still governs, so a
+// caller cannot get a different verdict for the same failure by adding a flag.
+//
+// An empty graph is deliberate: there are no specs to check. Every rule in
+// CheckSpecs iterates the graph's nodes, so all of them produce nothing, and
+// the diagnostics handed in are the whole document.
+func earlyCheckResult(strict bool, diags ...checker.CheckDiagnostic) *checker.CheckResult {
+	return checker.CheckSpecs(&resolver.SpecGraph{}, &checker.CheckOptions{
+		Strict:           strict,
+		ExtraDiagnostics: diags,
+	})
+}
+
+// coverageGateInputs carries what the verdict needs from a run that measured.
+// Nil means the run refused, so there is nothing to compute a verdict from.
+type coverageGateInputs struct {
+	specs          []schema.SpecAST
+	results        *coverage.ResultsFile
+	m              *manifest.Manifest
+	strictness     string
+	hasParseErrors bool
+}
+
+// renderCoverageResult is the single owner of the coverage document and the
+// coverage verdict, spec-coverage C-10 and AC-74.
+//
+// Every return from coverageCmd routes here: the seven refusals and the
+// ordinary path. An encoder per early return satisfies every observable
+// assertion while leaving the next early return to be forgotten, which is how
+// bugs/SP-SP-032 began.
+//
+// The verdict comes from coverageExitGates, called from exactly one site, so
+// this stays a renderer WITH a verdict rather than a JSON wrapper around
+// several. Two call sites would be two decisions for one workspace, which is
+// how the text and JSON codes diverged in bugs/SP-SP-066.
+//
+// renderText prints the human table. It runs only when the run measured and
+// the format is text, which is what keeps text output byte-identical: a
+// refusal has always printed to stderr alone.
+// The document writer is a parameter so an encoder failure is reachable from a
+// test. Writing straight to os.Stdout made the error branch unguarded: a
+// mutation that discarded the error survived the whole suite, because nothing
+// could make Encode fail through the CLI.
+func renderCoverageResult(w io.Writer, jsonOutput bool, report *coverage.CoverageReport,
+	gates *coverageGateInputs, renderText func()) error {
+
+	if jsonOutput {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(report); err != nil {
+			// Reported, not discarded. A dropped encoder error leaves a
+			// caller with a truncated document and a verdict computed as
+			// though it had been written whole, which is a worse lie than
+			// the empty stdout this rule exists to remove.
+			fmt.Fprintf(os.Stderr, "error: the coverage document could not be written: %v\n", err)
+			return errSilent
+		}
+	}
+
+	// A refusal. Nothing was measured, so there is no verdict to compute and
+	// no table to print.
+	if gates == nil {
+		return errSilent
+	}
+	if gates.hasParseErrors {
+		return errSilent
+	}
+	if !jsonOutput && renderText != nil {
+		renderText()
+	}
+	return coverageExitGates(report, gates.specs, gates.results, gates.m, gates.strictness)
+}
+
+// refuseCoverage renders one of the states that stop a run before it measures.
+//
+// The message is built once by the caller and used twice: printed to stderr as
+// the human line it has always been, and carried in stop_reason.message. Two
+// constructions of one sentence drift, and the drift is invisible because each
+// surface is read by a different audience.
+//
+// The placeholders are set here rather than by each caller: entries is an
+// empty list and never nil, because a nil slice marshals as `null` and C-10
+// requires the key to carry an empty array.
+func refuseCoverage(jsonOutput bool, kind coverage.StopKind, msg string, extraStderr ...string) error {
+	fmt.Fprintf(os.Stderr, "error: %s\n", msg)
+	for _, line := range extraStderr {
+		fmt.Fprintln(os.Stderr, line)
+	}
+	report := &coverage.CoverageReport{
+		Entries:    []coverage.SpecCoverageEntry{},
+		StopReason: &coverage.StopReason{Kind: kind, Message: msg},
+	}
+	return renderCoverageResult(os.Stdout, jsonOutput, report, nil, nil)
+}
+
+// coverageExitGates runs the coverage exit gates in the order C-38(b)
+// requires, rule 1 before the tier arithmetic, and returns the error the
+// command should return. Codes other than 1 exit the process directly, which
+// is how they stay distinct for CI.
+//
+// There is one copy on purpose. The --json branch and the text path used to
+// carry a gate sequence each, and the JSON one was missing the annotation
+// rule: a workspace whose tier threshold was met exited 2 in text mode and 0
+// under --json, so a CI consumer reading JSON got a green build on a workspace
+// `coverage` fails (bugs/SP-SP-066). The JSON copy even carried a comment
+// saying it mirrored the text checks, which was true when it was written.
+func coverageExitGates(report *coverage.CoverageReport, specs []schema.SpecAST,
+	results *coverage.ResultsFile, m *manifest.Manifest, effectiveStrictness string) error {
+
+	annotationDeclared := m != nil && m.Settings.Annotation != nil
+	zeroTolerance := effectiveStrictness == "zero-tolerance"
+
+	in := coverage.GateInputs{
+		AnnotationDeclared: annotationDeclared,
+		ZeroTolerance:      zeroTolerance,
+		ThresholdFailing:   report.Summary.Failing,
+		// C-44: taken off the report the builder produced, never recomputed
+		// here. `sync` reads the same field, so the two surfaces cannot reach
+		// different answers about one workspace.
+		StreamValidationErrors: report.ResultsValidationErrors,
+	}
+	if annotationDeclared {
+		in.AnnotationPermissive = m.Settings.Annotation.Permissive
+		in.AnnotationRuleViolations = coverage.AnnotationRuleVerdict(report)
+	}
+	if zeroTolerance {
+		in.ZeroToleranceNonPassed = coverage.CountNonPassed(results)
+	}
+	// C-40: the approval gate fires under both models, so it is counted under
+	// both. It used to be counted inside the zero-tolerance branch alone, which
+	// is why it went silent when a workspace declared settings.annotation
+	// (bugs/SP-SP-071).
+	if annotationDeclared || zeroTolerance {
+		in.ApprovalGateViolations = coverage.CountApprovalGateViolations(specs)
+	}
+
+	// C-40(e): every violation is named before the process leaves, so one run
+	// tells the operator everything that failed. A violation with no Stderr
+	// decides the code without printing, which is the tier threshold.
+	violations, code := coverage.GateVerdict(in)
+	printGateViolations(violations)
+	return exitOnGateCode(code)
+}
+
+// exitOnGateCode routes a gate verdict's code to the process exit.
+//
+// One enumeration, shared. `coverage` and `sync` each carried their own switch
+// over the same codes, and a code the shared verdict can return but a switch
+// does not name falls through: to 0 on one command and to a bare 1 on the
+// other. That is bugs/done/SP-SP-073's shape one level up. The verdict was
+// shared and the propagation was not.
+//
+// The codes stay named rather than computed. `spec-sync` AC-17 refuses an
+// os.Exit argument it cannot resolve, because a computed one makes the set of
+// codes the binary can emit unknowable to the registry scan and C-12
+// unenforceable. So this is one list of named constants, not `os.Exit(code)`.
+//
+// An unrouted non-zero code is reported rather than swallowed. Silence there
+// would claim a workspace passed a gate that failed it.
+func exitOnGateCode(code int) error {
+	switch code {
+	case 0:
+		return nil
+	case 1:
+		// The command's own failure exit, returned rather than raised so cobra
+		// reports it the way it reports every other one.
+		return errSilent
+	case exitCoverageNoTest:
+		os.Exit(exitCoverageNoTest)
+	case exitCoverageApprovalGate:
+		os.Exit(exitCoverageApprovalGate)
+	case exitStreamValidation:
+		os.Exit(exitStreamValidation)
+	}
+	fmt.Fprintf(os.Stderr,
+		"internal: the coverage gates returned exit code %d, which no command routes. Reporting failure rather than success. Please file this against docs/EXIT_CODES.md section 6.\n", code)
+	return errSilent
+}
+
+// printGateViolations writes each gate violation that has a line to write.
+// One helper so the two commands cannot drift on whether a silent violation
+// prints a blank line.
+func printGateViolations(violations []coverage.GateViolation) {
+	for _, v := range violations {
+		if v.Stderr == "" {
+			continue
+		}
+		fmt.Fprintln(os.Stderr, v.Stderr)
+	}
 }
 
 func coverageCmd() *cobra.Command {
@@ -820,8 +1180,8 @@ func coverageCmd() *cobra.Command {
 			// AC-25: --scope without --strict is an operator mistake.
 			// Fail-fast rather than silently degrading to annotation counting.
 			if scope != "" && !strict {
-				fmt.Fprintln(os.Stderr, "error: --scope requires --strict")
-				return errSilent
+				return refuseCoverage(jsonOutput, coverage.StopInvalidFlag,
+					"--scope requires --strict")
 			}
 
 			files := discoverSpecs()
@@ -837,9 +1197,10 @@ func coverageCmd() *cobra.Command {
 
 			m, _, mErr := loadManifest()
 			if mErr != nil {
-				fmt.Fprintln(os.Stderr, "error:", mErr)
-				return errSilent
+				return refuseCoverage(jsonOutput, coverage.StopManifestError, mErr.Error())
 			}
+
+			warnAnnotationStrictnessConflict(m)
 
 			// C-25: when --tests is unset, fall back to settings.tests_glob.
 			// Manifest may carry multiple globs as a list; iterate and union
@@ -889,13 +1250,19 @@ func coverageCmd() *cobra.Command {
 			if strictnessFlag != "" {
 				validStrictness := map[string]bool{"annotation": true, "threshold": true, "zero-tolerance": true}
 				if !validStrictness[strictnessFlag] {
-					fmt.Fprintf(os.Stderr, "error: --strictness %q is not a valid value (allowed: annotation, threshold, zero-tolerance)\n", strictnessFlag)
-					return errSilent
+					return refuseCoverage(jsonOutput, coverage.StopInvalidFlag,
+						fmt.Sprintf("--strictness %q is not a valid value (allowed: annotation, threshold, zero-tolerance)", strictnessFlag))
 				}
 			}
 
 			// Resolve effective strictness: CLI flag overrides manifest setting.
-			effectiveStrictness := m.Settings.Strictness
+			//
+			// spec-manifest C-34(d): with a settings.annotation block declared,
+			// GoverningStrictness returns the interim level rather than the
+			// declared settings.strictness, so the run does not vary with a
+			// value the block has superseded. The flag still wins over both,
+			// which is its behavior until v1.0.0 per SSRB-104 section 1.
+			effectiveStrictness := m.GoverningStrictness()
 			if strictnessFlag != "" {
 				effectiveStrictness = strictnessFlag
 			}
@@ -907,9 +1274,9 @@ func coverageCmd() *cobra.Command {
 			// (annotation mode is for new adopters; strict requires runner-visible
 			// annotations). Fail-fast with a clear message.
 			if strict && effectiveStrictness == "annotation" {
-				fmt.Fprintln(os.Stderr, "error: --strict requires settings.strictness >= threshold; current strictness is annotation")
-				fmt.Fprintln(os.Stderr, "       set settings.strictness to 'threshold' or 'zero-tolerance' in specter.yaml, or pass --strictness <level>")
-				return errSilent
+				return refuseCoverage(jsonOutput, coverage.StopInvalidFlag,
+					"--strict requires settings.strictness >= threshold; current strictness is annotation",
+					"       set settings.strictness to 'threshold' or 'zero-tolerance' in specter.yaml, or pass --strictness <level>")
 			}
 
 			// C-31: the strict path keys on the EFFECTIVE strictness, not
@@ -929,8 +1296,8 @@ func coverageCmd() *cobra.Command {
 				fmt.Fprintln(os.Stderr, "warn: no test files contained @spec/@ac annotations — coverage will report 0% for every spec")
 				fmt.Fprintln(os.Stderr, "      set settings.tests_glob in specter.yaml or pass --tests <glob>")
 				if effectiveStrictness == "zero-tolerance" {
-					fmt.Fprintln(os.Stderr, "error: zero-tolerance strictness requires at least one annotated test file")
-					return errSilent
+					return refuseCoverage(jsonOutput, coverage.StopUnmetPrecondition,
+						"zero-tolerance strictness requires at least one annotated test file")
 				}
 			}
 
@@ -945,9 +1312,9 @@ func coverageCmd() *cobra.Command {
 						validNames = append(validNames, name)
 					}
 					sort.Strings(validNames)
-					fmt.Fprintf(os.Stderr, "error: unknown domain %q. valid domains: %s\n",
-						scope, strings.Join(validNames, ", "))
-					return errSilent
+					return refuseCoverage(jsonOutput, coverage.StopUnknownScope,
+						fmt.Sprintf("unknown domain %q. valid domains: %s",
+							scope, strings.Join(validNames, ", ")))
 				}
 				scopedSpecs = make(map[string]bool, len(domain.Specs))
 				for _, s := range domain.Specs {
@@ -975,7 +1342,15 @@ func coverageCmd() *cobra.Command {
 				fmt.Fprintln(os.Stderr, "      see docs/explainer/v0.10-ci-gated-coverage.md, Conventions A and B")
 			}
 
-			report, strictErr := coverage.BuildCoverageReportStrict(specs, allAnnotations, m.CoverageThresholds(), results, strictPath, scopedSpecs)
+			// C-39: zero-tolerance reaches classification, so the gate
+			// demotion is part of building the report rather than a pass over
+			// it afterward.
+			report, strictErr := coverage.BuildCoverageReportMode(specs, allAnnotations, m.CoverageThresholds(), results,
+				coverage.ClassifyMode{
+					Strict:        strictPath,
+					ZeroTolerance: effectiveStrictness == "zero-tolerance",
+					ScopedSpecs:   scopedSpecs,
+				})
 			if strictErr != nil {
 				// C-32: when the strict path came from --strictness or the
 				// manifest (not the --strict flag), the missing-results
@@ -986,9 +1361,11 @@ func coverageCmd() *cobra.Command {
 				if errors.Is(strictErr, coverage.ErrMissingResults) && !strict {
 					msg = fmt.Sprintf("strictness %q requires .specter-results.json — run 'specter ingest' first, or use --strictness annotation for structural coverage", effectiveStrictness)
 				}
-				fmt.Fprintf(os.Stderr, "error: %s\n", msg)
-				return errSilent
+				return refuseCoverage(jsonOutput, coverage.StopUnmetPrecondition, msg)
 			}
+			// C-37: order the flat list before it is emitted or grouped, so
+			// two runs on an unchanged workspace write the same document.
+			parseErrors = coverage.SortParseErrors(parseErrors)
 			report.ParseErrors = parseErrors
 			report.ParseErrorPatterns = coverage.SummarizeParseErrors(parseErrors)
 			report.SpecCandidatesCount = len(files)
@@ -1024,20 +1401,6 @@ func coverageCmd() *cobra.Command {
 				}
 			}
 
-			// GH #94 — under zero-tolerance, demote ACs that violate the
-			// approval_gate contract (approval_gate: true with unset
-			// approval_date) so the report reflects the same enforcement
-			// signal the exit code carries. v0.11.0 fired the exit code but
-			// left the report unchanged; the user-visible PASS/FAIL cell
-			// stayed identical between threshold and zero-tolerance.
-			//
-			// Demotion shape: move the AC from CoveredACs to UncoveredACs,
-			// recompute CoveragePct + PassesThreshold per entry, recompute
-			// Summary.Passing / Summary.Failing.
-			if effectiveStrictness == "zero-tolerance" {
-				coverage.DemoteApprovalGateViolations(report, specs)
-			}
-
 			// C-10: --json emits the report in every state, including when
 			// parse failed. Downstream consumers (VS Code extension) branch on
 			// ParseErrors vs Entries to decide what to render. Exit code, not
@@ -1050,148 +1413,143 @@ func coverageCmd() *cobra.Command {
 			// rely on exit code to gate. Now JSON mode runs the SAME exit
 			// checks text mode runs (in the same order): zero-tolerance
 			// non-passed (exit 2), approval_gate (exit 3), threshold (exit 1).
-			if jsonOutput {
-				enc := json.NewEncoder(os.Stdout)
-				enc.SetIndent("", "  ")
-				_ = enc.Encode(report)
-				if hasErrors {
-					return errSilent
-				}
-				// Mirror the text-mode exit checks. The os.Exit calls
-				// preserve their distinct exit codes (2 and 3) for
-				// downstream CI consumers that distinguish violation
-				// classes.
-				if effectiveStrictness == "zero-tolerance" {
-					if nonPassed := coverage.CountNonPassed(results); nonPassed > 0 {
-						fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d annotated AC(s) did not pass\n", nonPassed)
-						os.Exit(2)
-					}
-					if gateViolations := coverage.CountApprovalGateViolations(specs); gateViolations > 0 {
-						fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d AC(s) carry approval_gate=true with unset approval_date\n", gateViolations)
-						os.Exit(3)
-					}
-				}
-				if report.Summary.Failing > 0 {
-					return errSilent
-				}
-				return nil
+			// spec-coverage C-10 / AC-74: one owner renders the document and
+			// takes the verdict. The json branch, the --failing early exit and
+			// the ordinary path each ended on their own gate call before; three
+			// verdicts for one workspace is how the codes diverged in
+			// bugs/SP-SP-066, and the --failing one silently skipped every gate
+			// added after the threshold (bugs/SP-SP-074).
+			gates := &coverageGateInputs{
+				specs:          specs,
+				results:        results,
+				m:              m,
+				strictness:     effectiveStrictness,
+				hasParseErrors: hasErrors,
 			}
 
-			if hasErrors {
-				return errSilent
-			}
+			// The human table. Runs only when the run measured and the format
+			// is text, which is what keeps text output byte-identical.
+			renderText := func() {
 
-			// spec-coverage C-30 / v0.13 D2: emit one stderr warning per
-			// unique unrecognized `status` value in `.specter-results.json`.
-			// Printed ABOVE the table. Suppressed under --quiet. The same
-			// data is in report.InvalidStatusWarnings so --json carries it
-			// regardless of --quiet — JSON consumers see structured state.
-			if !quiet && len(report.InvalidStatusWarnings) > 0 {
-				for _, w := range report.InvalidStatusWarnings {
-					fmt.Fprintf(os.Stderr,
-						"warning: .specter-results.json contains %d entries with status=%q — not a recognized status (passed|failed|skipped|errored); treated as not-passed\n",
-						w.Count, w.Status)
-				}
-			}
-
-			// AC-31 / AC-33: per-AC source-only hints are printed to stderr
-			// ABOVE the table when --strict is on, --quiet is off, and we're
-			// not in --json mode (JSON consumers see them in DiagnosticHints).
-			if strictPath && !quiet && len(report.DiagnosticHints) > 0 {
-				for _, h := range report.DiagnosticHints {
-					loc := h.File
-					if h.Line > 0 {
-						loc = fmt.Sprintf("%s:%d", h.File, h.Line)
-					}
-					fmt.Fprintf(os.Stderr,
-						"hint: %s/%s has source annotation in %s but no matching pass in .specter-results.json\n",
-						h.SpecID, h.ACID, loc)
-					fmt.Fprintln(os.Stderr,
-						"      did your test runner emit a runner-visible annotation? "+
-							"(Convention A: spec-id/AC-NN in the test name; "+
-							"Convention B: print '// @spec'/'// @ac' lines from the test body)")
-				}
-			}
-
-			// C-16: summary header ABOVE the table, reflects the full
-			// report even when --failing filters the rendered rows.
-			fmt.Print(coverage.BuildSummaryHeader(report))
-			fmt.Println()
-
-			// C-15 / C-17: sort worst-first; optionally filter to sub-100%.
-			displayEntries := coverage.SortCoverageEntriesForDisplay(report.Entries)
-			if failingOnly {
-				displayEntries = coverage.FilterFailing(displayEntries)
-				if len(displayEntries) == 0 {
-					fmt.Printf("All %d specs at 100%% coverage.\n", len(report.Entries))
-					// Exit code still respects threshold pass/fail —
-					// --failing is a display filter, not a status change.
-					if report.Summary.Failing > 0 {
-						return errSilent
-					}
-					return nil
-				}
-			}
-
-			fmt.Printf("%-41s %-6s %-8s %-9s %-10s %s\n", "Spec ID", "Tier", "ACs", "Covered", "Coverage", "Status")
-			fmt.Println(strings.Repeat("-", 82))
-
-			for _, e := range displayEntries {
-				status := "PASS"
-				if !e.PassesThreshold {
-					if e.CoveragePct == 0 {
-						status = "NONE"
-					} else {
-						status = "FAIL"
+				// spec-coverage C-30 / v0.13 D2: emit one stderr warning per
+				// unique unrecognized `status` value in `.specter-results.json`.
+				// Printed ABOVE the table. Suppressed under --quiet. The same
+				// data is in report.InvalidStatusWarnings so --json carries it
+				// regardless of --quiet — JSON consumers see structured state.
+				if !quiet && len(report.InvalidStatusWarnings) > 0 {
+					for _, w := range report.InvalidStatusWarnings {
+						fmt.Fprintf(os.Stderr,
+							"warning: .specter-results.json contains %d entries with status=%q — not a recognized status (passed|failed|skipped|errored); treated as not-passed\n",
+							w.Count, w.Status)
 					}
 				}
-				// C-18: truncate long spec IDs so the column stays aligned.
-				fmt.Printf("%-41s T%-5d %-8d %-9d %-10s %s\n",
-					coverage.DisplaySpecID(e.SpecID), e.Tier, e.TotalACs, len(e.CoveredACs),
-					fmt.Sprintf("%.0f%%", e.CoveragePct), status)
 
-				if len(e.UncoveredACs) > 0 {
-					fmt.Printf("  uncovered: %s\n", strings.Join(e.UncoveredACs, ", "))
+				// AC-31 / AC-33: per-AC source-only hints are printed to stderr
+				// ABOVE the table when --strict is on, --quiet is off, and we're
+				// not in --json mode (JSON consumers see them in DiagnosticHints).
+				if strictPath && !quiet && len(report.DiagnosticHints) > 0 {
+					for _, h := range report.DiagnosticHints {
+						loc := h.File
+						if h.Line > 0 {
+							loc = fmt.Sprintf("%s:%d", h.File, h.Line)
+						}
+						fmt.Fprintf(os.Stderr,
+							"hint: %s/%s has source annotation in %s but no matching pass in .specter-results.json\n",
+							h.SpecID, h.ACID, loc)
+						fmt.Fprintln(os.Stderr,
+							"      did your test runner emit a runner-visible annotation? "+
+								"(Convention A: spec-id/AC-NN in the test name; "+
+								"Convention B: print '// @spec'/'// @ac' lines from the test body)")
+					}
 				}
-			}
 
-			fmt.Printf("\n%d specs: %d passing, %d failing\n",
-				report.Summary.TotalSpecs, report.Summary.Passing, report.Summary.Failing)
+				// C-16: summary header ABOVE the table, reflects the full
+				// report even when --failing filters the rendered rows.
+				fmt.Print(coverage.BuildSummaryHeader(report))
+				fmt.Println()
 
-			// Dependency coverage warnings
-			var edges []coverage.DepEdge
-			if inputs, _, _ := parseAllSpecs(files); len(inputs) > 0 {
-				graph := resolver.ResolveSpecs(inputs)
-				for _, e := range graph.Edges {
-					edges = append(edges, coverage.DepEdge{From: e.From, To: e.To})
+				// C-15 / C-17: sort worst-first; optionally filter to sub-100%.
+				displayEntries := coverage.SortCoverageEntriesForDisplay(report.Entries)
+				if failingOnly {
+					displayEntries = coverage.FilterFailing(displayEntries)
+					if len(displayEntries) == 0 {
+						// C-17: the filter's empty-table confirmation. The table is
+						// all this path replaces. The verdict comes from the same
+						// gates the unfiltered path reaches, with the same inputs.
+						//
+						// This branch used to decide the code itself, from the
+						// threshold alone. That was right when the threshold was
+						// the only gate that could reach it, and it silently
+						// skipped every gate added afterward that reports without
+						// moving a coverage percentage: the approval gate under a
+						// declared annotation block, and streams validation. Both
+						// exited 0 here and non-zero without the flag
+						// (bugs/SP-SP-074).
+						fmt.Printf("All %d specs at 100%% coverage.\n", len(report.Entries))
+						return
+					}
 				}
-			}
-			for _, w := range coverage.CheckDependencyCoverage(edges, report) {
-				fmt.Printf("warn [dependency_coverage] %s\n", w.Message)
-				fmt.Printf("  run: specter explain %s:%s\n", w.DependsOn, w.UncoveredACs[0])
+
+				fmt.Printf("%-41s %-6s %-8s %-9s %-10s %s\n", "Spec ID", "Tier", "ACs", "Covered", "Coverage", "Status")
+				fmt.Println(strings.Repeat("-", 82))
+
+				for _, e := range displayEntries {
+					status := "PASS"
+					if !e.PassesThreshold {
+						if e.CoveragePct == 0 {
+							status = "NONE"
+						} else {
+							status = "FAIL"
+						}
+					}
+					// C-18: truncate long spec IDs so the column stays aligned.
+					// C-35: the Coverage cell floors the stored value, so the
+					// integer printed here always passes as a threshold.
+					fmt.Printf("%-41s T%-5d %-8d %-9d %-10s %s\n",
+						coverage.DisplaySpecID(e.SpecID), e.Tier, e.TotalACs, len(e.CoveredACs),
+						coverage.FormatCoveragePct(e.CoveragePct), status)
+
+					if len(e.UncoveredACs) > 0 {
+						fmt.Printf("  uncovered: %s\n", strings.Join(e.UncoveredACs, ", "))
+					}
+					// C-38(a): a rule-1 violation is a different failure from an
+					// uncovered criterion, so it gets its own line. Printed only
+					// under the annotation model, because without a declared block
+					// the ladder governs and rule 1 does not apply.
+					if m.Settings.Annotation != nil && len(e.NoTestACs) > 0 {
+						fmt.Printf("  no test: %s\n", strings.Join(e.NoTestACs, ", "))
+					}
+				}
+
+				fmt.Printf("\n%d specs: %d passing, %d failing\n",
+					report.Summary.TotalSpecs, report.Summary.Passing, report.Summary.Failing)
+
+				// Dependency coverage warnings
+				var edges []coverage.DepEdge
+				if inputs, _, _ := parseAllSpecs(files); len(inputs) > 0 {
+					graph := resolver.ResolveSpecs(inputs)
+					for _, e := range graph.Edges {
+						edges = append(edges, coverage.DepEdge{From: e.From, To: e.To})
+					}
+				}
+				for _, w := range coverage.CheckDependencyCoverage(edges, report) {
+					fmt.Printf("warn [dependency_coverage] %s\n", w.Message)
+					fmt.Printf("  run: specter explain %s:%s\n", w.DependsOn, w.UncoveredACs[0])
+				}
+
+				// C-25 / AC-28: zero-tolerance fails on any non-passed annotated AC,
+				// regardless of whether the spec's tier-coverage % met its threshold.
+				// Exit code 2 distinguishes strictness violation from threshold failure.
+				//
+				// C-26 / AC-29: zero-tolerance also fails on approval_gate=true with
+				// unset approval_date. Exit code 3 distinguishes approval-gate violation.
+				// C-38(a),(b),(c),(d): under a declared annotation block, rule 1
+				// is evaluated before the tier arithmetic, because the threshold
+				// does not excuse a criterion with no test. permissive decides
+				// severity and nothing else, per SSRB-104 section 7.4.
 			}
 
-			// C-25 / AC-28: zero-tolerance fails on any non-passed annotated AC,
-			// regardless of whether the spec's tier-coverage % met its threshold.
-			// Exit code 2 distinguishes strictness violation from threshold failure.
-			//
-			// C-26 / AC-29: zero-tolerance also fails on approval_gate=true with
-			// unset approval_date. Exit code 3 distinguishes approval-gate violation.
-			if effectiveStrictness == "zero-tolerance" {
-				if nonPassed := coverage.CountNonPassed(results); nonPassed > 0 {
-					fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d annotated AC(s) did not pass\n", nonPassed)
-					os.Exit(2)
-				}
-				if gateViolations := coverage.CountApprovalGateViolations(specs); gateViolations > 0 {
-					fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d AC(s) carry approval_gate=true with unset approval_date\n", gateViolations)
-					os.Exit(3)
-				}
-			}
-
-			if report.Summary.Failing > 0 {
-				return errSilent
-			}
-			return nil
+			return renderCoverageResult(os.Stdout, jsonOutput, report, gates, renderText)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
@@ -1270,6 +1628,8 @@ func syncCmd() *cobra.Command {
 				fmt.Fprintln(os.Stderr, "error:", mErr)
 				return errSilent
 			}
+			warnAnnotationStrictnessConflict(m)
+
 			checkOpts := &checker.CheckOptions{
 				Strict:      strict || m.Settings.Strict,
 				WarnOnDraft: m.Settings.WarnOnDraft,
@@ -1279,12 +1639,16 @@ func syncCmd() *cobra.Command {
 			// to manifest setting; ultimate default is "annotation". The
 			// legacy --strict bool maps to "zero-tolerance" when
 			// --strictness is not set.
+			//
+			// spec-manifest C-34(d): the manifest fallback reads
+			// GoverningStrictness, so a declared settings.annotation block
+			// supersedes the declared settings.strictness value here too.
 			effectiveStrictness := strictnessFlag
 			if effectiveStrictness == "" {
 				if strict {
 					effectiveStrictness = "zero-tolerance"
 				} else {
-					effectiveStrictness = m.Settings.Strictness
+					effectiveStrictness = m.GoverningStrictness()
 				}
 			}
 
@@ -1304,8 +1668,16 @@ func syncCmd() *cobra.Command {
 				CheckOpts:            checkOpts,
 				OnlyPhase:            onlyPhase,
 				Results:              results,
-				Strictness:           effectiveStrictness,         // spec-sync C-06: route coverage phase per strictness
-				CheckTestAnnotations: strict || m.Settings.Strict, // spec-check C-09/AC-12: sync --strict (or settings.strict) routes through
+				Strictness:           effectiveStrictness,          // spec-sync C-06: route coverage phase per strictness
+				AnnotationDeclared:   m.Settings.Annotation != nil, // spec-sync C-11
+				AnnotationPermissive: m.Settings.Annotation != nil && m.Settings.Annotation.Permissive,
+				// spec-check C-09/AC-12: the flag routes the scan through, and
+				// only the flag. settings.strict used to be ORed in here, which
+				// made a severity setting decide which defects were discovered:
+				// removing one manifest key made a broken spec reference
+				// invisible, and no promotion was involved because
+				// unknown_spec_ref is hardcoded to error. bugs/SP-SP-047.
+				CheckTestAnnotations: strict,
 			})
 
 			// spec-sync C-10: zero-tolerance violations exit with the same
@@ -1313,15 +1685,27 @@ func syncCmd() *cobra.Command {
 			// 3 = approval_gate violation), in text and --json modes alike.
 			// Called after output is emitted so machine consumers see the
 			// structured state before the exit (spec-coverage C-29 pattern).
-			zeroToleranceExit := func() {
-				if result.ZeroToleranceNonPassed > 0 {
-					fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d annotated AC(s) did not pass\n", result.ZeroToleranceNonPassed)
-					os.Exit(2)
-				}
-				if result.ApprovalGateViolations > 0 {
-					fmt.Fprintf(os.Stderr, "error: zero-tolerance strictness — %d AC(s) carry approval_gate=true with unset approval_date\n", result.ApprovalGateViolations)
-					os.Exit(3)
-				}
+			// One verdict, shared with `coverage`. This used to carry its own
+			// ordering, messages and codes, which is what let the approval gate
+			// go silent under settings.annotation while the ladder still fired
+			// (bugs/SP-SP-071). Renamed from zeroToleranceExit because the
+			// gates it reports are no longer the ladder's alone.
+			gateExit := func() {
+				// One verdict, computed once inside RunSync and carried here.
+				// This closure used to build a second one and omit
+				// ThresholdFailing from it, so the two agreed only while the
+				// threshold was the last gate and its code matched the silent
+				// fallback. Stream validation is ordered after the threshold,
+				// which is exactly the shape that would have made them
+				// disagree (bugs/SP-SP-073).
+				violations, code := result.GateViolations, result.GateCode
+				// spec-coverage C-40(e): every violation is named before the
+				// process leaves, so one run tells the operator everything.
+				printGateViolations(violations)
+				// Code 1 stays with errSilent at the call site, exactly as
+				// before, so the threshold path is unchanged. Every other code
+				// is routed by the one helper both commands share.
+				_ = exitOnGateCode(code)
 			}
 
 			if jsonOutput {
@@ -1333,7 +1717,7 @@ func syncCmd() *cobra.Command {
 					"stopped_at": result.StoppedAt,
 				})
 				if !result.Passed {
-					zeroToleranceExit()
+					gateExit()
 					return errSilent
 				}
 				return nil
@@ -1360,7 +1744,7 @@ func syncCmd() *cobra.Command {
 				fmt.Println("All checks passed.")
 			} else {
 				fmt.Printf("Pipeline failed at %s phase.\n", result.StoppedAt)
-				zeroToleranceExit()
+				gateExit()
 				return errSilent
 			}
 			return nil
@@ -1369,7 +1753,7 @@ func syncCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
 	cmd.Flags().StringVar(&testsGlob, "tests", "", "Glob pattern for test files")
 	cmd.Flags().StringVar(&onlyPhase, "only", "", "Run only this phase (parse|resolve|check|coverage); prerequisites run without halting")
-	cmd.Flags().BoolVar(&strict, "strict", false, "Treat warnings as errors (also set via settings.strict in specter.yaml). Alias for --strictness zero-tolerance when --strictness is not set.")
+	cmd.Flags().BoolVar(&strict, "strict", false, "Promote warning and info check diagnostics to errors, run the test-annotation scan, and act as --strictness zero-tolerance for the coverage phase when --strictness is not set. settings.strict in specter.yaml sets the promotion only.")
 	cmd.Flags().StringVar(&strictnessFlag, "strictness", "", "Override settings.strictness for the coverage phase. Values: annotation, threshold, zero-tolerance. Matches `coverage --strictness` semantics. When set, wins over --strict.")
 	return cmd
 }
@@ -1511,7 +1895,11 @@ func reverseCmd() *cobra.Command {
 			result := reverse.Reverse(input, adapters)
 			spin.stop()
 
-			if jsonOutput {
+			// C-18: --json selects the report format. It does not decide
+			// whether files are written; only --dry-run does. The payload is
+			// encoded after the write loop so a write failure exits without
+			// emitting JSON a consumer would read as success.
+			emitJSON := func() {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
 				_ = enc.Encode(map[string]interface{}{
@@ -1519,10 +1907,6 @@ func reverseCmd() *cobra.Command {
 					"diagnostics": result.Diagnostics,
 					"summary":     result.Summary,
 				})
-				if result.Summary.SpecsGenerated == 0 {
-					return errSilent
-				}
-				return nil
 			}
 
 			for _, d := range result.Diagnostics {
@@ -1530,14 +1914,29 @@ func reverseCmd() *cobra.Command {
 			}
 
 			if result.Summary.SpecsGenerated == 0 {
-				fmt.Println("No specs generated. Check diagnostics above.")
+				if jsonOutput {
+					emitJSON()
+				} else {
+					fmt.Println("No specs generated. Check diagnostics above.")
+				}
 				return errSilent
+			}
+
+			// C-18: under --json, stdout carries the payload and nothing else,
+			// so the per-spec lines go to stderr.
+			specOut := os.Stdout
+			if jsonOutput {
+				specOut = os.Stderr
 			}
 
 			for _, gs := range result.Specs {
 				if dryRun {
-					fmt.Printf("--- %s (dry-run) ---\n", gs.FileName)
-					fmt.Println(gs.YAML)
+					// Under --json the payload already carries every spec's
+					// YAML, so the preview would only duplicate it.
+					if !jsonOutput {
+						fmt.Printf("--- %s (dry-run) ---\n", gs.FileName)
+						fmt.Println(gs.YAML)
+					}
 					for _, w := range gs.Warnings {
 						fmt.Fprintf(os.Stderr, "  warning: %s\n", w)
 					}
@@ -1548,7 +1947,7 @@ func reverseCmd() *cobra.Command {
 
 				// Skip existing files unless --overwrite is set
 				if _, existErr := os.Stat(outPath); existErr == nil && !overwrite {
-					fmt.Printf("SKIPPED %s (already exists, use --overwrite to replace)\n", outPath)
+					fmt.Fprintf(specOut, "SKIPPED %s (already exists, use --overwrite to replace)\n", outPath)
 					continue
 				}
 
@@ -1560,12 +1959,20 @@ func reverseCmd() *cobra.Command {
 					fmt.Fprintf(os.Stderr, "error writing %s: %v\n", outPath, wErr)
 					return errSilent
 				}
-				fmt.Printf("GENERATED %s — %s@%s (%d constraints, %d ACs)\n",
+				fmt.Fprintf(specOut, "GENERATED %s — %s@%s (%d constraints, %d ACs)\n",
 					outPath, gs.Spec.ID, gs.Spec.Version,
 					len(gs.Spec.Constraints), len(gs.Spec.AcceptanceCriteria))
 				for _, w := range gs.Warnings {
 					fmt.Fprintf(os.Stderr, "  warning: %s\n", w)
 				}
+			}
+
+			// AC-19: both human-facing lines below are suppressed under
+			// --json, so stdout carries the payload and nothing else. The
+			// writes above already happened; C-18 separates the two.
+			if jsonOutput {
+				emitJSON()
+				return nil
 			}
 
 			// spec-reverse 1.3.0 C-13: single-line summary after the
@@ -1578,13 +1985,14 @@ func reverseCmd() *cobra.Command {
 				gapCount, pluralize("gap", gapCount),
 				result.Summary.SpecsGenerated, pluralize("file", result.Summary.SpecsGenerated))
 
-			// spec-reverse 1.3.0 C-14: single-line handoff pointing
-			// at `specter explain <first-spec-id>` for gap triage in
-			// each generated draft. Suppressed under --json (handled
-			// at the top of this RunE).
+			// C-14: single-line handoff pointing at `specter explain
+			// <first-spec-id>`. It must name something explain can do. It said
+			// "triage gaps" for three releases while internal/explain had no
+			// gap handling; explain lists criteria with coverage status, so
+			// the line says review.
 			if len(result.Specs) > 0 {
 				firstID := result.Specs[0].Spec.ID
-				fmt.Printf("Run `specter explain %s` to triage gaps in each generated draft.\n", firstID)
+				fmt.Printf("Run `specter explain %s` to review the criteria in each generated draft.\n", firstID)
 			}
 
 			return nil
@@ -1643,6 +2051,42 @@ func loadManifest() (*manifest.Manifest, string, error) {
 		return manifest.Defaults(), "", fmt.Errorf("invalid %s: %w", path, err)
 	}
 	return m, root, nil
+}
+
+// warnManifestRejected writes the two-line notice spec-manifest C-31 requires
+// from a command that continues after a rejected specter.yaml. The first line
+// names the file and the parser's reason, the second says which settings are
+// actually in effect. Silent when the manifest is absent or valid.
+//
+// It binds `parse`, `resolve`, and `explain`, which dropped the error at the
+// call site and ran against defaults with nothing on stderr. A manifest that
+// set specs_dir and carried one bad key made `parse` report two specs from a
+// recursive walk instead of the one the operator configured, and exit 0.
+//
+// The commands that already fail on a rejected manifest (`check`, `coverage`,
+// `sync`, `init --refresh`) keep their non-zero exit and do not call this.
+func warnManifestRejected() {
+	if _, _, err := loadManifest(); err != nil {
+		fmt.Fprintln(os.Stderr, "warn:", err)
+		fmt.Fprintln(os.Stderr, "      the manifest was ignored; default settings are in effect")
+	}
+}
+
+// warnAnnotationStrictnessConflict writes the spec-manifest C-34 warning to
+// stderr when the manifest declares both `settings.strictness` and a
+// `settings.annotation` block. Silent otherwise.
+//
+// C-34(c) binds `check`, `coverage`, and `sync`, the three commands that read
+// a strictness level. It goes to stderr rather than following the tier-conflict
+// precedent's stdout, because `coverage --json` and `check --json` write a
+// machine-read document to stdout and a warning line would corrupt it.
+//
+// The warning changes no exit code. The declared `settings.strictness` is
+// ignored either way; the line only says so out loud.
+func warnAnnotationStrictnessConflict(m *manifest.Manifest) {
+	if w := manifest.CheckAnnotationStrictnessConflict(m); w != nil {
+		fmt.Fprintf(os.Stderr, "warn [annotation_conflict] %s\n", w.Message)
+	}
 }
 
 func initCmd() *cobra.Command {
@@ -2068,12 +2512,24 @@ func doctorCmd() *cobra.Command {
 
 			// C-08: run ALL checks regardless of failures
 
-			// --- Check 1: Manifest presence (C-01, AC-01, AC-02) ---
+			// --- Check 1: Manifest presence and validity (C-01, C-18) ---
+			//
+			// C-18: the three manifest states are distinct and each gets its
+			// own verdict. Absent is WARN, present and valid is PASS, present
+			// and rejected is FAIL naming the parser's reason. Reporting PASS
+			// for a file the same run rejects told the operator the opposite
+			// thing twice. The remaining checks run against defaults, which
+			// loadManifest already returns on a rejection.
 			manifestPath, _ := findManifest()
-			if manifestPath != "" {
-				printCheck("manifest", "PASS", "specter.yaml found at "+manifestPath)
-			} else {
+			m, _, mErr := loadManifest()
+			switch {
+			case manifestPath == "":
 				printCheck("manifest", "WARN", "No specter.yaml found — run `specter init` to scaffold one (optional)")
+			case mErr != nil:
+				printCheck("manifest", "FAIL", mErr.Error())
+				anyFail = true
+			default:
+				printCheck("manifest", "PASS", "specter.yaml found at "+manifestPath)
 			}
 
 			// --- Check 2: .spec.yaml files present (C-02, AC-03) ---
@@ -2167,12 +2623,13 @@ func doctorCmd() *cobra.Command {
 			}
 
 			// --- Check 5: Coverage meets tier thresholds (C-05, AC-06) ---
+			//
+			// C-18: this check used to abort the run when the manifest was
+			// rejected, which left the operator without a coverage verdict
+			// and with the reason printed below a PASS line. It now reuses
+			// the manifest loaded by check 1, which is Defaults() on a
+			// rejection, and the FAIL verdict there carries the exit code.
 			if len(specFiles) > 0 {
-				m, _, mErr := loadManifest()
-				if mErr != nil {
-					fmt.Fprintln(os.Stderr, "error:", mErr)
-					return errSilent
-				}
 				_, specs, hasParseErrors := parseAllSpecs(specFiles)
 				if hasParseErrors {
 					printCheck("coverage", "WARN", "Skipping coverage check — specs have parse errors")
@@ -2200,8 +2657,8 @@ func doctorCmd() *cobra.Command {
 						for _, e := range report.Entries {
 							if !e.PassesThreshold {
 								threshold := thresholds[e.Tier]
-								fmt.Printf("    %s: %.0f%% coverage (T%d requires %d%%)\n",
-									e.SpecID, e.CoveragePct, e.Tier, threshold)
+								fmt.Printf("    %s: %s coverage (T%d requires %d%%)\n",
+									e.SpecID, coverage.FormatCoveragePct(e.CoveragePct), e.Tier, threshold)
 							}
 						}
 						anyFail = true
@@ -2535,6 +2992,11 @@ func explainCmd() *cobra.Command {
 				acID = arg[idx+1:]
 			}
 
+			// C-31: surface a rejected manifest. The reference surfaces
+			// above (`explain annotation`, `explain schema`) never read the
+			// manifest, so the warning belongs on this branch alone.
+			warnManifestRejected()
+
 			// Load all specs
 			specFiles := discoverSpecs()
 			_, specs, _ := parseAllSpecs(specFiles)
@@ -2616,13 +3078,13 @@ func explainListMode(spec *schema.SpecAST, coveredBy map[string][]string, testFi
 			covered++
 		}
 	}
-	pct := 0
-	if total > 0 {
-		pct = (covered * 100) / total
-	}
+	// C-35: `explain` reads the same number the table and the JSON document
+	// read. It used to divide integers here, so one spec printed 66 while the
+	// table printed 67 and the gate compared 66.6.
+	pct := coverage.FormatCoveragePct(coverage.CoveragePercent(covered, total))
 
 	fmt.Printf("specter explain %s\n\n", spec.ID)
-	fmt.Printf("  Tier: %d    Coverage: %d%% (%d/%d ACs)\n\n", spec.Tier, pct, covered, total)
+	fmt.Printf("  Tier: %d    Coverage: %s (%d/%d ACs)\n\n", spec.Tier, pct, covered, total)
 	fmt.Printf("  %-8s %-8s  %-40s  %s\n", "Status", "AC", "Description", "Test files")
 	fmt.Println("  " + strings.Repeat("-", 90))
 
@@ -2980,6 +3442,10 @@ func modsChanged(prev, curr map[string]time.Time) bool {
 
 // @spec spec-diff
 func diffCmd() *cobra.Command {
+	// C-14: opt-in. The default stays 0 because `diff` is a documented
+	// diagnostic surface, and changing an exit code silently breaks every
+	// existing caller.
+	var exitCode bool
 	cmd := &cobra.Command{
 		Use:   "diff <path>[@<ref>] <path>[@<ref>]",
 		Short: "Polymorphic diff — spec (default) or coverage",
@@ -3017,6 +3483,14 @@ Example (coverage kind):
 				return nil
 			}
 
+			// C-14: the failing exit is applied after the report, so the
+			// operator always sees what failed before the process leaves.
+			defer func() {
+				if exitCode && d.Class == specdiff.ChangeBreaking {
+					os.Exit(exitDiffBreaking)
+				}
+			}()
+
 			fmt.Printf("spec %s %s → %s [%s]\n", d.SpecID, d.OldVersion, d.NewVersion, d.Class)
 			fmt.Println()
 
@@ -3027,7 +3501,19 @@ Example (coverage kind):
 				case "removed":
 					fmt.Printf("  -%s: %s\n", c.ID, c.Description)
 				case "changed":
-					fmt.Printf("  ~%s: %s → %s\n", c.ID, c.OldDesc, c.Description)
+					// C-03: a criterion changes in two ways and the line says
+					// which. An identical description on both sides of an
+					// arrow tells the reader nothing.
+					switch {
+					case c.OldDesc != c.Description && len(c.ChangedFields) > 0:
+						fmt.Printf("  ~%s: %s → %s (also %s)\n",
+							c.ID, c.OldDesc, c.Description, strings.Join(c.ChangedFields, ", "))
+					case c.OldDesc != c.Description:
+						fmt.Printf("  ~%s: %s → %s\n", c.ID, c.OldDesc, c.Description)
+					default:
+						fmt.Printf("  ~%s: %s changed (description unchanged)\n",
+							c.ID, strings.Join(c.ChangedFields, ", "))
+					}
 				}
 			}
 			for _, c := range d.ConstraintChanges {
@@ -3052,6 +3538,9 @@ Example (coverage kind):
 	// The parent diffCmd's RunE handles the implicit spec kind for
 	// backward-compat with v1.x callers (`specter diff <path1> <path2>`).
 	cmd.AddCommand(diffCoverageCmd())
+	cmd.Flags().BoolVar(&exitCode, "exit-code", false,
+		"Exit with code 10 when the change is breaking (default: always exit 0)")
+
 	return cmd
 }
 

@@ -6,6 +6,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -156,4 +157,158 @@ func TestCoverageJsonExit_ThresholdFailure_MatchesTextExitNonzero(t *testing.T) 
 		}
 
 	})
+}
+
+// writeManifestWithAnnotation writes a manifest declaring settings.annotation
+// with the given permissive value.
+func writeManifestWithAnnotation(t *testing.T, dir string, permissive bool) {
+	t.Helper()
+	body := fmt.Sprintf("system:\n  name: test\nsettings:\n  specs_dir: .\n  annotation:\n    permissive: %t\n", permissive)
+	if err := os.WriteFile(filepath.Join(dir, "specter.yaml"), []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// annotationRuleWorkspace seeds a workspace whose tier threshold is met while
+// one criterion has no test at all. Nine of ten criteria are annotated and
+// passing, so coverage is 90 percent against a Tier 2 threshold of 80. The
+// only failure available is the annotation rule.
+func annotationRuleWorkspace(t *testing.T, dir string) {
+	t.Helper()
+	acIDs := []string{"AC-01", "AC-02", "AC-03", "AC-04", "AC-05",
+		"AC-06", "AC-07", "AC-08", "AC-09", "AC-10"}
+	writeSpec(t, dir, "fg.spec.yaml", minimalValidSpec("fg", 2, acIDs...))
+
+	body := "package main\n"
+	entries := make([]string, 0, len(acIDs)-1)
+	for _, id := range acIDs[:len(acIDs)-1] { // AC-10 deliberately has no test
+		body += fmt.Sprintf("// @spec fg\n// @ac %s\nfunc Test%s(t *testing.T) {}\n", id, strings.ReplaceAll(id, "-", ""))
+		entries = append(entries,
+			fmt.Sprintf(`{"spec_id": "fg", "ac_id": %q, "status": "passed"}`, id))
+	}
+	if err := os.WriteFile(filepath.Join(dir, "fg_test.go"), []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+	results := "{\"results\": [" + strings.Join(entries, ",") + "]}"
+	if err := os.WriteFile(filepath.Join(dir, ".specter-results.json"), []byte(results), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// @ac AC-34
+// The annotation rule is a gate, so AC-34's closing invariant covers it: "JSON
+// and text modes are exit-code equivalent for every gate-relevant state."
+//
+// This is the false-green case rather than a mismatched code. The tier
+// threshold is met, so the annotation rule is the only thing that fails, and
+// under --json nothing fails at all.
+func TestCoverageJsonExit_AnnotationRule_MatchesTextExitCode(t *testing.T) {
+	t.Run("spec-coverage/AC-34 --json exits with the same code as text for an annotation-rule violation", func(t *testing.T) {
+		dir := t.TempDir()
+		writeManifestWithAnnotation(t, dir, false)
+		annotationRuleWorkspace(t, dir)
+
+		_, _, textCode := runCLISplit(t, dir, "coverage")
+		stdout, _, jsonCode := runCLISplit(t, dir, "coverage", "--json")
+
+		if textCode != 2 {
+			t.Fatalf("text mode exited %d, want 2; the fixture is not exercising the annotation rule", textCode)
+		}
+		if jsonCode != textCode {
+			t.Errorf("--json exited %d, text exited %d. A CI consumer reading --json gets a green "+
+				"build on a workspace `coverage` fails.", jsonCode, textCode)
+		}
+
+		// The report itself must still be emitted, per C-29.
+		var report map[string]interface{}
+		if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+			t.Errorf("--json did not emit a parseable report: %v", err)
+		}
+	})
+}
+
+// @ac AC-34
+// The parity property over every gate, as a table.
+//
+// The three tests above each pin one gate, and that shape is what let this
+// class recur: `settings.annotation` shipped after them and was wired into the
+// text path only, while the JSON branch carried a comment claiming it mirrored
+// the text checks. A table fails when the next gate is added to one surface and
+// not the other, which a per-gate test cannot do.
+func TestCoverageJsonExit_TextAndJSONAgreeOnEveryGate(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, dir string)
+		args  []string
+	}{
+		{
+			name: "annotation rule, threshold met",
+			setup: func(t *testing.T, dir string) {
+				writeManifestWithAnnotation(t, dir, false)
+				annotationRuleWorkspace(t, dir)
+			},
+			args: []string{"coverage"},
+		},
+		{
+			name: "annotation rule, permissive so it only warns",
+			setup: func(t *testing.T, dir string) {
+				writeManifestWithAnnotation(t, dir, true)
+				annotationRuleWorkspace(t, dir)
+			},
+			args: []string{"coverage"},
+		},
+		{
+			name: "zero-tolerance with a failed annotated criterion",
+			setup: func(t *testing.T, dir string) {
+				writeManifestWithStrictness(t, dir, "zero-tolerance")
+				writeSpec(t, dir, "zt.spec.yaml", minimalValidSpec("zt", 2, "AC-01", "AC-02"))
+				if err := os.WriteFile(filepath.Join(dir, "zt_test.go"),
+					[]byte("// @spec zt\n// @ac AC-01\n// @ac AC-02\nfunc TestZT(t *testing.T) {}\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, ".specter-results.json"), []byte(
+					`{"results":[{"spec_id":"zt","ac_id":"AC-01","status":"failed"},`+
+						`{"spec_id":"zt","ac_id":"AC-02","status":"passed"}]}`), 0644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			args: []string{"coverage"},
+		},
+		{
+			name: "threshold failure",
+			setup: func(t *testing.T, dir string) {
+				writeManifestWithStrictness(t, dir, "")
+				writeSpec(t, dir, "low.spec.yaml", minimalValidSpec("low", 2, "AC-01", "AC-02"))
+			},
+			args: []string{"coverage"},
+		},
+		{
+			name: "clean workspace",
+			setup: func(t *testing.T, dir string) {
+				writeManifestWithStrictness(t, dir, "")
+				writeSpec(t, dir, "ok.spec.yaml", minimalValidSpec("ok", 3, "AC-01"))
+				if err := os.WriteFile(filepath.Join(dir, "ok_test.go"),
+					[]byte("// @spec ok\n// @ac AC-01\nfunc TestOK(t *testing.T) {}\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			args: []string{"coverage"},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run("spec-coverage/AC-34 exit parity: "+c.name, func(t *testing.T) {
+			textDir := t.TempDir()
+			c.setup(t, textDir)
+			_, _, textCode := runCLISplit(t, textDir, c.args...)
+
+			jsonDir := t.TempDir()
+			c.setup(t, jsonDir)
+			_, _, jsonCode := runCLISplit(t, jsonDir, append(append([]string{}, c.args...), "--json")...)
+
+			if textCode != jsonCode {
+				t.Errorf("text exited %d, --json exited %d", textCode, jsonCode)
+			}
+		})
+	}
 }

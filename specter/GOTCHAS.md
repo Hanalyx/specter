@@ -11,7 +11,7 @@ Non-obvious traps that have already bitten this codebase. Read before releasing.
 **How it bit us:** Shipped v0.6.5 VSIX containing v0.5.x-era compiled JS. Fix code was in `src/`, build was never run, `out/` was from the day before. Every user install re-ran the old broken auto-downloader, which wrote the 9-byte string `Not Found` (the body of a 404 response) into `~/.specter/bin/specter` and chmodded it +x.
 
 **What's in place now:**
-- `vscode:prepublish` hook in `vscode-extension/package.json` — `vsce` runs this automatically before packaging and will fail the package if build fails.
+- `vscode:prepublish` hook in `vscode-extension/package.json`, `vsce` runs this automatically before packaging and will fail the package if build fails.
 - `package` script is `npm run build && npx @vscode/vsce package` for defense in depth.
 
 **If you're packaging manually:** always run `npm run build` first and verify `out/extension.js` mtime is newer than any `src/*.ts` file. Quick check:
@@ -22,7 +22,7 @@ find src -name '*.ts' -newer out/extension.js
 
 ---
 
-## 2. `jest` compiles TypeScript on the fly — it does NOT write to `out/`
+## 2. `jest` compiles TypeScript on the fly (it does NOT write to `out/`)
 
 **Symptom:** Tests pass, you assume the build is good, ship broken VSIX.
 
@@ -37,16 +37,16 @@ find src -name '*.ts' -newer out/extension.js
 **Symptom:** Download succeeds silently but the bytes are an HTTP error body (`Not Found`, HTML error page, etc).
 
 **How it bit us:** Pre-v0.6.0 download code called `https.get(url, ...)` and wrote the body straight to disk. GitHub Releases returns:
-- 302 redirect to `release-assets.githubusercontent.com/...` (actual asset) — the 302 body is empty, so this fails silently
+- 302 redirect to `release-assets.githubusercontent.com/...` (actual asset), the 302 body is empty, so this fails silently
 - 404 with `content-type: text/plain` body `Not Found` if the URL is wrong (e.g., `vlatest/specter_latest_...` when the config defaults to literal string `"latest"`)
 
-**Rule:** any `https.get` on GitHub (or any CDN) MUST follow redirects and check status. See `vscode-extension/src/binaryDiscovery.ts:httpsGet` for the correct pattern — follows up to 5 redirects, rejects on status >= 400, has a 30s timeout.
+**Rule:** any `https.get` on GitHub (or any CDN) MUST follow redirects and check status. See `vscode-extension/src/binaryDiscovery.ts:httpsGet` for the correct pattern, follows up to 5 redirects, rejects on status >= 400, has a 30s timeout.
 
 ---
 
 ## 4. `cfg.get('version', 'latest')` gives you the literal string `"latest"`
 
-**Symptom:** URLs like `.../releases/download/vlatest/specter_latest_linux_amd64.tar.gz` — not valid.
+**Symptom:** URLs like `.../releases/download/vlatest/specter_latest_linux_amd64.tar.gz`, not valid.
 
 **How it bit us:** Pre-v0.6.0 code used the config value directly in the URL. `"latest"` is a keyword convention, not a real tag.
 
@@ -58,7 +58,7 @@ find src -name '*.ts' -newer out/extension.js
 
 **Symptom:** Stray `./specter` binary appears next to `go.mod`. Looks identical to `./bin/specter` but is stale.
 
-**How it bit us:** Someone ran `go build` in `specter/` (no `-o` flag). Go named the output after the package dir: `./specter`. It got committed. When both `./specter` and `./bin/specter` existed, running one versus the other produced different results — the old one lacked gap-exclusion logic, the new one had it. Took non-trivial debugging to notice they were different binaries.
+**How it bit us:** Someone ran `go build` in `specter/` (no `-o` flag). Go named the output after the package dir: `./specter`. It got committed. When both `./specter` and `./bin/specter` existed, running one versus the other produced different results, the old one lacked gap-exclusion logic, the new one had it. Took non-trivial debugging to notice they were different binaries.
 
 **What's in place now:** `/specter` is in `.gitignore`. Canonical build path is `make build` → `bin/specter`.
 
@@ -80,13 +80,24 @@ find src -name '*.ts' -newer out/extension.js
 
 ## 7. `specter.yaml` being optional means silent defaults
 
-**Symptom:** User puts specs in `src/specs/`, runs `specter sync`, sees "No .spec.yaml files found", has no idea why.
+**Symptom (fixed):** this described discovery falling back to `specs/` and
+saying nothing about it. Neither half holds any more, and both were checked
+against the binary before this entry was rewritten.
 
-**Cause:** When no `specter.yaml` is found, Specter silently uses `specs_dir: specs` default. Nothing tells the user this happened.
+**What happens now.** With no `specter.yaml`, discovery is recursive: a spec at
+`src/specs/spec-x.spec.yaml` is found and parsed. And when nothing is found, the
+run says why it looked where it did:
 
-**Partial mitigation:** `specter doctor` reports manifest status. Full mitigation is pending (see improvement backlog in the session log).
+It names where it searched and what it searched for, then lists three
+remedies: generate drafts with `specter reverse`, scaffold from a template with
+`specter init --template`, or point it elsewhere by adding `specs_dir` to
+`specter.yaml`. The literal block is not reproduced here; an earlier revision
+of this entry quoted it and silently changed a bullet character, which is the
+same drift this file exists to warn about.
 
-**Rule:** if you're editing manifest-loading code, preserve (or add) a clear hint when defaults are in play. `discoverSpecs` should be able to say "I looked at `specs/` and found 0 files".
+**The rule that remains:** if you are editing manifest-loading code, keep the
+hint when defaults are in play. A discovery that reports zero files should say
+where it looked, which is what makes this no longer a gotcha.
 
 ---
 
@@ -102,7 +113,7 @@ find src -name '*.ts' -newer out/extension.js
 
 ## 9. CI's `pull_request` trigger does NOT fire on title edits
 
-**Symptom:** You edit a PR title (e.g., to satisfy a conventional-commit check), then rerun failed jobs — they still see the old title.
+**Symptom:** You edit a PR title (e.g., to satisfy a conventional-commit check), then rerun failed jobs, they still see the old title.
 
 **Cause:** Default `pull_request` trigger types are `opened, synchronize, reopened`. `edited` is NOT included. Reruns use the original event payload.
 
@@ -114,7 +125,7 @@ find src -name '*.ts' -newer out/extension.js
 
 **Symptom:** You `export VSCE_PAT=...` in one terminal, tell Claude Code to publish, Claude's shell reports VSCE_PAT unset.
 
-**Cause:** Each terminal has its own shell env. Claude Code's Bash tool launches a non-interactive bash subprocess that inherits from the Claude Code parent, not from any other terminal. A `.bash_profile` export doesn't help either — non-interactive shells don't source it.
+**Cause:** Each terminal has its own shell env. Claude Code's Bash tool launches a non-interactive bash subprocess that inherits from the Claude Code parent, not from any other terminal. A `.bash_profile` export doesn't help either, non-interactive shells don't source it.
 
 **How to bridge:**
 - Type `! export VAR=value` as a message to Claude (the `!` prefix sends it to Claude's own shell), OR
@@ -143,11 +154,11 @@ find src -name '*.ts' -newer out/extension.js
 
 **What's in place now:** v0.6.5+ lets `constraint.enforcement` override the tier default. `constraint.type` shows up inline in check output. `trust_level` (parsed-but-useless) was removed.
 
-**Rule:** before adding a new field to the schema, decide what part of the pipeline consumes it. If nothing does, don't add it — or clearly mark it "documentation only, not enforced."
+**Rule:** before adding a new field to the schema, decide what part of the pipeline consumes it. If nothing does, don't add it, or clearly mark it "documentation only, not enforced."
 
 ---
 
-## 13. `process.arch` ≠ `runner.arch` — case matters
+## 13. `process.arch` ≠ `runner.arch` (case matters)
 
 **Symptom:** VS Code extension downloads URL `.../specter_0.6.6_linux_x64.tar.gz` which 404s. The actual published asset is `..._linux_amd64.tar.gz`.
 
@@ -155,17 +166,17 @@ find src -name '*.ts' -newer out/extension.js
 - VS Code's `runner.arch` (GitHub Actions context) uses uppercase: `X64`, `ARM64`, `IA32`.
 - Node's `process.arch` (what the extension host actually passes) uses lowercase: `x64`, `arm64`, `ia32`.
 
-The switch was case-sensitive with only uppercase cases. Lowercase values fell through to default (`return arch.toLowerCase()`) and produced URLs with `x64` in the path — which goreleaser never emits (it uses `amd64`).
+The switch was case-sensitive with only uppercase cases. Lowercase values fell through to default (`return arch.toLowerCase()`) and produced URLs with `x64` in the path, which goreleaser never emits (it uses `amd64`).
 
 **What's in place now:** `normaliseArch` lowercases its input before switching. Tests cover both uppercase and lowercase inputs.
 
-**Rule:** when writing a normaliser that straddles two case conventions, normalise case at the top of the function. Don't depend on callers feeding the "right" case.
+**Rule:** when writing a normalizer that straddles two case conventions, normalize case at the top of the function. Don't depend on callers feeding the "right" case.
 
 ---
 
 ## 14. Context was extensible pre-v0.7.0 and silently dropped data
 
-**Symptom (pre-v0.7.0):** A user writes `context.role: "public API"` or `context.callers: [...]` in their spec. `specter parse` passes. Downstream tools see only the declared fields (`system`, `feature`, etc.) — the extra keys are gone.
+**Symptom (pre-v0.7.0):** A user writes `context.role: "public API"` or `context.callers: [...]` in their spec. `specter parse` passes. Downstream tools see only the declared fields (`system`, `feature`, etc.), the extra keys are gone.
 
 **Cause:** Schema had `context.additionalProperties: true` ("extras are OK"), but `SpecContext` (types.go) was a closed struct. yaml.v3's default non-strict unmarshal silently discarded anything the struct didn't declare. The schema's promise and the types' behavior disagreed, and the disagreement was invisible.
 
@@ -188,11 +199,11 @@ The switch was case-sensitive with only uppercase cases. Lowercase values fell t
 | VS Code `runner.os` / `runner.arch` | `Linux` | `X64` |
 | **Go `GOOS` / `GOARCH` (asset names)** | **`linux`** | **`amd64`** |
 
-goreleaser uses `name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"` — Go's values — so every asset is `specter_<version>_<linux|darwin|windows>_<amd64|arm64>.<ext>`. None of the reporter conventions match directly; every install caller must translate.
+goreleaser uses `name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"`, Go's values, so every asset is `specter_<version>_<linux|darwin|windows>_<amd64|arm64>.<ext>`. None of the reporter conventions match directly; every install caller must translate.
 
 **What's in place now:** all install snippets in README.md, QUICKSTART.md, GETTING_STARTED.md translate `uname` → `GOOS`/`GOARCH` and resolve version via the GitHub API. The VS Code extension's `normaliseArch` lowercases its input so it handles both uppercase (runner.arch) and lowercase (process.arch). The composite GitHub Action in `.github/actions/specter-sync/action.yml` also does the translation.
 
-**Rule:** when writing any install-command example, never use `uname -m`, `uname -s`, `process.arch`, or `runner.arch` raw in the URL. Always translate. And never omit the version — there is no version-less alias (goreleaser could be configured to emit one but currently doesn't).
+**Rule:** when writing any install-command example, never use `uname -m`, `uname -s`, `process.arch`, or `runner.arch` raw in the URL. Always translate. And never omit the version, there is no version-less alias (goreleaser could be configured to emit one but currently doesn't).
 
 ---
 
@@ -202,9 +213,9 @@ goreleaser uses `name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ 
 
 **Cause:** `resolveManifestPath(filePath, exists)` in `activation.ts` started its search by calling `path.dirname(filePath)`. The function was designed to be called with a FILE path (e.g. `/project/specs/auth.spec.yaml`), where `dirname` correctly strips the filename to leave `/project/specs/`. All unit tests passed file paths.
 
-But the real caller in `setupFolder` passes `folder.uri.fsPath` — a DIRECTORY path like `/home/user/project`. `path.dirname` doesn't check whether the input is a directory; it treats it syntactically. `path.dirname("/home/user/project")` returns `/home/user` — the PARENT directory. The resolver then searched `/home/user/project/../specter.yaml`, `/home/user/specter.yaml`, etc., walking all the way to `/` — **never checking `/home/user/project/specter.yaml` itself**.
+But the real caller in `setupFolder` passes `folder.uri.fsPath`, a DIRECTORY path like `/home/user/project`. `path.dirname` doesn't check whether the input is a directory; it treats it syntactically. `path.dirname("/home/user/project")` returns `/home/user`, the PARENT directory. The resolver then searched `/home/user/project/../specter.yaml`, `/home/user/specter.yaml`, etc., walking all the way to `/`, **never checking `/home/user/project/specter.yaml` itself**.
 
-This shipped in spec-vscode v1.0 and affected every user whose `specter.yaml` was at the workspace root — the canonical location the docs explicitly recommend. The unit tests covered the designed calling convention (file paths) but didn't cover the actual calling convention in production (directory paths).
+This shipped in spec-vscode v1.0 and affected every user whose `specter.yaml` was at the workspace root, the canonical location the docs explicitly recommend. The unit tests covered the designed calling convention (file paths) but didn't cover the actual calling convention in production (directory paths).
 
 **What's in place now (v0.8.1+):** `resolveManifestPath` takes an optional third argument `isDirectory: (p: string) => boolean` so callers handling workspace folders can say "this path IS the starting directory." The runtime caller supplies a `statSync(...).isDirectory()` probe. Two regression tests pin both shapes.
 
@@ -218,10 +229,10 @@ This shipped in spec-vscode v1.0 and affected every user whose `specter.yaml` wa
 
 **Cause:** `SpecterClient` in `client.ts` was built assuming the CLI had flags it never shipped:
 
-- `specter parse --json --manifest <path>` — no `--manifest` flag exists
-- `specter check --json --manifest <path>` — same
-- `specter coverage --json --manifest <path> [--spec <id>]` — same, plus `--spec` doesn't exist either
-- `specter diff --json --base <ref> <file>` — no `--base`, no `--json`; diff is two positional args `<path>[@<ref>]` and emits human-readable text
+- `specter parse --json --manifest <path>`, no `--manifest` flag exists
+- `specter check --json --manifest <path>`, same
+- `specter coverage --json --manifest <path> [--spec <id>]`, same, plus `--spec` doesn't exist either
+- `specter diff --json --base <ref> <file>`, no `--base`, no `--json`; diff is two positional args `<path>[@<ref>]` and emits human-readable text
 
 Five fabricated flags in production code. The CLI rejects unknown flags (Cobra default), so every invocation threw, which `runCoverageForFolder`'s try/catch surfaced as "no coverage data" in the sidebar. Users saw empty coverage state regardless of whether their specs were valid.
 
@@ -233,7 +244,7 @@ Five fabricated flags in production code. The CLI rejects unknown flags (Cobra d
 
 ---
 
-## 18. Marketplace is NOT a test harness — humans must verify before publish
+## 18. Marketplace is NOT a test harness (humans must verify before publish)
 
 **Symptom:** Four patch releases of the VS Code extension in a single day (v0.8.0 → v0.8.1 → v0.8.2 → v0.8.3), each one fixing a bug that the first real user hit the moment they installed. Users see the auto-update notification every few hours and each install reveals another regression. Damages credibility.
 
@@ -243,16 +254,16 @@ Five fabricated flags in production code. The CLI rejects unknown flags (Cobra d
 3. `vsce package` + `vsce publish`
 4. Wait for a user to install and report whatever broke
 
-Step 4 was the test. Unit tests covered roughly 30% of the extension's actual user-facing surface — specifically the pure-function parts. The un-covered 70% (binary resolution, tree rendering, CLI invocation, activation race conditions, cwd assumptions) is where every one of the four v0.8.x bugs lived.
+Step 4 was the test. Unit tests covered roughly 30% of the extension's actual user-facing surface, specifically the pure-function parts. The un-covered 70% (binary resolution, tree rendering, CLI invocation, activation race conditions, cwd assumptions) is where every one of the four v0.8.x bugs lived.
 
-The lesson isn't "write more unit tests" alone — the real gap was the absence of a human-verified end-to-end test in a real VS Code window against a real workspace before every publish. No mock, no CI substitute, no "I'm confident it works" — an actual install + reload + click-through.
+The lesson isn't "write more unit tests" alone, the real gap was the absence of a human-verified end-to-end test in a real VS Code window against a real workspace before every publish. No mock, no CI substitute, no "I'm confident it works", an actual install + reload + click-through.
 
 **What's in place now (v0.8.3+):**
 - `RELEASING.md` documents an 8-step gate. Mandatory before any `vsce publish`.
-- `make release-check` packages the VSIX and prints the checklist. It does not run `vsce publish` — that stays manual so the operator cannot forget step 7 (human sign-off).
+- `make release-check` packages the VSIX and prints the checklist. It does not run `vsce publish`, that stays manual so the operator cannot forget step 7 (human sign-off).
 - Headless `@vscode/test-electron` integration tests are the planned long-term backstop.
 
-**Rule:** Marketplace is a distribution channel, not a test harness. Every publish must ship behavior that has already been verified by a person in a live VS Code window. If that person is me or an AI agent, the verification must be demonstrated (screenshot, recorded session, or reproducible script) — not asserted. The first user to install should be the hundred-and-first person to see the feature work, not the first.
+**Rule:** Marketplace is a distribution channel, not a test harness. Every publish must ship behavior that has already been verified by a person in a live VS Code window. If that person is me or an AI agent, the verification must be demonstrated (screenshot, recorded session, or reproducible script), not asserted. The first user to install should be the hundred-and-first person to see the feature work, not the first.
 
 ---
 

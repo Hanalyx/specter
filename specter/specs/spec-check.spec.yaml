@@ -1,6 +1,6 @@
 spec:
   id: spec-check
-  version: "1.5.0"
+  version: "5.0.0"
   status: approved
   tier: 1
 
@@ -11,8 +11,6 @@ spec:
       The core analysis tool. Walks the dependency graph produced by spec-resolve
       and validates semantic consistency across specs. MVP focuses on deterministic,
       structural checks. AI-assisted semantic checks are deferred to a later phase.
-    dependencies:
-      - "deep-diff (1.x) or custom tree differ"
     related_specs:
       - "spec-parse.spec.yaml"
       - "spec-resolve.spec.yaml"
@@ -25,17 +23,19 @@ spec:
     summary: >
       Perform structural type-checking across the spec dependency graph.
       Detect orphan constraints, structural conflicts between connected specs,
-      breaking changes between spec versions, and (opt-in) test-annotation
-      references that do not match any parsed spec.
+      and (opt-in) test-annotation references that do not match any parsed spec.
+      Version-change classification is not part of this spec: `spec-diff` owns
+      it.
     scope:
       includes:
         - "Orphan constraint detection (constraints not referenced by any AC)"
+        - "Duplicate acceptance criterion ID detection within a single spec"
         - "Structural conflict detection between dependent specs"
-        - "Breaking change detection (compare current spec to previous version)"
         - "Tier-aware severity (Tier 1 = error, Tier 3 = warning)"
         - "Diagnostic output with spec ID, constraint ID, and explanation"
         - "Test-annotation cross-reference (opt-in via --test / -t): scan test files, flag @spec and @ac references that do not match any parsed spec"
         - "Unreachable annotation detection (opt-in via --test / -t): scan test files, flag source-comment @ac annotations whose runner-visible test title or runtime output does not carry the corresponding `spec-id/AC-NN` pair (would silently demote under `coverage --strict`)"
+        - "Exit-code parity between the default output and `--json`: the verdict follows the diagnostics, not the rendering"
       excludes:
         - "Semantic conflict detection (AI-assisted, Phase 8)"
         - "Gap detection (uncovered input paths, Phase 8)"
@@ -54,17 +54,12 @@ spec:
       enforcement: error
 
     - id: C-03
-      description: "MUST detect structural conflicts where a downstream spec contradicts an upstream constraint"
-      type: technical
-      enforcement: error
-
-    - id: C-04
-      description: "MUST classify spec-version changes as breaking/additive/patch per SDD versioning rules"
+      description: "MUST detect structural conflicts where a downstream spec contradicts an upstream constraint, and MUST report them advisorily per C-15 rather than as a build failure"
       type: technical
       enforcement: error
 
     - id: C-05
-      description: "MUST NOT produce false positives on valid specs (zero false positive rate for structural checks)"
+      description: "Orphan-constraint, duplicate-id, dangling-reference, version-mismatch and duplicate-AC-id detection MUST NOT produce false positives on valid specs. Structural-conflict detection is excluded from that promise and carries the weaker one stated in C-15, because the promise is unsatisfiable for it. Two reasons, each sufficient. C-03 in this spec requires the check to detect conflicts at all, and the only implementation literally producing zero false positives emits nothing, so C-05 as originally written contradicted C-03. And no lexical rule can separate a conflict from an enforcement: `Process checkout when email is absent` and `Registration fails when email is absent` share subject, absence expression and clause structure, and differ only in the polarity of the outcome verb, which lies outside everything the rule examines. Measured 2026-08-23: 40 of this repository's 408 acceptance criteria are enforcement-shaped, carrying both an absence keyword and a failure verb. Rationale: the original text promised zero and the shipped scan produced false positives that failed builds (`SP-SP-004`, P0). A promise no implementation can keep is not a constraint."
       type: technical
       enforcement: error
 
@@ -74,7 +69,7 @@ spec:
       enforcement: error
 
     - id: C-07
-      description: "MUST support strict mode (CheckOptions.Strict=true) that upgrades all warning-severity diagnostics to error severity"
+      description: "MUST support strict mode (CheckOptions.Strict=true) that upgrades all warning-severity and info-severity diagnostics to error severity, with a **named set of non-promotable kinds**: `structural_conflict` per C-15, and `unreachable_annotation_unknown` per C-10. The set is enumerated in this constraint rather than decided per call site, so adding a kind to it is a deliberate amendment here and not a local choice. Without the first the advisory posture would hold only until someone passed --strict, which is what CI passes. The second is stated in C-10's own terms, that the soft form is always a warning regardless of strictness mode, and this constraint agrees with it rather than overriding it: a scanner that could not recognize a test shape has found no defect to report, so promoting it would fail a build on the checker's own blind spot. **The upgrade MUST apply to every diagnostic the run reports, whatever stage assembled it, and exactly one place MUST apply it.** A diagnostic added to the result after the upgrade has run is silently exempt, and nothing fails when that happens: the kind keeps its own severity, the summary counts it as a warning, and `--strict` returns 0 on a workspace this constraint says it should fail. That is not a hypothetical. `tier_conflict` and `domain_tier_conflict` are computed from the manifest, and `unreachable_annotation` and the other `--test` diagnostics from test file contents, and all of them were appended by the command after the checker returned. What that cost differed by kind, and the accurate account is narrower than the route suggests. The two tier kinds escaped the rule outright and were fixed on 2026-08-28. Of the `--test` diagnostics, only `unreachable_annotation` at threshold severity did: the reference kinds are error severity, so promotion was a no-op for them and they failed the run either way, and `unreachable_annotation_unknown` is in the non-promotable set by design. That one case was fixed on 2026-08-29. The route was wrong for all of them, which is why the fix is structural rather than per-kind, but only two kinds ever reported the wrong severity because of it. One owner rather than a promotion step per assembly site, because a second site is how the non-promotable set drifts, and a private copy elsewhere would not know what the set contains. **The summary is computed once, from the final diagnostics, in the same place.** Counting at each assembly site is the same defect wearing different clothes: a count taken before the upgrade reports as a warning what the run reports as an error. **The manifest key reaches this option, on every surface that checks.** There are three: `check`, `sync`'s check phase, and `watch`'s check phase. Each MUST route `settings.strict: true` to `CheckOptions.Strict = true`. Naming them is the point rather than saying every command: an unnamed surface is one a criterion forgets, and `watch` was missing from the first draft of this clause even though it already routed the key. Without that clause here, a criterion asserting the key promotes severity would be inventing the rule it verifies, and an implementation that dropped the routing would be violating nothing. `spec-manifest` C-11 owns parsing the key and says explicitly that where the parsed value is carried is the reading command's business; this is that business, stated by the constraint that owns what strict mode does. The routing is all the key does: it does not enable the test-annotation scan, which C-09 names and forbids it."
       type: technical
       enforcement: error
 
@@ -84,7 +79,7 @@ spec:
       enforcement: error
 
     - id: C-09
-      description: "MUST support opt-in test-annotation cross-reference mode (`check --test` / `-t`) that scans test files for `@spec <id>` and `@ac AC-NN` source comments, and emits diagnostics for references that do not resolve. Diagnostic kinds: `unknown_spec_ref` (no spec with that id), `unknown_ac_ref` (spec exists but AC id is not declared), `malformed_ac_id` (AC id fails `^AC-\\d{2,}$`). Scanner skips lines inside multi-line string literals (TS/JS template, Python triple-quote) — annotations there are payload. Cascade rule: when `@spec` is unknown, child `@ac` lines under it are not separately checked. Ordering rule: `@ac` lines before any `@spec` are not checked. Repeat `@ac` mentions of the same id emit one diagnostic per occurrence (no dedup)."
+      description: "MUST support opt-in test-annotation cross-reference mode (`check --test` / `-t`) that scans test files for `@spec <id>` and `@ac AC-NN` source comments, and emits diagnostics for references that do not resolve. Diagnostic kinds: `unknown_spec_ref` (no spec with that id), `unknown_ac_ref` (spec exists but AC id is not declared), `malformed_ac_id` (AC id fails `^AC-\\d{2,}$`). Scanner skips lines inside multi-line string literals (TS/JS template, Python triple-quote) — annotations there are payload. Cascade rule: when `@spec` is unknown, child `@ac` lines under it are not separately checked. Ordering rule: `@ac` lines before any `@spec` are not checked. Repeat `@ac` mentions of the same id emit one diagnostic per occurrence (no dedup). **What enables the scan is named here, and `settings.strict` is not one of them.** The scan runs when `check --test` is passed, and on `sync` when `--strict` is passed. The manifest key `settings.strict` MUST NOT enable it. Rationale, and it is a scope rule rather than a preference: `settings.strict` is a severity setting, and a severity setting cannot decide which defects are discovered. Measured before this clause existed, at 96c75ad: a workspace whose test file references a spec id that does not exist failed `sync` with `settings.strict: true` and passed it with the key removed, because the key alone decided whether the cross-reference ran. `unknown_spec_ref` carries a hardcoded error severity, so no promotion was involved; removing one manifest key made a broken reference invisible. That is the defect `bugs/SP-SP-047` finding 3 records, and it lives at one site: `sync`. `check` gates the scan on its own `--test` flag alone and never reads the key. So there are two supported ways to enter the scan, `check --test` and `sync --strict`, and one defective one. The flag keeps its own behavior: `sync --strict` still routes the scan through, which AC-12 binds and this clause does not weaken. The two are therefore **not** equivalent, and any documentation saying they are is wrong."
       type: technical
       enforcement: error
 
@@ -102,6 +97,59 @@ spec:
       description: "When reading test files for the annotation scanners (`CheckTestAnnotations` per C-09 and `CheckUnreachableAnnotations` per C-10), the CLI MUST refuse to read any test file whose on-disk size exceeds `MaxTestFileBytes` (4 MiB). The check MUST use `os.Stat` BEFORE `os.ReadFile`, so an oversized file is never buffered into memory. Files at or under the cap continue to scan as before. Oversized files MUST be skipped (not fatal — `check --test` proceeds with the remaining files) and the skip MUST emit a stderr warning naming the file path and byte count so the operator knows that file was not scanned. Rationale: the unreachable scanner reads every discovered test file via `os.ReadFile` and passes the full string to `go/parser.ParseFile` (Go), `strings.Split` over regex (TS / Python). A 4 GiB malicious or accidental test file OOMs Specter; `go/parser` allocates an AST proportional to file size. The 4 MiB cap is conservative — real test files are well under that. Mirrors the existing `parser.maxSpecBytes` (1 MiB) and `coverage.MaxResultsFileBytes` (16 MiB) pattern; v0.13 security audit surfaced this as the H5 gap because the unreachable scanner was the only v0.13 surface that didn't inherit a size cap."
       type: business
       enforcement: error
+
+    - id: C-13
+      description: "MUST detect duplicate acceptance criterion IDs within a single spec and emit a `duplicate_ac_id` diagnostic. Uniqueness is scoped to one spec. Two specs may each declare `AC-01`, and that is not a duplicate. Comparison is exact string equality, so `AC-01` and `AC-001` are distinct IDs. Severity is `error` at every tier. An AC ID is the join key between a spec and its tests, and no tier makes two criteria answering to one key correct. The check runs in the default `check` pass and requires no flag, so `sync` inherits it. One diagnostic is emitted per duplicated ID, not per occurrence. The message MUST name the spec ID, the duplicated AC ID, the number of occurrences, and the 1-based position of each occurrence in declaration order, so the author can find every offending criterion. This dedup rule is the opposite of the C-09 rule for repeated `@ac` mentions in test files, and that is deliberate: there each mention is a separate broken reference, while here the occurrences are one broken declaration. Rationale: one `@ac AC-01` annotation credits every criterion declared as `AC-01`, so the spec reports coverage it has not earned. JSON Schema cannot express uniqueness over a property of array items, so parse cannot catch this."
+      type: technical
+      enforcement: error
+
+    - id: C-14
+      description: "`specter check --json` MUST exit with the same process exit code that `specter check` produces for the same workspace, the same flags, and the same manifest settings. The exit code is a function of the diagnostics the run produced, not of how they are rendered. Per the documented check contract, the code is 1 when the run reports one or more error-severity diagnostics, counted after tier routing (C-02) and after any `--strict` upgrade (C-07), and 0 otherwise. A run whose worst severity is warning or info therefore exits 0 in both formats, and a `--strict` run that upgrades those warnings to errors exits 1 in both. No diagnostic kind is exempt, including kinds added later. The JSON document MUST be written to stdout in full before the exit-code decision runs, and stdout MUST carry that document alone, so one invocation gives a caller both the diagnostics and a usable verdict. Human-readable notices stay on stderr. This is the `check` instance of the parity rule spec-coverage C-29 states for `coverage`, where the same defect was found in the v0.13 D3 audit. Rationale: a CI job that uses `--json` to capture structured diagnostics has a check gate that never fails, at any severity, for any kind. The document is correct and the exit code, which is the one thing an automated caller reads, reports a passing run. **A run that cannot reach the structural rules still writes the document.** Three states end a run early: one or more specs fail to parse, the resolver reports an error, or the manifest fails to load. In each of them `--json` MUST still write one complete document to stdout, carrying diagnostics that say why the run stopped, and MUST take its exit code from the same verdict the ordinary path uses. Writing nothing is this constraint's own failure one step earlier: a caller reading stdout gets an empty stream and cannot distinguish a broken workspace from a crashed process, which is the state `bugs/SP-SP-032` records. The document MUST be assembled and rendered on one path rather than by adding an emitter to each early return, because three emitters are three places for the next early return to be forgotten, and this defect began as exactly that omission."
+      type: business
+      enforcement: error
+
+    - id: C-15
+      description: "`structural_conflict` MUST be advisory. Three parts, and all three are required for the posture to hold. (a) Its severity is always `info`, whatever the upstream constraint's `enforcement` field says. That field expresses how strictly the constraint binds the system, not how confident this scan is about a sentence, and reading it here let a Tier 1 constraint make a heuristic match fail a build. (b) `--strict` does not upgrade it, exempting it from C-07. (c) It never contributes to a non-zero exit code from `specter check`. Rationale: the detector is a lexical heuristic and cannot be made sound, per C-05. An unsound gate that fails builds is worse than no gate, because the failure lands on correct work and the operator's only recourse is to reword a criterion until the tool stops complaining. The diagnostic still names a real tension worth a human glance, which is why it is retained rather than removed. Reconsideration trigger: an implementation that distinguishes a conflict from an enforcement, which needs the outcome clause and is therefore semantic analysis rather than a lexical rule."
+      type: business
+      enforcement: error
+
+    - id: C-16
+      description: "`specter check --concrete` MUST report every acceptance criterion that carries neither `inputs` nor `expected_output`, as a `vague_criterion` diagnostic naming the spec and the criterion. Severity follows the tier: error at Tier 1, warning at Tier 2, info at Tier 3. The rule reads fields that already exist and needs no schema change. It checks presence only. Whether `completes within budget` is a checkable assertion is semantic reading, and a rule that rejects the word `gracefully` is theater; this constraint makes no attempt at it."
+      type: technical
+      enforcement: error
+
+    - id: C-17
+      description: "The concreteness rule of C-16 MUST be opt-in and MUST NOT run without `--concrete`. Rationale, and it is the whole of the design. `inputs` and `expected_output` are optional in the canonical schema, whose `required` list for an acceptance criterion is `id` and `description`. A criterion carrying neither is therefore valid, and failing a build on it is a gate failing on correct input, which is the priority framework's P0 row and the defect `SP-SP-004` spent this cycle removing. The tier gradient makes the rule survivable for **this** repository, whose Tier 1 gaps were backfilled before the rule shipped; it says nothing about an adopter whose Tier 1 specs have the same gaps and who upgrades. The precedent is `settings.annotation` in this same cycle, which introduced a comparable new demand on previously valid workspaces and shipped opt-in for the same reason. A flag rather than a manifest key because a manifest key is a schema change and would need its own brief, and the flag costs nothing the key would have bought. Reconsideration trigger: a v0.18 pre-lock pass that makes concreteness unconditional, which is where the roadmap already places enforcement across all tiers."
+      type: business
+      enforcement: error
+
+
+    - id: C-18
+      description: "A `structural_conflict` diagnostic MUST NOT present the downstream spec id beside the upstream spec's constraint id as though the two belonged together. The header line reads `<spec> <constraint-id>`, and today the spec is the downstream one while the constraint id belongs to the upstream spec, so a reader looking up that id in the named spec finds nothing, or finds a different constraint that happens to share it. The constraint id MUST therefore be qualified with its owning spec wherever the two appear together. Rationale: the header is what a terminal scan and an editor problem list show, and both truncate the message body that names the specs correctly (`SP-SP-014`)."
+      type: technical
+      enforcement: error
+
+    - id: C-19
+      description: "The required-keyword list used by structural-conflict detection MUST contain only keywords that can yield a subject. `required`, `MUST be present`, `MUST exist` and `mandatory` set the required flag and then produce an empty subject, because subject extraction reads the text before the literal ` MUST` and nothing else, so a constraint matching one of them is discarded a few lines later. They are dead rather than merely imprecise. They MUST be removed rather than made to work: activating them widens a false-positive surface that C-05 already declines to bound, and the detector is advisory under C-15, so the value of matching more constraints is low and the cost is more noise. The case sensitivity of ` MUST` is left as it is and documented: a constraint written with a lowercase `must` is invisible to the detector, which is a false negative in an advisory check and not worth a second matching rule."
+      type: technical
+      enforcement: error
+
+    - id: C-20
+      description: "Structural-conflict detection MUST scan every dependency edge, not only those whose relationship is `requires`. `extends` and `conflicts_with` edges are skipped today. Rationale: a `conflicts_with` edge is the one place a contradiction check has the strongest reason to look, and it is the one place it does not look at all. The corpus has no such edges today, so this changes no current output; it is a gap that would surface silently the first time an adopter declared one."
+      type: technical
+      enforcement: error
+
+
+    - id: C-21
+      description: "Structural-conflict detection MUST NOT fire on mere co-occurrence. It fires only when the absence expression attaches to the required subject, in one of two shapes. Forward: the subject, then at most three intervening words with no sentence punctuation between them, then a copula (`is`, `are`, `was`, `were`, `be`, `being`, `been`), then an optional `not`, then an absence predicate (`absent`, `missing`, `empty`, `null`, `provided`, `present`, `supplied`, `set`, `defined`). Backward: `without`, `missing`, `lacking` or `absent`, then an optional article, then the subject. The subject MUST match on whole-token boundaries, so `ci` does not match inside `producing`. A leading article on the extracted subject MUST be stripped before matching, because extraction keeps everything before ` MUST` and a criterion saying `an audit record` cannot otherwise match a subject of `The audit record`. Rationale: the shipped rule asked whether the subject appeared anywhere and whether an absence word appeared anywhere, with nothing binding the two, which produced 34 fires on this repository's own specs and not one of them a genuine conflict. Implementation note, recorded because the next implementer would otherwise rediscover it: **Go's RE2 has no lookaround**, so the prototype that established these numbers cannot be ported directly. `\\b` is available and covers the boundary half, but the intervening-word window and the optional article are not expressible without it, so the whole rule is a token scanner rather than a mix of two mechanisms."
+      type: technical
+      enforcement: error
+
+    - id: C-22
+      description: "C-21 MUST NOT be described as eliminating false positives, and any measurement of it MUST be taken against three corpora rather than two: genuine conflicts, criteria that must not fire, and this repository's own specs. Rationale: the rule reaches zero fires on this repository and keeps every genuine conflict, and it still fires on five of the nine written-down non-conflicts, counting both the near-miss set and the proximity survivors as AC-44 does, because a conflict and an enforcement are lexically identical. `Process checkout when email is absent` and `Registration fails when email is absent` share subject, absence expression and clause structure and differ only in the polarity of the outcome verb, which the rule never reads. Roughly one criterion in ten in this repository is enforcement-shaped. The zero is a property of this corpus, not of the rule, which is why C-15 keeps the diagnostic advisory and C-05 declines to promise zero."
+      type: business
+      enforcement: error
+
 
   depends_on:
     - spec_id: spec-parse
@@ -144,28 +192,6 @@ spec:
         kind: "structural_conflict"
       references_constraints: ["C-03"]
       priority: critical
-
-    - id: AC-04
-      description: "Removing a field between versions is classified as MAJOR (breaking)"
-      inputs:
-        v1: "spec with field 'legacy_token'"
-        v2: "spec without 'legacy_token'"
-      expected_output:
-        change_type: "breaking"
-        requires_major_bump: true
-      references_constraints: ["C-04"]
-      priority: high
-
-    - id: AC-05
-      description: "Adding an optional field between versions is classified as MINOR (additive)"
-      inputs:
-        v1: "spec without 'refresh_token'"
-        v2: "spec with optional 'refresh_token'"
-      expected_output:
-        change_type: "additive"
-        requires_minor_bump: true
-      references_constraints: ["C-04"]
-      priority: high
 
     - id: AC-06
       description: "Spec where all constraints are referenced by ACs produces zero orphan diagnostics"
@@ -345,7 +371,588 @@ spec:
       references_constraints: ["C-12"]
       priority: critical
 
+    - id: AC-21
+      description: "A spec that declares AC-01 at two positions produces exactly one `duplicate_ac_id` diagnostic at error severity, naming the spec id, the duplicated id, the occurrence count, and the 1-based position of each occurrence"
+      inputs:
+        spec: "id payment-charge, tier 1, acceptance_criteria in declaration order: AC-01, AC-02, AC-01"
+        invocation: "specter check"
+      expected_output:
+        diagnostic_count: 1
+        diagnostic_kind: "duplicate_ac_id"
+        severity: "error"
+        spec_id: "payment-charge"
+        ac_id: "AC-01"
+        message_names_occurrence_count: 2
+        message_names_positions: [1, 3]
+        exit_code_nonzero: true
+      references_constraints: ["C-13"]
+      priority: critical
+
+    - id: AC-22
+      description: "Duplicate AC id severity does not route through tier: a tier 3 spec with a duplicated id reports error, not info"
+      inputs:
+        tier_3_spec: "id ledger-export, tier 3, acceptance_criteria in declaration order: AC-01, AC-01"
+        invocation: "specter check"
+      expected_output:
+        diagnostic_kind: "duplicate_ac_id"
+        severity: "error"
+        severity_is_not: "info"
+        exit_code_nonzero: true
+      references_constraints: ["C-13"]
+      priority: critical
+
+    - id: AC-23
+      description: "An AC id declared three times in one spec produces one diagnostic reporting three occurrences, not one diagnostic per occurrence and not one per duplicate pair"
+      inputs:
+        spec: "id payment-charge, tier 1, acceptance_criteria in declaration order: AC-01, AC-02, AC-01, AC-01"
+        invocation: "specter check"
+      expected_output:
+        diagnostic_count: 1
+        diagnostic_kind: "duplicate_ac_id"
+        severity: "error"
+        ac_id: "AC-01"
+        message_names_occurrence_count: 3
+        message_names_positions: [1, 3, 4]
+        exit_code_nonzero: true
+      references_constraints: ["C-13"]
+      priority: high
+
+    - id: AC-24
+      description: "Two different ids each duplicated in one spec produce two diagnostics, one per duplicated id, and the id declared once produces none"
+      inputs:
+        spec: "id payment-charge, tier 1, acceptance_criteria in declaration order: AC-01, AC-02, AC-01, AC-02, AC-03"
+        invocation: "specter check"
+      expected_output:
+        diagnostic_count: 2
+        diagnostic_kind: "duplicate_ac_id"
+        severity: "error"
+        diagnostic_1: { ac_id: "AC-01", message_names_positions: [1, 3] }
+        diagnostic_2: { ac_id: "AC-02", message_names_positions: [2, 4] }
+        no_diagnostic_for_ac_id: "AC-03"
+        exit_code_nonzero: true
+      references_constraints: ["C-13"]
+      priority: high
+
+    - id: AC-25
+      description: "The same AC id declared in two different specs of one workspace is not a duplicate and produces no diagnostic"
+      inputs:
+        spec_a: "id payment-charge, tier 1, acceptance_criteria: AC-01, AC-02"
+        spec_b: "id payment-refund, depends on payment-charge, tier 1, acceptance_criteria: AC-01, AC-02"
+        invocation: "specter check"
+      expected_output:
+        duplicate_ac_id_count: 0
+        exit_code_zero: true
+      references_constraints: ["C-13"]
+      priority: critical
+
+    - id: AC-26
+      description: "Ids are compared as exact strings, so AC-01 and AC-001 declared in the same spec are distinct and produce no diagnostic"
+      inputs:
+        spec: "id payment-charge, tier 1, acceptance_criteria in declaration order: AC-01, AC-001"
+        invocation: "specter check"
+      expected_output:
+        duplicate_ac_id_count: 0
+        exit_code_zero: true
+      references_constraints: ["C-13"]
+      priority: medium
+
+    - id: AC-27
+      description: "The duplicate id check runs in the default check pass: a plain `specter check` with no `--test` flag reports the diagnostic and exits non-zero"
+      inputs:
+        spec: "id payment-charge, tier 1, acceptance_criteria in declaration order: AC-01, AC-02, AC-01"
+        invocation: "specter check (no --test flag, no --strict flag)"
+      expected_output:
+        diagnostic_count: 1
+        diagnostic_kind: "duplicate_ac_id"
+        severity: "error"
+        requires_test_flag: false
+        exit_code_nonzero: true
+      references_constraints: ["C-13"]
+      priority: critical
+
+    - id: AC-28
+      description: "A workspace whose only defect is a spec declaring AC-01 twice exits 1 under `specter check` and 1 under `specter check --json`. The two invocations differ only in output format, so they agree on the exit code"
+      inputs:
+        spec: "id dup, tier 1, acceptance_criteria in declaration order: AC-01, AC-02, AC-01"
+        invocation_text: "specter check"
+        invocation_json: "specter check --json"
+      expected_output:
+        text_exit_code: 1
+        json_exit_code: 1
+        json_document_reports_duplicate_ac_id: true
+      references_constraints: ["C-14"]
+      priority: critical
+
+    - id: AC-29
+      description: "Exit-code parity holds for every diagnostic kind, not only the kind that surfaced the defect. Each workspace below is run twice, once as `specter check` and once with `--json` added, and the two runs report the same exit code"
+      inputs:
+        row_orphan: "tier 1 spec with orphan constraint C-03, error severity"
+        row_unknown_spec_ref: "test file carrying `// @spec bogus-spec`, run with `--test`"
+        row_malformed_ac_id: "test file carrying `// @ac AC-1`, run with `--test`"
+        row_clean: "workspace with no diagnostics of any severity"
+      expected_output:
+        row_orphan: { text_exit_code: 1, json_exit_code: 1 }
+        row_unknown_spec_ref: { text_exit_code: 1, json_exit_code: 1 }
+        row_malformed_ac_id: { text_exit_code: 1, json_exit_code: 1 }
+        row_clean: { text_exit_code: 0, json_exit_code: 0 }
+      references_constraints: ["C-14"]
+      priority: critical
+
+    - id: AC-30
+      description: "A run whose worst severity is warning exits 0 under `--json`, matching text mode. Warnings do not fail the check in either format"
+      inputs:
+        spec: "tier 2 spec with orphan constraint C-03, which routes to warning severity"
+        invocation_text: "specter check"
+        invocation_json: "specter check --json"
+      expected_output:
+        text_exit_code: 0
+        json_exit_code: 0
+        json_document_reports_orphan_constraint_at_warning: true
+      references_constraints: ["C-14"]
+      priority: high
+
+    - id: AC-31
+      description: "`specter check --strict --json` on the tier 2 orphan of AC-30 exits 1, because `--strict` upgrades the warning to an error and the exit code follows severity after that upgrade. Text mode on the same workspace also exits 1"
+      inputs:
+        spec: "tier 2 spec with orphan constraint C-03"
+        invocation_text: "specter check --strict"
+        invocation_json: "specter check --strict --json"
+      expected_output:
+        text_exit_code: 1
+        json_exit_code: 1
+      references_constraints: ["C-14", "C-07"]
+      priority: high
+
+    - id: AC-32
+      description: "A run whose worst severity is info exits 0 under `--json`, matching text mode. Info diagnostics are reported in the document and change no verdict"
+      inputs:
+        spec: "tier 3 spec with orphan constraint C-03, which routes to info severity"
+        invocation_text: "specter check"
+        invocation_json: "specter check --json"
+      expected_output:
+        text_exit_code: 0
+        json_exit_code: 0
+        json_document_reports_orphan_constraint_at_info: true
+      references_constraints: ["C-14", "C-02"]
+      priority: medium
+
+    - id: AC-33
+      description: "When `specter check --json` exits non-zero, stdout still holds one complete JSON document and nothing else. The document parses, and it carries every diagnostic the same run reports in text mode, each with its kind and its severity. A caller that reads the exit code can then read the reason from the same output"
+      inputs:
+        spec: "id dup, tier 1, acceptance_criteria in declaration order: AC-01, AC-02, AC-01"
+        invocation: "specter check --json"
+      expected_output:
+        exit_code: 1
+        stdout_parses_as_json: true
+        stdout_contains_only_the_document: true
+        diagnostics_match_text_mode: true
+        each_diagnostic_carries_kind_and_severity: true
+      references_constraints: ["C-14"]
+      priority: critical
+
+    - id: AC-34
+      description: "A workspace whose only finding is a structural conflict exits 0, and exits 0 under `--strict` as well. The diagnostic is present in both runs at info severity."
+      inputs:
+        workspace: "upstream constraint requiring a subject, downstream criterion mentioning it beside an absence word, joined by a requires edge"
+        commands: ["check", "check --strict"]
+      expected_output:
+        exit_code: 0
+        diagnostic_present: true
+        diagnostic_severity: "info"
+      references_constraints: ["C-15"]
+      priority: high
+
+    - id: AC-35
+      description: "An upstream constraint carrying `enforcement: error` does not raise the severity of a structural conflict it produces. The enforcement field says how strictly the constraint binds the system, not how much to trust a lexical match."
+      inputs:
+        upstream_constraint_enforcement: "error"
+      expected_output:
+        diagnostic_severity: "info"
+        exit_code: 0
+      references_constraints: ["C-15"]
+      priority: high
+
+    - id: AC-45
+      description: "Strictness reaches diagnostics the command assembles, not only those the checker produced. Workspace: a manifest declaring `settings.tier_overrides` for a spec whose declared `tier` disagrees, and a domain declaring a `tier` that also disagrees, so one run carries both a `tier_conflict` and a `domain_tier_conflict` and no other diagnostic. Plain `specter check` reports both at `warning` and exits 0. `specter check --strict` reports both at `error` and exits 1. `specter check --strict --json` agrees: every diagnostic in the document carries `severity: error`, the summary reports zero warnings, and the exit code is 1. Both kinds are computed from the manifest and appended after the checker returns, which is why they are the case this criterion binds: an implementation that promotes inside the checker alone passes AC-07, AC-31 and AC-36 and fails here. The `--test` diagnostics are the second half of this criterion, and they are the half that separates the rule from the two kinds that prompted it. On a workspace declaring `settings.strictness: threshold` with a source annotation whose test produces no runner-visible token, `specter check --test` reports `unreachable_annotation` at `warning` and exits 0, and `specter check --test --strict` reports it at `error` and exits 1. These diagnostics are computed from test file contents, which the checker does not read, so they arrive by the same route the tier kinds do. And the non-promotable set holds: on a workspace whose test shape the reachability scanner cannot recognize, `unreachable_annotation_unknown` stays at `warning` under `--strict` and does not by itself make the run exit non-zero, per C-10. A run carrying only that diagnostic exits 0 with or without the flag. This is the case that stops the rule being implemented as promote everything that arrives late. **The rule binds every command that builds a check result, not the `check` command alone.** `sync` runs the same checker and assembles its own test-annotation diagnostics, so the same route exists there and the same criterion covers it. It reported no wrong severity while every diagnostic on that path was error severity, which is the condition that makes a structural violation invisible: the route is wrong and the output happens to be right, so nothing fails until a warning-severity kind is added. A guard that reads only one command cannot see the second, so the ownership assertion covers `cmd/specter` and `internal/sync` together. Whether a command may write through the `CheckOptions` pointer it was handed is not this criterion's business. `spec-sync` C-13 owns that boundary, because `RunSync` is the API that takes the pointer."
+      inputs:
+        workspace_tier: "one spec whose declared tier disagrees with both settings.tier_overrides and its domain tier"
+        workspace_annotation: "settings.strictness: threshold, one source annotation with no runner-visible token"
+        workspace_unknown: "a test shape the reachability scanner cannot recognize"
+        invocations: "check, check --strict, check --strict --json, check --test, check --test --strict"
+        commands_bound: "cmd/specter and internal/sync"
+      expected_output:
+        plain_severities: "warning, warning"
+        plain_exit_code: 0
+        strict_severities: "error, error"
+        strict_exit_code: 1
+        strict_json_warning_count: 0
+        strict_json_exit_code: 1
+        unreachable_annotation_plain_severity: "warning"
+        unreachable_annotation_strict_severity: "error"
+        unreachable_annotation_strict_exit_code: 1
+        unreachable_annotation_unknown_strict_severity: "warning"
+        unreachable_annotation_unknown_strict_exit_code: 0
+        promotion_sites_across_both_commands: 1
+        summary_computation_sites: 1
+      references_constraints: ["C-07", "C-10"]
+      priority: critical
+
+    - id: AC-46
+      description: >-
+        `check --json` writes one complete document in each of the three states
+        that end a run before the structural rules execute. A spec that fails to
+        parse, a resolver error, and a manifest that fails to load each leave
+        stdout carrying a parseable document and nothing else, and each takes its
+        exit code from the same verdict the ordinary path uses. The three are
+        asserted separately rather than as one case, because they are three
+        separate early returns and a fix applied to one is the defect this
+        criterion exists to catch. A control run that reaches the checker
+        normally is required beside them, so the criterion cannot be satisfied by
+        a command that emits a document and never checks anything.
+
+        Each state binds the diagnostic it produces: its kind, error severity, a
+        non-empty message, and a summary error count of at least one. A document
+        carrying an empty diagnostics list satisfies every structural assertion
+        about the document while telling a caller nothing, and its summary counts
+        zero errors so both modes exit 0. That is a worse failure than writing
+        nothing at all, because an empty stream is at least obviously broken. The
+        exit code is therefore asserted as 1 in its own right, not only as
+        agreeing with text mode, since the two agree at 0 when the document is
+        empty.
+
+        Rendering is bound as ownership rather than as placement. One named
+        function owns encoding and the verdict, the command encodes at no site of
+        its own, and every path out of the command routes through that owner.
+        Asserting instead that the encoder sits lexically inside the command
+        would fail a valid extraction of the renderer into a helper, which is a
+        refactor that preserves the property this criterion is about.
+      inputs:
+        parse_failure: "a workspace where one spec is not valid against the schema"
+        resolver_error: "a schema-valid spec depending on a spec id that does not exist"
+        manifest_failure: "a specter.yaml the manifest loader rejects"
+        control: "a workspace whose specs parse, resolve, and produce one orphan_constraint"
+        invocation: "specter check --json"
+      expected_output:
+        parse_failure_stdout_parses_as_json: true
+        resolver_error_stdout_parses_as_json: true
+        manifest_failure_stdout_parses_as_json: true
+        stdout_contains_only_the_document: true
+        human_readable_notices_on_stderr: true
+        exit_code_matches_text_mode_in_all_three: true
+        exit_code_in_all_three: 1
+        parse_failure_diagnostic_kind: "parse_error"
+        resolver_error_diagnostic_kind: "dangling_reference"
+        manifest_failure_diagnostic_kind: "manifest_error"
+        every_early_diagnostic_severity: "error"
+        every_early_diagnostic_message_non_empty: true
+        summary_errors_at_least_one_in_all_three: true
+        control_reaches_the_checker_and_reports_its_diagnostic: true
+        render_owner_functions: 1
+        command_encodes_directly_at_zero_sites: true
+        command_routes_to_the_owner_at_every_exit: true
+      references_constraints: ["C-14"]
+      priority: critical
+
+    - id: AC-47
+      description: >-
+        `settings.strict` does not enable the test-annotation scan. The scan's
+        own diagnostic is what is asserted, not the exit code: a run that
+        exits 0 has not proved the scan stayed off, because a scan that ran
+        and had its findings suppressed exits 0 too, and a run that exits 1
+        has not proved the scan is why.
+
+        `sync` is the defective consumption site and the only one. `check`
+        gates the scan on its own `--test` flag and never reads the key.
+
+        **How presence is observed, stated because the two commands differ.**
+        `check --test --json` names diagnostic kinds, so `unknown_spec_ref` is
+        asserted there directly. `sync` names no kind in any output mode: its
+        check phase reports counts only. So on `sync` the scan is observed
+        through the check phase's error count, made attributable by two
+        controls on the same workspace: `check --test` produces exactly one
+        `unknown_spec_ref`, and `check` without the flag produces no
+        diagnostics at all. The scan is therefore the only thing that error
+        count can be about.
+
+        Both supported entries are exercised under BOTH manifests, so the
+        claim that they do not depend on the key is asserted rather than
+        assumed from one run. They are also the control: without them a build
+        that deleted the scan entirely would satisfy everything else here.
+
+        The count of sites feeding the key into the scan's enable input is
+        asserted at zero, as a guard against future wiring rather than the
+        present one, since no behavioral case can catch a site added later.
+
+        That guard follows return flow rather than a spelling: a helper counts
+        only when the value it returns depends on the key, and named callees
+        are followed with the caller's arguments substituted. **It is syntactic
+        and its limit is part of the criterion rather than an implementation
+        note.** It does not resolve types, so it cannot follow the key through
+        a struct field, a slice element, a closure capture, an interface
+        method, or a value crossing a package boundary, and a regression taking one
+        of those routes passes it silently.
+
+        **It reports on exactly one kind of uncertainty, and that distinction
+        matters.** An exhausted depth budget fails, because there the analysis
+        knows it stopped looking. Everything else outside the supported set,
+        an unresolvable call, a closure, a method, a cross-package value, is
+        indistinguishable from an untainted expression and returns clean. So
+        the count below is zero SUPPORTED flows, not zero flows.
+
+        The claim is therefore narrow, and stated narrowly on purpose: this
+        catches the shapes a refactor of the present code would plausibly take.
+        The behavioral cases above are what bind the rule; this sits under
+        them as a tripwire, and a criterion that implied soundness here would
+        be promising what no test in this repository delivers.
+      inputs:
+        workspace: "one spec, one test annotating it correctly, and a second test annotating @spec bogus-spec"
+        manifest_with_key: "settings.strict: true, settings.strictness: annotation"
+        manifest_without_key: "the same manifest with settings.strict removed"
+        invocations: "specter sync, specter sync --strict, specter check --test --json, specter check --json, each under both manifests"
+      expected_output:
+        attribution_check_test_unknown_spec_ref_count: 1
+        attribution_plain_check_diagnostic_count: 0
+        sync_with_the_key_check_phase_errors: 0
+        sync_with_the_key_exit_code: 0
+        sync_without_the_key_check_phase_errors: 0
+        sync_without_the_key_exit_code: 0
+        sync_strict_check_phase_errors_under_both_manifests: 1
+        sync_strict_exit_code_under_both_manifests: 1
+        check_test_unknown_spec_ref_count_under_both_manifests: 1
+        check_test_exit_code_under_both_manifests: 1
+        supported_syntactic_flows_assigning_the_key_to_the_scan_input: 0
+      references_constraints: ["C-09"]
+      priority: critical
+
+    - id: AC-48
+      description: >-
+        `settings.strict` promotes severity, and that is what it does. The same
+        workspace with and without the key produces the SAME diagnostics; only
+        their severity and the verdict change.
+
+        Bound separately from AC-47 because that criterion cannot see it. Every
+        diagnostic AC-47 observes is either absent or `unknown_spec_ref`, whose
+        severity is hardcoded, so an implementation that removed the key's
+        routing to `CheckOptions.Strict` would satisfy all of it. Stating a
+        rule as "only X" needs the X asserted, not just the not-X. C-07 owns
+        that routing, so this criterion verifies a rule rather than inventing
+        one.
+
+        **Identity, not kind equality.** The two diagnostic lists are compared
+        whole after normalizing severity alone. Comparing kinds would let the
+        message, the constraint id, the spec id or the cardinality change
+        under the key, and a setting that rewrites what a diagnostic says has
+        not merely promoted it.
+
+        Observed through `check --json`, which is the only surface that emits
+        the full diagnostic list. `sync` reports counts, so its half is bound
+        as the check phase's error and warning counts plus its exit code, and
+        that difference is stated rather than papered over.
+
+        All three surfaces, because the key reaches promotion through a
+        separate consumption site in each and a regression in one would not
+        show in the others. `watch` is the one an earlier draft missed: it
+        already routed the key, so deleting that routing would have left this
+        criterion green.
+
+        `watch` runs a loop, so it is observed from its first cycle, which
+        completes before any file changes. Its passing line is also a control
+        the other two do not need: it reports coverage, which means the run
+        reached past the check phase, so parse, resolve and coverage cannot be
+        what supplies the failure seen under the key.
+      inputs:
+        workspace: "one Tier 3 spec with two constraints, one referenced by an acceptance criterion and one not, and a test file annotating that criterion"
+        manifest_without_key: "settings.strictness: annotation"
+        manifest_with_key: "the same manifest plus settings.strict: true"
+        invocations: "specter check --json, specter check, specter sync --json, specter sync, and specter watch interrupted after its first cycle"
+      expected_output:
+        check_json_diagnostics_without_the_key: "exactly one orphan_constraint, severity info"
+        check_json_diagnostics_with_the_key: "exactly one orphan_constraint, severity error"
+        check_json_lists_identical_after_normalizing_severity: true
+        check_exit_code_without_the_key: 0
+        check_exit_code_with_the_key: 1
+        sync_check_phase_counts_without_the_key: "0 error(s), 0 warning(s)"
+        sync_check_phase_counts_with_the_key: "1 error(s), 0 warning(s)"
+        sync_exit_code_without_the_key: 0
+        sync_exit_code_with_the_key: 1
+        watch_first_cycle_without_the_key: "PASS, reporting coverage, so the cycle reached past the check phase"
+        watch_first_cycle_with_the_key: "FAIL  check  (1 error(s))"
+      references_constraints: ["C-07"]
+      priority: critical
+
+    - id: AC-36
+      description: "The advisory posture does not weaken the other structural checks. A workspace carrying an orphan constraint on a Tier 1 spec still fails, and `--strict` still upgrades a Tier 3 orphan to an error, in the same run that reports a structural conflict at info."
+      inputs:
+        workspace: "one Tier 1 orphan constraint and one structural conflict"
+      expected_output:
+        exit_code_nonzero: true
+        failing_diagnostic_kind: "orphan_constraint"
+        structural_conflict_severity: "info"
+      references_constraints: ["C-15", "C-07"]
+      priority: high
+
+    - id: AC-37
+      description: "`specter check --concrete` reports a criterion carrying neither `inputs` nor `expected_output` as `vague_criterion`, at error for a Tier 1 spec, warning for Tier 2 and info for Tier 3. A criterion carrying either field is not reported."
+      inputs:
+        specs: ["Tier 1 with one bare criterion", "Tier 2 with one bare criterion", "Tier 3 with one bare criterion", "Tier 1 with a criterion carrying inputs only"]
+        command: "check --concrete"
+      expected_output:
+        diagnostic_kind: "vague_criterion"
+        severity_by_tier: {"1": "error", "2": "warning", "3": "info"}
+        reported_when_either_field_present: false
+      references_constraints: ["C-16"]
+      priority: high
+
+    - id: AC-38
+      description: "Without `--concrete`, the same workspace produces no `vague_criterion` diagnostic and exits 0. The rule is opt-in and a workspace that never passes the flag cannot be failed by it."
+      inputs:
+        specs: ["Tier 1 with one bare criterion"]
+        commands: ["check", "check --strict"]
+      expected_output:
+        diagnostic_present: false
+        exit_code: 0
+      references_constraints: ["C-17"]
+      priority: high
+
+
+    - id: AC-39
+      description: "A structural conflict between two specs renders a header that does not attribute the upstream constraint id to the downstream spec. The constraint id appears qualified with the spec that owns it."
+      inputs:
+        upstream: "spec-core, constraint C-01"
+        downstream: "spec-app, criterion AC-01"
+      expected_output:
+        header_attributes_constraint_to_owner: true
+        header_pairs_downstream_spec_with_upstream_constraint_id: false
+      references_constraints: ["C-18"]
+      priority: medium
+
+    - id: AC-40
+      description: "A constraint whose text uses `required` or `mandatory` rather than ` MUST` produces no structural-conflict diagnostic, and does so because the keyword is no longer in the required list rather than because the subject came out empty. The observable behavior is unchanged; the dead branch is gone."
+      inputs:
+        constraints: ["The system required to log every request", "Logging by the system is mandatory"]
+      expected_output:
+        diagnostics: 0
+      references_constraints: ["C-19"]
+      priority: medium
+
+    - id: AC-41
+      description: "A `conflicts_with` edge is scanned for structural conflicts, as is an `extends` edge. A workspace whose only edge is `conflicts_with` and whose text conflicts produces the diagnostic."
+      inputs:
+        edge_relationship: "conflicts_with"
+        upstream_constraint: "email MUST be required"
+        downstream_criterion: "Process checkout when email is absent"
+      expected_output:
+        diagnostic_emitted: true
+      references_constraints: ["C-20"]
+      priority: medium
+
+
+    - id: AC-42
+      description: "The subject matches on whole-token boundaries. A constraint whose subject is `CI` produces no diagnostic against a criterion containing `producing` or `exercises`, and does produce one against `in a ci environment without a controlling terminal` only if the absence expression attaches, which it does not."
+      inputs:
+        subject: "CI"
+        criteria: ["a step producing artifacts", "the suite exercises the path", "in a ci environment without a controlling terminal"]
+      expected_output:
+        diagnostics: 0
+      references_constraints: ["C-21"]
+      priority: high
+
+    - id: AC-43
+      description: "Both attachment shapes are detected. Forward: `email is absent`, `email is not provided`, `the email is empty`. Backward: `without email`, `without the refresh token`, `without an audit record` against a subject of `The audit record`."
+      inputs:
+        forward_criteria: ["Process checkout when email is absent", "Submit the form when email is not provided", "Checkout proceeds when the email is empty"]
+        backward_criteria: ["Order is accepted without email", "Renewal succeeds without the refresh token", "Deletion completes without an audit record"]
+      expected_output:
+        all_detected: true
+      references_constraints: ["C-21"]
+      priority: high
+
+    - id: AC-44
+      description: "Accuracy is measured against all three corpora and the numbers are recorded rather than described. On this repository's specs the rule fires zero times over every ordered pair. Of twelve genuine conflicts it detects twelve. Of nine written-down non-conflicts it wrongly fires on five, all of which are the enforcement class C-22 names."
+      inputs:
+        corpora: ["this repository, all ordered pairs", "12 genuine conflicts", "9 non-conflicts"]
+      expected_output:
+        corpus_fires: 0
+        true_conflicts_detected: 12
+        non_conflicts_wrongly_fired: 5
+      references_constraints: ["C-21", "C-22"]
+      priority: high
+
+
   changelog:
+    - version: "5.0.0"
+      date: "2026-09-01"
+      author: "specter-team"
+      type: major
+      description: "C-09 names what enables the test-annotation scan, `check --test` and `sync --strict`, and states that `settings.strict` is not one of them. AC-47 binds that and AC-48 binds the other half, that the key promotes severity and changes nothing about which diagnostics are discovered. Measured at 96c75ad, on a workspace whose test file references a spec id that does not exist: `sync` with `settings.strict: true` exits 1 and the same workspace with the key removed exits 0, because the key alone decided whether the cross-reference ran. `unknown_spec_ref` carries a hardcoded error severity, so no promotion was involved: removing one manifest key made a broken reference invisible. A severity setting cannot decide which defects are discovered. MAJOR, and this is the point on which the classifier and the rule disagree. `specter diff` reports [additive], because structurally this adds a clause and two criteria. `docs/SPEC_SCHEMA_REFERENCE.md` lists 'narrowing scope in a way that invalidates existing implementations' as MAJOR, and the new MUST NOT invalidates syncCmd's `SyncInput.CheckTestAnnotations` initializer today. The document governs; the classifier sees structure and cannot see an implementation it invalidates. Both dependents cascade: spec-sync and spec-vscode raise their floors from ^4.0.0 to ^5.0.0 and take patch bumps. `resolve dependents spec-check` names exactly those two, checked rather than assumed. C-07 names the three surfaces that check rather than saying every command, because an unnamed surface is one a criterion forgets: `watch` was missing from the first draft of the clause even though it already routes the key, and AC-48 would have stayed green if that routing were deleted. Measured on `watch` for the same fixture: without the key the first cycle reports coverage, which means it reached past the check phase, and with the key it reports FAIL check (1 error(s)). `bugs/SP-SP-047` finding 3."
+
+    - version: "4.0.0"
+      date: "2026-08-30"
+      author: "specter-team"
+      type: major
+      description: "AC-46 was satisfiable by a document that says nothing. It asserted the diagnostics key exists and that the two modes agree on the exit code, and both hold for an empty list: the summary counts zero errors, so both modes exit 0. Measured rather than argued. Dropping the diagnostic from all three early returns leaves AC-46 green; the kill came from an unrelated criterion, spec-manifest AC-51, which covers the manifest state only, so the parse and resolver states were unbound. An empty document with a zero exit is worse than writing nothing, because an empty stream is at least obviously broken while a successful-looking empty document is not. AC-46 now binds each state's diagnostic kind, error severity, a non-empty message, a summary error count of at least one, and exit 1 in its own right rather than only as parity. The ownership half is restated as ownership rather than placement: it asserted the encoder appears lexically inside the command, which would fail a valid extraction of the renderer into a named helper while the single-owner property still held. It now asserts one named owner, no encoding in the command, and every exit routed through the owner. Major, and taken from the classifier rather than from a reading of the diff: expected_output gains keys on one criterion, and spec-diff C-05 counts a change to any of the six concrete fields as breaking. specter diff over this change reports [breaking]. This repository has twice recorded overriding that classifier with a judgment about half the diff, so it is followed here. Two specs do depend on spec-check, and this claim was wrong when written: spec-sync and spec-vscode both required ^3.0.0, and `check` reported two version_mismatch errors after the bump. Both ranges are raised to ^4.0.0 and both specs take a patch bump. The absence of dependents was asserted rather than resolved; running `check` is what found it."
+
+    - version: "3.2.0"
+      date: "2026-08-30"
+      author: "specter-team"
+      type: minor
+      description: "C-14 gains the three states that end a `check` run before any structural rule executes, and AC-46 binds them. Measured at b3d02c9: a schema-valid spec depending on a spec that does not exist gives `check --json` rc=1 with zero bytes on stdout, and a parse failure and a rejected manifest do the same. C-14 already required the document to be written in full before the exit-code decision, so this is a conformance failure rather than a gap, and the constraint now says so instead of leaving it to be inferred from a rule about severity routing. The cost is not limited to CI: the VS Code extension's jsonDocumentFrom throws on an empty stream, and extension.ts runs parse and check through Promise.all, so one unparseable spec discards the parse result that succeeded and freezes on-save diagnostics and the coverage tree for every file in the workspace. A workspace with a broken cross-spec reference gets no Problems-panel entry for it at all. AC-46 asserts one render site rather than three emitters, because the defect is an omission at an early return and adding an emitter per branch leaves the next early return to be forgotten the same way. Minor: a new clause and a new criterion, with no criterion removed and no `inputs` changed on an existing one. `bugs/SP-SP-032`."
+
+    - version: "3.1.0"
+      date: "2026-08-30"
+      author: "specter-team"
+      type: minor
+      description: "AC-45 binds C-07 over every command that builds a check result, not `check` alone. `sync` runs the same checker and assembles its own test-annotation diagnostics after it returns, counting them into the summary itself, which is the route C-07 forbids. It reported no wrong severity, because every diagnostic on that path is error severity and `sync` does not run the unreachable scan, and that is exactly the condition that makes a structural violation invisible: the route is wrong and the output happens to be right, so nothing fails until a warning-severity kind is added there. The ownership guard reads `cmd/specter` and `internal/sync` together, because a guard over one command cannot see the other. Whether a command may write through the `CheckOptions` pointer it is handed is not this spec's business: `spec-sync` C-13 owns that boundary, because `RunSync` is the API that takes the pointer. Minor: the criterion widens to see a violation that was always there, C-07's rule is unchanged, and no conforming implementation breaks."
+    - version: "3.0.0"
+      date: "2026-08-29"
+      author: "specter-team"
+      type: major
+      description: "Reconcile C-07 with C-10 and finish the boundary 2.1.0 opened. 2.1.0 generalized the rule to every assembled diagnostic and moved only the two manifest-derived kinds across it. The `--test` diagnostics are still appended after the checker returns, each with its own summary accounting, so a threshold-severity `unreachable_annotation` stays a warning and `check --test --strict` exits 0. Same false-green class, in the flag CI reaches for. C-07 stated one exemption, `structural_conflict`; C-10 states that `unreachable_annotation_unknown` is always a warning regardless of strictness. Feeding every late diagnostic through the shared owner would have fixed one bypass and broken that guarantee. C-07 now names a set of non-promotable kinds rather than one exemption, enumerated in the constraint so adding to it is an amendment and not a local choice, and defers to C-10's wording rather than overriding it: a scanner that could not recognize a test shape has found no defect, so promoting it would fail a build on the checker's blind spot. C-07 also states that the summary is computed once in the same place, because a count taken at an assembly site reports as a warning what the run reports as an error. AC-45 gains the two `--test` cases, one that must promote and one that must not. Major, not the minor first written: an implementation conforming to 2.1.0 promoted `unreachable_annotation_unknown`, because that version named `structural_conflict` as the sole exemption, and this version forbids promoting it. `docs/SPEC_SCHEMA_REFERENCE.md` sets MAJOR for a change that could break implementations, and widening the non-promotable set does exactly that. `spec-sync` and `spec-vscode` pin `^2.0.0` and move with it."
+    - version: "2.1.0"
+      date: "2026-08-28"
+      author: "specter-team"
+      type: minor
+      description: "C-07 now says what it always meant: the strict upgrade applies to every diagnostic a run reports, whatever stage assembled it, and exactly one place applies it. `tier_conflict` and `domain_tier_conflict` are computed from the manifest and appended by the command after the checker returns, so both sat past the upgrade loop and stayed warnings under `--strict`. `check --strict` returned 0 on a workspace `spec-manifest` C-35 says it should fail, which is a false green in the command CI runs. AC-45 binds it across plain, strict and strict JSON, and is written on the two kinds that escaped rather than on the orphan diagnostics AC-07, AC-31 and AC-36 already cover, because an implementation that promotes inside the checker alone passes all three of those and still fails this one. Minor: a new criterion, and C-07's rule is unchanged in what it requires."
+    - version: "2.0.0"
+      date: "2026-08-27"
+      author: "specter-team"
+      type: major
+      description: "Retract version-change classification from this spec. Remove C-04, AC-04 and AC-05, the objective summary's promise to detect breaking changes between spec versions, the matching `scope.includes` entry, and the `deep-diff` differ dependency that existed only for them. `bugs/SP-SP-018`: no production caller populates `CheckOptions.PreviousVersions`, so the branch calling `ClassifyChanges` was unreachable and `check` emitted no change diagnostic on a constraint rewritten to the opposite meaning. The three criteria nonetheless reported covered, because the only callers were tests invoking the pure function directly, which is why the record is graded P1 false confidence rather than a lower defect. Retracted rather than reworded: `spec-diff` owns version comparison and carries the constraints, the corpora and the tests for it, so a rewritten checker-owned criterion would invent a second version policy and recreate the defect under new wording. Any future previous-version feature reuses `internal/diff`. Major because constraints and criteria are removed."
+    - version: "1.11.1"
+      date: "2026-08-23"
+      author: "specter-team"
+      type: patch
+      description: "Correct two records, no behavior change. C-22 said the rule fires on five of seven written-down non-conflicts while AC-44 said five of nine, using the same phrase for two different sets: seven counts the near-miss table alone, nine adds the two proximity survivors. C-22 now states nine and names what it counts. And C-05's measurement was stamped 2026-08-24, a day after the commit that took it; every amendment in this cycle carried the same wrong date and all are corrected in place, because a bump would record a fake amendment to fix a typo in a real one. Bug citations drop their lifecycle folder: a spec is permanent and `bugs/doing/` changes every time an item moves, so a pathed citation is broken by design."
+    - version: "1.11.0"
+      date: "2026-08-23"
+      author: "specter-team"
+      type: minor
+      description: "Add C-21/C-22 and AC-42..44, roadmap 2A2. Structural-conflict detection binds the absence expression to the required subject rather than testing co-occurrence, in two shapes, on whole-token boundaries, with a leading article stripped from the extracted subject. C-22 records that Go's RE2 has no lookaround so the implementation is a token scanner. C-22 forbids describing the rule as eliminating false positives and requires three corpora for any measurement, because the zero it reaches on this repository is a property of the corpus rather than of the rule."
+    - version: "1.10.0"
+      date: "2026-08-23"
+      author: "specter-team"
+      type: minor
+      description: "Add C-18/C-19/C-20 and AC-39..41, roadmap 2A4. The structural-conflict header stops attributing the upstream constraint id to the downstream spec (SP-SP-014). The dead required-keywords are removed rather than activated, because activating them widens a false-positive surface C-05 declines to bound on a check that is advisory under C-15. And detection scans every dependency edge rather than only `requires`, because a conflicts_with edge is where a contradiction check has the strongest reason to look and the one place it did not."
+    - version: "1.9.0"
+      date: "2026-08-23"
+      author: "specter-team"
+      type: minor
+      description: "Add C-16/C-17 and AC-37/AC-38: `check --concrete` reports criteria carrying neither inputs nor expected_output, severity by tier. Roadmap 2C2. The rule is opt-in, and C-17 records why: both fields are optional in the canonical schema, so erroring on their absence by default would fail a build on a valid spec, which is the P0 row this cycle spent itself removing. The tier gradient protects this repository, whose Tier 1 gaps were backfilled first; it does not protect an adopter upgrading."
+    - version: "1.8.0"
+      date: "2026-08-23"
+      author: "specter-team"
+      type: minor
+      description: "Add C-15/AC-34..36 and amend C-03, C-05 and C-07: `structural_conflict` becomes advisory. Always info, `--strict` does not upgrade it, the upstream enforcement field does not raise it, and it never contributes to a non-zero exit. C-05 no longer promises zero false positives for it, because that promise contradicted C-03 and because no lexical rule separates a conflict from an enforcement. Roadmap 2A1, closing the build-failure half of bugs/SP-SP-004."
+    - version: "1.7.0"
+      date: "2026-08-16"
+      author: "specter-team"
+      type: minor
+      description: "v0.15, exit-code parity between `check` and `check --json` (bugs/SP-SP-021). Add C-14 and AC-28 through AC-33. On a workspace with one error, `specter check` exits 1 and `specter check --json` exits 0. The diagnostics are present and correct in the document, so only the verdict is lost, and the verdict is the part an automated caller reads. A CI job that uses `--json` for structured diagnostics has a check gate that never fails, for any kind, at any severity. Three decisions are recorded here. First, the existing `exit_code_nonzero` criteria did not already cover this. Each of them names its invocation in `inputs`, and none of those invocations carries `--json`. The current binary satisfies all of them as written, so the contract was silent. This is a gap rather than a conformance failure. That reading matches how the identical case was settled for `coverage` in the v0.13 D3 audit, which added spec-coverage C-29 instead of declaring the older criteria violated. Second, the rule is scoped to `check`. Per-command parity constraints are the existing house form (spec-coverage C-29, spec-sync C-07). A constraint in this spec also cannot bind a command this spec does not describe. A format-parity rule would not catch the separate `diff` defect either, because that exit code is wrong in both formats. Third, C-14 defines the JSON exit code as the code text mode produces, so it never restates severity routing. Warning-only and info-only runs exit 0 in both formats, and a `--strict` run that upgrades warnings to errors exits 1 in both. AC-33 states what the document must hold on a non-zero exit, in terms of the diagnostics and stdout, and mandates no new field."
+    - version: "1.6.0"
+      date: "2026-08-16"
+      author: "specter-team"
+      type: minor
+      description: "v0.15 phase 2C1, duplicate acceptance criterion IDs. Add C-13 and AC-21 through AC-27. A spec that declares the same AC id twice passes parse and check today, and one `@ac` annotation then credits every criterion carrying that id, so the spec reports coverage it has not earned. JSON Schema cannot express uniqueness over a property of array items, so the rule belongs in the checker. Four decisions are recorded here because a reader may expect otherwise. Severity is error at every tier, since no tier makes two criteria sharing a join key correct. One diagnostic is emitted per duplicated id rather than per occurrence, which is the opposite of the C-09 no-dedup rule for repeated `@ac` mentions and is deliberate. The check runs with no flag, so `sync` inherits it. Ids are compared as exact strings, so `AC-01` and `AC-001` stay distinct. Error at every tier means an adopter shipping a duplicate today fails `check` on upgrade, which is the intent, because the defect is silent coverage inflation."
     - version: "1.5.0"
       date: "2026-05-16"
       author: "specter-team"
