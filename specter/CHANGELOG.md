@@ -137,6 +137,16 @@ Four manifest surfaces are on a removal path for v1.0.0. Three of them resolve n
 
 - British spellings corrected in `README.md`, `GOTCHAS.md`, `docs/CLI_REFERENCE.md`, `vscode-extension/README.md`, and three VS Code extension source comments. One decorative symbol removed from `docs/explainer/v0.10-ci-gated-coverage.md`. No behavior change.
 
+### Security
+
+- **Two Go standard library vulnerabilities are fixed by building on Go 1.25.13.** Both were reachable from code Specter runs, so both applied to the released binary.
+
+  [`GO-2026-6218`](https://pkg.go.dev/vuln/GO-2026-6218) is quadratic complexity in `net/url`. Specter reached it while resolving schema references during spec parsing.
+
+  [`GO-2026-6088`](https://pkg.go.dev/vuln/GO-2026-6088) is a missing recursion depth guard when decoding XML. Specter reached it in `specter ingest` when reading a JUnit report, where deep nesting could exhaust the stack.
+
+  **Action:** none if you use a released binary. If you build from source, the minimum Go version is now 1.25.13. The `go` directive in `go.mod` enforces it, so an older pinned toolchain fails the build instead of producing a binary that still carries both.
+
 ---
 
 ## v0.14.1 - 2026-06-13
