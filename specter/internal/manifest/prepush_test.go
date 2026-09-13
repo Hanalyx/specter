@@ -230,9 +230,13 @@ func TestHasAnnotationDelta_DiffHeaderIgnored(t *testing.T) {
 // can consume directly.
 func TestSummarizePushDiff_ImplOnlyNoAnnotation(t *testing.T) {
 	t.Run("spec-manifest/AC-28 SummarizePushDiff impl-only no-annotation produces blocking summary", func(t *testing.T) {
-		filenames := []string{"internal/foo/bar.go"}
+		changes := []FileChange{{
+			Path: "internal/foo/bar.go", Status: 'M',
+			Base: []byte("package foo\n"),
+			Head: []byte("package foo\n\nfunc bar() {}\n"),
+		}}
 		diff := "+++ b/internal/foo/bar.go\n+func bar() {}\n"
-		s := SummarizePushDiff(filenames, diff)
+		s := SummarizePushDiff(changes, diff)
 
 		if len(s.ImplFilesChanged) != 1 || s.ImplFilesChanged[0] != "internal/foo/bar.go" {
 			t.Errorf("expected impl files = [internal/foo/bar.go], got %+v", s.ImplFilesChanged)
@@ -248,9 +252,14 @@ func TestSummarizePushDiff_ImplOnlyNoAnnotation(t *testing.T) {
 
 func TestSummarizePushDiff_ImplPlusAnnotation(t *testing.T) {
 	t.Run("spec-manifest/AC-28 SummarizePushDiff impl + annotation delta allows push", func(t *testing.T) {
-		filenames := []string{"internal/foo/bar.go", "internal/foo/bar_test.go"}
+		changes := []FileChange{
+			{Path: "internal/foo/bar.go", Status: 'M',
+				Base: []byte("package foo\n"),
+				Head: []byte("package foo\n\nfunc bar() {}\n")},
+			{Path: "internal/foo/bar_test.go", Status: 'M'},
+		}
 		diff := "+++ b/internal/foo/bar_test.go\n+// @spec spec-foo\n+// @ac AC-01\n"
-		s := SummarizePushDiff(filenames, diff)
+		s := SummarizePushDiff(changes, diff)
 
 		if !s.AnnotationDelta {
 			t.Errorf("expected annotation delta, got false")
