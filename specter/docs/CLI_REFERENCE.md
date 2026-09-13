@@ -597,7 +597,7 @@ specter init --ai <tool>
 | `--template <type>` | Create a draft `.spec.yaml` from a template instead of a manifest. Types: `api-endpoint`, `service`, `auth`, `data-model`. |
 | `--refresh` | Update only `domains.default.specs` in an existing `specter.yaml`. Preserves every other field: `settings`, `registry`, tier overrides, custom domains. Added in v0.9.2. |
 | `--dry-run` | Used with `--refresh`: print the proposed diff to stdout without writing the file. Added in v0.9.2. |
-| `--install-hook` | Install a git pre-push hook that blocks implementation-only pushes with no `@spec` / `@ac` annotation delta. |
+| `--install-hook` | Install a git pre-push hook that blocks implementation-only pushes with no `@spec` / `@ac` annotation delta. A modified Go file whose pushed base and head are equal after canonical formatting, such as a `goimports` regrouping, does not count as an implementation change. TypeScript, JavaScript, Python, Rust, Java, C, and C++ files always count, and so does any file the hook cannot read, or any Go file it cannot parse. |
 | `--ai <tool>` | Write an AI assistant instruction file. Values: `claude`, `codex`, `cursor`, `copilot`, `gemini`. |
 
 **Behavior (v0.9.0+):**

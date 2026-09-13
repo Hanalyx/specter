@@ -8,6 +8,12 @@ Unreleased changes accumulate under `## Unreleased`. Every user-visible change a
 
 ## Unreleased
 
+### Fixed
+
+- **The pre-push hook no longer blocks a push whose only implementation change is formatting.** `goimports` moving an import between groups changes two lines and no symbol, and the hook installed by `specter init --install-hook` refused that push as an unannotated implementation change. The only way through was `git push --no-verify`, which disables every check rather than the one that misfired. `pre-push-check` now reads each modified Go file at the pushed base and at the pushed head, and treats the two as the same file when they are equal after canonical formatting: the standard library printer with imports merged into one sorted group. That erases import order and grouping and the line layout the printer decides, and nothing that changes what the file does. A changed import set, a changed statement, a new alias, a comment edit, or an inserted blank line that `gofmt` would keep still counts. So does a number literal `gofmt` would rewrite, such as `0XFF` to `0xFF`, because the canonical form does not normalize literals. The rule fails closed. TypeScript, JavaScript, Python, Rust, Java, C, and C++ files, a blob git cannot read, a Go file that does not parse, and files added or deleted in the range all count as implementation changes, and the block message names any file it could not compare. There is no flag, commit trailer, or manifest key that declares a range format-only. **Action:** none. The installed hook script delegates to the binary, so upgrading the binary is enough; `specter init --install-hook` does not need to be run again.
+
+- **A pushed range git could not list passed the hook.** When `git diff` failed, `pre-push-check` printed the error and skipped the ref, so the push exited 0. It now blocks when git cannot list the changed files, and says so. When git can list the files but cannot read a modified implementation file, that file counts as changed and the block message names it. A range with no implementation file still passes when git cannot read one of its test files, because there is nothing in it to annotate. **Action:** none.
+
 ---
 
 ## v0.15.0 - 2026-09-02
