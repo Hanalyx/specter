@@ -16,11 +16,13 @@ import (
 	"example.com/x/compliance"
 	"fmt"
 	"sync"
+	"z.example.com/y/other"
 )
 
 var _ = fmt.Sprint
 var _ sync.Mutex
 var _ = compliance.X
+var _ = other.Y
 
 // f is documented.
 func f(err error) error {
@@ -38,11 +40,13 @@ import (
 	"sync"
 
 	"example.com/x/compliance"
+	"z.example.com/y/other"
 )
 
 var _ = fmt.Sprint
 var _ sync.Mutex
 var _ = compliance.X
+var _ = other.Y
 
 // f is documented.
 func f(err error) error {
@@ -77,7 +81,7 @@ func TestCanonicalGo_ErasesImportGrouping(t *testing.T) {
 		}
 		// The canonical form must still be the same program, not an empty
 		// or truncated one. Every import path survives.
-		for _, p := range []string{`"fmt"`, `"sync"`, `"example.com/x/compliance"`} {
+		for _, p := range []string{`"fmt"`, `"sync"`, `"example.com/x/compliance"`, `"z.example.com/y/other"`} {
 			if !strings.Contains(string(a), p) {
 				t.Errorf("AC-68: canonical form lost import %s", p)
 			}

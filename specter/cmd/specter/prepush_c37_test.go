@@ -25,11 +25,13 @@ import (
 	"example.com/x/compliance"
 	"fmt"
 	"sync"
+	"z.example.com/y/other"
 )
 
 var _ = fmt.Sprint
 var _ sync.Mutex
 var _ = compliance.X
+var _ = other.Y
 
 func f(err error) error {
 	if err != nil {
@@ -39,8 +41,11 @@ func f(err error) error {
 }
 `
 
-// c37FormatOnly is c37Base after goimports moves the third-party import into
-// its own group. Same import set, same statements, two lines moved.
+// c37FormatOnly is c37Base after goimports moves both non-standard-library
+// imports into their own group. Same import set, same statements. One of the
+// two sorts before the standard library paths and one after, so the
+// canonical form has to reorder the specs and erase the gap; a mutation run
+// showed a fixture with one import left the gap half untested.
 const c37FormatOnly = `package p
 
 import (
@@ -48,11 +53,13 @@ import (
 	"sync"
 
 	"example.com/x/compliance"
+	"z.example.com/y/other"
 )
 
 var _ = fmt.Sprint
 var _ sync.Mutex
 var _ = compliance.X
+var _ = other.Y
 
 func f(err error) error {
 	if err != nil {
@@ -158,7 +165,7 @@ func sortedImports(src string) []string {
 			}
 		}
 	}
-	// Insertion sort; the lists are three entries long.
+	// Insertion sort; the lists are four entries long.
 	for i := 1; i < len(paths); i++ {
 		for j := i; j > 0 && paths[j] < paths[j-1]; j-- {
 			paths[j], paths[j-1] = paths[j-1], paths[j]
@@ -288,6 +295,26 @@ func TestPrePushCheck_C37_FailsClosed(t *testing.T) {
 		}
 		if !strings.Contains(out, "could not compare impl.go") {
 			t.Errorf("AC-71: the block message does not say which file could not be compared:\n%s", out)
+		}
+	})
+
+	t.Run("spec-manifest/AC-71 a range git cannot list blocks and says so", func(t *testing.T) {
+		// A mutation run reverted this branch to the old skip and nothing
+		// noticed. With the base tree gone, git cannot list the changed
+		// files, and there is nothing to classify.
+		dir, base := setupC37Repo(t)
+		head := commitC37(t, dir, "goimports", map[string]string{"impl.go": c37FormatOnly})
+		tree := runGitInDir(t, dir, "rev-parse", base+"^{tree}")
+		obj := filepath.Join(dir, ".git", "objects", tree[:2], tree[2:])
+		if err := os.Remove(obj); err != nil {
+			t.Fatalf("AC-71: could not remove the base tree %s: %v", obj, err)
+		}
+		out, code := runCLIWithStdin(t, dir, pushLine(head, base), "pre-push-check")
+		if code == 0 {
+			t.Errorf("AC-71: a range git cannot list exited 0. The old code skipped the ref; a range that cannot be classified is not read as safe.\n%s", out)
+		}
+		if !strings.Contains(out, "cannot list") {
+			t.Errorf("AC-71: the block does not say the range could not be listed:\n%s", out)
 		}
 	})
 
