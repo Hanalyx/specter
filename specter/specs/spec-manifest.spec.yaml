@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "3.1.0"
+  version: "3.1.1"
   status: draft
   tier: 2
 
@@ -979,10 +979,10 @@ spec:
       references_constraints: ["C-35"]
       priority: high
     - id: AC-68
-      description: "A push whose only implementation change is formatter normalization exits 0 with no annotation delta. The base holds a gofmt-clean Go file with every import in one sorted group. The head moves one third-party import into its own group, which is what `goimports` does and what `gofmt` accepts on both sides. The pushed range carries no `@spec` or `@ac` delta. A second range makes the same move and also edits test files without touching an annotation, which is the shape of both recorded pushes. Both exit 0. Before this criterion the hook exited non-zero on both, and the only way through was `git push --no-verify`."
+      description: "A push whose only implementation change is formatter normalization exits 0 with no annotation delta. The base holds a gofmt-clean Go file with every import in one sorted group. The head moves the two non-standard-library imports into their own group, which is what `goimports` does and what `gofmt` accepts on both sides. Two are needed, one sorting before the standard library paths and one after, so canonical form has to both reorder the specs and erase the gap; a fixture with one lets either half go untested. The pushed range carries no `@spec` or `@ac` delta. A second range makes the same move and also edits test files without touching an annotation, which is the shape of both recorded pushes. Both exit 0. Before this criterion the hook exited non-zero on both, and the only way through was `git push --no-verify`."
       inputs:
-        base: "impl.go, gofmt-clean, imports `example.com/x/compliance`, `fmt`, `sync` in one group"
-        head: "the same file with `example.com/x/compliance` moved into its own group after a blank line"
+        base: "impl.go, gofmt-clean, imports `example.com/x/compliance`, `fmt`, `sync`, `z.example.com/y/other` in one sorted group"
+        head: "the same file with `example.com/x/compliance` and `z.example.com/y/other` moved into their own group after a blank line"
         second_range: "the same move plus an edit to impl_test.go that adds no annotation"
         annotation_delta: false
       expected_output:
@@ -1019,16 +1019,18 @@ spec:
       priority: high
 
     - id: AC-71
-      description: "A comparison that cannot be made blocks. It never assumes formatting. Four ranges each exit non-zero: a `.py` implementation file whose only change is whitespace, because Python has no canonical form in this tool; a Go file whose base blob does not parse; a Go file whose base blob has been removed from the object store, so `git show` cannot read it, and stderr says the file could not be compared; and a Go file added in the range, which has no base to compare."
+      description: "A comparison that cannot be made blocks. It never assumes formatting. Four ranges each exit non-zero: a `.py` implementation file whose only change is whitespace, because Python has no canonical form in this tool; a Go file whose base blob does not parse; a Go file whose base blob has been removed from the object store, so `git show` cannot read it, and stderr says the file could not be compared; and a Go file added in the range, which has no base to compare. A fifth range, whose base tree object is gone so git cannot list the changed files at all, exits non-zero and stderr says the range cannot be listed."
       inputs:
         unknown_language: "impl.py, one trailing space added"
         unparseable_base: "impl.go whose base is `package p\n\nfunc (` and whose head is valid Go"
         unreadable_base: "the base blob of impl.go deleted from .git/objects before the check"
         added_file: "new.go added in the range"
+        unlistable_range: "the base commit tree object deleted from .git/objects before the check"
         annotation_delta: false
       expected_output:
         exit_code_each: "non-zero"
         unreadable_stderr_contains: "could not compare impl.go"
+        unlistable_stderr_contains: "cannot list"
       references_constraints: ["C-37"]
       priority: high
 
@@ -1056,6 +1058,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "3.1.1"
+      date: "2026-09-13"
+      author: "specter-team"
+      type: patch
+      description: "Two criteria state fixtures a mutation run showed were too narrow. AC-68 now moves two non-standard-library imports, one sorting before the standard library paths and one after. With one that sorted first, a canonicalizer that kept import positions still reported the fixtures equal, because the printer never saw a forward gap; on the recorded persist.go blob the same defect leaves a stray blank line. AC-71 gains a range git cannot list at all, because the base tree object is gone. Nothing observed that branch, and reverting it to the old skip survived. Patch: the requirements are unchanged, and both fixtures bind what C-37 already said."
     - version: "3.1.0"
       date: "2026-09-13"
       author: "specter-team"
