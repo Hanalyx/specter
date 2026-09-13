@@ -23,6 +23,10 @@ type PushDiffSummary struct {
 	DocFilesChanged  []string
 	SpecFilesChanged []string
 	AnnotationDelta  bool
+	// CompareFailures names each implementation file whose base and head
+	// could not be compared, with the reason. Every entry is also in
+	// ImplFilesChanged: a comparison that cannot be made counts, C-37.
+	CompareFailures []string
 }
 
 // ShouldBlockPush decides whether the pre-push hook should reject the push.
@@ -125,6 +129,12 @@ func FormatBlockedPushMessage(diff PushDiffSummary) string {
 	b.WriteString(fmt.Sprintf("  %d implementation file(s) changed but no @spec / @ac annotation delta found:\n", len(diff.ImplFilesChanged)))
 	for _, f := range diff.ImplFilesChanged {
 		b.WriteString("    - " + f + "\n")
+	}
+	if len(diff.CompareFailures) > 0 {
+		b.WriteString("\n  These files could not be compared against their pushed base, so they count as changed:\n")
+		for _, f := range diff.CompareFailures {
+			b.WriteString("    could not compare " + f + "\n")
+		}
 	}
 	b.WriteString("\n  Either add a test that annotates the affected ACs, or push with `git push --no-verify` to bypass.\n")
 	return b.String()

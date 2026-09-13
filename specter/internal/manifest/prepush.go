@@ -111,11 +111,20 @@ func HasAnnotationDelta(diff string) bool {
 }
 
 // SummarizePushDiff combines file categorization (IsImplFile / isTestFile /
-// isSpecFile / isDocFile) with HasAnnotationDelta into one PushDiffSummary
-// that ShouldBlockPush can consume directly.
-func SummarizePushDiff(filenames []string, diff string) PushDiffSummary {
+// isSpecFile / isDocFile), the C-37 content rule, and HasAnnotationDelta
+// into one PushDiffSummary that ShouldBlockPush can consume directly.
+//
+// A modified implementation file leaves ImplFilesChanged when its base and
+// head are the same file after canonical formatting. It stays, with the
+// reason recorded in CompareFailures, when the comparison could not be
+// made: a blob that could not be read, or a side that does not parse. An
+// added or deleted file stays without a reason, and so does a file in a
+// language with no canonical form, because nothing was attempted that
+// could fail. A FileChange with no Status counts too.
+func SummarizePushDiff(changes []FileChange, diff string) PushDiffSummary {
 	var s PushDiffSummary
-	for _, f := range filenames {
+	for _, c := range changes {
+		f := c.Path
 		switch {
 		case isTestFile(f):
 			s.TestFilesChanged = append(s.TestFilesChanged, f)
@@ -124,6 +133,19 @@ func SummarizePushDiff(filenames []string, diff string) PushDiffSummary {
 		case isDocFile(f):
 			s.DocFilesChanged = append(s.DocFilesChanged, f)
 		case IsImplFile(f):
+			if c.ReadError != "" {
+				s.CompareFailures = append(s.CompareFailures, f+": "+c.ReadError)
+				s.ImplFilesChanged = append(s.ImplFilesChanged, f)
+				continue
+			}
+			if c.Status == 'M' {
+				same, err := formatOnly(f, c.Base, c.Head)
+				if err != nil {
+					s.CompareFailures = append(s.CompareFailures, f+": "+err.Error())
+				} else if same {
+					continue
+				}
+			}
 			s.ImplFilesChanged = append(s.ImplFilesChanged, f)
 		}
 	}

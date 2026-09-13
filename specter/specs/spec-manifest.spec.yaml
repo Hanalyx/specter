@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "3.0.0"
+  version: "3.1.1"
   status: draft
   tier: 2
 
@@ -150,7 +150,7 @@ spec:
       enforcement: error
 
     - id: C-22
-      description: "`specter init --install-hook` MUST write a `.git/hooks/pre-push` shell script (mode 0755) that blocks pushes whose diff changes implementation files but adds or updates no `@spec` / `@ac` annotations. The hook MUST exit 0 on changes that include either an annotation delta or only doc/spec/test files; MUST exit non-zero with a clear message otherwise; and MUST be bypassable via `git push --no-verify`. The hook script body is wrapped in shell-comment markers `# specter:begin v1` / `# specter:end` (HTML-comment markers would be invalid shell syntax — `<!--` parses as a redirection token), and re-runs replace only the fenced region. The installed hook MUST parse cleanly under `sh -n`."
+      description: "`specter init --install-hook` MUST write a `.git/hooks/pre-push` shell script (mode 0755) that blocks pushes whose diff changes implementation files but adds or updates no `@spec` / `@ac` annotations. The hook MUST exit 0 on changes that include either an annotation delta or only doc/spec/test files; MUST exit non-zero with a clear message otherwise; and MUST be bypassable via `git push --no-verify`. The hook script body is wrapped in shell-comment markers `# specter:begin v1` / `# specter:end` (HTML-comment markers would be invalid shell syntax — `<!--` parses as a redirection token), and re-runs replace only the fenced region. The installed hook MUST parse cleanly under `sh -n`. Which changed files count as implementation changes is decided by C-37, by content and not by name alone."
       type: technical
       enforcement: error
 
@@ -224,6 +224,11 @@ spec:
       description: "`system.tier` and `settings.tier_overrides` are deprecated and MUST warn on every run that reads the manifest. A manifest declaring either gets **exactly one stderr line per declared key**, naming that key and stating it is removed at v1.0.0. **Each line MUST state what is true of its own key, and the two are not the same.** `system.tier` has no effect, and its line says so. `settings.tier_overrides` resolves no tier, and its value is still compared under C-14, so a mismatching override produces a `tier_conflict` warning that `spec-check` C-07 promotes under `--strict`; its line says that instead. A single wording for both makes one of them false, which is what this constraint required until 3.0.0. The deprecation line itself MUST NOT change any exit code, and does not: a matching override produces the line alone and the run still exits 0. What can change an exit code is the conflict, not the deprecation. Both keys stay accepted so an existing manifest parses. Rationale, per docs/ssrb/SSRB-106.md sections 7.2 and 7.3: both are validated, neither resolves a tier, `specter init` has been writing `system.tier` into every new workspace, and an operator who configures either currently gets no signal that it did nothing. `settings.tier_overrides` additionally emitted a message asserting the override was in use, corrected under C-14 at spec-manifest 1.15.0."
       type: technical
       enforcement: error
+    - id: C-37
+      description: "`pre-push-check` MUST classify each changed implementation file by content, not by name alone. A file whose contents at the pushed base and at the pushed head are equal after canonical formatting is not an implementation change and MUST NOT block. For Go, canonical formatting is the standard library printer over the parsed file with every import declaration merged into one sorted group. That is the form left behind by `goimports` grouping and `gofmt` reflow, and it is computed in process with no external formatter. Both blobs come from the pushed range, never from the working tree or the index. The rule fails closed. A file in a language with no canonical form in this tool counts as an implementation change. A file whose base or head cannot be read or parsed counts, and the hook says which file it could not compare. A file added or deleted in the range counts. No flag, commit trailer, or manifest key can declare a range format-only; the tool decides from the two blobs or it does not decide. Comment edits and blank lines that `gofmt` preserves are not formatter normalization and still count. Rationale: `goimports` moving one import between groups changes two lines and no symbol, and the hook blocked the push. The only way through was `git push --no-verify`, which disables every check rather than the one that misfired. A gate whose false positives are cleared by disabling the gate teaches people to disable the gate."
+      type: technical
+      enforcement: error
+
   acceptance_criteria:
     - id: AC-01
       description: "Valid specter.yaml with all sections parses into Manifest struct"
@@ -449,7 +454,7 @@ spec:
       priority: critical
 
     - id: AC-28
-      description: "Pre-push hook installed by `init --install-hook` exits non-zero on a diff containing implementation file changes (`*.go`, `*.ts`, etc.) with no corresponding `@spec` / `@ac` annotation delta in the same diff. Diff containing only doc/spec/test changes (or any annotation delta) exits 0."
+      description: "Pre-push hook installed by `init --install-hook` exits non-zero on a diff containing implementation file changes (`*.go`, `*.ts`, etc., as C-37 classifies them) with no corresponding `@spec` / `@ac` annotation delta in the same diff. Diff containing only doc/spec/test changes (or any annotation delta) exits 0."
       inputs:
         diff_with_impl_only: "internal/foo/bar.go modified, no @spec/@ac change"
         diff_with_annotation_delta: "test file gained `// @ac AC-05`"
@@ -973,6 +978,77 @@ spec:
         strict_json_warning_count: 0
       references_constraints: ["C-35"]
       priority: high
+    - id: AC-68
+      description: "A push whose only implementation change is formatter normalization exits 0 with no annotation delta. The base holds a gofmt-clean Go file with every import in one sorted group. The head moves the two non-standard-library imports into their own group, which is what `goimports` does and what `gofmt` accepts on both sides. Two are needed, one sorting before the standard library paths and one after, so canonical form has to both reorder the specs and erase the gap; a fixture with one lets either half go untested. The pushed range carries no `@spec` or `@ac` delta. A second range makes the same move and also edits test files without touching an annotation, which is the shape of both recorded pushes. Both exit 0. Before this criterion the hook exited non-zero on both, and the only way through was `git push --no-verify`."
+      inputs:
+        base: "impl.go, gofmt-clean, imports `example.com/x/compliance`, `fmt`, `sync`, `z.example.com/y/other` in one sorted group"
+        head: "the same file with `example.com/x/compliance` and `z.example.com/y/other` moved into their own group after a blank line"
+        second_range: "the same move plus an edit to impl_test.go that adds no annotation"
+        annotation_delta: false
+      expected_output:
+        exit_code: 0
+        second_range_exit_code: 0
+      references_constraints: ["C-37"]
+      priority: critical
+
+    - id: AC-69
+      description: "Reordering imports is not changing the import set, and the set and the executable code still require an annotation delta. Four ranges start from the AC-68 base and each exits non-zero with the file named in the message: an import is added and used; an import is removed; one condition flips from `err != nil` to `err == nil`; an import gains an alias. Each is a real change to what the file does or depends on, and canonical formatting does not erase any of them."
+      inputs:
+        import_added: "`strings` imported and used"
+        import_removed: "`sync` removed"
+        executable_change: "`if err != nil` becomes `if err == nil`"
+        alias_added: "`c \"example.com/x/compliance\"`"
+        annotation_delta: false
+      expected_output:
+        exit_code_each: "non-zero"
+        message_names_file: "impl.go"
+      references_constraints: ["C-37"]
+      priority: critical
+
+    - id: AC-70
+      description: "Classification reads the pushed base and head blobs, not the working tree or the index. After committing the AC-68 format-only range, the working tree copy of impl.go carries an executable edit, once unstaged and once staged; the push still exits 0, because the pushed range is unchanged. After committing an executable change, the working tree copy is restored to the base content; the push still exits non-zero, because the pushed range still carries the change."
+      inputs:
+        committed_range_a: "the AC-68 format-only move"
+        working_tree_a: "impl.go with a flipped condition, first unstaged, then staged"
+        committed_range_b: "a flipped condition"
+        working_tree_b: "impl.go restored to the base content, unstaged"
+      expected_output:
+        range_a_exit_code: 0
+        range_b_exit_code: "non-zero"
+      references_constraints: ["C-37"]
+      priority: high
+
+    - id: AC-71
+      description: "A comparison that cannot be made blocks. It never assumes formatting. Four ranges each exit non-zero: a `.py` implementation file whose only change is whitespace, because Python has no canonical form in this tool; a Go file whose base blob does not parse; a Go file whose base blob has been removed from the object store, so `git show` cannot read it, and stderr says the file could not be compared; and a Go file added in the range, which has no base to compare. A fifth range, whose base tree object is gone so git cannot list the changed files at all, exits non-zero and stderr says the range cannot be listed."
+      inputs:
+        unknown_language: "impl.py, one trailing space added"
+        unparseable_base: "impl.go whose base is `package p\n\nfunc (` and whose head is valid Go"
+        unreadable_base: "the base blob of impl.go deleted from .git/objects before the check"
+        added_file: "new.go added in the range"
+        unlistable_range: "the base commit tree object deleted from .git/objects before the check"
+        annotation_delta: false
+      expected_output:
+        exit_code_each: "non-zero"
+        unreadable_stderr_contains: "could not compare impl.go"
+        unlistable_stderr_contains: "cannot list"
+      references_constraints: ["C-37"]
+      priority: high
+
+    - id: AC-72
+      description: "No developer-declared escape exists. `specter pre-push-check --format-only` exits non-zero with an unknown-flag error before reading stdin. A commit whose message carries the trailer `Format-Only: true` and whose range flips a condition still exits non-zero. The command reads no manifest: with `specter.yaml` replaced by text that does not parse as YAML, the AC-68 range still exits 0 and the AC-69 executable change still exits non-zero."
+      inputs:
+        flag: "pre-push-check --format-only"
+        trailer: "a commit message ending in `Format-Only: true` on a flipped condition"
+        manifest: "specter.yaml containing `: : not yaml`"
+      expected_output:
+        flag_exit_code: "non-zero"
+        flag_stderr_contains: "unknown flag"
+        trailer_exit_code: "non-zero"
+        garbage_manifest_pass_exit_code: 0
+        garbage_manifest_block_exit_code: "non-zero"
+      references_constraints: ["C-37"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -982,6 +1058,16 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "3.1.1"
+      date: "2026-09-13"
+      author: "specter-team"
+      type: patch
+      description: "Two criteria state fixtures a mutation run showed were too narrow. AC-68 now moves two non-standard-library imports, one sorting before the standard library paths and one after. With one that sorted first, a canonicalizer that kept import positions still reported the fixtures equal, because the printer never saw a forward gap; on the recorded persist.go blob the same defect leaves a stray blank line. AC-71 gains a range git cannot list at all, because the base tree object is gone. Nothing observed that branch, and reverting it to the old skip survived. Patch: the requirements are unchanged, and both fixtures bind what C-37 already said."
+    - version: "3.1.0"
+      date: "2026-09-13"
+      author: "specter-team"
+      type: minor
+      description: "C-37 classifies a changed implementation file by content, not by name. A Go file whose base and head are equal after canonical formatting, the standard library printer with imports merged into one sorted group, is not an implementation change and does not block a push. Before this, `goimports` moving one import between groups blocked the push, and the only way through was `git push --no-verify`, which disables every check. The rule fails closed: other languages, unreadable or unparseable blobs, and added or deleted files still count. No flag, trailer, or manifest key can declare a range format-only. AC-68 through AC-72 bind the pass, four semantic counterexamples, the pushed-blob source, four fail-closed cases, and the absence of an escape. C-22 and AC-28 defer to C-37 for what counts. Minor: one new constraint and five criteria; the block rule for a real implementation change is unchanged."
     - version: "3.0.0"
       date: "2026-08-30"
       author: "specter-team"

@@ -8,6 +8,12 @@ Unreleased changes accumulate under `## Unreleased`. Every user-visible change a
 
 ## Unreleased
 
+### Fixed
+
+- The pre-push hook now accepts Go import regrouping and supported formatting-only changes without requiring new test annotations. Upgrade Specter; existing hooks need no reinstall.
+
+- The pre-push hook now blocks pushes when Git cannot list the changed files. Resolve the reported Git error and retry.
+
 ---
 
 ## v0.15.0 - 2026-09-02
