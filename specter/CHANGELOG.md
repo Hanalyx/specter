@@ -8,6 +8,10 @@ Unreleased changes accumulate under `## Unreleased`. Every user-visible change a
 
 ## Unreleased
 
+### Fixed
+
+- **The VS Code extension no longer replaces a CLI you installed.** It used to overwrite `~/.specter/bin/specter` with its own version whenever the version there differed, including a newer one, with no error. The extension now keeps its own copy under `~/.specter/cli` and uses a CLI on PATH or at `~/.specter/bin/specter` as is whenever its version is one the extension supports. A CLI outside that range is left unchanged and named in the Output channel, and the extension uses its own copy instead. **Action:** if you want `specter` in your shell and have not installed it yourself, run `Specter: Add CLI to Shell PATH` once; it creates `~/.specter/bin/specter` when nothing is there and never touches an existing file. `Specter: Re-download CLI` now refreshes only the extension's own copy. If you have no CLI of your own on PATH, typing `specter` yourself in the VS Code integrated terminal needs that copy at `~/.specter/bin`, which the shell PATH command creates; the extension's own terminal commands, such as Run Reverse Compiler, use the CLI it resolved and work without it. If your `~/.specter/bin/specter` is older than the extension supports, the extension leaves it alone and runs its own copy, so your terminal and hooks keep the version you installed. A path set in `specter.binaryPath` is used without a range check.
+
 ---
 
 ## v0.15.1 - 2026-09-13

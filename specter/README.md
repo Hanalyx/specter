@@ -43,7 +43,7 @@ Specter validates the artifacts in front of it, not the order you wrote them in.
 
 ### VS Code extension (recommended for most users)
 
-Search **Specter SDD** in the Extensions panel. The extension auto-downloads the CLI binary matching the host's OS and architecture, installs it under `~/.specter/bin/`, and wires up the integrated terminal so `specter` works without further setup. To call `specter` from external terminals, run **Specter: Add CLI to Shell PATH** from the command palette once.
+Search **Specter SDD** in the Extensions panel. The extension uses a CLI already on your PATH when its version is one the extension supports, and otherwise downloads its own copy under `~/.specter/cli/`. It never replaces a CLI you installed. To call `specter` from a terminal, run **Specter: Add CLI to Shell PATH** from the command palette once; it puts a copy at `~/.specter/bin/specter` when nothing is there.
 
 ### CLI, Linux / macOS (tar.gz)
 
