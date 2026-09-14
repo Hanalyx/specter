@@ -9,7 +9,9 @@ import {
   planRedownload,
   privateCliDir,
   installUserCopy,
-  PlanSource,
+  BinaryPlan,
+  shellInstallDecision,
+  terminalInvocation,
   buildDownloadUrl,
   defaultCachePath,
   resolveLatestVersion,
@@ -90,7 +92,7 @@ let statusBarItem: vscode.StatusBarItem | null = null;
 let binaryPath: string | null = null;
 // C-34: where the running CLI came from, so the shell PATH command knows
 // whether the user already has a CLI of their own.
-let lastPlanSource: PlanSource | null = null;
+let lastPlan: BinaryPlan | null = null;
 const rateLimiter = new NotificationRateLimiter({ windowMs: 60_000 });
 let treeProvider: SpecterTreeProvider | null = null;
 let specterTreeView: vscode.TreeView<unknown> | null = null;
@@ -150,10 +152,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // One-time prompt for existing users (and anyone whose rc file doesn't
   // include ~/.specter/bin): offer to run the shell-path command so the
   // CLI works from external terminals. Non-blocking — fire and forget.
-  // C-34: only when the extension's own copy or the user's copy is in use.
-  // A user with their own CLI on PATH has nothing to add.
-  if (lastPlanSource === 'private' || lastPlanSource === 'user-dir') {
-    void maybePromptAddCliToShellPath(ctx, specterBinDir);
+  // C-34: only when the shell PATH command would have something to do.
+  // A user with their own CLI on PATH, in range or out, has nothing to add.
+  if (lastPlan && shellInstallDecision(lastPlan, defaultCachePath()).addPath) {
+    void maybePromptAddCliToShellPath(ctx, specterBinDir, lastPlan.source === 'private');
   }
 
   // If the workspace has no specs or manifest, we're done. Commands are
@@ -333,7 +335,7 @@ async function resolveBinary(ctx: vscode.ExtensionContext): Promise<string | nul
     range,
     platform: process.platform,
   });
-  lastPlanSource = plan.source;
+  lastPlan = plan;
 
   for (const sk of plan.skipped) {
     outputChannel?.appendLine(
@@ -491,6 +493,7 @@ const ADD_PATH_PROMPT_DISMISSED_KEY = 'specter.addPathPromptDismissed';
 async function maybePromptAddCliToShellPath(
   ctx: vscode.ExtensionContext,
   binDir: string,
+  installFirst: boolean,
 ): Promise<void> {
   const fs = require('fs');
 
@@ -505,8 +508,10 @@ async function maybePromptAddCliToShellPath(
   if (!shouldPromptAddPath(rcContents, binDir, dismissed)) return;
 
   const pick = await vscode.window.showInformationMessage(
-    `Specter CLI is installed at ${binDir} but not on your shell PATH. ` +
-    `Run \`specter\` from external terminals by adding it to ${cfg.rcFile}.`,
+    installFirst
+      ? `The Specter CLI is available to VS Code but not to your shell. Install a copy at ${binDir} and add it to ${cfg.rcFile}?`
+      : `Specter CLI is installed at ${binDir} but not on your shell PATH. ` +
+        `Run \`specter\` from external terminals by adding it to ${cfg.rcFile}.`,
     'Add to PATH',
     "Don't show again",
   );
@@ -1151,7 +1156,7 @@ function registerDiagnosticHooks(ctx: vscode.ExtensionContext): void {
                     );
                   } else {
                     const terminal = vscode.window.createTerminal('Specter Diff');
-                    terminal.sendText(`specter diff ${fsPath}@HEAD ${fsPath}`);
+                    terminal.sendText(terminalInvocation(binaryPath, `diff ${fsPath}@HEAD ${fsPath}`));
                     terminal.show();
                   }
                 }
@@ -1373,7 +1378,7 @@ function registerCommands(ctx: vscode.ExtensionContext): void {
       });
       terminal.show();
       // Don't execute — let the user pick the source directory.
-      terminal.sendText('specter reverse ', false);
+      terminal.sendText(terminalInvocation(binaryPath, 'reverse '), false);
     }),
   );
 
@@ -1420,18 +1425,14 @@ function registerCommands(ctx: vscode.ExtensionContext): void {
       // C-34: the one permitted write to the user's copy, and only when the
       // extension is running its own copy. A CLI already on PATH is the
       // user's; putting ~/.specter/bin ahead of it would shadow it.
-      if (lastPlanSource === 'path' || lastPlanSource === 'workspace-setting') {
-        vscode.window.showInformationMessage(
-          `Specter: a CLI is already available at ${binaryPath}. Nothing was installed.`,
-        );
+      const decision = lastPlan ? shellInstallDecision(lastPlan, defaultCachePath()) : null;
+      if (!decision || !decision.addPath) {
+        vscode.window.showInformationMessage(`Specter: ${decision?.reason ?? 'no CLI is resolved yet. Nothing was installed.'}`);
         return;
       }
-      if (binaryPath) {
+      if (decision.install && binaryPath) {
         const install = installUserCopy(binaryPath, defaultCachePath());
         outputChannel?.appendLine(`Specter: ${install.message}`);
-        if (!install.wrote) {
-          vscode.window.showInformationMessage(`Specter: ${install.message}`);
-        }
       }
 
       const shell = process.env.SHELL || '';

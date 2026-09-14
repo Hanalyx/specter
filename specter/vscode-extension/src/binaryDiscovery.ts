@@ -224,8 +224,16 @@ export async function extractBinary(
 
   try {
     if (format === 'tar.gz') {
-      // Extract only the 'specter' binary from the archive
-      execFileSync('tar', ['xzf', tmpArchive, '-C', dir, 'specter'], { timeout: 30000 });
+      // Extract only the 'specter' member, into a scratch directory, then
+      // move it to the versioned target. Extracting straight into dir left
+      // the file as <dir>/specter and the chmod below hit a path that did
+      // not exist, so every private download failed with ENOENT.
+      const tmpDir = path.join(dir, 'specter-extract');
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      fs.mkdirSync(tmpDir, { recursive: true });
+      execFileSync('tar', ['xzf', tmpArchive, '-C', tmpDir, 'specter'], { timeout: 30000 });
+      fs.renameSync(path.join(tmpDir, 'specter'), targetPath);
+      fs.rmSync(tmpDir, { recursive: true, force: true });
     } else {
       // Windows: extract zip then move binary
       const tmpDir = path.join(dir, 'specter-extract');
@@ -430,4 +438,43 @@ export function installUserCopy(privatePath: string, userBinPath: string): { wro
   fs.copyFileSync(privatePath, userBinPath);
   fs.chmodSync(userBinPath, 0o755);
   return { wrote: true, message: `Installed the CLI at ${userBinPath}.` };
+}
+
+/**
+ * What the shell PATH command may do, decided from the resolution plan.
+ * It installs the user's copy only when the extension is running its own
+ * copy and no CLI of the user's sits on PATH, in range or out of it.
+ * Prepending ~/.specter/bin ahead of a CLI the user installed would change
+ * what their shell runs, which is the very thing C-34 forbids by another
+ * route.
+ */
+export function shellInstallDecision(plan: BinaryPlan, userBinPath: string): { install: boolean; addPath: boolean; reason: string } {
+  if (plan.source === 'path' || plan.source === 'workspace-setting') {
+    return { install: false, addPath: false, reason: `a CLI is already available at ${plan.resolved}. Nothing was installed.` };
+  }
+  const onPath = plan.skipped.find(s => s.path !== userBinPath);
+  if (onPath) {
+    return {
+      install: false, addPath: false,
+      reason: `a CLI is already on your PATH at ${onPath.path} (version ${onPath.version}), outside the range this extension supports (${onPath.range}). Nothing was installed, so your shell keeps it.`,
+    };
+  }
+  // The user copy exists, in use or skipped for its version: it is theirs,
+  // and only the PATH entry is worth offering.
+  if (plan.source === 'user-dir' || plan.skipped.some(s => s.path === userBinPath)) {
+    return { install: false, addPath: true, reason: `${userBinPath} is yours and was left alone.` };
+  }
+  return { install: true, addPath: true, reason: 'installing a copy of the CLI for your shell.' };
+}
+
+/**
+ * The command line the extension types into a terminal for the user. It
+ * names the binary the extension resolved, so the command works whether or
+ * not `specter` is on the shell PATH. The path is quoted when it needs to
+ * be; the arguments are the caller's and are not touched.
+ */
+export function terminalInvocation(binaryPath: string | null, args: string): string {
+  const bin = binaryPath ?? 'specter';
+  const quoted = /[\s'"]/.test(bin) ? `"${bin.replace(/"/g, '\\"')}"` : bin;
+  return `${quoted} ${args}`;
 }
