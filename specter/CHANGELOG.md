@@ -8,6 +8,10 @@ Unreleased changes accumulate under `## Unreleased`. Every user-visible change a
 
 ## Unreleased
 
+### Fixed
+
+- The VS Code extension now preserves independently installed Specter CLIs, including newer supported versions. Update the extension to receive the fix. Existing CLI installations need no reinstall. If you have no shell CLI, run Specter: Add CLI to Shell PATH.
+
 ---
 
 ## v0.15.1 - 2026-09-13

@@ -1,6 +1,6 @@
 spec:
   id: spec-vscode
-  version: "5.1.1"
+  version: "6.0.0"
   status: draft
   tier: 2
 
@@ -71,7 +71,7 @@ spec:
 
   constraints:
     - id: C-01
-      description: "MUST discover the specter binary in this resolution order: workspace setting specter.binaryPath → PATH → ~/.specter/bin/specter → auto-download from GitHub Releases. MUST verify SHA256 checksum on auto-download. MUST validate the resolved binary (magic-byte check and `--version` probe) regardless of resolution source; a corrupt file on PATH must not slip through as a valid binary. MUST expose a `Specter: Re-download CLI` command and MUST surface CLI invocation failures via an output channel reachable from the status bar (never leave the UI stuck on an indefinite loading state)."
+      description: "MUST discover the specter binary in this resolution order: workspace setting specter.binaryPath → PATH → ~/.specter/bin/specter → the extension's private copy under ~/.specter/cli, downloaded from GitHub Releases when absent. A PATH or ~/.specter/bin candidate is used only when its version satisfies the range C-34 declares; one outside the range is skipped and never modified. MUST verify SHA256 checksum on auto-download. MUST validate the resolved binary (magic-byte check and `--version` probe) regardless of resolution source; a corrupt file on PATH must not slip through as a valid binary. MUST expose a `Specter: Re-download CLI` command and MUST surface CLI invocation failures via an output channel reachable from the status bar (never leave the UI stuck on an indefinite loading state)."
       type: technical
       enforcement: error
 
@@ -201,7 +201,7 @@ spec:
       enforcement: error
 
     - id: C-27
-      description: "The CLI auto-download MUST default to the CLI version matching the extension's own version — a v0.10.0 extension fetches v0.10.0 CLI, not whatever GitHub's /releases/latest currently returns. The extension reads its own version via ctx.extension.packageJSON.version at download time. Users MAY override via specter.version: set to 'latest' to track GitHub's newest release, or pin a specific semver (e.g. '0.9.2'). Default-to-latest is prohibited because the CLI release and extension Marketplace publish are decoupled — a GoReleaser-produced CLI release fires on tag push, but the matching extension may publish days later (or not at all), creating split-brain installs where users run an older extension against a newer CLI."
+      description: "The extension's private copy (C-34) MUST default to the CLI version matching the extension's own version — a v0.10.0 extension fetches v0.10.0 CLI, not whatever GitHub's /releases/latest currently returns. The extension reads its own version via ctx.extension.packageJSON.version at download time. Users MAY override via specter.version: set to 'latest' to track GitHub's newest release, or pin a specific semver (e.g. '0.9.2'). Default-to-latest is prohibited because the CLI release and extension Marketplace publish are decoupled — a GoReleaser-produced CLI release fires on tag push, but the matching extension may publish days later (or not at all), creating split-brain installs where users run an older extension against a newer CLI. The private copy is how the extension guarantees itself a compatible CLI. It is not how the user's shell gets one: a newer CLI on PATH is used as is while it satisfies the C-34 range, and is never replaced."
       type: business
       enforcement: error
 
@@ -508,6 +508,11 @@ spec:
         that, since it never asked for the same object. Identity was an
         implementation detail a test pinned, and pinning it here would forbid
         the fix.
+      type: technical
+      enforcement: error
+
+    - id: C-34
+      description: "The extension MUST keep the CLI it runs separate from the CLI the user's shell and git hooks run. Its own copy lives at ~/.specter/cli/specter-<version> (with .exe on Windows), one file per version, and the extension MAY download, replace, or delete files there. The extension MUST NOT write, replace, or delete ~/.specter/bin/specter, any binary found on PATH, or the file named by specter.binaryPath: not at activation, not on a version mismatch, and not from the Re-download command. The one permitted write to ~/.specter/bin/specter is the Add CLI to Shell PATH command copying the private binary there when no file exists, as an explicit user action; when a file exists the command MUST leave it alone and say so. The extension MUST declare, in package.json under `specterCli.range`, the CLI version range it supports, in the form `>=A.B.C <X.Y.Z`. A PATH or ~/.specter/bin binary whose `--version` satisfies the range MUST be used as is, with no download. A candidate outside the range MUST be skipped, with a line in the Output channel naming its version and the range, and the private copy used instead. The range MUST include the CLI version the repository ships, and a test binds that. Rationale: an auto-update on version mismatch, present since v0.6.5 and never specified, replaced a newer CLI in ~/.specter/bin with the extension's older one on every activation, silently. The shell PATH command had placed ~/.specter/bin first on PATH, so the pre-push hook ran whatever the extension pinned, and a CLI-only release could not reach hook users at all. The range keeps C-27's concern: deviation is allowed only within the versions the extension's wire types were built against. That holds only while patch releases leave every --json shape the extension reads unchanged, which the type parity tests bind."
       type: technical
       enforcement: error
 
@@ -1611,6 +1616,54 @@ spec:
       references_constraints: ["C-33"]
       priority: critical
 
+    - id: AC-80
+      description: "A CLI found on PATH or at ~/.specter/bin/specter is used as is when its version satisfies the declared range, and skipped without being touched when it does not. With the extension at 0.15.0 declaring `>=0.15.0 <0.16.0`: a PATH binary reporting 0.15.1 resolves with source `path`, no download is planned, and no write is planned. A PATH binary reporting 0.16.0 is skipped, the plan names it with its version and the range for the Output channel, the private copy for 0.15.0 is resolved with a download planned if it is absent, and the PATH file is not in any write. A ~/.specter/bin/specter reporting 0.14.1 is skipped the same way. A candidate whose version cannot be read is not a candidate."
+      inputs:
+        extension_version: "0.15.0"
+        declared_range: ">=0.15.0 <0.16.0"
+        path_candidate_in_range: "0.15.1"
+        path_candidate_above_range: "0.16.0"
+        user_dir_candidate_below_range: "0.14.1"
+      expected_output:
+        in_range_source: "path"
+        in_range_download_planned: false
+        in_range_writes: []
+        out_of_range_source: "private"
+        out_of_range_skipped_names_version_and_range: true
+        out_of_range_writes_touching_candidate: []
+      references_constraints: ["C-34", "C-01"]
+      priority: critical
+
+    - id: AC-81
+      description: "Nothing automatic writes ~/.specter/bin/specter. With no candidate anywhere, the plan downloads to ~/.specter/cli/specter-0.15.0 (with .exe on Windows) and to nothing else. The Re-download command's plan targets the same private path and no other. The Add CLI to Shell PATH command copies the private binary to ~/.specter/bin/specter only when no file exists there; when one exists, it leaves the bytes unchanged and reports that it left the file alone."
+      inputs:
+        no_candidates: "no PATH binary, no ~/.specter/bin/specter, no private copy"
+        redownload: "the Re-download command with a private copy present"
+        shell_path_absent: "the shell PATH command with no ~/.specter/bin/specter"
+        shell_path_present: "the shell PATH command with an existing ~/.specter/bin/specter of different bytes"
+      expected_output:
+        download_target: "~/.specter/cli/specter-0.15.0"
+        user_dir_in_any_automatic_write: false
+        shell_path_absent_writes_user_copy: true
+        shell_path_present_bytes_unchanged: true
+        shell_path_present_reports_left_alone: true
+      references_constraints: ["C-34"]
+      priority: critical
+
+    - id: AC-82
+      description: "package.json declares `specterCli.range` in the form `>=A.B.C <X.Y.Z`, and the repository's VERSION file satisfies it, so the extension that ships accepts the CLI that ships with it. satisfiesRange treats the lower bound as inclusive and the upper bound as exclusive, compares numerically so 0.15.10 is above 0.15.9, ignores a pre-release suffix on the candidate, and rejects any range not in that form."
+      inputs:
+        range: ">=0.15.0 <0.16.0"
+        candidates: "0.15.0, 0.15.1, 0.15.10, 0.16.0, 0.14.9, 0.15.2-rc.1"
+        malformed: "^0.15.0, >=0.15.0, 0.15.x"
+      expected_output:
+        satisfies: "0.15.0, 0.15.1, 0.15.10, 0.15.2-rc.1"
+        does_not_satisfy: "0.16.0, 0.14.9"
+        malformed_rejected: true
+        repository_version_satisfies_declared_range: true
+      references_constraints: ["C-34"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.1.0"
@@ -1629,6 +1682,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "6.0.0"
+      date: "2026-09-14"
+      author: "specter-team"
+      type: major
+      description: "C-34 separates the CLI the extension runs from the CLI the user's shell runs. The extension keeps a private copy per version under ~/.specter/cli and never writes ~/.specter/bin/specter, a PATH binary, or specter.binaryPath; the one exception is the shell PATH command creating the user copy when none exists. It declares a supported CLI range in package.json and uses any PATH or user-dir binary inside it as is, skipping and never modifying one outside it. C-01's order now ends at the private copy, and C-27's default-version rule now governs that copy. AC-80 binds the range gate on both sides and that a skipped candidate is untouched, AC-81 binds that nothing automatic writes the user's copy, and AC-82 binds the range form and that the repository's VERSION satisfies it. Major: the auto-update on version mismatch that a conforming implementation performed since v0.6.5 is now forbidden. It downgraded a 0.15.1 in ~/.specter/bin to 0.15.0 on every activation after the CLI-only v0.15.1 release, with no error, and because the shell PATH command put that directory first on PATH, the pre-push hook ran the downgraded binary."
     - version: "5.1.1"
       date: "2026-09-01"
       author: "specter-team"

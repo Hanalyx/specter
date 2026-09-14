@@ -131,9 +131,9 @@ The annotations are plain comments, no build step, no framework, works in any la
 
 | Setting | Default | Description |
 |---|---|---|
-| `specter.binaryPath` | `""` | Path to the specter binary. Leave empty to auto-resolve. Machine-scoped; workspace settings are ignored. |
-| `specter.autoDownload` | `true` | Download specter automatically if not found. |
-| `specter.version` | `""` | Binary version to download. Empty means "match the extension version"; `latest` tracks the newest GitHub release. Machine-scoped; workspace settings are ignored. |
+| `specter.binaryPath` | `""` | Path to the specter binary. Leave empty to auto-resolve: a CLI on PATH or at `~/.specter/bin/specter` is used when its version is one the extension supports, and otherwise the extension uses its own copy under `~/.specter/cli`. A path set here must be a working binary that answers `--version`, but it is not checked against the supported range, because it is your explicit choice. A path that does not exist is ignored and resolution continues. Machine-scoped; workspace settings are ignored. |
+| `specter.autoDownload` | `true` | Download the extension's own CLI copy when no supported CLI is found. |
+| `specter.version` | `""` | Version of the extension's own CLI copy. Empty means "match the extension version"; `latest` tracks the newest GitHub release. A supported CLI on PATH is used regardless. Machine-scoped; workspace settings are ignored. |
 | `specter.showInsightsOnFailure` | `true` | Open Insights panel automatically when a spec fails threshold. |
 
 ---
@@ -146,8 +146,8 @@ The annotations are plain comments, no build step, no framework, works in any la
 | `Specter: Copy Spec Context for AI` | Copy current spec as a structured AI prompt preamble |
 | `Specter: Run Sync` | Re-run the full coverage pipeline manually |
 | `Specter: Run Reverse Compiler` | Generate draft specs from your source code |
-| `Specter: Add CLI to Shell PATH` | Append `~/.specter/bin` to your shell rc file so `specter` works in external terminals |
-| `Specter: Re-download CLI` | Force a fresh download of the CLI binary (recovery if the cached one is broken) |
+| `Specter: Add CLI to Shell PATH` | Install a copy of the CLI at `~/.specter/bin/specter` if none is there, and append `~/.specter/bin` to your shell rc file so `specter` works in external terminals. An existing file there is left alone. When you already have a working CLI on PATH, in the supported range or not, the command does nothing, so it never puts a copy ahead of yours. |
+| `Specter: Re-download CLI` | Force a fresh download of the extension's own CLI copy (recovery if it is broken). Your `~/.specter/bin/specter` is not touched. |
 | `Specter: Show Output Log` | Open the Specter output channel with download/coverage error details |
 | `Specter: Reveal in Tree View` | Jump to the current spec in the Coverage sidebar |
 
@@ -155,7 +155,7 @@ The annotations are plain comments, no build step, no framework, works in any la
 
 ## Using `specter` from external terminals
 
-When the extension auto-downloads the CLI, it lands at `~/.specter/bin/specter`. VS Code's integrated terminal gets this path prepended automatically. External terminals (iTerm, Windows Terminal, tmux, etc.) don't, you'd need to type the full path.
+The extension keeps its own CLI copy under `~/.specter/cli`, one file per version, and never changes a CLI you installed yourself. `~/.specter/bin/specter` is yours: the extension creates it only when you run the shell PATH command and nothing is there, and it never replaces it afterward. VS Code's integrated terminal gets `~/.specter/bin` prepended automatically. External terminals (iTerm, Windows Terminal, tmux, etc.) don't, you'd need to type the full path. If you have no CLI of your own on PATH, typing `specter` there yourself needs that copy to exist, so run the shell PATH command once. The extension's own commands that open a terminal, such as Run Reverse Compiler and View Diff, use the CLI the extension resolved and need no setup.
 
 Run `Specter: Add CLI to Shell PATH` from the command palette once, and the extension will append an idempotent export to your shell's rc file (`.bashrc` on Linux, `.bash_profile` on macOS, `.zshrc` for zsh, `config.fish` for fish). Restart your terminal and `specter` works from anywhere.
 

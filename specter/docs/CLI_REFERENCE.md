@@ -6,7 +6,7 @@ Specter is a spec compiler toolchain, "a type system for specs." It validates, l
 
 ## Installation
 
-Install the VS Code extension for the smoothest path: it auto-downloads the CLI and sets PATH. For CLI-only installs (tar.gz, `.deb`, `.rpm`, Windows zip, or build from source), see the [Install section in the Specter README](../README.md#install). Asset naming pattern: `specter_<version>_<os>_<arch>.<ext>` with lowercase `linux`/`darwin`/`windows` and `amd64`/`arm64`.
+Install the VS Code extension for the smoothest path: it uses a supported CLI already on PATH, or downloads its own copy, and can set PATH for you. For CLI-only installs (tar.gz, `.deb`, `.rpm`, Windows zip, or build from source), see the [Install section in the Specter README](../README.md#install). Asset naming pattern: `specter_<version>_<os>_<arch>.<ext>` with lowercase `linux`/`darwin`/`windows` and `amd64`/`arm64`.
 
 ---
 

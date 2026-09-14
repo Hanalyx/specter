@@ -5,7 +5,13 @@ import * as path from 'path';
 
 import { shouldActivate, resolveManifestPath, createClientKey, isSpecFilePath } from './activation';
 import {
-  resolveBinaryPath,
+  planBinaryResolution,
+  planRedownload,
+  privateCliDir,
+  installUserCopy,
+  BinaryPlan,
+  shellInstallDecision,
+  terminalInvocation,
   buildDownloadUrl,
   defaultCachePath,
   resolveLatestVersion,
@@ -84,6 +90,9 @@ const coverageReports = new CoverageReportStore({
 const coverageErrorFolders = new Set<string>();
 let statusBarItem: vscode.StatusBarItem | null = null;
 let binaryPath: string | null = null;
+// C-34: where the running CLI came from, so the shell PATH command knows
+// whether the user already has a CLI of their own.
+let lastPlan: BinaryPlan | null = null;
 const rateLimiter = new NotificationRateLimiter({ windowMs: 60_000 });
 let treeProvider: SpecterTreeProvider | null = null;
 let specterTreeView: vscode.TreeView<unknown> | null = null;
@@ -143,7 +152,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // One-time prompt for existing users (and anyone whose rc file doesn't
   // include ~/.specter/bin): offer to run the shell-path command so the
   // CLI works from external terminals. Non-blocking — fire and forget.
-  void maybePromptAddCliToShellPath(ctx, specterBinDir);
+  // C-34: only when the shell PATH command would have something to do.
+  // A user with their own CLI on PATH, in range or out, has nothing to add.
+  const shellDecision = lastPlan ? shellInstallDecision(lastPlan, defaultCachePath()) : null;
+  if (shellDecision?.addPath) {
+    // The prompt offers what the command will do: install only when the
+    // decision says so, not merely because the extension runs its own copy.
+    void maybePromptAddCliToShellPath(ctx, specterBinDir, shellDecision.install);
+  }
 
   // If the workspace has no specs or manifest, we're done. Commands are
   // registered, the binary is available, the walkthrough fired if needed.
@@ -284,8 +300,21 @@ function teardownFolder(folder: vscode.WorkspaceFolder): void {
 async function resolveBinary(ctx: vscode.ExtensionContext): Promise<string | null> {
   const cfg = vscode.workspace.getConfiguration('specter');
   const workspaceSetting = cfg.get<string>('binaryPath') || null;
+  const nodeFs = require('fs');
 
-  const { resolved, source } = resolveBinaryPath({
+  const range = ctx.extension.packageJSON?.specterCli?.range as string | undefined;
+  if (!range) {
+    vscode.window.showErrorMessage(
+      'Specter: this extension build declares no supported CLI range (package.json specterCli.range). Reinstall the extension.',
+      { modal: true },
+    );
+    return null;
+  }
+  const privateVersion = await resolvePrivateVersion(ctx);
+  if (!privateVersion) return null;
+
+  // C-34: the decision is a pure plan. Everything below only carries it out.
+  const plan = planBinaryResolution({
     workspaceSetting,
     which: name => {
       try {
@@ -294,94 +323,91 @@ async function resolveBinary(ctx: vscode.ExtensionContext): Promise<string | nul
       } catch { return null; }
     },
     fs: {
-      exists: p => { try { require('fs').accessSync(p); return true; } catch { return false; } },
+      exists: p => { try { nodeFs.accessSync(p); return true; } catch { return false; } },
       isExecutable: p => {
-        try { require('fs').accessSync(p, require('fs').constants.X_OK); return true; }
+        try { nodeFs.accessSync(p, nodeFs.constants.X_OK); return true; }
         catch { return false; }
       },
     },
-    cachePath: defaultCachePath(),
+    // C-01: a candidate counts only if it is a real binary that answers
+    // --version. A corrupt file on PATH is not a candidate, wherever it is.
+    probeVersion: p => (isBinaryFile(p) ? getCachedBinaryVersion(p) : null),
+    userBinPath: defaultCachePath(),
+    privateDir: privateCliDir(),
+    privateVersion,
+    range,
+    platform: process.platform,
   });
+  lastPlan = plan;
 
-  const cachePath = defaultCachePath();
-
-  if (resolved) {
-    // Always validate the resolved binary — regardless of source. A corrupt
-    // file in ~/.specter/bin that also happens to be on the shell PATH would
-    // otherwise slip through as source='path' and every specter invocation
-    // would fail silently. See issue: https://github.com/Hanalyx/specter/issues
-    if (!isBinaryFile(resolved) || !getCachedBinaryVersion(resolved)) {
-      // If the corrupt file is the cache path we own, delete it and fall
-      // through to auto-download. Otherwise it's user-provided (workspace
-      // setting or something else on PATH) — don't touch it, just prompt.
-      if (resolved === cachePath) {
-        try { require('fs').unlinkSync(resolved); } catch { /* ignore */ }
-        // fall through to auto-download
-      } else {
-        const pick = await vscode.window.showErrorMessage(
-          `Specter binary at ${resolved} (via ${source}) is not a valid executable. ` +
-          `It may be a corrupt download or a stale file. Re-download to ${cachePath}?`,
-          'Re-download', 'Cancel',
-        );
-        if (pick === 'Re-download') {
-          return downloadBinary(ctx);
-        }
-        return null;
-      }
-    } else {
-      // Valid binary. Auto-update if CLI version != extension version.
-      const cliVersion = getCachedBinaryVersion(resolved);
-      const extVersion = vscode.extensions.getExtension('Hanalyx.specter-vscode')?.packageJSON?.version as string | undefined;
-      if (cliVersion && extVersion && cliVersion !== extVersion) {
-        const autoDownload = cfg.get<boolean>('autoDownload', true);
-        if (autoDownload) {
-          const updated = await downloadBinary(ctx);
-          if (updated) return updated;
-        }
-      }
-      return resolved;
-    }
+  for (const sk of plan.skipped) {
+    outputChannel?.appendLine(
+      `Specter: not using ${sk.path} (version ${sk.version}); this extension supports ${sk.range}. ` +
+      'The file was left unchanged. The extension uses its own copy instead.',
+    );
   }
 
-  // Auto-download
-  const autoDownload = cfg.get<boolean>('autoDownload', true);
-  if (!autoDownload) {
+  if (plan.source === 'workspace-setting') {
+    // C-01: validated regardless of source. A path the user named is never
+    // modified; an invalid one is reported and the run stops.
+    if (!isBinaryFile(plan.resolved) || !getCachedBinaryVersion(plan.resolved)) {
+      vscode.window.showErrorMessage(
+        `Specter binary at ${plan.resolved} (via specter.binaryPath) is not a valid executable. Fix or clear the setting.`,
+        { modal: true },
+      );
+      return null;
+    }
+    return plan.resolved;
+  }
+
+  if (!plan.download) return plan.resolved;
+
+  if (!cfg.get<boolean>('autoDownload', true)) {
     vscode.window.showErrorMessage(
       'Specter binary not found. Set specter.binaryPath or enable specter.autoDownload.',
       { modal: true },
     );
     return null;
   }
-
-  return downloadBinary(ctx);
+  // The private copy is the extension's own: a stale or corrupt file there
+  // is replaced. Nothing else is ever unlinked from here.
+  try { nodeFs.unlinkSync(plan.download.target); } catch { /* absent */ }
+  return downloadBinary(ctx, plan.download);
 }
 
-async function downloadBinary(ctx: vscode.ExtensionContext): Promise<string | null> {
-  const cfg = vscode.workspace.getConfiguration('specter');
-  const versionSetting = cfg.get<string>('version', '');
+/**
+ * C-27: the version the private copy should be. The extension's own version
+ * unless specter.version names another or asks for the latest release.
+ */
+async function resolvePrivateVersion(ctx: vscode.ExtensionContext): Promise<string | null> {
+  const versionSetting = vscode.workspace.getConfiguration('specter').get<string>('version', '');
+  if (versionSetting === 'latest') {
+    try {
+      return await resolveLatestVersion();
+    } catch (e) {
+      vscode.window.showErrorMessage(`Specter: could not resolve the latest release: ${e}`, { modal: true });
+      return null;
+    }
+  }
+  if (versionSetting) return versionSetting;
+  return ctx.extension.packageJSON.version as string;
+}
+
+async function downloadBinary(ctx: vscode.ExtensionContext, target: { version: string; target: string }): Promise<string | null> {
 
   return vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: 'Downloading Specter CLI…', cancellable: false },
     async (progress) => {
       try {
-        // 1. Resolve version — default pins the CLI to the extension's own
-        // version, so v0.10.0 VSIX always fetches v0.10.0 CLI. 'latest' opts
-        // in to whatever GitHub's /releases/latest points at, and any other
-        // string is treated as a pinned semver.
+        // 1. The version and the target come from the plan (C-34): always
+        // the private copy, never the user's.
         progress.report({ message: 'resolving version…' });
-        let version: string;
-        if (versionSetting === 'latest') {
-          version = await resolveLatestVersion();
-        } else if (versionSetting) {
-          version = versionSetting;
-        } else {
-          version = ctx.extension.packageJSON.version as string;
-        }
+        const version = target.version;
 
         // 2. Build download URL
         const dlOpts = { version, os: process.platform, arch: process.arch };
         const url = buildDownloadUrl(dlOpts);
-        const targetPath = defaultCachePath();
+        const targetPath = target.target;
         const archiveName = assetName(dlOpts);
         const format: 'tar.gz' | 'zip' = process.platform === 'win32' ? 'zip' : 'tar.gz';
 
@@ -470,6 +496,7 @@ const ADD_PATH_PROMPT_DISMISSED_KEY = 'specter.addPathPromptDismissed';
 async function maybePromptAddCliToShellPath(
   ctx: vscode.ExtensionContext,
   binDir: string,
+  installFirst: boolean,
 ): Promise<void> {
   const fs = require('fs');
 
@@ -484,8 +511,10 @@ async function maybePromptAddCliToShellPath(
   if (!shouldPromptAddPath(rcContents, binDir, dismissed)) return;
 
   const pick = await vscode.window.showInformationMessage(
-    `Specter CLI is installed at ${binDir} but not on your shell PATH. ` +
-    `Run \`specter\` from external terminals by adding it to ${cfg.rcFile}.`,
+    installFirst
+      ? `The Specter CLI is available to VS Code but not to your shell. Install a copy at ${binDir} and add it to ${cfg.rcFile}?`
+      : `Specter CLI is installed at ${binDir} but not on your shell PATH. ` +
+        `Run \`specter\` from external terminals by adding it to ${cfg.rcFile}.`,
     'Add to PATH',
     "Don't show again",
   );
@@ -1130,7 +1159,7 @@ function registerDiagnosticHooks(ctx: vscode.ExtensionContext): void {
                     );
                   } else {
                     const terminal = vscode.window.createTerminal('Specter Diff');
-                    terminal.sendText(`specter diff ${fsPath}@HEAD ${fsPath}`);
+                    terminal.sendText(terminalInvocation(binaryPath, `diff ${fsPath}@HEAD ${fsPath}`));
                     terminal.show();
                   }
                 }
@@ -1352,7 +1381,7 @@ function registerCommands(ctx: vscode.ExtensionContext): void {
       });
       terminal.show();
       // Don't execute — let the user pick the source directory.
-      terminal.sendText('specter reverse ', false);
+      terminal.sendText(terminalInvocation(binaryPath, 'reverse '), false);
     }),
   );
 
@@ -1395,6 +1424,20 @@ function registerCommands(ctx: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('specter.addCliToShellPath', async () => {
       const fs = require('fs');
       const binDir = path.dirname(defaultCachePath());
+
+      // C-34: the one permitted write to the user's copy, and only when the
+      // extension is running its own copy. A CLI already on PATH is the
+      // user's; putting ~/.specter/bin ahead of it would shadow it.
+      const decision = lastPlan ? shellInstallDecision(lastPlan, defaultCachePath()) : null;
+      if (!decision || !decision.addPath) {
+        vscode.window.showInformationMessage(`Specter: ${decision?.reason ?? 'no CLI is resolved yet. Nothing was installed.'}`);
+        return;
+      }
+      if (decision.install && binaryPath) {
+        const install = installUserCopy(binaryPath, defaultCachePath());
+        outputChannel?.appendLine(`Specter: ${install.message}`);
+      }
+
       const shell = process.env.SHELL || '';
       const cfg = detectShellConfig({ shell, platform: process.platform, home: os.homedir() }, binDir);
 
@@ -1441,9 +1484,13 @@ function registerCommands(ctx: vscode.ExtensionContext): void {
   // downloadBinary always writes a new copy, then re-runs activation wiring.
   ctx.subscriptions.push(
     vscode.commands.registerCommand('specter.redownloadCli', async () => {
-      const cachePath = defaultCachePath();
-      try { require('fs').unlinkSync(cachePath); } catch { /* ignore */ }
-      const resolved = await downloadBinary(ctx);
+      // C-34: refreshes the extension's own copy and nothing else. The
+      // user's ~/.specter/bin/specter is not touched.
+      const version = await resolvePrivateVersion(ctx);
+      if (!version) return;
+      const plan = planRedownload({ privateDir: privateCliDir(), version, platform: process.platform });
+      try { require('fs').unlinkSync(plan.download.target); } catch { /* ignore */ }
+      const resolved = await downloadBinary(ctx, plan.download);
       if (!resolved) return;
       binaryPath = resolved;
       for (const folder of (vscode.workspace.workspaceFolders ?? [])) {

@@ -3,7 +3,7 @@
 // Tests for binary discovery and auto-download logic.
 // All functions under test are pure or injectable — no VS Code runtime required.
 
-import { resolveBinaryPath, verifyChecksum, buildDownloadUrl, isBinaryFile, validateVersion } from '../binaryDiscovery';
+import { planBinaryResolution, verifyChecksum, buildDownloadUrl, isBinaryFile, validateVersion } from '../binaryDiscovery';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -24,61 +24,49 @@ const mockWhich = (name: string): string | null => null;
 // ---------------------------------------------------------------------------
 
 // @ac AC-02
-describe('[spec-vscode/AC-02] resolveBinaryPath', () => {
+describe('[spec-vscode/AC-02] planBinaryResolution: setting, then PATH, then user dir, then the private copy', () => {
+  const RANGE = '>=0.15.0 <0.16.0';
+  const base = {
+    which: mockWhich,
+    fs: mockFs,
+    probeVersion: (_: string) => '0.15.1',
+    userBinPath: '/home/user/.specter/bin/specter',
+    privateDir: '/home/user/.specter/cli',
+    privateVersion: '0.15.0',
+    range: RANGE,
+    platform: 'linux',
+  };
+
   it('returns workspace setting path when specter.binaryPath is set and file exists', () => {
     const fs = { ...mockFs, exists: (p: string) => p === '/custom/specter' };
-    const result = resolveBinaryPath({
-      workspaceSetting: '/custom/specter',
-      which: mockWhich,
-      fs,
-      cachePath: '~/.specter/bin/specter',
-    });
+    const result = planBinaryResolution({ ...base, workspaceSetting: '/custom/specter', fs });
     expect(result.resolved).toBe('/custom/specter');
     expect(result.source).toBe('workspace-setting');
   });
 
   it('falls through to PATH when workspace setting is absent', () => {
     const which = (name: string) => name === 'specter' ? '/usr/local/bin/specter' : null;
-    const result = resolveBinaryPath({
-      workspaceSetting: null,
-      which,
-      fs: { ...mockFs, exists: () => true },
-      cachePath: '~/.specter/bin/specter',
-    });
+    const result = planBinaryResolution({ ...base, workspaceSetting: null, which, fs: { ...mockFs, exists: () => true } });
     expect(result.resolved).toBe('/usr/local/bin/specter');
     expect(result.source).toBe('path');
   });
 
-  it('falls through to cache path when PATH lookup fails', () => {
+  it('falls through to the user dir when PATH lookup fails', () => {
     const fs = { ...mockFs, exists: (p: string) => p === '/home/user/.specter/bin/specter', isExecutable: () => true };
-    const result = resolveBinaryPath({
-      workspaceSetting: null,
-      which: () => null,
-      fs,
-      cachePath: '/home/user/.specter/bin/specter',
-    });
+    const result = planBinaryResolution({ ...base, workspaceSetting: null, which: () => null, fs });
     expect(result.resolved).toBe('/home/user/.specter/bin/specter');
-    expect(result.source).toBe('cache');
+    expect(result.source).toBe('user-dir');
   });
 
-  it('returns needs-download when all resolution strategies fail', () => {
-    const result = resolveBinaryPath({
-      workspaceSetting: null,
-      which: () => null,
-      fs: { ...mockFs, exists: () => false },
-      cachePath: '/home/user/.specter/bin/specter',
-    });
-    expect(result.resolved).toBeNull();
-    expect(result.source).toBe('needs-download');
+  it('plans a download of the private copy when every other source fails', () => {
+    const result = planBinaryResolution({ ...base, workspaceSetting: null, which: () => null, fs: { ...mockFs, exists: () => false } });
+    expect(result.source).toBe('private');
+    expect(result.download).not.toBeNull();
+    expect(result.resolved).toBe(path.join('/home/user/.specter/cli', 'specter-0.15.0'));
   });
 
   it('rejects workspace setting path that does not exist on disk', () => {
-    const result = resolveBinaryPath({
-      workspaceSetting: '/nonexistent/specter',
-      which: () => null,
-      fs: { ...mockFs, exists: () => false },
-      cachePath: '~/.specter/bin/specter',
-    });
+    const result = planBinaryResolution({ ...base, workspaceSetting: '/nonexistent/specter', which: () => null, fs: { ...mockFs, exists: () => false } });
     // Must not return the non-existent setting; must fall through
     expect(result.source).not.toBe('workspace-setting');
   });
