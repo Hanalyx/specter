@@ -154,8 +154,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // CLI works from external terminals. Non-blocking — fire and forget.
   // C-34: only when the shell PATH command would have something to do.
   // A user with their own CLI on PATH, in range or out, has nothing to add.
-  if (lastPlan && shellInstallDecision(lastPlan, defaultCachePath()).addPath) {
-    void maybePromptAddCliToShellPath(ctx, specterBinDir, lastPlan.source === 'private');
+  const shellDecision = lastPlan ? shellInstallDecision(lastPlan, defaultCachePath()) : null;
+  if (shellDecision?.addPath) {
+    // The prompt offers what the command will do: install only when the
+    // decision says so, not merely because the extension runs its own copy.
+    void maybePromptAddCliToShellPath(ctx, specterBinDir, shellDecision.install);
   }
 
   // If the workspace has no specs or manifest, we're done. Commands are
