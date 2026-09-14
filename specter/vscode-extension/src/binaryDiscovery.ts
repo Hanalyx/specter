@@ -16,57 +16,12 @@ export interface FsAdapter {
   isExecutable: (path: string) => boolean;
 }
 
-export interface ResolveBinaryOptions {
-  workspaceSetting: string | null;
-  which: (name: string) => string | null;
-  fs: FsAdapter;
-  cachePath: string;
-}
-
-export type BinarySource = 'workspace-setting' | 'path' | 'cache' | 'needs-download';
-
-export interface BinaryResolution {
-  resolved: string | null;
-  source: BinarySource;
-}
-
 export interface DownloadUrlOptions {
   version: string;
   os: string;
   arch: string;
 }
 
-// ---------------------------------------------------------------------------
-// AC-02: Binary discovery — workspace setting → PATH → cache → auto-download
-// ---------------------------------------------------------------------------
-
-/**
- * Resolves the specter binary path using the documented priority order:
- * 1. Workspace setting (specter.binaryPath) — if file exists on disk
- * 2. PATH lookup via which()
- * 3. Cache path (~/.specter/bin/specter) — if file exists on disk
- * 4. Needs download
- */
-export function resolveBinaryPath(opts: ResolveBinaryOptions): BinaryResolution {
-  // 1. Workspace setting
-  if (opts.workspaceSetting && opts.fs.exists(opts.workspaceSetting)) {
-    return { resolved: opts.workspaceSetting, source: 'workspace-setting' };
-  }
-
-  // 2. PATH
-  const fromPath = opts.which('specter');
-  if (fromPath && opts.fs.exists(fromPath)) {
-    return { resolved: fromPath, source: 'path' };
-  }
-
-  // 3. Cache
-  if (opts.fs.exists(opts.cachePath) && opts.fs.isExecutable(opts.cachePath)) {
-    return { resolved: opts.cachePath, source: 'cache' };
-  }
-
-  // 4. Needs download
-  return { resolved: null, source: 'needs-download' };
-}
 
 /**
  * Returns true if the file at `filePath` looks like a compiled binary
@@ -322,4 +277,157 @@ export async function downloadChecksums(version: string): Promise<Map<string, st
     }
   }
   return map;
+}
+
+// ---------------------------------------------------------------------------
+// C-34: the extension's CLI is separate from the user's CLI
+// ---------------------------------------------------------------------------
+
+/** Where the extension keeps its own copies, one file per version. */
+export function privateCliDir(): string {
+  return path.join(os.homedir(), '.specter', 'cli');
+}
+
+/** The private copy for one version: ~/.specter/cli/specter-<version>[.exe]. */
+export function privateBinaryPath(privateDir: string, version: string, platform: string): string {
+  const ext = platform === 'win32' ? '.exe' : '';
+  return path.join(privateDir, `specter-${version}${ext}`);
+}
+
+const RANGE_RE = /^>=(\d+)\.(\d+)\.(\d+) <(\d+)\.(\d+)\.(\d+)$/;
+
+function versionTriple(v: string): [number, number, number] | null {
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(v);
+  if (!m) return null;
+  return [Number(m[1]), Number(m[2]), Number(m[3])];
+}
+
+function cmp(a: [number, number, number], b: [number, number, number]): number {
+  for (let i = 0; i < 3; i++) {
+    if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
+ * Reports whether a CLI version satisfies a declared range of the form
+ * `>=A.B.C <X.Y.Z`. The lower bound is inclusive, the upper exclusive, the
+ * compare is numeric per component, and a pre-release suffix on the
+ * candidate is ignored. Any other range form is an error rather than a
+ * silent "no": a malformed declaration must fail the build, not disable the
+ * gate.
+ */
+export function satisfiesRange(version: string, range: string): boolean {
+  const m = RANGE_RE.exec(range);
+  if (!m) {
+    throw new Error(`specterCli.range must be ">=A.B.C <X.Y.Z", got ${JSON.stringify(range)}`);
+  }
+  const lo: [number, number, number] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const hi: [number, number, number] = [Number(m[4]), Number(m[5]), Number(m[6])];
+  const v = versionTriple(version);
+  if (!v) return false;
+  return cmp(v, lo) >= 0 && cmp(v, hi) < 0;
+}
+
+export type PlanSource = 'workspace-setting' | 'path' | 'user-dir' | 'private';
+
+export interface SkippedCandidate {
+  path: string;
+  version: string;
+  range: string;
+}
+
+export interface BinaryPlan {
+  /** The path to run. When a download is planned, it does not exist yet. */
+  resolved: string;
+  source: PlanSource;
+  /** The one download this plan performs, or null. */
+  download: { version: string; target: string } | null;
+  /** Candidates left untouched because their version is outside the range. */
+  skipped: SkippedCandidate[];
+  /** Every path this plan writes. Never the user's copy, PATH, or the setting. */
+  writes: string[];
+}
+
+export interface PlanOptions {
+  workspaceSetting: string | null;
+  which: (name: string) => string | null;
+  fs: FsAdapter;
+  /** Runs `--version` on a path; null when the file is not a valid CLI. */
+  probeVersion: (p: string) => string | null;
+  /** ~/.specter/bin/specter, the user's copy. Read, never written here. */
+  userBinPath: string;
+  /** ~/.specter/cli, the extension's own directory. */
+  privateDir: string;
+  /** The version the private copy should be, per C-27. */
+  privateVersion: string;
+  /** package.json specterCli.range. */
+  range: string;
+  platform: string;
+}
+
+/**
+ * The C-34 resolution decision, pure. Order: the workspace setting, used as
+ * is because it is the user's explicit choice; then PATH, then the user's
+ * copy, each used only when its version satisfies the range and otherwise
+ * skipped and left alone; then the private copy, downloaded when absent.
+ * The plan lists every write it will make, and that list can only ever
+ * name the private copy.
+ */
+export function planBinaryResolution(opts: PlanOptions): BinaryPlan {
+  const skipped: SkippedCandidate[] = [];
+
+  if (opts.workspaceSetting && opts.fs.exists(opts.workspaceSetting)) {
+    return { resolved: opts.workspaceSetting, source: 'workspace-setting', download: null, skipped, writes: [] };
+  }
+
+  const candidates: Array<{ p: string; source: PlanSource }> = [];
+  const fromPath = opts.which('specter');
+  if (fromPath && opts.fs.exists(fromPath)) {
+    candidates.push({ p: fromPath, source: fromPath === opts.userBinPath ? 'user-dir' : 'path' });
+  }
+  if (fromPath !== opts.userBinPath && opts.fs.exists(opts.userBinPath) && opts.fs.isExecutable(opts.userBinPath)) {
+    candidates.push({ p: opts.userBinPath, source: 'user-dir' });
+  }
+  for (const c of candidates) {
+    const v = opts.probeVersion(c.p);
+    if (!v) continue;
+    if (satisfiesRange(v, opts.range)) {
+      return { resolved: c.p, source: c.source, download: null, skipped, writes: [] };
+    }
+    skipped.push({ path: c.p, version: v, range: opts.range });
+  }
+
+  const target = privateBinaryPath(opts.privateDir, opts.privateVersion, opts.platform);
+  if (opts.fs.exists(target) && opts.fs.isExecutable(target) && opts.probeVersion(target)) {
+    return { resolved: target, source: 'private', download: null, skipped, writes: [] };
+  }
+  return {
+    resolved: target,
+    source: 'private',
+    download: { version: opts.privateVersion, target },
+    skipped,
+    writes: [target],
+  };
+}
+
+/** The Re-download command's plan: refresh the private copy and nothing else. */
+export function planRedownload(opts: { privateDir: string; version: string; platform: string }): { download: { version: string; target: string }; writes: string[] } {
+  const target = privateBinaryPath(opts.privateDir, opts.version, opts.platform);
+  return { download: { version: opts.version, target }, writes: [target] };
+}
+
+/**
+ * The one permitted write to the user's copy: the shell PATH command copying
+ * the private binary there when nothing is there. An existing file is the
+ * user's, whatever its version, and is left byte for byte.
+ */
+export function installUserCopy(privatePath: string, userBinPath: string): { wrote: boolean; message: string } {
+  if (fs.existsSync(userBinPath)) {
+    return { wrote: false, message: `${userBinPath} already exists and was left alone. Replace it yourself if you want a different version there.` };
+  }
+  fs.mkdirSync(path.dirname(userBinPath), { recursive: true });
+  fs.copyFileSync(privatePath, userBinPath);
+  fs.chmodSync(userBinPath, 0o755);
+  return { wrote: true, message: `Installed the CLI at ${userBinPath}.` };
 }

@@ -8,6 +8,9 @@
   "engines": {
     "vscode": "^1.85.0"
   },
+  "specterCli": {
+    "range": ">=0.15.0 <0.16.0"
+  },
   "categories": [
     "AI",
     "Linters",
@@ -48,18 +51,18 @@
           "type": "string",
           "default": "",
           "scope": "machine",
-          "description": "Path to the specter binary. If empty, Specter will search PATH then ~/.specter/bin/specter, then auto-download. Machine-scoped: ignored by workspace and folder settings."
+          "description": "Path to the specter binary. If empty, Specter uses a CLI on PATH or at ~/.specter/bin/specter when its version is one this extension supports, and otherwise its own private copy under ~/.specter/cli. The extension never modifies a binary it did not put there. Machine-scoped: ignored by workspace and folder settings."
         },
         "specter.autoDownload": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically download the specter binary if not found."
+          "description": "Download the extension's own CLI copy when no supported CLI is found."
         },
         "specter.version": {
           "type": "string",
           "default": "",
           "scope": "machine",
-          "description": "Specter CLI version to auto-download. Empty (default) matches the extension version. Set 'latest' to always track the newest GitHub release, or pin a specific version (e.g. '0.9.2'). Machine-scoped: ignored by workspace and folder settings."
+          "description": "Version of the extension's own CLI copy under ~/.specter/cli. Empty (default) matches the extension version. Set 'latest' to always track the newest GitHub release, or pin a specific version (e.g. '0.9.2'). A CLI on PATH inside the supported range is used regardless of this setting. Machine-scoped: ignored by workspace and folder settings."
         },
         "specter.showInsightsOnFailure": {
           "type": "boolean",
