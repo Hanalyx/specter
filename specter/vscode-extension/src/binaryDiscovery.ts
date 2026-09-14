@@ -470,11 +470,25 @@ export function shellInstallDecision(plan: BinaryPlan, userBinPath: string): { i
 /**
  * The command line the extension types into a terminal for the user. It
  * names the binary the extension resolved, so the command works whether or
- * not `specter` is on the shell PATH. The path is quoted when it needs to
- * be; the arguments are the caller's and are not touched.
+ * not `specter` is on the shell PATH. A path made only of characters no
+ * shell interprets is used bare. Anything else is single-quoted, which is
+ * the one form that makes every character literal: spaces, backslashes,
+ * `$`, backticks, and double quotes alike. An embedded single quote is
+ * written the way each shell reads it, `'\''` on POSIX and `''` in
+ * PowerShell. Escaping inside double quotes was the previous approach, and
+ * CodeQL rightly flagged it as incomplete. The arguments are the caller's
+ * and are not touched.
  */
-export function terminalInvocation(binaryPath: string | null, args: string): string {
+export function terminalInvocation(binaryPath: string | null, args: string, platform: string = process.platform): string {
   const bin = binaryPath ?? 'specter';
-  const quoted = /[\s'"]/.test(bin) ? `"${bin.replace(/"/g, '\\"')}"` : bin;
-  return `${quoted} ${args}`;
+  const posix = platform !== 'win32';
+  const safe = posix ? /^[A-Za-z0-9._/-]+$/ : /^[A-Za-z0-9._:\\-]+$/;
+  if (safe.test(bin)) {
+    return `${bin} ${args}`;
+  }
+  if (posix) {
+    return `'${bin.replace(/'/g, "'\\''")}' ${args}`;
+  }
+  // PowerShell needs the call operator to run a quoted path.
+  return `& '${bin.replace(/'/g, "''")}' ${args}`;
 }

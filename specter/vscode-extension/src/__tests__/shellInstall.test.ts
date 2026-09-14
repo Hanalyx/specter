@@ -56,15 +56,30 @@ describe('[spec-vscode/AC-81] shellInstallDecision: the user copy is created onl
 
 // @ac AC-45
 describe('[spec-vscode/AC-45] terminalInvocation names the resolved binary, so terminal commands work without a shell PATH entry', () => {
-  it('uses the resolved path as the command', () => {
-    expect(terminalInvocation('/home/u/.specter/cli/specter-0.15.0', 'reverse ')).toBe('/home/u/.specter/cli/specter-0.15.0 reverse ');
+  it('uses a plain resolved path bare', () => {
+    expect(terminalInvocation('/home/u/.specter/cli/specter-0.15.0', 'reverse ', 'linux')).toBe('/home/u/.specter/cli/specter-0.15.0 reverse ');
   });
 
-  it('quotes a path with spaces', () => {
-    expect(terminalInvocation('/Users/a b/.specter/cli/specter-0.15.0', 'diff x')).toBe('"/Users/a b/.specter/cli/specter-0.15.0" diff x');
+  it('single-quotes a path with spaces on POSIX', () => {
+    expect(terminalInvocation('/Users/a b/.specter/cli/specter-0.15.0', 'diff x', 'darwin')).toBe("'/Users/a b/.specter/cli/specter-0.15.0' diff x");
+  });
+
+  it('makes every shell-active character literal on POSIX: backslash, dollar, backtick, double quote', () => {
+    const hostile = '/home/u\\x/$HOME/`id`/"q"/specter-0.15.0';
+    expect(terminalInvocation(hostile, 'reverse ', 'linux')).toBe(`'${hostile}' reverse `);
+  });
+
+  it("writes an embedded single quote as '\\'' on POSIX", () => {
+    expect(terminalInvocation("/home/o'brien/specter-0.15.0", 'reverse ', 'linux')).toBe("'/home/o'\\''brien/specter-0.15.0' reverse ");
+  });
+
+  it('uses the PowerShell call operator and doubled quotes on Windows', () => {
+    expect(terminalInvocation('C:\\Users\\a b\\specter-0.15.0.exe', 'reverse ', 'win32')).toBe("& 'C:\\Users\\a b\\specter-0.15.0.exe' reverse ");
+    expect(terminalInvocation("C:\\o'b\\specter.exe", 'reverse ', 'win32')).toBe("& 'C:\\o''b\\specter.exe' reverse ");
+    expect(terminalInvocation('C:\\Users\\ab\\specter-0.15.0.exe', 'reverse ', 'win32')).toBe('C:\\Users\\ab\\specter-0.15.0.exe reverse ');
   });
 
   it('falls back to the bare name when nothing is resolved', () => {
-    expect(terminalInvocation(null, 'reverse ')).toBe('specter reverse ');
+    expect(terminalInvocation(null, 'reverse ', 'linux')).toBe('specter reverse ');
   });
 });
