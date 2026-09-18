@@ -203,7 +203,7 @@ describe('[spec-vscode/AC-50] specter.version config default (C-27)', () => {
     // Schema drift guard: if a future change reverts to 'latest' as the
     // default, version skew between the Marketplace extension and the
     // GoReleaser-produced GitHub Release reappears. Keep the default empty
-    // so downloadBinary reads ctx.extension.packageJSON.version.
+    // so the private copy uses package.json's specterCli.default.
   });
 });
 

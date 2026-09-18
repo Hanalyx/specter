@@ -78,19 +78,19 @@ install-hooks:
 # Sync VERSION into the VS Code extension's package.json
 version-sync:
 	@VER=$$(cat VERSION); \
-	node -e "const fs=require('fs'),p='vscode-extension/package.json',j=JSON.parse(fs.readFileSync(p));j.version='$$VER';fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n');" && \
-	echo "Synced version $$VER → vscode-extension/package.json"
+	node -e "const fs=require('fs'),p='vscode-extension/package.json',j=JSON.parse(fs.readFileSync(p));j.specterCli=j.specterCli||{};j.specterCli.default='$$VER';fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n');" && \
+	echo "Synced CLI default $$VER -> vscode-extension/package.json specterCli.default (the extension's own version is independent)"
 
 # Publish VS Code extension to Marketplace
-# Usage: make publish-vscode PAT=<your-token>
+# Usage: VSCE_PAT=... make publish-vscode  (token from the environment only)
 publish-vscode:
-	@if [ -z "$(PAT)" ]; then \
-		echo "Usage: make publish-vscode PAT=<your-personal-access-token>"; \
+	@if [ -z "$$VSCE_PAT" ]; then \
+		echo "Set VSCE_PAT in the environment. The token is never passed on the command line."; \
 		exit 1; \
 	fi
 	$(MAKE) version-sync
 	cd vscode-extension && npm run build
-	cd vscode-extension && npx vsce publish --pat $(PAT)
+	cd vscode-extension && npx vsce publish
 
 clean:
 	rm -rf bin/ specter-linux-* specter-darwin-* specter-windows-*
@@ -150,7 +150,7 @@ prerelease: check test-race vulncheck dogfood
 # checklist. Does NOT run vsce publish under any circumstance.
 # See CLAUDE.md > "Release discipline" for why every step matters.
 release-check: prerelease
-	@VER=$$(cat VERSION); \
+	@VER=$$(node -e "console.log(require('./vscode-extension/package.json').version)"); \
 	VSIX=vscode-extension/specter-vscode-$$VER.vsix; \
 	if [ ! -f "$$VSIX" ]; then \
 		echo "ERROR: expected $$VSIX after prerelease; not found."; exit 1; \

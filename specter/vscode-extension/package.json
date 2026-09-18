@@ -9,6 +9,7 @@
     "vscode": "^1.85.0"
   },
   "specterCli": {
+    "default": "0.15.1",
     "range": ">=0.15.0 <0.16.0"
   },
   "categories": [
@@ -62,7 +63,7 @@
           "type": "string",
           "default": "",
           "scope": "machine",
-          "description": "Version of the extension's own CLI copy under ~/.specter/cli. Empty (default) matches the extension version. Set 'latest' to always track the newest GitHub release, or pin a specific version (e.g. '0.9.2'). A CLI on PATH inside the supported range is used regardless of this setting. Machine-scoped: ignored by workspace and folder settings."
+          "description": "Version of the extension's own CLI copy under ~/.specter/cli. Empty (default) uses the CLI version this extension build declares. Set 'latest' to always track the newest GitHub release, or pin a specific version (e.g. '0.9.2'). A CLI on PATH inside the supported range is used regardless of this setting. Machine-scoped: ignored by workspace and folder settings."
         },
         "specter.showInsightsOnFailure": {
           "type": "boolean",

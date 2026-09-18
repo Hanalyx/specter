@@ -9,6 +9,7 @@ import {
   planRedownload,
   privateCliDir,
   installUserCopy,
+  privateVersionFor,
   BinaryPlan,
   shellInstallDecision,
   terminalInvocation,
@@ -381,16 +382,20 @@ async function resolveBinary(ctx: vscode.ExtensionContext): Promise<string | nul
  */
 async function resolvePrivateVersion(ctx: vscode.ExtensionContext): Promise<string | null> {
   const versionSetting = vscode.workspace.getConfiguration('specter').get<string>('version', '');
-  if (versionSetting === 'latest') {
-    try {
-      return await resolveLatestVersion();
-    } catch (e) {
-      vscode.window.showErrorMessage(`Specter: could not resolve the latest release: ${e}`, { modal: true });
-      return null;
-    }
+  let wanted: string;
+  try {
+    wanted = privateVersionFor(versionSetting, ctx.extension.packageJSON);
+  } catch (e) {
+    vscode.window.showErrorMessage(`Specter: ${e instanceof Error ? e.message : String(e)}`, { modal: true });
+    return null;
   }
-  if (versionSetting) return versionSetting;
-  return ctx.extension.packageJSON.version as string;
+  if (wanted !== 'latest') return wanted;
+  try {
+    return await resolveLatestVersion();
+  } catch (e) {
+    vscode.window.showErrorMessage(`Specter: could not resolve the latest release: ${e}`, { modal: true });
+    return null;
+  }
 }
 
 async function downloadBinary(ctx: vscode.ExtensionContext, target: { version: string; target: string }): Promise<string | null> {
