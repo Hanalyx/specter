@@ -8,9 +8,19 @@ Unreleased changes accumulate under `## Unreleased`. Every user-visible change a
 
 ## Unreleased
 
+---
+
+## v0.15.2 - 2026-09-18
+
+VS Code extension only. The CLI stays at 0.15.1, and this extension fetches that CLI by default. Stable Marketplace users are updating from 0.12.1: the extension changes between then and now are in the v0.13.0 through v0.15.1 sections below.
+
 ### Fixed
 
 - The VS Code extension now preserves independently installed Specter CLIs, including newer supported versions. Update the extension to receive the fix. Existing CLI installations need no reinstall. If you have no shell CLI, run Specter: Add CLI to Shell PATH.
+
+### Changed
+
+- The extension's version number no longer has to match the CLI's. With `specter.version` empty, the extension fetches the CLI version it declares, 0.15.1 for this release, rather than its own number. **Action:** none. A pinned `specter.version` or `latest` still works as before.
 
 ---
 
