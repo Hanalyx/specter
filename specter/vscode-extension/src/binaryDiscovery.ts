@@ -492,3 +492,22 @@ export function terminalInvocation(binaryPath: string | null, args: string, plat
   // PowerShell needs the call operator to run a quoted path.
   return `& '${bin.replace(/'/g, "''")}' ${args}`;
 }
+
+/**
+ * C-27: the version the private copy should be. package.json declares it
+ * under specterCli.default, which a test binds to the repository's VERSION
+ * file, so the extension fetches by default exactly the CLI that shipped
+ * with it whatever number the extension itself carries. The setting
+ * overrides it: `latest` is returned as is for the caller to resolve over
+ * the network, and any other non-empty value is used verbatim. A build
+ * whose package.json lacks the field is broken and says so.
+ */
+export function privateVersionFor(setting: string, pkg: { specterCli?: { default?: string } }): string {
+  const declared = pkg.specterCli?.default;
+  if (!declared) {
+    throw new Error('this extension build declares no CLI version to fetch (package.json specterCli.default). Reinstall the extension.');
+  }
+  if (setting === 'latest') return 'latest';
+  if (setting) return setting;
+  return declared;
+}

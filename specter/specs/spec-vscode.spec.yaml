@@ -1,6 +1,6 @@
 spec:
   id: spec-vscode
-  version: "6.0.0"
+  version: "7.0.0"
   status: draft
   tier: 2
 
@@ -201,7 +201,7 @@ spec:
       enforcement: error
 
     - id: C-27
-      description: "The extension's private copy (C-34) MUST default to the CLI version matching the extension's own version — a v0.10.0 extension fetches v0.10.0 CLI, not whatever GitHub's /releases/latest currently returns. The extension reads its own version via ctx.extension.packageJSON.version at download time. Users MAY override via specter.version: set to 'latest' to track GitHub's newest release, or pin a specific semver (e.g. '0.9.2'). Default-to-latest is prohibited because the CLI release and extension Marketplace publish are decoupled — a GoReleaser-produced CLI release fires on tag push, but the matching extension may publish days later (or not at all), creating split-brain installs where users run an older extension against a newer CLI. The private copy is how the extension guarantees itself a compatible CLI. It is not how the user's shell gets one: a newer CLI on PATH is used as is while it satisfies the C-34 range, and is never replaced."
+      description: "The extension's private copy (C-34) MUST default to the CLI version declared in package.json under `specterCli.default`, not to the extension's own version and not to whatever GitHub's /releases/latest currently returns. The declared default MUST equal the CLI version the repository ships, its VERSION file, and MUST satisfy `specterCli.range`; a test binds both. The extension's own version number is free to move without a CLI release, which is what lets an extension-only fix reach the Marketplace stable channel when the same number is already published as pre-release, since the Marketplace never accepts a version number twice. Users MAY override via specter.version: set to 'latest' to track GitHub's newest release, or pin a specific semver (e.g. '0.9.2'). Default-to-latest is prohibited because the CLI release and extension Marketplace publish are decoupled — a GoReleaser-produced CLI release fires on tag push, but the matching extension may publish days later (or not at all), creating split-brain installs where users run an older extension against a newer CLI. The private copy is how the extension guarantees itself a compatible CLI. It is not how the user's shell gets one: a newer CLI on PATH is used as is while it satisfies the C-34 range, and is never replaced."
       type: business
       enforcement: error
 
@@ -793,7 +793,7 @@ spec:
       priority: medium
 
     - id: AC-50
-      description: "With specter.version unset (the default empty string), downloadBinary resolves the target version by reading ctx.extension.packageJSON.version — a v0.10.0 VSIX fetches specter_0.10.0_<os>_<arch>.<ext>, not whatever /releases/latest returns. With specter.version='latest', downloadBinary queries /releases/latest (previous default behavior, now explicit opt-in). With specter.version pinned to a semver like '0.9.2', downloadBinary uses that string verbatim. package.json declares the config default as the empty string, not 'latest'."
+      description: "With specter.version unset (the default empty string), the private copy's version is package.json's `specterCli.default`, so an extension declaring 0.15.1 fetches specter_0.15.1_<os>_<arch>.<ext> whatever its own version, not whatever /releases/latest returns. With specter.version='latest', downloadBinary queries /releases/latest (previous default behavior, now explicit opt-in). With specter.version pinned to a semver like '0.9.2', downloadBinary uses that string verbatim. package.json declares the config default as the empty string, not 'latest'."
       references_constraints: ["C-27"]
       priority: high
 
@@ -1664,6 +1664,21 @@ spec:
       references_constraints: ["C-34"]
       priority: high
 
+    - id: AC-83
+      description: "The private copy's default version is declared, not inferred from the extension's own version. package.json carries `specterCli.default`, a plain MAJOR.MINOR.PATCH that equals the repository's VERSION file and satisfies `specterCli.range`, so the extension that ships fetches by default exactly the CLI that ships with it, whatever number the extension itself carries. privateVersionFor returns that default when `specter.version` is empty, the string `latest` when the setting is `latest` so the caller resolves it, and the setting's own value when it names a version. An extension whose package.json lacks the field cannot resolve a private copy at all, and says so."
+      inputs:
+        package_json: "specterCli.default 0.15.1, specterCli.range >=0.15.0 <0.16.0, version 0.15.2"
+        settings: "empty; latest; 0.15.0"
+      expected_output:
+        default_equals_repository_VERSION: true
+        default_satisfies_range: true
+        empty_setting: "0.15.1"
+        latest_setting: "latest"
+        pinned_setting: "0.15.0"
+        missing_field: "an error naming specterCli.default"
+      references_constraints: ["C-27", "C-34"]
+      priority: critical
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.1.0"
@@ -1682,6 +1697,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "7.0.0"
+      date: "2026-09-17"
+      author: "specter-team"
+      type: major
+      description: "C-27 now names the CLI version the private copy fetches by default: package.json's `specterCli.default`, which must equal the repository's VERSION and satisfy `specterCli.range`, both bound by AC-83. The extension's own version was the default, which pairs every extension version to a CLI release of the same number. That pairing blocked the first stable publication of the C-34 fix: 0.15.1 was already on the Marketplace as pre-release, the Marketplace never accepts a number twice, and a 0.15.2 extension would have tried to fetch a CLI 0.15.2 that does not exist. AC-50 reads the declared default. Major: an implementation that reads its own version no longer conforms."
     - version: "6.0.0"
       date: "2026-09-14"
       author: "specter-team"
