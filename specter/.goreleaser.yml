@@ -38,9 +38,10 @@ checksum:
 # format (single .sigstore.json file containing signature + cert).
 # The release workflow's permissions block must declare `id-token:
 # write` so goreleaser-action can fetch the OIDC token. Verify a
-# downloaded release with:
+# downloaded release with an exact identity. A regexp without anchors
+# also accepts a signature made by a copy of release.yml on any branch.
 #   cosign verify-blob \
-#     --certificate-identity-regexp 'https://github.com/Hanalyx/specter/.github/workflows/release.yml' \
+#     --certificate-identity 'https://github.com/Hanalyx/specter/.github/workflows/release.yml@refs/heads/main' \
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
 #     --bundle checksums.txt.sigstore.json \
 #     checksums.txt

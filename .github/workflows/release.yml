@@ -2,60 +2,109 @@ name: Release
 
 on:
   # M7: chained on the upstream Pre-Release Test Suite. Tag pushes set
-  # head_branch to the tag name (e.g., v0.12.0), so we do NOT filter
-  # branches at the trigger level — the `if:` condition below enforces
-  # the tag-only invariant via startsWith(head_branch, 'v').
+  # head_branch to the tag name (e.g., v0.12.0). That suite also runs on
+  # pull requests, including pull requests from forks, so the trigger alone
+  # proves nothing. The gate job below decides whether a run may release.
   workflow_run:
     workflows: ["Pre-Release Test Suite"]
     types: [completed]
   # Manual fallback so the operator can re-run for an existing tag
   # (e.g., when fixing a release-infra bug post-tag) without re-tagging.
+  # It passes through the same gate: the tag must exist, be on main, and
+  # have a successful upstream push run at the same commit.
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release (e.g., v0.12.0). Defaults to the workflow ref."
-        required: false
+        description: "Tag to release (e.g., v0.12.0)."
+        required: true
         type: string
 
-# `contents: write` lets goreleaser create the GitHub Release.
-# `id-token: write` lets cosign fetch a sigstore OIDC token for keyless
-# signing of checksums.txt.
-permissions:
-  contents: write
-  id-token: write
-
-defaults:
-  run:
-    working-directory: specter
-
-# Concurrency guard: two near-simultaneous tag pushes would otherwise race
-# goreleaser. cancel-in-progress: false because release artifacts are
-# expensive to rebuild and we'd rather queue than abort midway.
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
+# No job gets a permission it does not name for itself.
+permissions: {}
 
 jobs:
-  release:
-    # workflow_run path: only run when the upstream Pre-Release Test Suite
-    # (Tier 1+2+3) was triggered by a tag push AND finished successfully.
-    # Otherwise a Tier 3 regression-matrix failure could publish artifacts
-    # before validation completes.
-    # workflow_dispatch path: always run (operator opt-in for re-releases).
+  gate:
+    # Cheap filter so pull request runs skip instead of failing red. The
+    # gate script re-checks all of this and much more; this condition is
+    # not the security boundary. A dispatch from any ref but main runs that
+    # ref's copy of this file and the script, so it is skipped here too.
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       startsWith(github.event.workflow_run.head_branch, 'v'))
-    name: Build and Release
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    name: Verify release trigger
     runs-on: ubuntu-latest
+    # Read-only. This job checks out the trusted default-branch copy of the
+    # gate script, never the commit being released.
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      tag: ${{ steps.gate.outputs.tag }}
+      sha: ${{ steps.gate.outputs.sha }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          # workflow_run carries the upstream commit SHA;
-          # workflow_dispatch with a tag input checks that ref out;
-          # workflow_dispatch with no input falls back to github.ref.
-          ref: ${{ github.event.workflow_run.head_sha || inputs.tag || github.ref }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - name: Verify tag, commit, and upstream run
+        id: gate
+        # Every value from the event payload reaches the script through the
+        # environment. None is interpolated into the command line.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GATE_EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_WORKFLOW_PATH: ${{ github.event.workflow_run.path }}
+          DISPATCH_TAG: ${{ inputs.tag }}
+          DISPATCH_REF: ${{ github.ref }}
+        run: bash .github/scripts/release-gate.sh
+
+  release:
+    needs: gate
+    name: Build and Release
+    runs-on: ubuntu-latest
+    # `contents: write` lets goreleaser create the GitHub Release.
+    # `id-token: write` lets cosign fetch a sigstore OIDC token for keyless
+    # signing of checksums.txt.
+    permissions:
+      contents: write
+      id-token: write
+    # Two near-simultaneous runs for one tag would otherwise race
+    # goreleaser. cancel-in-progress: false because release artifacts are
+    # expensive to rebuild and we'd rather queue than abort midway.
+    concurrency:
+      group: release-${{ needs.gate.outputs.tag }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: specter
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # Only the commit the gate verified. Never the raw event SHA.
+          ref: ${{ needs.gate.outputs.sha }}
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Confirm the checkout is the verified tag
+        env:
+          TAG: ${{ needs.gate.outputs.tag }}
+          SHA: ${{ needs.gate.outputs.sha }}
+        run: |
+          head=$(git rev-parse HEAD)
+          tagged=$(git rev-parse "refs/tags/${TAG}^{commit}")
+          if [ "$head" != "$SHA" ] || [ "$tagged" != "$SHA" ]; then
+            echo "checkout $head, tag $tagged, verified $SHA: refusing to build" >&2
+            exit 1
+          fi
 
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
@@ -70,11 +119,17 @@ jobs:
       # specter/.goreleaser.yml sboms: block).
       - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
 
+      # GoReleaser is pinned to the exact version that built v0.15.1. This
+      # job can write releases and sign, so an upgrade is a deliberate
+      # change, made here and in release-snapshot.yml together.
       - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         with:
           distribution: goreleaser
-          version: latest
+          version: v2.18.1
           args: release --clean
           workdir: specter
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Release the verified tag, not whatever tag goreleaser would
+          # infer from the checkout.
+          GORELEASER_CURRENT_TAG: ${{ needs.gate.outputs.tag }}
