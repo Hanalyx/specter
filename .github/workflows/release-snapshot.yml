@@ -16,6 +16,8 @@ on:
   pull_request:
     paths:
       - '.github/workflows/release*.yml'
+      # The release gate and the pinned tool installer both run in release.yml.
+      - '.github/scripts/**'
       - 'specter/.goreleaser.y*ml'
       - 'specter/Makefile'
       - 'specter/go.mod'
@@ -58,32 +60,26 @@ jobs:
       # PRs skip via --skip=sign below).
       - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
 
-      # syft for CycloneDX SBOM emission per archive.
-      - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+      # GoReleaser and syft come from the same pinned, checksum-verified
+      # installer as release.yml, so the pre-flight runs the tools the
+      # release will run.
+      - name: Install GoReleaser and syft (pinned and checksum-verified)
+        working-directory: .
+        run: |
+          bash .github/scripts/install-release-tools.sh "$RUNNER_TEMP/release-tools"
+          echo "$RUNNER_TEMP/release-tools" >> "$GITHUB_PATH"
 
-      # GoReleaser is pinned to the same exact version as release.yml, so the
-      # pre-flight tests the build the release will run.
       # Same-repo PR: full snapshot including sign + SBOM.
       # Fork PR: skip sign (no OIDC token); SBOM still works.
       - name: Goreleaser snapshot (same-repo)
         if: github.event.pull_request.head.repo.fork == false
-        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
-        with:
-          distribution: goreleaser
-          version: v2.18.1
-          args: release --snapshot --skip=publish --clean
-          workdir: specter
+        run: goreleaser release --snapshot --skip=publish --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Goreleaser snapshot (fork PR — skip sign)
+      - name: Goreleaser snapshot (fork PR, skip sign)
         if: github.event.pull_request.head.repo.fork == true
-        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
-        with:
-          distribution: goreleaser
-          version: v2.18.1
-          args: release --snapshot --skip=publish --skip=sign --clean
-          workdir: specter
+        run: goreleaser release --snapshot --skip=publish --skip=sign --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -123,6 +119,16 @@ jobs:
               exit 1
             fi
             echo "cosign sigstore bundle: present"
+            # Verify the signature, not only the file. The identity is this
+            # workflow at this pull request's ref, which is not the release
+            # identity: this proves the signing step produces a valid
+            # signature, not that release.yml on main can sign.
+            cosign verify-blob \
+              --certificate-identity "https://github.com/${GITHUB_WORKFLOW_REF}" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              --bundle dist/checksums.txt.sigstore.json \
+              dist/checksums.txt
+            echo "cosign signature: verified for ${GITHUB_WORKFLOW_REF}"
           else
             echo "cosign verification skipped (fork PR)"
           fi
