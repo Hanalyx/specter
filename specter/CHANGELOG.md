@@ -8,6 +8,20 @@ Unreleased changes accumulate under `## Unreleased`. Every user-visible change a
 
 ## Unreleased
 
+### Security
+
+- Verify a release signature against the exact workflow identity. Earlier notes gave an unanchored `--certificate-identity-regexp`, which also accepts a signature made by a copy of the release workflow on another branch. Use:
+
+  ```bash
+  cosign verify-blob \
+    --certificate-identity 'https://github.com/Hanalyx/specter/.github/workflows/release.yml@refs/heads/main' \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    --bundle checksums.txt.sigstore.json \
+    checksums.txt
+  ```
+
+  Then check the archive against `checksums.txt`, for example with GNU `sha256sum -c --ignore-missing checksums.txt`. This was verified against the v0.15.1 release with cosign v3.0.5. Cosign v2.4.1 cannot read the bundle.
+
 ---
 
 ## v0.15.2 - 2026-09-18
