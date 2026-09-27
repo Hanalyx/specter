@@ -79,6 +79,12 @@ esac
 
 [[ "$tag" =~ $TAG_PATTERN ]] || reject "'$tag' is not a release tag name"
 
+SHA_PATTERN='^[0-9a-f]{40}$'
+if [ "$GATE_EVENT" = "workflow_run" ]; then
+  [[ "$tested_sha" =~ $SHA_PATTERN ]] ||
+    reject "upstream head SHA '$tested_sha' is not a full commit SHA"
+fi
+
 # Resolve the tag through the repository's own refs. A branch that shares
 # the name does not count, and a fork cannot create a tag here.
 ref_json=$(api "repos/$REPO/git/ref/tags/$tag") ||
@@ -92,6 +98,8 @@ tag_json=$(api "repos/$REPO/git/tags/$ref_obj") ||
 [ "$(jq -r '.object.type' <<<"$tag_json")" = "commit" ] ||
   reject "tag $tag does not point at a commit"
 tag_sha=$(jq -r '.object.sha' <<<"$tag_json")
+[[ "$tag_sha" =~ $SHA_PATTERN ]] ||
+  reject "tag $tag resolved to '$tag_sha', which is not a full commit SHA"
 
 if [ "$GATE_EVENT" = "workflow_run" ]; then
   [ "$tag_sha" = "$tested_sha" ] ||

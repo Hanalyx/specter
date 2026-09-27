@@ -152,6 +152,16 @@ fixture "repos/$REPO_NAME/git/tags/$TAG_OBJ" \
   "{\"object\":{\"type\":\"commit\",\"sha\":\"$OTHER_SHA\"}}"
 expect "tag moved after the suite ran" reject "resolves to $OTHER_SHA" -- push_run
 
+good_repo null-sha
+fixture "repos/$REPO_NAME/git/tags/$TAG_OBJ" '{"object":{"type":"commit"}}'
+expect "tag object with no SHA, event SHA null" reject "is not a full commit SHA" -- \
+  push_run RUN_HEAD_SHA=null
+good_repo short-sha
+expect "abbreviated upstream SHA" reject "is not a full commit SHA" -- push_run RUN_HEAD_SHA=58c1e93
+good_repo tag-no-sha
+fixture "repos/$REPO_NAME/git/tags/$TAG_OBJ" '{"object":{"type":"commit"}}'
+expect "tag object with no SHA on dispatch" reject "which is not a full commit SHA" -- dispatch_run
+
 # Release branch policy.
 good_repo ahead
 fixture "repos/$REPO_NAME/compare/main...$GOOD_SHA" '{"status":"ahead"}'
