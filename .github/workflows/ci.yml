@@ -49,6 +49,10 @@ jobs:
       - name: Test (race detector)
         run: go test -race ./...
 
+      - name: Release gate tests
+        working-directory: .
+        run: bash .github/scripts/release-gate.test.sh
+
       - name: Build
         run: go build -o bin/specter ./cmd/specter/
 
