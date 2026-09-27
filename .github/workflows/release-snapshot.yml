@@ -16,6 +16,8 @@ on:
   pull_request:
     paths:
       - '.github/workflows/release*.yml'
+      # The release gate and the pinned tool installer both run in release.yml.
+      - '.github/scripts/**'
       - 'specter/.goreleaser.y*ml'
       - 'specter/Makefile'
       - 'specter/go.mod'

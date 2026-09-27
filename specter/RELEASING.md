@@ -33,7 +33,7 @@ A directory whose `.spec.yaml` files fail Specter's schema (e.g. specs written i
 ### 5. Exercise every changed code path
 
 If the change touches:
-- **Binary resolution**: delete the extension's private copy under `~/.specter/cli/` and watch the re-download.
+- **Binary resolution**: run **Specter: Re-download CLI** and watch the download into `~/.specter/cli/`. Deleting the private copy alone does not always trigger a download, because the extension first uses an in-range CLI from `specter.binaryPath`, PATH, or `~/.specter/bin/specter`.
 - **Tree rendering**: verify both empty and populated states.
 - **CLI flag handling**: invoke the affected command from the integrated terminal.
 - **Activation flow**: open a workspace that matches the activation trigger but wasn't open when VS Code started.
@@ -68,7 +68,7 @@ npx vsce publish --packagePath specter-vscode-X.Y.Z.vsix
 
 A pushed tag starts the CLI release. The Pre-Release Test Suite runs on the tag, and `release.yml` builds and signs only after a read-only gate job allows it. The gate lives in `.github/scripts/release-gate.sh`. It allows a release only when all of these hold:
 
-- The tag is an annotated tag named `vX.Y.Z`. Create it with `git tag -a`.
+- The tag is an annotated tag named `vX.Y.Z`, or `vX.Y.Z-suffix` for a pre-release. Create it with `git tag -a`.
 - The tag points at a commit on `main`.
 - `specter/VERSION` at that commit matches the tag without its `v`.
 - The Pre-Release Test Suite passed on the push of that tag, at that commit.
@@ -101,7 +101,8 @@ The ruleset history records who disabled and re-enabled it, and when. Do not mov
 
 1. Download the new release's checksums file and its signature.
 2. Verify the signature with `cosign verify-blob` against the tool's own release workflow identity. The script's header names each identity.
-3. Put the new version and the archive's hash from the verified checksums file into the script, in one change.
+3. In one change, update the script: the version, the archive's hash from the verified checksums file, and the identity in the header. GoReleaser's identity names its release tag, so it changes with every version. Verify with `--certificate-oidc-issuer https://token.actions.githubusercontent.com`.
+4. Open the change as a pull request. The snapshot pre-flight runs on any change under `.github/scripts/`, so a wrong hash fails there, not on a release tag.
 
 ---
 
