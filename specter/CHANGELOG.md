@@ -8,7 +8,18 @@ Unreleased changes accumulate under `## Unreleased`. Every user-visible change a
 
 ## Unreleased
 
+### Changed
+
+- `specter init --ai <tool>` writes a validation gate an adopter's agent can run. The old body told the agent to run `make dogfood-strict`, a target that exists only in Specter's own Makefile, and never mentioned `specter ingest`. The new body tells the agent to run `specter check --concrete` before coding and to read each criterion's `inputs`, `expected_output` and `error_cases`. It points at `specter explain annotation` and tells the agent to write both parts on every test: the `// @spec` and `// @ac` source comments, and the pair in the runner output by Convention A or Convention B. To validate, the agent runs the project's own tests to JUnit XML or `go test -json`, then `specter ingest`, then `specter coverage --strict`. Before declaring done, it runs `specter diff ... --exit-code` against the commit it started from. Re-run `specter init --ai <tool>` to pick up the new body. Content outside the fenced region is kept. spec-manifest C-38 and AC-73.
+
+### Fixed
+
+- `docs/GETTING_STARTED.md` referenced `hanalyx/specter-sync-action@v1`, a repository that does not exist. The action is `Hanalyx/specter/specter/.github/actions/specter-sync@<tag>`.
+- The `specter-sync` composite action never worked on macOS runners. It lowercased `runner.os` to `macos` and built a file name that no release has. It now maps `Linux` to `linux` and `macOS` to `darwin`. On Windows, or any other OS, it stops with a message that names the OS and says it supports Linux and macOS only, instead of failing on a missing URL. spec-ci-action C-04 and AC-07.
+
 ### Security
+
+- The `specter-sync` composite action verifies the release archive before it extracts it. It downloads `checksums.txt` from the same release and compares the archive's sha256 with the one entry that names it. A missing checksums file, a missing or repeated entry, a malformed hash, or a mismatch fails the step. Before this, the action piped `curl` into `tar` with no check. The action does not verify the cosign signature on `checksums.txt`. The cache key changed to `specter-<os>-<version>-v2`, so every runner downloads and verifies once more instead of restoring a binary the older action cached without a check. A cache hit after that restores a binary that passed verification. spec-ci-action C-03, AC-03, C-06 and AC-06.
 
 - Verify a release signature against the exact workflow identity. Earlier notes gave an unanchored `--certificate-identity-regexp`, which also accepts a signature made by a copy of the release workflow on another branch. Use:
 

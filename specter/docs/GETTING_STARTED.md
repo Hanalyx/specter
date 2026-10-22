@@ -1,6 +1,6 @@
 # Getting Started with Specter
 
-This guide takes you from **zero specs to full coverage** — step by step, with every command, every AI prompt, and a complete VS Code workspace walkthrough.
+This guide takes you from **zero specs to full coverage**, step by step, with every command, every AI prompt, and a complete VS Code workspace walkthrough.
 
 If you just want to see it work in 5 minutes, start with the [QuickStart](QUICKSTART.md) instead.
 
@@ -10,18 +10,18 @@ If you just want to see it work in 5 minutes, start with the [QuickStart](QUICKS
 
 ### What Specter is
 
-Specter is a **type system for specs**. It validates, links, and checks `.spec.yaml` files the same way `tsc` validates `.ts` files. The core idea: your specification is the source of truth — not the code, not the tests, and not the AI output. Specter enforces that.
+Specter is a **type system for specs**. It validates, links, and checks `.spec.yaml` files the same way `tsc` validates `.ts` files. The core idea: your specification is the source of truth, not the code, not the tests, and not the AI output. Specter enforces that.
 
 ### What Specter is not
 
-Specter is **not** a general-purpose spec format reader. If you already use specs — Gherkin/Cucumber `.feature` files, OpenAPI `.yaml`, Notion docs, Confluence pages — Specter does not read those formats. It uses its own structured schema (see [Schema Reference](SPEC_SCHEMA_REFERENCE.md)).
+Specter is **not** a general-purpose spec format reader. If you already use specs (Gherkin/Cucumber `.feature` files, OpenAPI `.yaml`, Notion docs, Confluence pages), Specter does not read those formats. It uses its own structured schema (see [Schema Reference](SPEC_SCHEMA_REFERENCE.md)).
 
 **If you have existing specs in another format**, you have two options:
 
 | Option | When to use |
 |--------|-------------|
-| **Run `specter reverse`** on your source code, then discard your old specs | Your existing specs are high-level or informal — the code is the real source of truth |
-| **Migrate your existing specs** into Specter's schema manually or with AI | Your existing specs are detailed and authoritative — you want to preserve them |
+| **Run `specter reverse`** on your source code, then discard your old specs | Your existing specs are high-level or informal, and the code is the real source of truth |
+| **Migrate your existing specs** into Specter's schema manually or with AI | Your existing specs are detailed and authoritative, and you want to preserve them |
 
 For migration, use this AI prompt:
 
@@ -56,11 +56,11 @@ and break acceptance criteria into individually testable AC-XX items.
 
 ---
 
-## Phase 1 — Install
+## Phase 1: Install
 
 ### CLI
 
-Release assets follow the goreleaser convention `specter_<version>_<os>_<arch>.<ext>` — lowercase `linux`/`darwin`/`windows`, Go's `amd64`/`arm64` (not `uname`'s `x86_64`/`aarch64`). Each snippet below translates and picks the latest version automatically.
+Release assets follow the goreleaser convention `specter_<version>_<os>_<arch>.<ext>`: lowercase `linux`/`darwin`/`windows`, Go's `amd64`/`arm64` (not `uname`'s `x86_64`/`aarch64`). Each snippet below translates and picks the latest version automatically.
 
 **macOS / Linux (tar.gz):**
 ```bash
@@ -120,9 +120,9 @@ The extension activates automatically once `specter.yaml` exists in your workspa
 
 ---
 
-## Phase 2 — Bootstrap Your Specs
+## Phase 2: Bootstrap Your Specs
 
-### Step 1 — Run the reverse compiler
+### Step 1: Run the reverse compiler
 
 Point Specter at your source directory. It analyzes your code and generates draft specs automatically:
 
@@ -146,7 +146,7 @@ Each spec reflects the structure Specter found in your code: routes, models, val
 
 > **`gap: true` means:** Specter extracted the structure but could not infer the *intent*. A human (or AI) needs to complete it before it becomes authoritative.
 
-### Step 2 — Initialize the workspace manifest
+### Step 2: Initialize the workspace manifest
 
 ```bash
 specter init
@@ -182,19 +182,19 @@ This file is required for:
 
 Commit this file. It belongs in source control.
 
-### Step 3 — Check the VS Code extension activated
+### Step 3: Check the VS Code extension activated
 
-Open VS Code in your project folder. Look at the activity bar (left sidebar) for the **Sp** icon. Click it — you should see the **Specter: Coverage** panel listing your specs with their current coverage percentages.
+Open VS Code in your project folder. Look at the activity bar (left sidebar) for the **Sp** icon. Click it. You should see the **Specter: Coverage** panel listing your specs with their current coverage percentages.
 
-If you see: `Specter: no specter.yaml found in this workspace` — run `specter init` first (Step 2).
+If you see: `Specter: no specter.yaml found in this workspace`, run `specter init` first (Step 2).
 
 ---
 
-## Phase 3 — Close the Gaps
+## Phase 3: Close the Gaps
 
 This is the most important phase. You are turning AI-extracted drafts into authoritative specifications.
 
-### Step 1 — Run `specter check` to see the landscape
+### Step 1: Run `specter check` to see the landscape
 
 ```bash
 specter check
@@ -202,7 +202,7 @@ specter check
 
 This reports structural issues: orphaned constraints (no AC references them), broken dependencies, missing required fields. Fix every `error` before moving on. `warn` items can be addressed incrementally.
 
-### Step 2 — Review each spec with AI
+### Step 2: Review each spec with AI
 
 Open a generated spec. It looks like this:
 
@@ -229,7 +229,7 @@ spec:
       gap: true
 ```
 
-**AI prompt — fill the gaps:**
+**AI prompt to fill the gaps:**
 
 ```
 Here is a draft spec generated by Specter's reverse compiler for my [language/framework] codebase.
@@ -241,15 +241,15 @@ Please complete this spec:
    (e.g., "Valid email + password creates user and returns 201 with JWT token")
 2. Add any obviously missing constraints based on the context
 3. Add `references_constraints` arrays to each AC linking back to the C-XX IDs it validates
-4. Set `status: draft` (leave it — we'll promote later)
+4. Set `status: draft` (leave it; we'll promote later)
 5. Remove `gap: true` once all gaps are filled
-6. Keep all existing IDs (C-01, AC-01, etc.) unchanged — do not renumber
+6. Keep all existing IDs (C-01, AC-01, etc.) unchanged. Do not renumber
 7. Use MUST/MUST NOT/SHOULD language in constraint descriptions (RFC 2119)
 
 Return only the completed YAML.
 ```
 
-**AI prompt — add missing constraints:**
+**AI prompt to add missing constraints:**
 
 ```
 Review this Specter spec for [feature name]. Based on the context and objective,
@@ -267,7 +267,7 @@ Also add a corresponding AC that references it.
 Return the updated YAML only.
 ```
 
-### Step 3 — Validate each spec
+### Step 3: Validate each spec
 
 After AI edits, validate before moving on:
 
@@ -292,7 +292,7 @@ Common fixes:
 - `tier` must be an integer: `2` not `"2"`
 - `status` must be one of: `draft`, `review`, `approved`, `deprecated`, `removed`
 
-### Step 4 — Repeat for all specs
+### Step 4: Repeat for all specs
 
 ```bash
 specter parse    # validates all specs at once
@@ -303,7 +303,7 @@ When both commands exit cleanly with no errors, Phase 3 is complete.
 
 ---
 
-## Phase 4 — Write Tests Against the Specs
+## Phase 4: Write Tests Against the Specs
 
 Specter reads test annotations from two places. Both matter.
 
@@ -314,7 +314,7 @@ Source comments alone: `coverage` counts it, `--strict` demotes it. Write both f
 
 Full rules, per-language examples, parameterized tests, migration recipe, and troubleshooting: see [`TEST_ANNOTATION_REFERENCE.md`](TEST_ANNOTATION_REFERENCE.md).
 
-### Step 1 — See what's uncovered
+### Step 1: See what's uncovered
 
 ```bash
 specter coverage
@@ -330,7 +330,7 @@ payment        T1     6     0         0%         FAIL  ← tier 1 needs 100%
 auth-jwt       T2     5     0         0%         PASS
 ```
 
-### Step 2 — Get AI to write annotated tests
+### Step 2: Get AI to write annotated tests
 
 Use `specter explain` to get a ready-to-copy annotation example for any AC:
 
@@ -340,7 +340,7 @@ specter explain user-create
 
 Then pass the spec to your AI assistant:
 
-**AI prompt — write tests for a spec:**
+**AI prompt to write tests for a spec:**
 
 ```
 Here is a Specter spec:
@@ -391,7 +391,7 @@ test('[user-create/AC-02] invalid email format returns 400', async () => {
 });
 ```
 
-**Python/pytest** — Python function names cannot contain `/` or `:`. Use runtime output so `specter ingest` can read the pair from JUnit `<system-out>`.
+**Python/pytest**: Python function names cannot contain `/` or `:`. Use runtime output so `specter ingest` can read the pair from JUnit `<system-out>`.
 ```python
 # @spec user-create
 # @ac AC-01
@@ -423,7 +423,7 @@ Run pytest with JUnit logging enabled:
 pytest --junitxml=test-results.xml -o junit_logging=all -o junit_log_passing_tests=True
 ```
 
-**Go** — use `t.Run` so each AC has its own runner-visible subtest title. `specter ingest` reads subtest names from `go test -json` output.
+**Go**: use `t.Run` so each AC has its own runner-visible subtest title. `specter ingest` reads subtest names from `go test -json` output.
 ```go
 // @spec user-create
 // @ac AC-01
@@ -448,7 +448,7 @@ func TestCreateUser(t *testing.T) {
 }
 ```
 
-### Step 3 — Check coverage after each test file
+### Step 3: Check coverage after each test file
 
 ```bash
 specter coverage
@@ -462,7 +462,7 @@ Repeat until all tier 1 specs hit 100% and tier 2 specs hit 80%.
 
 ---
 
-## Phase 5 — VS Code Workspace Walkthrough
+## Phase 5: VS Code Workspace Walkthrough
 
 With `specter.yaml` in place and specs annotated, the VS Code extension gives you real-time feedback as you write code.
 
@@ -472,7 +472,7 @@ Click the **Sp** icon in the activity bar. The **Specter: Coverage** panel shows
 
 ### Inline diagnostics
 
-The extension underlines `@ac` annotations in test files when the referenced AC does not exist in any spec. This catches typos and stale references immediately — before CI.
+The extension underlines `@ac` annotations in test files when the referenced AC does not exist in any spec. This catches typos and stale references immediately, before CI.
 
 ### Run Sync from VS Code
 
@@ -480,38 +480,52 @@ Open the Command Palette (`Ctrl+Shift+P`), type **Specter: Run Sync**. This runs
 
 ### Drift detection
 
-When a spec changes (you edit a constraint or AC description), the extension highlights test files that reference that spec. This is the **intent drift** warning — your tests may no longer match the updated specification.
+When a spec changes (you edit a constraint or AC description), the extension highlights test files that reference that spec. This is the **intent drift** warning: your tests may no longer match the updated specification.
 
 ---
 
-## Phase 6 — Lock It Into CI
+## Phase 6: Lock It Into CI
 
 Once `specter sync` passes locally, add it to your CI pipeline. This is the gate that prevents specs and tests from drifting apart on every PR.
 
-**GitHub Actions (composite action, pinned version — preferred):**
+**GitHub Actions (composite action, pinned version, preferred):**
 ```yaml
-- uses: hanalyx/specter-sync-action@v1
+- uses: Hanalyx/specter/specter/.github/actions/specter-sync@v0.15.1
   with:
-    version: 0.9.2
+    version: 0.15.1
 ```
+
+The action lives in the `specter/` subdirectory of the `Hanalyx/specter` repository, so the path
+repeats `specter`. The tag after `@` selects the action's own code. The `version` input selects the
+binary it downloads. Pin both.
+
+The action on `main` checks the archive's sha256 against the release's `checksums.txt` before it
+extracts the binary. It fails the step on a mismatch or a missing file. The action at `v0.15.1`
+does not run that check. Move the tag forward to the first release that includes it.
 
 **Or inline download (if you can't use the composite action):**
 ```yaml
 - name: Install specter
   shell: bash
   run: |
-    OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
+    set -euo pipefail
+    case "${{ runner.os }}" in Linux) OS=linux ;; macOS) OS=darwin ;; *) echo "Unsupported OS: ${{ runner.os }}. Linux and macOS only." >&2; exit 1 ;; esac
     case "${{ runner.arch }}" in X64) ARCH=amd64 ;; ARM64) ARCH=arm64 ;; esac
-    VERSION=0.9.2   # pin a version; don't rely on "latest" in CI
-    curl -LO "https://github.com/Hanalyx/specter/releases/download/v${VERSION}/specter_${VERSION}_${OS}_${ARCH}.tar.gz"
-    tar xzf "specter_${VERSION}_${OS}_${ARCH}.tar.gz" && sudo mv specter /usr/local/bin/
+    VERSION=0.15.1   # pin a version; don't rely on "latest" in CI
+    FILE="specter_${VERSION}_${OS}_${ARCH}.tar.gz"
+    BASE="https://github.com/Hanalyx/specter/releases/download/v${VERSION}"
+    curl -fsSLO "${BASE}/${FILE}"
+    curl -fsSLO "${BASE}/checksums.txt"
+    grep " ${FILE}\$" checksums.txt | shasum -a 256 -c -   # fails on a mismatch or a missing entry
+    tar xzf "${FILE}" specter && sudo mv specter /usr/local/bin/   # extract only the binary
+    rm -f "${FILE}" checksums.txt
 - name: Specter sync
   run: specter sync
 ```
 
 ---
 
-## Phase 7 — Promote Specs to Approved
+## Phase 7: Promote Specs to Approved
 
 When a spec is fully covered and reviewed by your team, promote it:
 
@@ -523,7 +537,7 @@ spec:
 
 `approved` means the team has accepted the spec as authoritative. Specter checks `draft` and `review` specs by default too. For release gates, set `settings.warn_on_draft: true` and `settings.strict: true` so drafts and warnings block the pipeline.
 
-**AI prompt — review a spec before promotion:**
+**AI prompt to review a spec before promotion:**
 
 ```
 Review this Specter spec before we promote it from draft to approved:
@@ -557,9 +571,9 @@ Flag any issues. If it looks good, say so and I'll promote it.
 
 ## Reference
 
-- **[QuickStart](QUICKSTART.md)** — 5-minute path if you just want to see it work
-- **[Spec Schema Reference](SPEC_SCHEMA_REFERENCE.md)** — every field, type, and validation rule
-- **[CLI Reference](CLI_REFERENCE.md)** — all commands and flags
-- **[AI Prompts](AI_PROMPTS.md)** — ready-to-use prompts for the full SDD loop
-- **[Specter's own specs](../specs/)** — production specs from Specter itself
-- **[FAQ](FAQ.md)** — common questions about SDD and Specter
+- **[QuickStart](QUICKSTART.md)**: 5-minute path if you just want to see it work
+- **[Spec Schema Reference](SPEC_SCHEMA_REFERENCE.md)**: every field, type, and validation rule
+- **[CLI Reference](CLI_REFERENCE.md)**: all commands and flags
+- **[AI Prompts](AI_PROMPTS.md)**: ready-to-use prompts for the full SDD loop
+- **[Specter's own specs](../specs/)**: production specs from Specter itself
+- **[FAQ](FAQ.md)**: common questions about SDD and Specter
