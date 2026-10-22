@@ -4,7 +4,7 @@ author: 'Hanalyx'
 
 inputs:
   version:
-    description: 'Specter version to use (e.g. 0.4.1). Required — pin your version.'
+    description: 'Specter version to use (e.g. 0.4.1). Required. Pin your version.'
     required: true
   args:
     description: 'Arguments to pass to specter (default: sync)'
@@ -17,8 +17,14 @@ runs:
     - name: Detect OS and architecture
       id: platform
       shell: bash
+      # Map to the GoReleaser names. Lowercasing runner.os gives "macos",
+      # which no release asset uses (spec-ci-action AC-07).
       run: |
-        OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
+        case "${{ runner.os }}" in
+          Linux) OS="linux" ;;
+          macOS) OS="darwin" ;;
+          *)     echo "Unsupported OS: ${{ runner.os }}. specter-sync supports Linux and macOS only." >&2; exit 1 ;;
+        esac
         case "${{ runner.arch }}" in
           X64)   ARCH="amd64" ;;
           ARM64) ARCH="arm64" ;;
@@ -32,21 +38,36 @@ runs:
       uses: actions/cache@v4
       with:
         path: ~/.specter/bin
-        key: specter-${{ runner.os }}-${{ inputs.version }}
+        # The -v2 suffix retires entries the unverified action wrote under the
+        # old key. Every entry under this key holds a binary that passed
+        # verify-checksum.sh (spec-ci-action C-03, AC-03).
+        key: specter-${{ runner.os }}-${{ inputs.version }}-v2
 
-    - name: Download specter binary
+    # Download the archive and the release's checksums.txt to disk, verify the
+    # archive's sha256, and extract only after it passes (spec-ci-action C-06).
+    # A missing checksums file fails curl -f, and the step stops there.
+    - name: Download and verify specter binary
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
       run: |
+        set -euo pipefail
         VERSION="${{ inputs.version }}"
         OS="${{ steps.platform.outputs.os }}"
         ARCH="${{ steps.platform.outputs.arch }}"
         FILENAME="specter_${VERSION}_${OS}_${ARCH}.tar.gz"
-        URL="https://github.com/Hanalyx/specter/releases/download/v${VERSION}/${FILENAME}"
+        BASE_URL="https://github.com/Hanalyx/specter/releases/download/v${VERSION}/"
+        WORK="$(mktemp -d)"
+
+        echo "Downloading specter ${VERSION} for ${OS}/${ARCH}..."
+        curl -fsSL -o "${WORK}/${FILENAME}" "${BASE_URL}${FILENAME}"
+        curl -fsSL -o "${WORK}/checksums.txt" "${BASE_URL}checksums.txt"
+        bash "${ACTION_PATH}/verify-checksum.sh" "${WORK}/checksums.txt" "${WORK}/${FILENAME}"
 
         mkdir -p ~/.specter/bin
-        echo "Downloading specter ${VERSION} for ${OS}/${ARCH}..."
-        curl -fsSL "${URL}" | tar -xz -C ~/.specter/bin specter
+        tar -xzf "${WORK}/${FILENAME}" -C ~/.specter/bin specter
+        rm -rf "${WORK}"
 
     - name: Make binary executable and add to PATH
       shell: bash
