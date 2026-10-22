@@ -27,7 +27,7 @@ now pinned by a criterion rather than only recorded here.
 
 **What remains for v1.0.0:** removing `settings.strictness` and `--strictness`
 from the schema and the CLI, alongside the three other removals in
-`docs/roadmap/v1.0.0.md` section A5. `scope: all` stays unshipped and
+`docs/roadmap/releases/v1.0.0.md` section A5. `scope: all` stays unshipped and
 conditional on SSRB-101 being reopened, per section 7.7.
 Source: the strict/strictness consensus panel of 2026-08-17, and `features/SP-006`
 
