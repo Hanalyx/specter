@@ -152,15 +152,13 @@ Each spec reflects the structure Specter found in your code: routes, models, val
 specter init
 ```
 
-Creates `specter.yaml`:
+Creates `specter.yaml`, and creates the `specs/` directory it names when that directory does not exist yet:
 ```yaml
 schema_version: 1
 system:
   name: my-project
-  tier: 2
 domains:
   default:
-    tier: 2
     description: Add spec IDs here as you create them. See the spec-manifest spec for the schema.
 settings:
   specs_dir: specs

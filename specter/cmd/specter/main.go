@@ -2177,6 +2177,20 @@ func initCmd() *cobra.Command {
 			}
 
 			fmt.Printf("Created specter.yaml with %d spec(s) in system %q\n", len(specIDs), name)
+
+			// C-40: create the specs directory the manifest names, so the
+			// first `init --template` and `parse` have somewhere to look.
+			if scaffolded, perr := manifest.ParseManifest(yamlStr); perr == nil {
+				specsDir := scaffolded.SpecsDir()
+				if _, statErr := os.Stat(specsDir); os.IsNotExist(statErr) {
+					if mkErr := os.MkdirAll(specsDir, 0755); mkErr != nil {
+						fmt.Fprintf(os.Stderr, "error creating %s/: %v\n", specsDir, mkErr)
+						return errSilent
+					}
+					fmt.Printf("Created %s/ for your .spec.yaml files\n", specsDir)
+				}
+			}
+
 			unparsedFiles := len(specFiles) - len(specIDs)
 			if unparsedFiles > 0 {
 				fmt.Println()
@@ -2467,6 +2481,12 @@ func runInitRefresh(dryRun bool) error {
 }
 
 // runInitTemplate creates a draft .spec.yaml from a named template.
+//
+// C-40: the file goes into the specs directory, which is the nearest
+// manifest's settings.specs_dir resolved against that manifest's directory,
+// or specs/ under the current directory when there is no manifest. Under a
+// manifest, discovery walks only specs_dir, so a file written anywhere else
+// is invisible to parse and check.
 func runInitTemplate(templateType string, force bool) error {
 	content, err := manifest.SpecTemplate(templateType)
 	if err != nil {
@@ -2474,9 +2494,29 @@ func runInitTemplate(templateType string, force bool) error {
 		return errSilent
 	}
 
-	outFile := templateType + ".spec.yaml"
+	m, root, mErr := loadManifest()
+	if mErr != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", mErr)
+		fmt.Fprintln(os.Stderr, "       fix specter.yaml first; no template was written")
+		return errSilent
+	}
+	specsDir := m.SpecsDir()
+	if root != "" {
+		specsDir = filepath.Join(root, specsDir)
+	}
+	outFile := filepath.Join(specsDir, templateType+".spec.yaml")
+	if cwd, cwdErr := os.Getwd(); cwdErr == nil {
+		if rel, relErr := filepath.Rel(cwd, outFile); relErr == nil {
+			outFile = rel
+		}
+	}
+
 	if _, statErr := os.Stat(outFile); statErr == nil && !force {
 		fmt.Printf("%s already exists. Use --force to overwrite.\n", outFile)
+		return errSilent
+	}
+	if err := os.MkdirAll(filepath.Dir(outFile), 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "error creating %s: %v\n", filepath.Dir(outFile), err)
 		return errSilent
 	}
 
@@ -2486,7 +2526,8 @@ func runInitTemplate(templateType string, force bool) error {
 	}
 
 	fmt.Printf("Created %s (template: %s)\n", outFile, templateType)
-	fmt.Println("Edit the file to replace placeholder values, then run: specter sync")
+	// C-41: name the command the init --ai body sends an agent to first.
+	fmt.Println("Edit the file to replace placeholder values, then run: specter check --concrete")
 	return nil
 }
 

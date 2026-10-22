@@ -34,7 +34,7 @@ Specter reads annotations from two places. They serve different purposes and bot
 
 3. **Spec id format.** Lowercase kebab-case. Matches the regex `[a-z][a-z0-9-]*[a-z0-9]`. Starts with a letter. Ends with a letter or digit. No underscores, no uppercase, no leading or trailing dash.
 
-4. **AC id format.** Zero-padded two-digit minimum: `AC-01`, `AC-02`, `AC-12`, `AC-100`. **`AC-1` does not match `AC-01`.** The regex accepts `AC-\d+` so single-digit forms extract as `AC-1` — but the coverage gate compares by string equality against the spec, and the spec uses `AC-01`.
+4. **AC id format.** Zero-padded two-digit minimum: `AC-01`, `AC-02`, `AC-12`, `AC-100`. **`AC-1` does not match `AC-01`.** The regex accepts `AC-\d+` so single-digit forms extract as `AC-1`. But the coverage gate compares by string equality against the spec, and the spec uses `AC-01`.
 
 5. **One AC per test.** Each test function or subtest covers exactly one `(spec-id, AC-NN)` pair. A JUnit `<testcase>` entry or a `go test -json` test event carries one title, so `specter ingest` assigns one pair per entry. A multi-AC test loses ACs under `--strict`.
 
@@ -121,7 +121,7 @@ pytest --junitxml=test-results.xml -o junit_logging=all -o junit_log_passing_tes
 
 No first-party ingest flavor today. Emit Convention B to stdout and parse manually.
 
-### Runner-log form — Convention B
+### Runner-log form: Convention B
 
 Works in every language. Use it when you cannot rename test titles (shared naming contract, snapshot tests, external expectations, Python function names).
 
@@ -169,7 +169,7 @@ Each case emits a title like `[payment-charge/AC-04] rejects zero`. The regex ma
 
 ### pytest `@pytest.mark.parametrize`
 
-Use Convention B inside the test body — titles are parameter-suffixed function names, which again don't contain `/` or `:`.
+Use Convention B inside the test body. Titles are parameter-suffixed function names, which again don't contain `/` or `:`.
 
 ```python
 # @spec payment-charge
@@ -236,7 +236,7 @@ Migrate whole files at once. A half-migrated file (some tests renamed, some not)
 
 **Two ACs in one test.** Under `--strict`, `specter ingest` assigns one pair per runner entry. `test('[spec-foo/AC-01 AC-02] two things', ...)` captures only `spec-foo/AC-01`. Split into two tests.
 
-**Source-only annotations in a migrated file.** `specter coverage` will count them; `specter ingest` will drop them from the results; `specter coverage --strict` will demote them. Check `ingest`'s summary line (`Scanned N; extracted M; dropped K`) — K should be zero for fully-migrated files.
+**Source-only annotations in a migrated file.** `specter coverage` will count them; `specter ingest` will drop them from the results; `specter coverage --strict` will demote them. Check `ingest`'s summary line (`Scanned N; extracted M; dropped K`). K should be zero for fully-migrated files.
 
 **Mixed Convention A and B in one file.** Ingest handles both, but the mix is a migration smell. Pick one.
 
@@ -263,7 +263,7 @@ file (top of file is conventional):
 
 The marker is file-level scope. One declaration anywhere in the file
 opts every `@ac` in that file out of BOTH `unreachable_annotation` and
-`unreachable_annotation_unknown`, regardless of `settings.strictness`.
+`unreachable_annotation_unknown`, whatever the manifest sets.
 
 **When to use the marker:**
 
@@ -276,17 +276,25 @@ opts every `@ac` in that file out of BOTH `unreachable_annotation` and
 
 **Don't use it as a noise-suppressor.** If the diagnostic fires because
 a real Go subtest title is missing the `<spec-id>/AC-NN` token, fix the
-subtest title — the marker disables a real signal. The same applies to
+subtest title. The marker disables a real signal. The same applies to
 TypeScript `describe`/`it` titles and pytest `print()` lines.
 
-**Strictness routing** (when the marker is absent):
+**Severity** (when the marker is absent):
 
-- `settings.strictness: annotation` — diagnostics suppressed (exit 0).
-- `settings.strictness: threshold` (default) — `warning` (exit 0).
-- `settings.strictness: zero-tolerance` — `error` (exit non-zero).
+- With a `settings.annotation` block in `specter.yaml`, `unreachable_annotation`
+  is a `warning` and `check --test` exits 0. The block's `permissive` value
+  does not change this diagnostic.
+- `check --test --strict`, or `settings.strict: true`, promotes the
+  `warning` to an `error`, and `check` exits non-zero. It cannot promote a
+  diagnostic the manifest suppressed.
+- A manifest with no `settings.annotation` block falls back to an older
+  strictness key that SSRB-104 deprecates and v1.0.0 removes. Its default
+  also gives a `warning`. Its value `annotation` suppresses the diagnostic
+  even under `--strict`, and its value `zero-tolerance` makes it an `error`
+  without `--strict`.
 
-`unreachable_annotation_unknown` is always a `warning` regardless of
-strictness — the scanner can't tell whether the test really covers the
+`unreachable_annotation_unknown` is always a `warning`, and `--strict` does
+not promote it. The scanner can't tell whether the test really covers the
 AC, only that no language-aware parser recognized the shape.
 
 Example (Go test with a custom helper that hides the subtest from
@@ -335,7 +343,7 @@ Without the marker, `check --test` would emit
 
 **Symptom**: `specter check --test` emits `unreachable_annotation_unknown` rather than `unreachable_annotation`.
 **Cause**: The test file is in a language the language-aware reachability scanner doesn't have a parser for (anything other than Go, TypeScript / Jest / Vitest, or Python), OR the test shape (custom helpers, table-driven tests with non-literal names, dynamically-generated tests) is structurally unrecognized.
-**Fix**: `_unknown` is always a `warning` regardless of strictness mode — it does not fail any gate. If you've manually verified the test does cover the AC, add `// @reachable manual` at the top of the file to silence both `_unknown` and the `unreachable_annotation` diagnostic for that file.
+**Fix**: `_unknown` is always a `warning`, under every manifest setting and under `--strict`, so it does not fail any gate. If you've manually verified the test does cover the AC, add `// @reachable manual` at the top of the file to silence both `_unknown` and the `unreachable_annotation` diagnostic for that file.
 
 ---
 

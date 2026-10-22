@@ -14,6 +14,10 @@ Unreleased changes accumulate under `## Unreleased`. Every user-visible change a
 
 ### Fixed
 
+- `specter init` no longer writes `system.tier` or `domains.default.tier`. A fresh workspace used to warn about the deprecated `system.tier` on its own first `check`. `init --refresh` no longer copies `system.tier` into a default domain it creates. Existing manifests are not changed; remove the keys by hand to stop the warning. spec-manifest C-39 and AC-74.
+- `specter init` creates the `specs/` directory its manifest names, and `specter init --template <name>` writes into that directory instead of the current one. Under a manifest, `parse` and `check` never saw a template written to the current directory. With a rejected `specter.yaml`, `init --template` now exits non-zero and writes nothing. spec-manifest C-40 and AC-75.
+- All four `init --template` specs now pass `specter check` and `specter check --concrete`. Each failed `check` with orphan-constraint errors, 13 in total, because no criterion referenced the constraints. Every criterion now carries placeholder `inputs` and `expected_output`, and a criterion about a failure also carries `error_cases`. The `service`, `auth` and `data-model` templates each gain one criterion. The next step `init --template` prints changed from `specter sync` to `specter check --concrete`. spec-manifest C-41 and AC-76.
+- `specter explain annotation` and `docs/TEST_ANNOTATION_REFERENCE.md` describe the `unreachable_annotation` severity under a `settings.annotation` block, instead of the deprecated strictness key.
 - `docs/GETTING_STARTED.md` referenced `hanalyx/specter-sync-action@v1`, a repository that does not exist. The action is `Hanalyx/specter/specter/.github/actions/specter-sync@<tag>`.
 - The `specter-sync` composite action never worked on macOS runners. It lowercased `runner.os` to `macos` and built a file name that no release has. It now maps `Linux` to `linux` and `macOS` to `darwin`. On Windows, or any other OS, it stops with a message that names the OS and says it supports Linux and macOS only, instead of failing on a missing URL. spec-ci-action C-04 and AC-07.
 
