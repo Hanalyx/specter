@@ -615,7 +615,10 @@ specter init --ai <tool>
 ```
 $ specter init
 Created specter.yaml with 0 spec(s) in system "my-project"
+Created specs/ for your .spec.yaml files
 ```
+
+`init` creates the directory `settings.specs_dir` names when it does not exist. The scaffold declares no `system.tier` and no domain `tier`; each spec declares its own.
 
 **Example (existing parseable specs):**
 
@@ -678,9 +681,11 @@ Run `specter init --refresh` (without --dry-run) to apply.
 
 ```
 $ specter init --template api-endpoint
-Created api-endpoint.spec.yaml (template: api-endpoint)
-Edit the file to replace placeholder values, then run: specter sync
+Created specs/api-endpoint.spec.yaml (template: api-endpoint)
+Edit the file to replace placeholder values, then run: specter check --concrete
 ```
+
+The template goes into the specs directory: `settings.specs_dir` of the nearest `specter.yaml`, resolved against that manifest's directory, or `specs/` when there is no manifest. If the nearest `specter.yaml` is rejected, `init --template` exits non-zero and writes nothing. Every template passes `specter check` and `specter check --concrete` as written.
 
 ---
 
