@@ -1,6 +1,6 @@
 spec:
   id: spec-ci-action
-  version: "1.0.0"
+  version: "1.1.0"
   status: draft
   tier: 3
   context:
@@ -11,20 +11,23 @@ spec:
       binary and runs it. Eliminates the need for each project to manually
       download and wire specter in CI.
     assumptions:
-      - "Runner is linux or macos (Windows not supported in initial version)"
+      - "Runner is Linux or macOS. The action refuses any other OS, Windows included."
       - "GitHub Releases hosts specter binaries"
   objective:
     summary: >
-      Provide a one-line GitHub Actions integration: `uses: hanalyx/specter-sync-action@v1`
-      that downloads specter, runs the pipeline, and exits non-zero on failure.
+      Provide a one-line GitHub Actions integration:
+      `uses: Hanalyx/specter/specter/.github/actions/specter-sync@<tag>`.
+      The action downloads specter, verifies the download, runs the pipeline,
+      and exits non-zero on failure.
     scope:
       includes:
         - "Composite action with version and args inputs"
         - "Binary download from GitHub Releases"
-        - "Binary caching keyed on OS + version"
+        - "sha256 verification of the downloaded archive against the release's checksums.txt"
+        - "Binary caching keyed on OS + version + a generation suffix"
         - "Linux and macOS support"
       excludes:
-        - "Windows support (initial version)"
+        - "Windows support. The action refuses a Windows runner with a message rather than downloading."
         - "Publishing to GitHub Marketplace"
         - "Automatic version resolution (latest)"
   constraints:
@@ -37,15 +40,19 @@ spec:
       type: technical
       enforcement: error
     - id: C-03
-      description: "MUST cache the binary keyed on runner.os + version to avoid redundant downloads"
+      description: "MUST cache the binary keyed on runner.os + version + a fixed generation suffix, to avoid redundant downloads. The suffix is `v2`. It MUST change whenever the way the cached binary is obtained or checked changes, and the cache step MUST NOT set `restore-keys`. Rationale: a cache hit skips the download and the C-06 check, so the key decides whether an unverified binary can run. The action before C-06 wrote unverified entries under the key with no suffix. A new key is the only way to retire them, and a prefix match through `restore-keys` would bring them back."
       type: technical
       enforcement: error
     - id: C-04
-      description: "MUST support linux/amd64, linux/arm64, darwin/amd64, darwin/arm64"
+      description: "MUST support linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, and no other platform. The action maps `runner.os` to the release name with an explicit table: `Linux` to `linux` and `macOS` to `darwin`. Any other value, Windows included, MUST exit the step non-zero before any download, with a message that names the OS and says the action supports Linux and macOS only. Rationale: lowercasing `runner.os` gives `macos`, a name no release asset uses, so the action never worked on macOS runners. A Windows runner failed on a missing URL instead of a clear refusal."
       type: technical
       enforcement: error
     - id: C-05
       description: "MUST exit non-zero if specter exits non-zero"
+      type: technical
+      enforcement: error
+    - id: C-06
+      description: "MUST verify the downloaded archive before extracting it. The action saves the archive and the `checksums.txt` file from the same release to disk. It finds exactly one entry for the archive's file name and compares that sha256 with the archive's own sha256. A missing or empty checksums file, a missing or repeated entry, a malformed hash, or a mismatch MUST fail the step before anything is extracted. The archive MUST NOT be piped from the network into `tar`. Rationale: the binary this action runs is the CI gate. An unverified `curl | tar` runs whatever the network returned as that gate."
       type: technical
       enforcement: error
   acceptance_criteria:
@@ -58,7 +65,7 @@ spec:
       references_constraints: ["C-02"]
       priority: critical
     - id: AC-03
-      description: "actions/cache step is present with key: specter-{runner.os}-{inputs.version}"
+      description: "actions/cache step is present with key: specter-{runner.os}-{inputs.version}-v2, and sets no restore-keys. The old key, specter-{runner.os}-{inputs.version}, fails this criterion."
       references_constraints: ["C-03"]
       priority: high
     - id: AC-04
@@ -69,8 +76,46 @@ spec:
       description: "specter command invocation uses ${{ inputs.args }} and inherits CI exit code"
       references_constraints: ["C-05"]
       priority: critical
+    - id: AC-06
+      description: "The download step saves `specter_{version}_{os}_{arch}.tar.gz` and `checksums.txt` from `.../releases/download/v{version}/` to disk. Both come from one base URL. The step runs under `set -euo pipefail`. It runs `verify-checksum.sh` on them with no `||` that would ignore a failure, and runs `tar` only after that. No command, with line continuations joined, pipes `curl` into `tar`. Run directly, `verify-checksum.sh` exits 0 for an archive whose entry matches, in a file that also lists the archive's `.sbom.json` sibling, as real releases do. It exits non-zero for each failure case: a mismatched hash, no entry for the archive, two entries for it, a malformed hash, a missing checksums file, and an empty checksums file."
+      inputs:
+        match: "checksums.txt with one correct entry for the archive, plus entries for another archive and for the archive's .sbom.json"
+        mismatch: "checksums.txt whose entry for the archive carries another file's hash"
+        absent: "checksums.txt listing only other archives"
+        repeated: "checksums.txt listing the archive twice"
+        malformed: "checksums.txt whose entry for the archive is not 64 hex characters"
+        missing_file: "no checksums.txt at the given path"
+        empty_file: "a zero-byte checksums.txt"
+      expected_output:
+        match_exit_code: 0
+        every_failure_case_exit_code: "non-zero"
+        verify_runs_before_tar: true
+        curl_piped_to_tar: false
+      references_constraints: ["C-06"]
+      priority: critical
+    - id: AC-07
+      description: "Run under bash with the runner values filled in, the platform step writes `os=linux` for `Linux` and `os=darwin` for `macOS`. For `Windows`, and for any other value such as `FreeBSD`, it exits non-zero, prints a message naming the OS and saying the action supports Linux and macOS only, and writes no `os` output. A step that lowercases `runner.os` fails this criterion, because it writes `os=macos` and accepts `Windows`."
+      inputs:
+        linux: "runner.os = Linux, runner.arch = X64"
+        macos: "runner.os = macOS, runner.arch = X64"
+        windows: "runner.os = Windows, runner.arch = X64"
+        unknown: "runner.os = FreeBSD, runner.arch = X64"
+      expected_output:
+        linux_output: "os=linux"
+        macos_output: "os=darwin"
+        windows_exit_code: "non-zero"
+        unknown_exit_code: "non-zero"
+        refusal_names_os_and_supported_set: true
+        refusal_writes_os_output: false
+      references_constraints: ["C-04"]
+      priority: critical
 
   changelog:
+    - version: "1.1.0"
+      date: "2026-10-22"
+      author: "specter-team"
+      type: minor
+      description: "C-06 requires the action to verify the archive's sha256 against the release's `checksums.txt` before extracting it, and to fail closed. The action used to pipe `curl` straight into `tar` with no check. AC-06 binds the step order and the verifier's exit code for one passing case and six failing ones. The objective now gives the reference that works, `Hanalyx/specter/specter/.github/actions/specter-sync@<tag>`. The old `hanalyx/specter-sync-action@v1` names a repository that does not exist. C-04 now states the platform mapping and the refusal. The action lowercased `runner.os` to `macos`, which no release asset uses, so it never worked on a macOS runner. A Windows runner failed on a missing URL. The action now maps `Linux` to `linux` and `macOS` to `darwin`, and refuses every other OS with a message. AC-07 binds the mapping and the refusal by running the step. C-03 and AC-03 change the cache key from `specter-{runner.os}-{inputs.version}` to the same string with `-v2` appended, and forbid `restore-keys`. A cache hit skips the download and the check, and the old action wrote its entries without verification. Changing the key is the only way to retire those entries, so every runner downloads and verifies once more. Minor: one new constraint, two new criteria, and C-04 extended with the mapping and the refusal. The platform set C-04 names is unchanged."
     - version: "1.0.0"
       date: "2026-04-14"
       author: "specter-team"

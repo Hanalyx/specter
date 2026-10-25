@@ -6,6 +6,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +17,8 @@ import (
 )
 
 func ingestCmd() *cobra.Command {
+	var mergePaths []string
+	var streamName string
 	var junitPaths []string
 	var goTestPaths []string
 	var outputPath string
@@ -41,8 +44,41 @@ Diagnostics:
   --verbose adds a per-case drop reason for each dropped testcase so
   operators can see which tests need migration to Convention A/B.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// C-15: --merge and the runner flags are two modes that disagree
+			// about what the output is built from. Refused rather than given a
+			// precedence rule, because a silent winner would make the artifact
+			// depend on flag order.
+			if len(mergePaths) > 0 {
+				var conflicts []string
+				if len(junitPaths) > 0 {
+					conflicts = append(conflicts, "--junit")
+				}
+				if len(goTestPaths) > 0 {
+					conflicts = append(conflicts, "--go-test")
+				}
+				if cmd.Flags().Changed("stream") {
+					conflicts = append(conflicts, "--stream")
+				}
+				if len(conflicts) > 0 {
+					fmt.Fprintf(os.Stderr, "error: --merge cannot be combined with %s. --merge builds the output from the files it names; the others build it from runner output\n",
+						strings.Join(conflicts, ", "))
+					return errSilent
+				}
+				if outputPath == "" {
+					outputPath = ".specter-results.json"
+				}
+				return runMerge(mergePaths, outputPath)
+			}
+
 			if len(junitPaths) == 0 && len(goTestPaths) == 0 {
-				fmt.Fprintln(os.Stderr, "error: at least one of --junit or --go-test is required")
+				fmt.Fprintln(os.Stderr, "error: at least one of --junit, --go-test or --merge is required")
+				return errSilent
+			}
+			// C-14: an empty name is refused, so a producer that meant to name
+			// a stream learns it from the run rather than from a coverage
+			// report weeks later.
+			if cmd.Flags().Changed("stream") && streamName == "" {
+				fmt.Fprintln(os.Stderr, "error: --stream requires a non-empty name")
 				return errSilent
 			}
 			if outputPath == "" {
@@ -67,6 +103,9 @@ Diagnostics:
 			var results []ingest.TestResult
 			var totalScanned int
 			var totalDropped []string
+			// C-16: named for what was observed. Not "failed to build", which
+			// ingest cannot tell from a filtered-out package or one with none.
+			var silentPackages int
 
 			for _, p := range junitFiles {
 				data, readErr := os.ReadFile(p)
@@ -90,7 +129,7 @@ Diagnostics:
 					fmt.Fprintf(os.Stderr, "error: read %s: %v\n", p, readErr)
 					return errSilent
 				}
-				gResults, gScanned, gDropped, err := ingest.ParseGoTestStats(data)
+				gResults, gScanned, gDropped, gSilent, err := ingest.ParseGoTestStreamStats(data)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "error: parse go-test %s: %v\n", p, err)
 					return errSilent
@@ -98,9 +137,30 @@ Diagnostics:
 				results = append(results, gResults...)
 				totalScanned += gScanned
 				totalDropped = append(totalDropped, gDropped...)
+				silentPackages += gSilent
 			}
 
-			if err := ingest.WriteResultsFile(outputPath, results); err != nil {
+			// C-14: one invocation writes one stream.
+			if streamName != "" {
+				for i := range results {
+					results[i].Stream = streamName
+				}
+			}
+
+			// C-16: the block is written only when the run names a stream.
+			// C-14 promises an unlabeled run writes exactly the file it wrote
+			// before, and even an empty array would break that.
+			var streams []ingest.StreamInfo
+			if streamName != "" {
+				streams = []ingest.StreamInfo{{
+					Name:                  streamName,
+					Scanned:               totalScanned,
+					Extracted:             len(ingest.MergeResults(results)),
+					ZeroTestEventPackages: silentPackages,
+				}}
+			}
+
+			if err := ingest.WriteResultsFileWithStreams(outputPath, results, streams); err != nil {
 				fmt.Fprintf(os.Stderr, "error: write %s: %v\n", outputPath, err)
 				return errSilent
 			}
@@ -126,6 +186,8 @@ Diagnostics:
 	cmd.Flags().StringArrayVar(&goTestPaths, "go-test", nil, "Path to go test -json output file. Accepts glob patterns; may be repeated.")
 	cmd.Flags().StringVar(&outputPath, "output", "", "Output path (default: .specter-results.json)")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "Emit one line per dropped testcase (testcases without a (spec_id, ac_id) annotation)")
+	cmd.Flags().StringVar(&streamName, "stream", "", "Label every entry this run produces with a stream name. Omit for an unlabeled file, which reads as the default stream.")
+	cmd.Flags().StringArrayVar(&mergePaths, "merge", nil, "Build the output from the named results files alone, never accumulating into an existing output. May be repeated.")
 	return cmd
 }
 
@@ -153,4 +215,54 @@ func expandPaths(inputs []string, flagName string) ([]string, error) {
 
 func hasGlobMeta(p string) bool {
 	return strings.ContainsAny(p, "*?[")
+}
+
+// runMerge builds an output from the named results files alone, spec-ingest
+// C-15. It deliberately does not read the existing output first. Accumulating
+// is right within one run and wrong across runs: a criterion that passed in the
+// previous run and produced no entry in this one would keep its stale passing
+// entry, which hides exactly the absence the stream foundation exists to make
+// visible. A stream re-run is a stream replaced.
+func runMerge(paths []string, outputPath string) error {
+	files, err := expandPaths(paths, "--merge")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return errSilent
+	}
+
+	var results []ingest.TestResult
+	// Blocks, not rows. Each input's `streams` key carries whether it was
+	// declared at all, and appending the rows alone would drop that: an input
+	// declaring an empty block contributes no rows and would vanish. A
+	// declared empty block beside a labeled entry is the artifact C-44
+	// rejects, so losing it here is what let `--merge` write one.
+	var blocks []ingest.StreamBlock
+	for _, p := range files {
+		r, block, readErr := ingest.ReadResultsFile(p)
+		if readErr != nil {
+			fmt.Fprintf(os.Stderr, "error: read %s: %v\n", p, readErr)
+			return errSilent
+		}
+		results = append(results, r...)
+		blocks = append(blocks, block)
+	}
+
+	merged := ingest.MergeStreams(blocks)
+	// C-15: the artifact is checked before it is written, so a merge never
+	// produces one `coverage` refuses and never destroys the output already
+	// there when it declines to.
+	if err := ingest.WriteMergedResultsFile(outputPath, results, merged); err != nil {
+		if errors.Is(err, ingest.ErrMergeWouldBeRefused) || errors.Is(err, ingest.ErrMergeTooLarge) {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "       %s was not written, and any existing file at that path is unchanged.\n", outputPath)
+			return errSilent
+		}
+		fmt.Fprintf(os.Stderr, "error: write %s: %v\n", outputPath, err)
+		return errSilent
+	}
+
+	entries := len(ingest.MergeResults(results))
+	fmt.Fprintf(os.Stderr, "Merged %d file(s) into %d result entries across %d stream(s).\n", len(files), entries, merged.Len())
+	fmt.Printf("Wrote %d result entries to %s\n", entries, outputPath)
+	return nil
 }

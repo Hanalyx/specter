@@ -6,7 +6,7 @@ Get from zero to a working spec pipeline in under 5 minutes.
 
 ## 1. Install
 
-**Fastest path — VS Code extension:** search `Specter SDD` in the Extensions panel, install, then run **Specter: Add CLI to Shell PATH** from the command palette once. The extension auto-downloads the CLI binary for your OS and architecture.
+**Fastest path, the VS Code extension:** search `Specter SDD` in the Extensions panel, install, then run **Specter: Add CLI to Shell PATH** from the command palette once. The extension uses a CLI already on your PATH when its version is one it supports, and otherwise downloads its own copy; the shell PATH command puts a copy at `~/.specter/bin/specter` for your terminal.
 
 **CLI-only, macOS / Linux:**
 ```bash
@@ -32,7 +32,7 @@ For `.deb`, `.rpm`, and other install methods see the [Specter README](../README
 
 ## 2. Bootstrap specs from your code
 
-Point Specter at your source directory — it generates draft specs automatically:
+Point Specter at your source directory, and it generates draft specs automatically:
 
 ```bash
 specter reverse src/        # TypeScript / JavaScript
@@ -54,7 +54,7 @@ This creates a `specs/` directory with one `.spec.yaml` per file group.
 specter init
 ```
 
-Creates `specter.yaml` — the manifest that tells Specter (and the VS Code extension) where your specs and tests live.
+Creates `specter.yaml`, the manifest that tells Specter (and the VS Code extension) where your specs and tests live.
 
 ---
 
@@ -163,7 +163,7 @@ Add this to CI and you're protected.
 
 ## What's next?
 
-- **[Getting Started](GETTING_STARTED.md)** — full walkthrough from zero specs to 100% coverage, with AI prompts for every step and VS Code workspace guide
-- **[CLI Reference](CLI_REFERENCE.md)** — every command and flag
-- **[AI Prompts](AI_PROMPTS.md)** — ready-to-use prompts for the full SDD loop
-- **[FAQ](FAQ.md)** — "Do I need to migrate my existing specs?"
+- **[Getting Started](GETTING_STARTED.md)**: full walkthrough from zero specs to 100% coverage, with AI prompts for every step and VS Code workspace guide
+- **[CLI Reference](CLI_REFERENCE.md)**: every command and flag
+- **[AI Prompts](AI_PROMPTS.md)**: ready-to-use prompts for the full SDD loop
+- **[FAQ](FAQ.md)**: "Do I need to migrate my existing specs?"

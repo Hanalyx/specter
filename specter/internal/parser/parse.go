@@ -148,6 +148,17 @@ func ParseSpec(yamlContent string) ParseResult {
 		}}
 	}
 
+	// Step 3b: record which optional fields the document declared, where the
+	// typed struct cannot say. spec-coverage C-36 turns on the difference
+	// between `coverage_threshold: 0` and no coverage_threshold at all, and
+	// the int field reads 0 in both cases. The normalized map is the only
+	// place that difference survives.
+	if root, ok := normalized.(map[string]interface{}); ok {
+		if specMap, ok := root["spec"].(map[string]interface{}); ok {
+			_, doc.Spec.CoverageThresholdSet = specMap["coverage_threshold"]
+		}
+	}
+
 	// Step 4: Structural cross-reference validation.
 	// JSON Schema can enforce that references_constraints entries MATCH the
 	// ^C-\d{2,}$ pattern, but cannot assert that the referenced constraint

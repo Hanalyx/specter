@@ -1,6 +1,6 @@
 spec:
   id: spec-sync
-  version: "1.5.0"
+  version: "2.5.2"
   status: approved
   tier: 2
 
@@ -79,12 +79,27 @@ spec:
       enforcement: error
 
     - id: C-09
-      description: "Under an effective strictness of `zero-tolerance`, sync's coverage phase MUST enforce the same two zero-tolerance gates `coverage` enforces (spec-coverage C-25/C-26), in the same order: (a) any annotated AC with a results-file status other than `passed` fails the coverage phase and the process exits with code 2, even when every spec meets its tier coverage threshold; (b) any AC carrying `approval_gate: true` with an unset `approval_date` is demoted in the coverage report (spec-coverage GH #94 semantics — the report and the exit signal agree) and, when no code-2 violation is present, the process exits with code 3. Both gates apply identically under `--json` (mirroring spec-coverage C-29's text/JSON exit parity). C-03's contract is unchanged — exit 0 still means all phases passed; codes 2 and 3 refine the failure exit so CI can distinguish violation classes exactly as it can with `coverage`. Rationale: pre-1.4.0, sync routed zero-tolerance through the strict report path but gated only on tier thresholds (Summary.Failing), so a Tier 3 spec with one passing and one failing annotated AC passed sync at 50% while `coverage --strictness zero-tolerance` exited 2 on the same workspace — a false-green in the primary CI command, contradicting C-06 and AC-09."
+      description: "Under an effective strictness of `zero-tolerance`, sync's coverage phase MUST enforce the same two zero-tolerance gates `coverage` enforces (spec-coverage C-25/C-26), in the same order: (a) any annotated AC with a results-file status other than `passed` fails the coverage phase and the process exits with code 2, even when every spec meets its tier coverage threshold; (b) any AC carrying `approval_gate: true` with an unset `approval_date` is demoted in the coverage report (spec-coverage C-39 — the report and the exit signal agree) and, when no code-2 violation is present, the process exits with code 3. Both gates apply identically under `--json` (mirroring spec-coverage C-29's text/JSON exit parity). C-03's contract is unchanged — exit 0 still means all phases passed; codes 2 and 3 refine the failure exit so CI can distinguish violation classes exactly as it can with `coverage`. Rationale: pre-1.4.0, sync routed zero-tolerance through the strict report path but gated only on tier thresholds (Summary.Failing), so a Tier 3 spec with one passing and one failing annotated AC passed sync at 50% while `coverage --strictness zero-tolerance` exited 2 on the same workspace — a false-green in the primary CI command, contradicting C-06 and AC-09."
       type: business
       enforcement: error
 
     - id: C-10
       description: "Sync's test-file discovery MUST apply the same per-file size cap as `check --test` (spec-check C-12, `checker.MaxTestFileBytes`, 4 MiB). Each discovered test file is stat-guarded BEFORE it is read — an oversized file is never buffered into memory. A file over the cap is skipped per-file with a stderr warning naming the file, the limit, and the actual size; the skip MUST NOT fail the run. A test file that cannot be read (I/O error) is likewise skipped with a stderr warning, not fatal. Spec files are exempt: neither `check` nor `coverage` caps spec-file reads, and sync matches that parity."
+      type: technical
+      enforcement: error
+
+
+    - id: C-11
+      description: "Exit codes MUST propagate from `coverage` to `sync` identically. For any workspace, the code `specter sync` returns for a coverage-contract failure MUST equal the code `specter coverage` returns on the same workspace, and the stderr line naming the cause MUST name the same cause. `sync` is the CI entry point, so a code that fires on `coverage` and not on `sync` means CI is told a different story from the developer who ran `coverage` locally. Rationale, per roadmap item 1A3 and `docs/EXIT_CODES.md`: a gate is fully wired only when it appears in the check, the phase result, the exit mapping, AND its ordering relative to gates that already exist. A gate wired into `coverage` alone has the first three and fails here, and the build still fails, so nothing in a normal review notices. It fails with the wrong number and the wrong sentence. **One place MUST own the mapping from a verdict code to a process exit.** Two commands each carrying their own switch over the same codes is how the two diverge: a code the shared verdict can return but a switch does not name falls through to a different answer on each surface, and adding a gate then requires editing both with nothing failing if only one is edited. **A code that reaches the mapping and matches no case MUST report failure**, because the alternative is reporting success for a run that failed a gate, and the surfaces would disagree about that too. This is the propagation half of the same defect the shared verdict fixed on the decision half, recorded in `bugs/done/SP-SP-073`: sharing the decision does not share the routing."
+      type: technical
+      enforcement: error
+
+    - id: C-12
+      description: "Every exit code the binary can emit MUST appear in `docs/EXIT_CODES.md`, and no code may be emitted from a band the document does not allocate to that purpose. This is a registry-parity rule, not a behavior rule: it fails when the code and the document disagree, in either direction. Rationale, per roadmap item 1A: three design tracks began allocating exit codes independently, which is the mechanism that double-books them. A registry nobody checks is a document, not an authority."
+      type: technical
+      enforcement: error
+    - id: C-13
+      description: "`RunSync` MUST NOT mutate the `CheckOptions` reached through `SyncInput.CheckOpts`. The options are a pointer the caller still owns. **Scoped to that one field deliberately.** An earlier draft said `RunSync` does not mutate the `SyncInput` at all, which promises more than AC-22 observes: a mutation of `SpecFiles`, `TestFiles`, `Thresholds` or `Results` would satisfy the criterion and violate the constraint. Widening it back requires an observation per reference-bearing field, and the defect this rule exists for is in `CheckOpts`. A run that extends `CheckOptions.ExtraDiagnostics` MUST copy the struct, and MUST copy the existing slice rather than appending to it in place, because a slice with spare capacity shares its backing array with the caller and an in-place append writes into storage the caller can still read. Rationale: sync assembles its own test-annotation diagnostics and hands them to the checker, per `spec-check` C-07's one-owner rule. Writing them through the caller's pointer would leave those options carrying one run's diagnostics, so a second run over the same value would start from the first run's list and count the same diagnostics twice. This constraint is here rather than in `spec-check` because `RunSync` is the API that takes the pointer; an acceptance criterion in `spec-check` stated it first, which put the rule where no caller of this package would look for it."
       type: technical
       enforcement: error
 
@@ -96,10 +111,10 @@ spec:
       version_range: "^1.0.0"
       relationship: requires
     - spec_id: spec-check
-      version_range: "^1.0.0"
+      version_range: "^5.0.0"
       relationship: requires
     - spec_id: spec-coverage
-      version_range: "^1.0.0"
+      version_range: "^1.23.0"
       relationship: requires
 
   acceptance_criteria:
@@ -239,7 +254,192 @@ spec:
       references_constraints: ["C-10"]
       priority: high
 
+
+    - id: AC-15
+      description: "A coverage-contract exit code fires identically on `sync` and on `coverage`. The assertion runs both commands on one workspace and compares the integer AND the stderr line naming the cause, for each condition that produces a code above 1. Conditions covered: under `settings.strictness: zero-tolerance`, an annotated criterion whose result is not `passed`, which is code 2; and under a declared `settings.annotation` block with `permissive: false`, a criterion with no test at all, which is also code 2 with a different cause. Comparing the integer alone is not sufficient and the criterion says so: two different causes share code 2, so an implementation that returns the right number for the wrong reason passes an integer check. This is what `bugs/SP-SP-058` records: the annotation rule returned 2 on `coverage` and 1 on `sync` for the same workspace."
+      inputs:
+        workspace: "one spec, one annotated criterion with a failing result, one criterion with no test"
+        conditions: ["strictness: zero-tolerance", "annotation block with permissive: false"]
+      expected_output:
+        sync_code_equals_coverage_code: true
+        sync_cause_line_equals_coverage_cause_line: true
+      references_constraints: ["C-11"]
+      priority: critical
+
+    - id: AC-16
+      description: "Every exit code the binary can emit is registered. The assertion scans `cmd/specter/` for `os.Exit` calls, resolves each argument to an integer per AC-17, collects the distinct values, and asserts each appears as a row in `docs/EXIT_CODES.md`. It also asserts the converse for the codes the document marks Stable: each must be reachable from some `os.Exit` in the tree. The scan's scope is stated here because it is a static scan: it reads `cmd/specter/*.go` excluding `_test.go` files, which is where every exit in this binary is made. A code emitted from `internal/` would not be found, and that is a known limit rather than an oversight; if one is ever added there, this criterion must widen with it."
+      inputs:
+        scan_scope: "cmd/specter/*.go excluding _test.go, every os.Exit call with its argument resolved per AC-17"
+        registry: "docs/EXIT_CODES.md rows"
+      expected_output:
+        every_emitted_code_is_registered: true
+        every_stable_registered_code_is_emitted: true
+      references_constraints: ["C-12"]
+      priority: high
+
+    - id: AC-17
+      description: "The scan resolves an `os.Exit` argument that is a named constant, and refuses one it cannot resolve. An argument that is a bare identifier is looked up among the `const` declarations in the scan scope and contributes that constant's value. An argument the scan cannot resolve to an integer fails the scan with an error naming the site, and is never skipped. The scan also reports how many exit sites it resolved, and that count MUST equal the number of `os.Exit(` calls in scope, so a site that matched nothing cannot pass as a site that was checked. Rationale, per `bugs/SP-SP-069`: the first implementation matched `os.Exit(` followed by literal digits only. `specter diff --exit-code` returns the named constant `exitDiffBreaking`, so that site was invisible, C-12 went unenforced for it, and `docs/EXIT_CODES.md` came to contradict the binary in five places while this criterion reported green. A scan that skips what it cannot read is indistinguishable from a scan that found nothing to skip, which is why refusal rather than omission is the rule."
+      inputs:
+        exit_argument_kinds: ["integer literal", "named constant declared in scope", "unresolvable expression"]
+        scan_scope: "cmd/specter/*.go excluding _test.go"
+      expected_output:
+        named_constant_resolves_to_its_value: true
+        unresolvable_argument_fails_the_scan: true
+        resolved_site_count_equals_exit_call_count: true
+      references_constraints: ["C-12"]
+      priority: high
+
+    - id: AC-18
+      description: "The registry-parity converse is decidable, and the rules it needs are stated here rather than left to the test that runs them. Three rules. (a) A row counts as Stable when its Standing cell is exactly `Stable`. A substring match is wrong: `Shipped, overloaded, frozen` and `Accidental collision` are the other values in use, and neither is a weaker form of stable. (b) A code is required to be reachable when at least one of its rows is Stable. Standing is a property of a row while the converse is a claim about a code, and code 2 carries three rows of which two are Stable and one is an accidental collision. Requiring every row to be Stable would exempt code 2, which is emitted and must be required. (c) Code 0 is exempt, because success is returned by `RunE` returning nil and never through `os.Exit`, so no scan of exit calls can reach it. The exemption MUST be guarded: the assertion fails if code 0 ever appears in the scanned set, because an `os.Exit(0)` would make the exemption wrong and nothing else would say so. The converse is green against a correct registry, so it MUST carry a differential precondition: the same check, run against a registry holding a Stable row that no scan can reach, MUST report that row, and the assertion MUST fail loudly rather than skip when the control does not fire. Rationale, per `bugs/SP-SP-070`: AC-16 claimed this direction in its expected_output and no test implemented it, so the pair read as enforced while half of it was not."
+      inputs:
+        registry_table: "docs/EXIT_CODES.md Section 1, the Code/Commands/Condition/Standing rows"
+        emitted_codes: "the set the AC-17 scan produces"
+      expected_output:
+        stable_is_an_exact_match: true
+        any_stable_row_requires_reachability: true
+        code_zero_exempt_and_the_exemption_guarded: true
+        control_case_reports_an_unreachable_stable_row: true
+      references_constraints: ["C-12"]
+      priority: high
+    - id: AC-19
+      description: "The annotation-model approval gate propagates to `sync`, report included. A workspace declaring `settings.annotation` with one acceptance criterion carrying `approval_gate: true` and no `approval_date` exits 3 under `specter sync`, matching `specter coverage` on the same workspace per C-11, with `permissive: true` and with `permissive: false` alike. A workspace carrying both that gate and a criterion with no test exits 2 on `sync`, per `spec-coverage` C-40(c), and names BOTH violations on stderr in the one run, per `spec-coverage` C-40(d). The reporting half is asserted and not left implicit, because an implementation that exits inside the rule-1 branch satisfies the exit code and never reaches the gate, which is what `sync` does today. Every case is asserted under `--json` as well as in text mode, per `spec-coverage` C-40(c). Nothing else binds `sync --json` for this gate: C-09's `--json` clause is scoped to `zero-tolerance` and does not reach a gate outside the ladder, so a text-only fix would pass every other criterion in this spec. The cause line is asserted too, because the defect measured was a silent exit 0 and a silent 3 would satisfy an assertion on the integer alone. Asserted here and not left to `spec-coverage` AC-67, because `sync` carried its own gate sequence rather than calling the one `coverage` used, so a fix applied to one surface could miss the other. That is the shape of `bugs/done/SP-SP-066`: a private copy of a gate sequence that was correct when written and went stale when a gate was added beside it. The copy was deleted by the `bugs/SP-SP-071` fix and both surfaces now share one verdict function. The criterion stays, and stating why matters: what keeps the copy from returning is an assertion that fails when the two surfaces disagree, not the fact that they agree today."
+      inputs:
+        workspace: "settings.annotation declared, one AC with approval_gate: true and no approval_date"
+        permissive_values: [true, false]
+        both_violations: "the same workspace with a second criterion carrying no test, permissive: false"
+      expected_output:
+        sync_exit_code: 3
+        sync_code_equals_coverage_code: true
+        both_violations_exit_code: 2
+        both_violations_name_rule_1_on_stderr: true
+        both_violations_name_the_approval_gate_on_stderr: true
+        single_gate_names_the_cause_on_stderr: true
+        sync_json_exit_code: 3
+        sync_json_names_the_cause_on_stderr: true
+      references_constraints: ["C-11"]
+      priority: critical
+
+    - id: AC-20
+      description: "Stream-validation refusals propagate to `sync`. A workspace whose results file violates any rule of `spec-coverage` C-44 exits from `sync` with the code `coverage` returns on the same workspace, and names the same stream, per C-11. Asserted here rather than inherited from `spec-coverage` AC-72 because the two commands reach the builder by different paths, and the whole reason C-44 puts the check in the builder is that a rule reachable from one path only is `bugs/done/SP-SP-058`. Also asserted under `--json` on both commands, since C-09's `--json` clause is scoped to the ladder and binds nothing outside it. And asserted under `--strictness annotation` as well as the two ladder modes, because `sync` reaches the builder by a different constructor there. The threshold and zero-tolerance paths call the constructor that can return an error and the annotation path calls one that cannot, so a validation rule added to the builder would reach two of three modes and the surface count would still read four. That is the same shape as `bugs/done/SP-SP-058`, one layer down."
+      inputs:
+        invalid_artifact: "a results file whose entry names a stream absent from the block"
+        surfaces: ["coverage", "coverage --json", "sync", "sync --json"]
+        strictness_modes: ["annotation", "threshold", "zero-tolerance"]
+      expected_output:
+        sync_code_equals_coverage_code: true
+        sync_names_the_same_stream: true
+        all_four_surfaces_agree: true
+        annotation_mode_validates_too: true
+      references_constraints: ["C-11"]
+      priority: critical
+
+    - id: AC-21
+      description: >-
+        One function owns the mapping from a coverage-gate verdict code to a
+        process exit, and both `coverage` and `sync` route through it. A code
+        that reaches it and matches no case returns a failure rather than
+        success. Asserted on the mapping directly rather than through a
+        workspace, because every routed non-zero code leaves by `os.Exit` and
+        cannot be exercised in-process, which leaves the unmatched case the
+        only branch a test can reach. Guarding it matters even though no
+        released version can produce an unmatched code: the branch exists so
+        that a gate added to the shared verdict and forgotten at the exit sites
+        is reported instead of being read as a pass, and a defensive branch
+        with no test is how the reporting quietly becomes a return of nil.
+      inputs:
+        unmatched_code: "a non-zero code no case names"
+        success_code: 0
+        unclassified_failure_code: 1
+      expected_output:
+        unmatched_code_returns_an_error: true
+        success_code_returns_nil: true
+        unclassified_failure_code_returns_an_error: true
+        one_routing_owner: true
+      references_constraints: ["C-11"]
+      priority: high
+
+    - id: AC-22
+      description: "A run leaves its caller's options untouched. Given a `SyncInput` whose `CheckOpts.ExtraDiagnostics` already carries one diagnostic, in a slice with spare capacity, and whose test files carry an annotation naming an acceptance criterion the spec does not declare: `RunSync` produces a check result containing both the caller's diagnostic and the `unknown_ac_ref` it assembled, each exactly once. After the run the caller's slice has the same length it started with, and the element beyond that length in the caller's backing array is unchanged, which is what an in-place append to a copied slice header would overwrite. Running twice over the same options value produces two results with identical diagnostic counts. The spare capacity is the point: copying the slice header alone passes a length check and still writes into storage the caller owns."
+      inputs:
+        caller_options: "CheckOpts.ExtraDiagnostics with one element and spare capacity"
+        test_files: "one annotation naming an undeclared AC"
+      expected_output:
+        caller_slice_length_after_run: "unchanged"
+        caller_backing_array_beyond_length: "unchanged"
+        callers_diagnostic_in_result: 1
+        assembled_diagnostic_in_result: 1
+        two_runs_produce_equal_counts: true
+      references_constraints: ["C-13"]
+      priority: high
   changelog:
+    - version: "2.5.2"
+      date: "2026-09-01"
+      author: "specter-team"
+      type: patch
+      description: "Raises the spec-check floor from ^4.0.0 to ^5.0.0. spec-check 5.0.0 adds a MUST NOT to C-09: settings.strict does not enable the test-annotation scan. That narrows scope in a way that invalidates the implementation in syncCmd's SyncInput.CheckTestAnnotations initializer, which docs/SPEC_SCHEMA_REFERENCE.md classifies as MAJOR even though specter diff reads the change as additive. The old range excluded the version this spec is now checked against. Patch: only the dependency range moved, with no constraint or criterion touched here."
+
+    - version: "2.5.1"
+      date: "2026-08-30"
+      author: "specter-team"
+      type: patch
+      description: "Raises the spec-check floor from ^3.0.0 to ^4.0.0. spec-check 4.0.0 strengthens AC-46 so the check document must name the diagnostic that stopped the run, and specter diff classifies an expected_output change as breaking, so the major was taken from the classifier. The old range excluded the version this spec is now checked against, and check reported version_mismatch. Patch: only the dependency range moved, with no constraint or criterion touched on this spec."
+    - version: "2.5.0"
+      date: "2026-08-30"
+      author: "specter-team"
+      type: minor
+      description: "C-13 and AC-22: `RunSync` does not mutate the `CheckOptions` reached through `SyncInput.CheckOpts`. Sync assembles its own test-annotation diagnostics and hands them to the checker under `spec-check` C-07's one-owner rule, and writing them through the caller's pointer would leave those options carrying one run's diagnostics, so a second run over the same value would start from the first run's list. The constraint requires copying the slice as well as the struct: a slice with spare capacity shares its backing array, so an in-place append writes into storage the caller can still read while leaving the caller's length unchanged, which a length check does not see. AC-22 seeds spare capacity for exactly that reason and reads the caller's array past its own length. Scoped to `CheckOpts` rather than to the whole `SyncInput`, because a constraint saying the input is never mutated promises more than one criterion can observe: a write to `SpecFiles`, `TestFiles`, `Thresholds` or `Results` would pass AC-22 and break the rule. Minor: a new constraint and criterion, and the implementation already conforms."
+    - version: "2.4.2"
+      date: "2026-08-29"
+      author: "specter-team"
+      type: patch
+      description: "Raise the `spec-check` dependency floor to `^3.0.0`. `spec-check` 3.0.0 widens C-07's non-promotable set to include `unreachable_annotation_unknown`, and `^2.0.0` does not admit a 3.x version, so `resolve` would report a version mismatch on an unchanged workspace. No behavior of this spec changes."
+    - version: "2.4.1"
+      date: "2026-08-27"
+      author: "specter-team"
+      type: patch
+      description: "Raise the `spec-check` dependency floor to `^2.0.0`. `spec-check` 2.0.0 retracted version-change classification (`bugs/SP-SP-018`), and `^1.0.0` does not admit a 2.x version, so `resolve` would report a version mismatch on an unchanged workspace. No behavior of `sync` changes: this spec never read the retracted criteria."
+    - version: "2.4.0"
+      date: "2026-08-26"
+      author: "specter-team"
+      type: minor
+      description: "C-11 gains the propagation half of the rule its rationale already described. It required the two commands to return the same code and named the four places a gate must appear, one of which is the exit mapping, and then left the mapping itself unowned: `coverage` and `sync` each carried a switch over the same codes, so adding code 20 meant editing both and nothing would have failed if only one had been edited. A code the shared verdict returns that a switch does not name falls through to 0 on one surface and 1 on the other, which is the disagreement C-11 exists to forbid. The rule now requires one owner and requires an unmatched code to report failure rather than success. AC-21 asserts the mapping directly, because every routed non-zero code leaves by os.Exit and cannot be exercised in-process. Minor: a new criterion, which `spec-diff` C-05 classifies as additive. This is the same defect as `bugs/done/SP-SP-073` on the routing rather than the decision, found in review of the fix for it."
+
+    - version: "2.3.0"
+      date: "2026-08-26"
+      author: "specter-team"
+      type: minor
+      description: "AC-20 pins stream-validation propagation on `sync`, per roadmap 3A5 and `spec-coverage` C-44. Stated here rather than inherited, because the two commands reach the builder by different paths and a rule reachable from one path only is exactly `bugs/done/SP-SP-058`. Covers `--json` on both commands, since C-09's `--json` clause is scoped to `zero-tolerance` and binds nothing outside the ladder, and covers `--strictness annotation` beside the two ladder modes, because sync reaches the builder by a constructor that cannot return an error there and a rule added to the builder would silently miss that path. The `spec-coverage` floor rises to 1.23.0, because AC-20 names C-44 and the old range admitted versions where it does not exist."
+
+    - version: "2.2.1"
+      date: "2026-08-25"
+      author: "specter-team"
+      type: patch
+      description: "AC-19's rationale described `sync` as carrying its own gate sequence, in the present tense. The `bugs/SP-SP-071` fix deleted that copy and routed both surfaces through one verdict function, so the sentence was describing the state the criterion was written to change. Reworded to the past, with the reason the criterion survives the deletion: what keeps a private copy from returning is an assertion that fails when the surfaces disagree, not their agreeing today. Wording only, no change to the expected output."
+    - version: "2.2.0"
+      date: "2026-08-25"
+      author: "specter-team"
+      type: minor
+      description: "AC-19 pins the annotation-model approval gate on `sync`, alongside AC-13 which pins the ladder's version. Per `bugs/SP-SP-071` and `spec-coverage` C-40. Stated on `sync` rather than inherited from `spec-coverage` AC-67 because `sync` carries its own gate sequence instead of calling the one `coverage` uses, so the two surfaces can drift. That is `bugs/done/SP-SP-066` exactly, and C-11 is the rule the drift would break. AC-19 also pins the reporting half of `spec-coverage` C-40(d) on `sync`: a workspace with both violations names both. Asserting the exit code alone would be met by an implementation that exits inside the rule-1 branch and never reaches the gate, which is what `sync` does today. AC-19 covers `sync --json` as well, because C-09's `--json` clause is scoped to `zero-tolerance` and nothing else binds this gate on that surface."
+    - version: "2.1.0"
+      date: "2026-08-25"
+      author: "specter-team"
+      type: minor
+      description: "AC-18 states the three rules the registry-parity converse needs, so the test that runs it is not the place they are decided. Stable is an exact match on the Standing cell, any Stable row makes its code required-reachable, and code 0 is exempt with the exemption guarded by an assertion that fails if anything ever emits it. The converse is green against a correct registry, which is why the criterion also requires a differential precondition: a control registry holding an unreachable Stable row must be reported, and the assertion must fail loudly rather than skip when the control does not fire. Per `bugs/SP-SP-070`: AC-16 claimed this direction and nothing implemented it. AC-16 is untouched, so this is additive rather than another major."
+    - version: "2.0.0"
+      date: "2026-08-25"
+      author: "specter-team"
+      type: major
+      description: "AC-17 states how an `os.Exit` argument that is not an integer literal is handled: a bare identifier resolves through the `const` declarations in scope, an argument that cannot be resolved fails the scan rather than being skipped, and the resolved site count MUST equal the number of `os.Exit(` calls in scope. Major rather than minor because of one field: AC-16's `inputs.scan_scope` read `literal os.Exit(N)`, and a test conforming to that input contract does not conform to the new one. `specter diff` classifies the change as breaking on that field alone; the same edit to the description classifies as patch, and AC-17 on its own classifies as additive. Filed as `bugs/SP-SP-069`: the literal-only scan could not see `os.Exit(exitDiffBreaking)`, so C-12 went unenforced for code 10 and `docs/EXIT_CODES.md` came to contradict the binary in five places while AC-16 reported green. AC-16's `every_stable_registered_code_is_emitted` claim is deliberately left untouched. No test implements it, which is a separate defect and not this one."
+    - version: "1.7.0"
+      date: "2026-08-23"
+      author: "specter-team"
+      type: patch
+      description: "C-09(b) cited `spec-coverage GH #94 semantics` for a rule spec-coverage did not state. spec-coverage 1.19.0 states it as C-39, and the reference now points there. No behavior change; the dangling citation is the defect."
+    - version: "1.6.0"
+      date: "2026-08-22"
+      author: "specter-team"
+      type: minor
+      description: "Roadmap item 1A4, the exit-code parity test. C-11 states the propagation contract 1A3 recorded: a coverage-contract code fires identically on sync and on coverage, cause line included. C-12 states the registry-parity rule: every code the binary emits appears in docs/EXIT_CODES.md, and every Stable row is reachable. AC-15 compares the cause line and not only the integer, because two conditions now share code 2 and an integer check would pass an implementation returning the right number for the wrong reason. AC-16 states its scan scope in its own text, since it is a static scan and its blind spot is a property of that scope. AC-15 is red on arrival: bugs/SP-SP-058 records that the annotation rule returns 2 on coverage and 1 on sync for the same workspace, which is the eighth instance of the un-swept fix pattern and was found by running this criterion before writing it."
     - version: "1.5.0"
       date: "2026-06-11"
       author: "specter-team"

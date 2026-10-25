@@ -32,6 +32,36 @@ func (a *TypeScriptAdapter) IsTestFile(path string) bool {
 	return false
 }
 
+// SourceKeyForTest maps login.test.ts to login.ts, and a file under
+// __tests__/ to the same name in the parent directory. C-17.
+//
+// The extension is carried through unchanged, so login.test.ts names login.ts
+// and never login.tsx. That is a guess, and it is deliberately a single one:
+// the caller drops the fold when the named source is absent, so a wrong guess
+// costs nothing beyond the test keeping its own group, which is what it had
+// before. Trying a set of candidate extensions would fold onto whichever
+// happened to exist and could pick the wrong file.
+func (a *TypeScriptAdapter) SourceKeyForTest(path string) string {
+	base := path
+	for _, infix := range []string{".test.", ".spec."} {
+		if idx := strings.LastIndex(base, infix); idx >= 0 {
+			base = base[:idx] + "." + base[idx+len(infix):]
+			break
+		}
+	}
+	if base == path && !strings.Contains(path, "__tests__/") {
+		return ""
+	}
+	// A file in __tests__/ names the same file one directory up.
+	if idx := strings.LastIndex(base, "__tests__/"); idx >= 0 {
+		base = base[:idx] + base[idx+len("__tests__/"):]
+	}
+	if base == path {
+		return ""
+	}
+	return base
+}
+
 // --- Route Extraction ---
 
 var (

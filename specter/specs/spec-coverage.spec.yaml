@@ -1,6 +1,6 @@
 spec:
   id: spec-coverage
-  version: "1.15.0"
+  version: "1.26.0"
   status: approved
   tier: 2
 
@@ -84,7 +84,7 @@ spec:
       enforcement: error
 
     - id: C-10
-      description: "`specter coverage --json` MUST always emit a CoverageReport JSON document to stdout, including when one or more spec files fail to parse. The report's parse_errors array carries per-file failures; pass/fail is signalled by process exit code, not by the presence or absence of JSON output. Rationale: downstream consumers (VS Code extension, CI jobs) need a structured document in every state to distinguish 'no specs yet' from 'specs present but failed to parse'."
+      description: "`specter coverage --json` MUST always emit a CoverageReport JSON document to stdout, including when one or more spec files fail to parse. The report's parse_errors array carries per-file failures; pass/fail is signalled by process exit code, not by the presence or absence of JSON output. Rationale: downstream consumers (VS Code extension, CI jobs) need a structured document in every state to distinguish 'no specs yet' from 'specs present but failed to parse'. **The boundary of \"always\" is the command function.** Once Cobra has accepted the invocation and entered `coverageCmd`'s RunE, every return in JSON mode MUST emit a complete document. Failures Cobra itself rejects, an unknown flag or a malformed argument, are outside this promise, because the command never ran. Naming the boundary is what makes \"always\" checkable: without it the rule was read as covering the parse case alone, and seven other early returns wrote nothing. **The document MUST carry a structured field naming why the run stopped**, distinct from `parse_errors`. The field is `stop_reason`, and its wire type is fixed here rather than left to the implementation: an object carrying exactly `kind` and `message`, both non-empty strings, omitted entirely when the run reached the report. A bare string was rejected. `kind` is what a consumer branches on and `message` is what a person reads, and collapsing them forces every consumer to parse prose to decide what happened, which is the failure mode this project keeps recording. `kind` is one of `manifest_error`, `invalid_flag`, `unknown_scope`, or `unmet_precondition`, covering the four families the command refuses on: a rejected manifest; an invalid flag value or flag combination; an unknown `--scope` domain; and a precondition the run needs and does not have, which is both the missing results artifact and zero-tolerance with no annotated test file. Saying only \"structured\" and \"non-empty\" permits two conforming implementations that no consumer can read at once. Overloading `parse_errors` would report a rejected manifest or an invalid flag value as a spec that failed to parse, which is a different fault with a different fix, and a consumer grouping by parse-error pattern would group them together. **The shape is additive, and that is a decision rather than an inference.** `entries` and `summary` stay required and always present, so every existing consumer keeps parsing. On a refusal they carry `[]` and a zeroed summary, and those values are **uncomputed placeholders, not measurements**: the run never counted anything. `stop_reason` is what distinguishes them, so a consumer MUST read `stop_reason` before interpreting `entries` or `summary`, and MUST NOT report a refusal as an empty or fully covered workspace. The alternative considered and rejected was a discriminated union whose refusal arm omits the measurements. It is the cleaner shape and it is breaking: it would change a published document for every consumer at once, in a release closing on a defect this rule exists to fix. The cost of the additive choice is real and is named here rather than discovered later: a zeroed summary beside an empty entries list is exactly what a clean empty workspace looks like, so the placeholder is indistinguishable from a measurement unless `stop_reason` is read. That obligation does not live only in this constraint; `spec-vscode` carries the consumer half, because a rule stated for a consumer in the producer's spec is a rule nothing checks. The states the field MUST cover are the ones the command already refuses on: a manifest that fails to load, an invalid flag value or flag combination, an unknown `--scope` domain, and an unmet results precondition. **Every return MUST route through one rendering and verdict path**, for the reason spec-check C-14 gives: an emitter per early return satisfies every observable assertion while leaving the next early return to be forgotten. Text output and exit codes are unchanged by this rule, which governs what stdout carries in JSON mode and nothing else."
       type: technical
       enforcement: error
 
@@ -119,7 +119,7 @@ spec:
       enforcement: error
 
     - id: C-17
-      description: "`specter coverage --failing` MUST restrict the table to entries whose `passes_threshold == false` OR `coverage_pct < 100` (i.e. everything below 100% coverage, whether it's under threshold or just not complete). The summary header still reflects the full report, not the filtered view. When all entries are 100%, the filter produces an empty table with a single-line confirmation: `All N specs at 100% coverage.`"
+      description: "`specter coverage --failing` MUST restrict the table to entries whose `passes_threshold == false` OR `coverage_pct < 100` (i.e. everything below 100% coverage, whether it's under threshold or just not complete). The summary header still reflects the full report, not the filtered view. When all entries are 100%, the filter produces an empty table with a single-line confirmation: `All N specs at 100% coverage.` **`--failing` MUST change only the table or empty-table presentation. It MUST NOT change which gates are evaluated, their diagnostics, or the exit code.** Stated as a property of the flag rather than as a list of gates, because a list goes stale the next time a gate is added and this one already did: the empty-table path carried its own threshold-only verdict and skipped every gate that reports without moving a coverage percentage. A presentation flag that decides an exit code is a second verdict, and `bugs/SP-SP-073` is what a second verdict costs."
       type: technical
       enforcement: error
 
@@ -195,6 +195,80 @@ spec:
 
     - id: C-32
       description: "When the strict path is enabled without the operator passing `--strict` (i.e. via `--strictness` or the manifest setting), a missing `.specter-results.json` MUST fail with a message that (a) names the active strictness mode and (b) offers both remedies — run `specter ingest` first, or use `--strictness annotation` for structural coverage — mirroring spec-sync C-08. The message MUST NOT attribute the requirement to a `--strict` flag the operator never passed. When the operator DID pass `--strict`, the existing C-20 message (`--strict requires .specter-results.json — run 'specter ingest' first`) is preserved unchanged."
+      type: business
+      enforcement: error
+
+    - id: C-33
+      description: "The results lookup MUST resolve a (spec_id, ac_id) pair across every matching entry in `.specter-results.json`, not the first one found. `ResultsFile.status(specID, acID)` returns the status of the worst matching entry, ranked passed (best), then skipped, then failed, then errored (worst). `ResultsFile.passed(specID, acID)` returns true only when every matching entry resolves to passed. A status value outside the C-21 enum ranks at the failed level and never at passed, so a rank table that yields a zero value for an unknown key is not a correct implementation. Resolution runs after the C-21 derivation, so a back-compat entry carrying `passed: false` and no `status` participates as failed. With no matching entry the lookup still returns `unknown` (AC-22). The consequence that binds both call paths: reordering the rows of a results file MUST NOT change any value in the coverage report, under `--strict` and under the Tier 1 pass-rate path of C-07 alike. Rationale: first-match resolution let two files describing identical facts report 0% and 100% on one workspace. Duplicate pairs are legal input, because ParseResultsFile validates size and JSON shape and nothing about uniqueness."
+      type: technical
+      enforcement: error
+
+    - id: C-34
+      description: "The zero-tolerance non-passed count MUST count distinct (spec_id, ac_id) pairs whose resolved status is not passed, not result entries. The message `N annotated AC(s) did not pass` names criteria, so N is a number of criteria, and several entries for one pair contribute one. The exit code does not change, because `at least one non-passed entry` and `at least one non-passed pair` are the same condition. `ResultsFile.InvalidStatuses()` is out of scope for this change and keeps counting entries, because its C-30 warning text says entries. Rationale: an operator reading `2 annotated AC(s) did not pass` goes looking for a second failing criterion that does not exist."
+      type: business
+      enforcement: error
+
+    - id: C-35
+      description: "Coverage percentages MUST be computed once and shown consistently. (a) `CoveragePercent(covered, total)` returns covered divided by total times 100, rounded half up to one decimal place, and that value is emitted as `coverage_pct`. It returns 100.0 only when covered equals total; when rounding would otherwise reach 100.0 with at least one criterion uncovered it returns 99.9. A total of zero returns 0. Every producer of `coverage_pct` calls this function; a caller doing its own division emits values such as 33.333333333333336 where this clause requires 33.3. Before C-39 this clause had to name a second producer explicitly, a per-entry recompute inside the approval-gate demotion pass, because that pass rebuilt the percentage after the fact. There is now one producer, so the clause needs no exception. (b) `FormatCoveragePct(pct)` returns the integer floor of one stored per-spec value with a trailing percent sign, and every per-spec human-readable surface uses it. Those surfaces are the Coverage column of the coverage table, the `Coverage:` line of `specter explain`, and the per-spec line `specter doctor` prints beneath a failing coverage check. (c) `passes_threshold` compares `coverage_pct` against the effective threshold with a greater-than-or-equal test. (d) Together these give the invariant that matters to an operator: a `coverage_threshold` set to the integer the tool just printed always passes. (e) The average in the C-16 summary header is not a per-spec value and has its own rule: it is the integer floor of the exact arithmetic mean of the entries' stored `coverage_pct` values. Exact means the mean carries no float accumulation error. Clause (a) makes every stored value an exact multiple of one tenth, so the sanctioned method is to sum the values as integer tenths and divide once. Three specs storing 4.1, 12.2 and 13.7 have a mean of 10.0 and the header prints 10, where summing them in float64 reaches 29.999999999999996, whose third is 9.999999999999998 and floors to 9. Rationale: the previous expression truncated under a comment that said it rounds, so on one spec the table printed 67, `explain` printed 66, and the gate compared 66.6. Rounding the displayed integer rather than flooring it was rejected, because 199 of 200 criteria would then print 100 and pass a Tier 1 gate. The header is stated apart from (b) because the two floors have different reasons. A per-spec floor guarantees the printed integer never exceeds what the gate compared, which is what makes (d) hold; the header compares nothing, so it floors for the other reason, agreement with the column beneath it. Rounding the mean would print 67 above a row of 66 on a one-spec report at 66.7, which is the disagreement this constraint exists to remove. Routing the header through `FormatCoveragePct` in 1.16.0 got the direction right and the arithmetic wrong: the argument that the floor is exact holds for one value of the form k/10 and not for a sum of them (`bugs/SP-SP-040`)."
+      type: technical
+      enforcement: error
+
+    - id: C-36
+      description: "A declared coverage threshold of 0 MUST mean zero rather than the tier default. Presence detection decides whether an override applies, not a greater-than-zero test, per the decision of 2026-06-10. This binds both override layers: a spec declaring `coverage_threshold: 0` gets an effective threshold of 0, and a manifest declaring `settings.coverage.tierN: 0` gets 0 for that tier. Precedence is unchanged, spec value over manifest tier value over built-in default (Tier 1 100, Tier 2 80, Tier 3 50), and a spec that omits the field still inherits the tier value. The effective number is the `threshold` field of `coverage --json`, so it can be read rather than inferred. No schema change is required: the JSON schema already declares `minimum: 0` and negative values are rejected at parse, so 0 is the only value that surprises the author."
+      type: technical
+      enforcement: error
+
+    - id: C-37
+      description: "`specter coverage --json` MUST produce a byte-identical document across runs of one binary on an unchanged workspace. Every array built from a map carries a defined total order: `test_files` ascending by path, `parse_error_patterns` by count descending then type ascending then path ascending, and the `files` list inside each pattern ascending by path. Ordering by count alone is not sufficient, because patterns with equal counts then keep map iteration order. Rationale: five runs on one workspace produced five documents, so coverage snapshots cannot be byte-compared and a CI job diffing them sees churn that is not a change."
+      type: technical
+      enforcement: error
+
+
+    - id: C-38
+      description: "When `settings.annotation` is declared in the manifest, coverage MUST apply the model of docs/ssrb/SSRB-104.md section 1 instead of the strictness ladder. Six parts. (a) Rule 1, the annotation rule: every acceptance criterion MUST have a test, meaning a source annotation naming it exists. A criterion with none is a rule-1 violation, counted and reported separately from an uncovered criterion, because the two are different failures. The reporting distinction MUST be observable in the text output: a rule-1 violation is listed on a `no test:` line, distinct from the existing `uncovered:` line. Without a distinguishable marker a caller cannot tell the two apart, and a test asserting only that the criterion id appears somewhere passes vacuously under the ladder, where the same id is already listed as uncovered. (b) The tier threshold does not excuse a rule-1 violation. A Tier 3 spec at or above its threshold still fails if any criterion has no test. (c) Rule 1 severity is decided by `settings.annotation.permissive` and by nothing else: error when false, warning when true. Tier routing is wrong here because a Tier 3 criterion would emit info and not fail, contradicting (b); global escalation via settings.strict is wrong because it rebuilds the bundling this model dismantles. Both are rejected in SSRB-104 section 7.4. (d) A rule-1 violation exits 2 when permissive is false, per SSRB-104 section 7.5. Exit 2 thereby narrows from its ladder meaning, an annotated criterion that did not pass, to its model meaning, a criterion with no test at all. (e) Rule 3, the pass rate: among criteria that DO have an annotation, a criterion counts as covered when its annotation has a passing result, and the tier threshold applies to that rate. A rate below the threshold exits 1. Rules 1 and 3 are therefore different failures with different codes, which is the distinction the single ladder could not express. (f) A declared block requires `.specter-results.json`, exactly as `threshold` does, per SSRB-104 section 7.9. Rule 1 is structural and could be answered without results, but evaluating rule 1 alone would let a workspace move from an outcome-verified gate to a structural one by adding a key that reads as stricter."
+      type: technical
+      enforcement: error
+    - id: C-39
+      description: "Under an effective strictness of `zero-tolerance`, an acceptance criterion carrying `approval_gate: true` with an unset `approval_date` MUST be reported as uncovered, and the entry's coverage percentage, threshold verdict, and the report summary MUST reflect that. The demotion is part of classifying the criterion, not an edit applied to a finished report, so every surface that reports coverage sees the same verdict for the same criterion: `coverage`, `coverage --json`, and `sync` alike. Two consequences follow and are observable. A demoted criterion appears in the uncovered list in acceptance-criterion declaration order, alongside criteria uncovered for any other reason, because there is one list built once rather than a list edited afterward. And an entry whose every covered criterion is demoted reports an empty covered list, never a null one, which is the same JSON-shape guarantee C-14 makes for every other entry. Rationale: this behavior shipped as the GH #94 fix and was required only by spec-sync C-09(b), which cited `spec-coverage GH #94 semantics` for a rule spec-coverage never stated. It was implemented as a second pass over the report, which is what let its output diverge from the builder's own invariants."
+      type: business
+      enforcement: error
+
+    - id: C-40
+      description: "When `settings.annotation` is declared, `specter coverage` MUST exit 3 when any acceptance criterion carries `approval_gate: true` with an unset `approval_date`, and `settings.annotation.permissive` MUST NOT change that. Six parts. (a) The rule is unconditional on `permissive`. That key was introduced for rule 1, the annotation rule, whose subject is whether evidence exists at all, and SSRB-104 section 7.4 scopes it there and nowhere else. An unmet approval gate is not an evidence-presence failure. It is a human sign-off the spec author chose on that criterion, so a switch that exists to ease adoption of a missing-test rule must not silently downgrade it. Read the other way, `permissive: true` would mean ignore human approval gates rather than warn on missing tests, which is a far broader bypass than the key was given. (b) The code is 3, per SSRB-104 section 7.5, which assigns `approval gate unmet` to 3 and states that the trigger does not depend on the ladder and survives its retirement. The run MUST also name the cause on stderr. A silent 3 is not the contract: the measured defect was exit 0 with nothing on stderr, and an operator who gets a bare integer has to guess which of the coverage gates fired. `spec-sync` C-11 requires `sync` to name the same cause `coverage` names, and that rule is vacuous when neither names one. (c) The gate applies identically on every surface that reports coverage: `coverage`, `coverage --json`, `sync`, and `sync --json` alike, in exit code and in cause line. This is C-39's surface clause applied to the exit signal rather than to the report. It is stated rather than left to inheritance because `spec-coverage` C-29 binds `coverage --json` and nothing binds `sync --json` for a gate outside the ladder: `spec-sync` C-09's `--json` clause is scoped to `zero-tolerance`. Five recorded instances of the `--json` family, `bugs/done/SP-SP-021`, `bugs/done/SP-SP-022`, `bugs/SP-SP-044`, `bugs/done/SP-SP-061` and `bugs/done/SP-SP-066`, all have one cause: `--json` written as a branch that returns early rather than as a rendering choice over one verdict, so a gate added beside the branch never reached it. A text-only fix for this gate would be the sixth. (d) Order: rule 1 is evaluated before this gate, so a workspace carrying both a criterion with no test and an unmet approval gate exits 2 rather than 3, matching the ladder's code-2-before-code-3 precedence where both ladder gates exist. Rule 1 is not itself a ladder gate, so the match is to the precedence and not to the gate set. Two reasons for that order, and both matter. The gates are checked in ascending code order today, and an order that varied by strictness model would let `coverage` and `sync` disagree on one workspace, which is the failure `spec-sync` C-11 exists to prevent. (e) Both diagnostics MUST be written to stderr before the process exits, so a workspace carrying both violations names both in one run. This is a requirement and not a description: no surface does it today, because each gate prints its own line and exits inside its own branch, so an operator fixes the missing test, re-runs, and only then learns about the approval gate. It is stated as MUST because part (d) rests on it. The argument for ascending-code order over semantic directness is that the integer is not the whole report, and that argument holds only if the report is complete. If both diagnostics cannot be emitted, the precedence in (d) has to be re-decided rather than kept. (f) C-26 is unchanged and stays true while the ladder ships. It scopes the gate to `zero-tolerance` and makes `approval_gate` metadata-only under `threshold`, and `GoverningStrictness()` maps a declared annotation block to `threshold`, so the pre-amendment code was faithful to the spec rather than defective. This constraint is what was missing. Rationale, per `bugs/SP-SP-071`: SSRB-104 section 7.5 decided the mapping on 2026-08-22 and roadmap item 1D-b shipped its code-2 row and not its code-3 row, so an adopter moving to the model the docs steer them toward lost a checkpoint with nothing on stderr to say so."
+      type: business
+      enforcement: error
+
+    - id: C-41
+      description: "A `.specter-results.json` entry MAY carry an optional `stream` field, a non-empty string naming the body of evidence it came from. An entry with no `stream` reads as the stream named `default`, so every file written before this field existed keeps its exact meaning and no producer breaks. `stream` is an opaque label. Any non-empty string is valid, `unit` and `live` and `mutation` included, because those are the names operators actually reach for and forbidding them would make the foundation unusable for the requests that motivated it. What is forbidden is meaning, in two directions. Specter MUST NOT interpret a label: no value may cause different handling, so `baseline` is a stream named baseline and not a baseline, and a tool that special-cased it would be reading a policy out of a string a producer chose. And the artifact MUST NOT gain a sibling field that carries the role instead, whether spelled `role`, `kind`, `baseline`, `current` or anything equivalent. Those are decisions a consumer makes by invocation, and an artifact asserting one would commit the tool to a policy it has not adopted, per SSRB-103 section 7. The merge key becomes `(spec_id, ac_id, stream)`, so `ingest` collapses duplicates within a stream and keeps one entry per stream. C-33 is deliberately unchanged and stays exactly true. It resolves a pair across every matching entry and returns the worst status, and two entries from two streams both match, so the worst-status rule already spans them. That is why splitting one body of evidence into two labeled streams cannot move the coverage number: over criteria that have entries the multi-stream rule IS the existing merge. Rationale, per SSRB-103: the results model records one status per pair, so no policy over more than one body of evidence can be expressed until a pair can carry more than one labeled result."
+      type: technical
+      enforcement: error
+
+    - id: C-42
+      description: "A `.specter-results.json` file MAY carry a top-level `streams` array, one object per **named** stream that ran, each naming the stream and the counts the producer observed: how many inputs it scanned, how many results it extracted, and how many packages produced zero test events. The third count is worded as observed rather than diagnosed. A runner that emits no test event for a package may have failed to build it, may have had every test filtered out, or may have been handed a package with no tests at all, and the artifact cannot tell those apart from runner output alone, so it reports what it saw and leaves the reading to a human. A per-entry label alone cannot express this, and the gap it leaves is the one that matters. A stream that ran and found nothing and a stream that never ran both leave zero entries, and the second is a broken pipeline reported as a clean one. The array MUST carry a defined total order, ascending by stream name, for the same reason C-37 orders the coverage document: an array built from a map otherwise keeps map iteration order, and a CI job diffing two runs sees churn that is not a change. A stream present in `streams` with zero entries is visible as such. A **named** stream absent from `streams` never ran. The implicit `default` stream is the exception and is outside this rule entirely: an unlabeled entry belongs to it and requires no declaration, per C-44(a), so `default` being absent from the block says nothing about whether it ran. That is what keeps a legacy file legal and lets a project adopt `--stream` one job at a time. Rationale, per SSRB-103 section 4: a second stream that silently failed to run must not read as success, and the failure direction matters, because a missing stream defaulting to satisfied produces maximum confidence exactly when the evidence is most broken."
+      type: technical
+      enforcement: error
+
+    - id: C-43
+      description: "A criterion is covered when at least one stream holds an entry for it AND every stream holding an entry reports `passed`. A criterion no stream reported on is NOT covered. Both clauses are load-bearing and the first is the one that is easy to drop. Written as `every stream holding an entry reports passed` alone, the condition is vacuously true over an empty set, so a criterion nothing reported on becomes covered and the outcome-verified path collapses toward annotation counting. Over criteria that have entries this rule is the existing worst-status merge of C-33, which is why the coverage number does not move when a project splits one stream into two. Over criteria with no entries it is not a merge at all: it is the absent-entry rule the strict path already applies, generalized. This constraint states the rule once for every strictness model rather than per model, because the rule does not depend on one: C-38(e) states the pass-rate arithmetic under the annotation model and C-07 states it for the tier path, and both consume this definition of covered rather than restating it."
+      type: business
+      enforcement: error
+
+    - id: C-44
+      description: "A results file carrying a `streams` block MUST be internally consistent, and the check MUST live in the shared pure builder that classifies coverage, so every command consuming the artifact as coverage evidence inherits it. That is `coverage` and `sync` today. It deliberately does not reach `ingest --merge`, which reads the same file as a producer assembling a new one rather than as a consumer judging a workspace, and which has its own contract in `spec-ingest` C-15 and C-17. Whether a merge should refuse an inconsistent input is a real question and it is not this one; deciding it here would be scoping a second command from the constraint that governs the first. The block is present when the key is present. Three shapes reach the reader and only two of them are legacy-compatible: an absent key, `streams: null`, and `streams: []`. The last two are present blocks declaring nothing, and both are refused rather than treated as legacy, because a producer that wrote the key made a claim about what ran. **Presence MUST be determined from the document as written and not from the decoded value**, because Go decodes an absent key and an explicit `null` to the same nil slice, so a reader that infers presence from the slice cannot tell a legacy file from one asserting that no stream ran. That is the whole distinction the rule turns on, and it is the one the decoder erases. Five rules. (a) Every stream an entry names MUST be declared in `streams`, **except `default`**, which never requires declaration whether an entry reaches it by carrying no label or by naming it outright. C-41 makes those two the same stream, so a rule that demanded declaration for one and not the other would split it. An entry labeled from any other undeclared stream is evidence a consumer cannot place, and the block exists precisely so a reader can enumerate what ran. **The `default` exemption is what lets a project adopt `--stream` one job at a time.** Merging a legacy unlabeled file with a labeled one yields unlabeled entries beside declared ones, and without the exemption that artifact would be refused, so `--stream` would be all or nothing across every job at once. The alternative considered and rejected was refusing mixed inputs in `ingest --merge`. It is sound on its own terms, since truthful counts for a synthesized default stream cannot be reconstructed, but it buys that soundness by forbidding the incremental adoption C-14's back-compat promise exists to enable, and it does so for a stream whose counts a legacy file never carried anyway. (b) A stream name MUST NOT be empty, and a **non-empty** name MUST NOT repeat within the block. The repeat rule is scoped to non-empty names because an empty one is not a label, which is the same reading (c) states: an empty name is refused as empty and never enters the repeat comparison. Read the other way the rule is unsatisfiable, because AC-72's fixture declares empty-name rows at two positions and pins a five-element sequence with no `duplicate_stream` element in it. (c) A violation MUST identify the stream it concerns, and for an empty name, where there is no name to print, it MUST identify the array position and say the name is empty. A repeated name leaves two counts for one stream with no rule for which wins, and an empty one is not a label. (d) No count in the block may be negative. `scanned`, `extracted` and `zero_test_event_packages` each report something a producer observed, and there is no run that scans minus one input. These are untrusted values read from a file Specter did not write, so a shape the domain cannot produce is refused rather than carried into arithmetic that would then be quietly wrong. The kind is `negative_count` and it carries `stream_index`. **One violation per stream row, not one per negative field.** Three negative fields in one row would otherwise produce three elements sharing a kind, a stream and a `stream_index`, which is a tie the total order cannot break, so the element names every negative field in one message, in the fixed order `scanned`, `extracted`, `zero_test_event_packages`. **A negative `extracted` suppresses the `extracted_below_entries` violation for that row**, because the second is derived from the first: a count below zero is below any entry count, and reporting both would tell an operator to fix a consequence beside its cause. (e) A stream's declared `extracted` count MUST NOT be lower than the number of entries carrying that label. It may be higher, because `spec-ingest` C-08 collapses duplicates within a stream and `--merge` sums counts across inputs that may both have reported one criterion, so extraction legitimately exceeds surviving entries. Lower is incoherent: the metadata under-reports the evidence sitting beside it in the same file. A violation selects an exit code **conditionally, and the two halves of that rule are not in tension once stated in order**. When stream validation is the only thing wrong, the run exits with a code from the evidence-stream band. When a gate that shipped before it has also failed, that gate's code wins and the stream violations are still reported. So the band's code is what a workspace exits with in the standalone case and never what it exits with in a coexisting one, which is how a new gate takes a number of its own without preempting one that shipped. Validation runs during report construction and the coverage gates run after, so the naive wiring returns the new code first and takes precedence from codes 2, 3 and 1, which `docs/EXIT_CODES.md` section 4 forbids for exactly this reason: a new gate that preempts a shipped one changes what an existing caller sees for a workspace whose old failure has not gone away.
+
+Three consequences follow, each a requirement rather than an implementation note. **Validation MUST run in time linear in the artifact plus the sort of what it finds.** That is `O(streams + results + violations log violations)`, with no scan of `results` per stream. The obvious nesting, walking every entry to count a stream's own, is `O(streams x results)`, and the artifact is untrusted and may sit just under the 16 MiB cap `spec-ingest` C-17 sets. A size limit bounds memory and not work, so a file that passes the cap can still buy an operator's CPU with a shape no runner would produce. Counting by map costs the same to write and removes the amplification. AC-72 binds this rather than leaving it to review, because every other expected output here is satisfied by a nested implementation: the answers are identical and only the work differs. The binding has to be something a mutation reintroducing the per-stream scan fails, which a behavioral assertion over a small fixture cannot be.
+
+**Validation MUST NOT abort report construction.** It records its findings on the report, so C-10's document still exists and the gates still have something to run on.
+
+**The code MUST be chosen by the same shared verdict the other gates use, ordered last**, after rule 1, after the zero-tolerance gates, after the approval gate and after the tier threshold. A private branch in `coverage` or in `sync` that returned the code directly would reintroduce both the precedence bug and the two-copies bug this constraint exists to prevent. Under `--json` it MUST also appear in the emitted document rather than replacing it: C-10 requires `coverage --json` to emit a report in every state, so a validation refusal that produced an empty stdout would trade one false-confidence failure for the `bugs/SP-SP-032` shape, where a machine consumer gets a code and nothing to read. The document carries a top-level `results_validation_errors` array, present and non-empty exactly when stream validation found one or more violations, and absent otherwise. Tied to the validation and not to the verdict: a run failing only its tier threshold or only an approval gate refuses without any stream violation, and a run whose artifact is inconsistent reports these whichever gate ends up choosing the code.
+
+**Every violation is collected, not the first.** An array that stopped at one would make a caller fix, re-run and discover the next, which is the sequencing C-40(e) already refuses for the coverage gates.
+
+**The order is total and deterministic**, ascending by `kind`, then by `stream`, then by `stream_index`, then by `result_index`, with an absent index sorting before a present one. A criterion asserting only that two runs agree is satisfied by any consistent order, a reversal included, so the exact sequence is what must be pinned. Two runs over one artifact therefore emit identical bytes, which is the same reason C-37 orders the rest of the document.
+
+Each element carries `kind`, one of `undeclared_stream`, `duplicate_stream`, `empty_stream_name`, `negative_count` or `extracted_below_entries`; `stream`, the name, empty for the empty-name kind; `message`; and **exactly one of `stream_index` or `result_index`**, with the other absent. `undeclared_stream` carries `result_index`, because the entry naming an undeclared stream is the thing to look at. The other four kinds carry `stream_index`, because each concerns a row of the block. **Both indexes reference the arrays as they appear in the file on disk, before any normalization Specter applies.** C-42 sorts the `streams` array ascending by name on read, so a row sitting at position 4 in the artifact can be at position 0 by the time a validator sees it, and an index taken after that sort points at a row the operator cannot find. The source position MUST therefore be preserved through parsing, or validation MUST run before the sort. Preserving it is the better of the two, because it keeps the check where C-44 puts it and does not make the order of two unrelated operations load-bearing. The preserved position is not part of the artifact and MUST NOT be serialized: it describes where something was read from, not what the file says. **A coordinate of zero MUST serialize.** A first row and a first entry are ordinary positions, so a field that drops its zero, which `int` with `omitempty` does, would emit an element whose only coordinate has silently vanished, and `exactly one of` would be violated by the encoder rather than by the validator. The field is therefore optional by nullability and not by emptiness. Exactly one rather than at most one: a rule permitting neither would let an element arrive with no coordinate at all, which is the case a consumer cannot act on. Two coordinates rather than one `index`, because the position an `undeclared_stream` violation points at is in `results` while every other kind points into `streams`, and one field meaning two things is a field a consumer has to branch on the kind to read. `empty_stream_name` carries `stream_index`, which is what identifies an entry that has no name to print.
+
+A shape is required rather than left to the implementation because asserting only that a document was emitted is satisfied by a normal report saying nothing about the refusal, and a caller reading the code alone is the failure this whole clause exists to prevent. Rationale, per SSRB-103 section 4: Specter gates on a file it cannot verify was generated by the run it claims to describe, so internal consistency is the only thing it can check. These are integrity checks and not authentication: they catch an artifact that contradicts itself, and they cannot tell whether the run it describes ever happened. The direction that matters is whichever one lets a broken pipeline read as a clean one. Placing this in the command rather than the builder is the defect `bugs/done/SP-SP-058` records: a rule wired into `coverage` alone left `sync` returning a different verdict for the same workspace."
       type: business
       enforcement: error
 
@@ -301,6 +375,64 @@ spec:
       references_constraints: ["C-10"]
       priority: critical
 
+    - id: AC-74
+      description: >-
+        Every return from `coverage --json` emits a complete document, in each
+        state the command refuses on and in each state it succeeds on. The
+        states are asserted individually rather than as a family, because they
+        are separate returns and a fix applied to one is the defect this
+        criterion exists to catch. Each refusal carries `stop_reason`, distinct from
+        `parse_errors`, with a non-empty `kind` and `message`. `entries` is `[]`
+        and the summary is zeroed, and those are placeholders rather than
+        measurements: the run counted nothing. Their meaning is guarded by
+        `stop_reason`, which is the only field separating a refusal from a clean
+        empty workspace, so a consumer that reads them without reading it
+        reports the wrong thing. A run that reaches the report is required beside
+        them, so the criterion cannot be met by a command that emits an empty
+        document and never measures anything. The gates keep their codes: a
+        document is emitted at 1, 2, 3 and 20 alike, and the code is unchanged
+        by this rule.
+
+        Each gate asserts its own cause before it reads its exit code. The gates
+        are ordered, so a fixture that trips an earlier one reports that gate's
+        code and reads as a pass for the gate it names: a below-threshold
+        workspace with no results artifact is refused for the missing artifact
+        and never reaches the threshold gate at all. This is the precedence
+        lesson already recorded for the streams gate.
+
+        Text compatibility is asserted against a baseline pinned in the
+        repository, not by comparing two builds by hand. A manual comparison
+        binds nothing once the person who ran it moves on.
+      inputs:
+        manifest_failure: "a specter.yaml the manifest loader rejects"
+        invalid_strictness: "--strictness bogus"
+        scope_without_strict: "--scope core with no --strict"
+        unknown_domain: "--scope no-such-domain --strict"
+        missing_results: "strictness threshold with no .specter-results.json"
+        zero_tolerance_no_annotations: "--strictness zero-tolerance over a workspace whose test files carry no annotations"
+        strict_against_annotation: "--strict with settings.strictness annotation, the seventh refusal"
+        control_success: "a workspace that parses and meets its tier threshold"
+        gate_1: "a spec below its tier threshold, WITH a results artifact covering one of its two criteria, so the run reaches the threshold gate instead of the missing-results refusal"
+        gate_2: "settings.annotation declared, a results artifact present, and one criterion carrying no test at all"
+        gate_3: "zero-tolerance, every annotated criterion passing in the results artifact so code 2 does not precede code 3, plus one approval_gate criterion with no approval_date"
+        gate_20: "a results artifact whose streams block is inconsistent, over a workspace otherwise at threshold so no earlier gate fires"
+      expected_output:
+        every_state_emits_a_parseable_document: true
+        all_seven_refusals_bound_independently: true
+        refusal_reason_field_is_present_and_non_empty: true
+        refusal_reason_is_not_parse_errors: true
+        refusal_entries_is_empty_and_summary_is_zeroed: true
+        refusal_reason_names_the_state_that_stopped_the_run: true
+        control_emits_entries: true
+        control_has_no_stop_reason: true
+        each_gate_asserts_its_own_cause_before_its_exit_code: true
+        gate_exit_codes_unchanged: "1, 2, 3, 20"
+        text_output_byte_identical_to_a_pinned_baseline: true
+        render_owner_functions: 1
+        command_encodes_directly_at_zero_sites: true
+      references_constraints: ["C-10"]
+      priority: critical
+
     - id: AC-11
       description: "A TypeScript test file that contains a template literal whose body includes the literal text `// @spec ghost-spec` produces zero annotations for `ghost-spec`. The same file's real `// @spec real-spec` on an actual comment line is still detected."
       inputs:
@@ -361,7 +493,7 @@ spec:
       priority: high
 
     - id: AC-17
-      description: "`specter coverage --failing` on a 14-spec workspace where 2 specs are below 100% (1 failing, 1 partial) prints the summary header (reflecting all 14), then a table containing only those 2 entries. On a workspace where all 14 are 100%, the flag produces no table and a single line: `All 14 specs at 100% coverage.` Exit code respects threshold, not the filter."
+      description: "`specter coverage --failing` on a 14-spec workspace where 2 specs are below 100% (1 failing, 1 partial) prints the summary header (reflecting all 14), then a table containing only those 2 entries. On a workspace where all 14 are 100%, the flag produces no table and a single line: `All 14 specs at 100% coverage.` The exit code is whatever the run would return without the flag."
       inputs:
         case_a: "14 specs, 2 below 100% (1 FAIL, 1 partial-PASS)"
         case_b: "14 specs, all 100% covered"
@@ -371,6 +503,34 @@ spec:
         case_b_footer_contains: "All 14 specs at 100% coverage"
       references_constraints: ["C-17"]
       priority: high
+
+    - id: AC-73
+      description: >-
+        `specter coverage --failing` returns the same exit code and the same
+        cause line as `specter coverage` on the same workspace, including on the
+        path where the filter leaves no rows. Bound on the gates that report
+        without moving a coverage percentage, because those are the ones an
+        empty-table path can skip while every other gate leaves a row for the
+        filter to keep and so cannot be skipped this way. A control case is
+        required beside them: a workspace with nothing wrong still exits 0 under
+        the flag and still prints the C-17 confirmation line, so the fix cannot
+        be a blanket refusal to return early.
+      inputs:
+        approval_gate: "every spec at 100 percent, a declared settings.annotation block, one criterion carrying approval_gate: true with no approval_date"
+        stream_validation: "every spec at 100 percent, a results file whose streams block names no stream an entry labels"
+        coexisting: "the stream-validation workspace, also below its tier threshold"
+        control: "every spec at 100 percent and nothing else wrong"
+      expected_output:
+        approval_gate_exit_code: 3
+        stream_validation_exit_code: 20
+        coexisting_exit_code: 1
+        control_exit_code: 0
+        codes_match_the_run_without_the_flag: true
+        cause_lines_match_the_run_without_the_flag: true
+        coexisting_still_reports_the_stream_violations: true
+        control_prints_the_confirmation_line: true
+      references_constraints: ["C-17"]
+      priority: critical
 
     - id: AC-18
       description: "A spec ID of 50 characters (e.g. `app-api-admin-appointments-id-service-override`) rendered in the default table is truncated to 40 characters followed by `…` (ellipsis), keeping the Tier column aligned. `specter coverage --json` emits the full ID unchanged. A function TruncateSpecID(id, maxLen) is the pure helper under this AC."
@@ -585,7 +745,586 @@ spec:
       references_constraints: ["C-31", "C-32"]
       priority: critical
 
+    - id: AC-38
+      description: "ResultsFile.status resolves a pair to its worst matching entry whatever the row order. Given four entries covering two pairs, status(demo-spec, AC-01) returns `failed` and status(demo-spec, AC-02) returns `errored`, and passed() returns false for both. The same four entries with each pair's `passed` row first return the same four answers."
+      inputs:
+        results_worst_first: '{"results":[{"spec_id":"demo-spec","ac_id":"AC-01","status":"failed"},{"spec_id":"demo-spec","ac_id":"AC-01","status":"passed"},{"spec_id":"demo-spec","ac_id":"AC-02","status":"errored"},{"spec_id":"demo-spec","ac_id":"AC-02","status":"passed"}]}'
+        results_best_first: '{"results":[{"spec_id":"demo-spec","ac_id":"AC-01","status":"passed"},{"spec_id":"demo-spec","ac_id":"AC-01","status":"failed"},{"spec_id":"demo-spec","ac_id":"AC-02","status":"passed"},{"spec_id":"demo-spec","ac_id":"AC-02","status":"errored"}]}'
+      expected_output:
+        status_ac01: "failed"
+        status_ac02: "errored"
+        passed_ac01: false
+        passed_ac02: false
+        answers_identical_across_both_orderings: true
+      references_constraints: ["C-33"]
+      priority: critical
+
+    - id: AC-39
+      description: "Two results files holding the same entries in different row order produce a byte-identical `coverage --strict --json` document and the same exit code. On a Tier 1 spec whose AC-01 and AC-02 are both annotated and both carry one passed and one failed entry, both orderings report coverage_pct 0 and uncovered_acs [AC-01, AC-02] and exit 1. Before this change the two orderings reported 0% exit 1 and 100% exit 0."
+      inputs:
+        workspace: "Tier 1 spec with AC-01 and AC-02, both annotated in one test file"
+        results_a: '{"results":[{"spec_id":"demo-spec","ac_id":"AC-01","status":"failed"},{"spec_id":"demo-spec","ac_id":"AC-01","status":"passed"},{"spec_id":"demo-spec","ac_id":"AC-02","status":"failed"},{"spec_id":"demo-spec","ac_id":"AC-02","status":"passed"}]}'
+        results_b: "the same four entries with both passed rows first"
+        command: "specter coverage --strict --json"
+      expected_output:
+        coverage_pct: 0
+        uncovered_acs: ["AC-01", "AC-02"]
+        exit_code: 1
+        json_byte_identical_across_orderings: true
+      references_constraints: ["C-33"]
+      priority: critical
+
+    - id: AC-40
+      description: "A pair carrying one `passed` entry and one entry whose status is `ok` resolves as not passed, so under `--strict` the criterion is uncovered and the run exits non-zero. A rank table that yields a zero value for an unrecognized key resolves this pair as passed and leaves the criterion covered, which is the trap this criterion exists to catch."
+      inputs:
+        results: '{"results":[{"spec_id":"demo-spec","ac_id":"AC-01","status":"passed"},{"spec_id":"demo-spec","ac_id":"AC-01","status":"ok"}]}'
+        annotated_acs: "demo-spec: AC-01"
+        command: "specter coverage --strict --json"
+      expected_output:
+        passed_ac01: false
+        uncovered_acs: ["AC-01"]
+        invalid_status_warnings: '[{"status":"ok","count":1}]'
+        exit_code: "non-zero"
+      references_constraints: ["C-33"]
+      priority: critical
+
+    - id: AC-41
+      description: "The C-07 Tier 1 pass-rate path resolves the same way, so the fix is not confined to `--strict`. Under `settings.strictness: annotation`, a Tier 1 spec with two annotated criteria, each carrying one `passed: true` and one `passed: false` back-compat entry, reports 0% coverage in both row orders. Before this change the two orders reported 0% and 100%."
+      inputs:
+        manifest: "settings.strictness: annotation"
+        spec: "tier 1, AC-01 and AC-02, both annotated"
+        results_a: '{"results":[{"spec_id":"demo-spec","ac_id":"AC-01","passed":false},{"spec_id":"demo-spec","ac_id":"AC-01","passed":true},{"spec_id":"demo-spec","ac_id":"AC-02","passed":false},{"spec_id":"demo-spec","ac_id":"AC-02","passed":true}]}'
+        results_b: "the same four entries with both `passed: true` rows first"
+      expected_output:
+        coverage_pct: 0
+        covered_acs: []
+        identical_across_orderings: true
+      references_constraints: ["C-33", "C-07"]
+      priority: critical
+
+    - id: AC-42
+      description: "Zero tolerance counts criteria, not entries. A results file of five entries covering three annotated criteria, where AC-01 carries failed, failed, errored, AC-02 carries skipped, and AC-03 carries passed, makes `specter coverage --strictness zero-tolerance` print `2 annotated AC(s) did not pass` and exit 2. Writing the same facts as three entries, one per pair, prints the same sentence. Before this change the five-entry file printed 4."
+      inputs:
+        results: '{"results":[{"spec_id":"demo-spec","ac_id":"AC-01","status":"failed"},{"spec_id":"demo-spec","ac_id":"AC-01","status":"failed"},{"spec_id":"demo-spec","ac_id":"AC-01","status":"errored"},{"spec_id":"demo-spec","ac_id":"AC-02","status":"skipped"},{"spec_id":"demo-spec","ac_id":"AC-03","status":"passed"}]}'
+        annotated_acs: "demo-spec: AC-01, AC-02, AC-03"
+        command: "specter coverage --strictness zero-tolerance"
+      expected_output:
+        stderr_contains: "2 annotated AC(s) did not pass"
+        exit_code: 2
+        count_identical_for_deduplicated_file: true
+      references_constraints: ["C-34"]
+      priority: critical
+
+    - id: AC-43
+      description: "InvalidStatuses keeps counting entries. Three entries for the single pair demo-spec/AC-01, all carrying status `pass`, produce one stderr warning reading `3 entries with status=\"pass\"` and one JSON warning of count 3. Deduplicating this count by pair would report 1 and contradict the C-30 wording, so this criterion fails a fix that applies the C-34 dedupe too widely."
+      inputs:
+        results: '{"results":[{"spec_id":"demo-spec","ac_id":"AC-01","status":"pass"},{"spec_id":"demo-spec","ac_id":"AC-01","status":"pass"},{"spec_id":"demo-spec","ac_id":"AC-01","status":"pass"}]}'
+      expected_output:
+        stderr_contains: '3 entries with status="pass"'
+        invalid_status_warnings: '[{"status":"pass","count":3}]'
+      references_constraints: ["C-34", "C-30"]
+      priority: high
+
+    - id: AC-44
+      description: "A spec with 2 of 3 criteria covered reads the same on all three surfaces. `coverage --json` reports coverage_pct 66.7, the coverage table prints `66%` in the Coverage column, and `specter explain` prints `Coverage: 66% (2/3 ACs)`. Before this change the three surfaces read 66.6, 67, and 66."
+      inputs:
+        spec: "3 criteria declared, AC-01 and AC-02 annotated, AC-03 not"
+      expected_output:
+        coverage_pct: 66.7
+        table_coverage_cell: "66%"
+        explain_line_contains: "Coverage: 66% (2/3 ACs)"
+      references_constraints: ["C-35"]
+      priority: critical
+
+    - id: AC-45
+      description: "On that same 2-of-3 workspace, `coverage_threshold: 66` passes and `coverage_threshold: 67` fails, so the integer the table printed is an integer that passes. Before this change the table printed 67 and 67 failed."
+      inputs:
+        workspace: "one spec, 3 criteria, 2 annotated"
+        case_a: "coverage_threshold: 66"
+        case_b: "coverage_threshold: 67"
+      expected_output:
+        case_a_passes_threshold: true
+        case_a_exit_code: 0
+        case_b_passes_threshold: false
+        case_b_exit_code: 1
+      references_constraints: ["C-35"]
+      priority: critical
+
+    - id: AC-46
+      description: "FormatCoveragePct floors and does not round. A spec with 7 of 9 criteria covered reports coverage_pct 77.8 and prints `77%` in the coverage table, where a formatter built on Go's `%.0f` prints 78%. A spec with 5 of 8 criteria covered reports 62.5 and prints `62%`, which fixes the tie direction against a round-half-up formatter."
+      inputs:
+        case_a: "covered 7, total 9"
+        case_b: "covered 5, total 8"
+      expected_output:
+        case_a_pct: 77.8
+        case_a_formatted: "77%"
+        case_b_pct: 62.5
+        case_b_formatted: "62%"
+      references_constraints: ["C-35"]
+      priority: high
+
+    - id: AC-47
+      description: "CoveragePercent never reports 100 for an incomplete spec, and never divides by zero. CoveragePercent(2999, 3000) returns 99.9 rather than 100.0 and formats as `99%`, while CoveragePercent(3000, 3000) returns 100.0 and formats as `100%`. A Tier 1 spec with one uncovered criterion therefore fails its threshold of 100 however many criteria it declares. CoveragePercent(0, 0) returns 0, not NaN."
+      inputs:
+        case_incomplete: "covered 2999, total 3000"
+        case_complete: "covered 3000, total 3000"
+        case_empty: "covered 0, total 0"
+      expected_output:
+        incomplete_pct: 99.9
+        incomplete_formatted: "99%"
+        complete_pct: 100.0
+        complete_formatted: "100%"
+        empty_pct: 0
+      references_constraints: ["C-35"]
+      priority: high
+
+    - id: AC-48
+      description: "The C-16 summary header takes the floor of the mean of the entries' coverage_pct values, so it never disagrees with the column below it. A report of one spec at 66.7 reads `Spec Coverage Report — 1 specs · 66% avg coverage` above a table cell of `66%`, where before this change the header rounded and read 67%. A report of two specs, one at 66.7 and one at 100, has a mean of 83.35 and reads `Spec Coverage Report — 2 specs · 83% avg coverage`. Both values are unchanged by the exact-mean rule of C-35(e), which moves only the cases where a float sum lands below the true mean; AC-59 covers one of those."
+      inputs:
+        case_single: "1 spec, 2 of 3 criteria covered"
+        case_multiple: "2 specs, coverage_pct 66.7 and 100"
+      expected_output:
+        single_header_line: "Spec Coverage Report — 1 specs · 66% avg coverage"
+        single_table_cell: "66%"
+        multiple_header_line: "Spec Coverage Report — 2 specs · 83% avg coverage"
+      references_constraints: ["C-35", "C-16"]
+      priority: medium
+
+    - id: AC-49
+      description: "A Tier 1 spec declaring `coverage_threshold: 0` with 0 of 2 criteria covered passes. `coverage --json` reports threshold 0 and passes_threshold true, and the run exits 0. Before this change the same spec reported threshold 100 and failed."
+      inputs:
+        spec: "tier 1, coverage_threshold: 0, 2 criteria, none annotated"
+      expected_output:
+        threshold: 0
+        coverage_pct: 0
+        passes_threshold: true
+        exit_code: 0
+      references_constraints: ["C-36"]
+      priority: critical
+
+    - id: AC-50
+      description: "A Tier 1 spec that omits coverage_threshold with 2 of 3 criteria covered still reports threshold 100 and passes_threshold false. A fix that treats every zero-valued field as a declared override would report 0 here and fail this criterion."
+      inputs:
+        spec: "tier 1, no coverage_threshold field, 3 criteria, 2 annotated"
+      expected_output:
+        threshold: 100
+        coverage_pct: 66.7
+        passes_threshold: false
+      references_constraints: ["C-36"]
+      priority: critical
+
+    - id: AC-51
+      description: "`settings.coverage.tier2: 0` in specter.yaml gives a Tier 2 spec an effective threshold of 0, so a spec with 2 of 3 criteria covered passes and `coverage --json` reports threshold 0. Before this change the manifest value of 0 fell through to the built-in default and the report read threshold 80."
+      inputs:
+        manifest: "settings.coverage.tier2: 0"
+        spec: "tier 2, no coverage_threshold field, 3 criteria, 2 annotated"
+      expected_output:
+        threshold: 0
+        passes_threshold: true
+        exit_code: 0
+      references_constraints: ["C-36"]
+      priority: high
+
+    - id: AC-52
+      description: "Precedence holds when both override layers are present in one run. With `settings.coverage.tier2: 40` in the manifest, a Tier 2 spec declaring `coverage_threshold: 0` reports threshold 0 and a second Tier 2 spec declaring no override reports threshold 40. Both entries appear in the same report. Before this change the first spec reported 40."
+      inputs:
+        manifest: "settings.coverage.tier2: 40"
+        spec_a: "tier 2, coverage_threshold: 0, 3 criteria, 2 annotated"
+        spec_b: "tier 2, no coverage_threshold field, 3 criteria, 2 annotated"
+      expected_output:
+        spec_a_threshold: 0
+        spec_a_passes_threshold: true
+        spec_b_threshold: 40
+        spec_b_passes_threshold: true
+        entries_count: 2
+      references_constraints: ["C-36"]
+      priority: high
+
+    - id: AC-53
+      description: "A spec covered by eight test files named a_test.go through h_test.go emits `test_files` in ascending path order on every run, `tests/a_test.go` first and `tests/h_test.go` last. Five consecutive runs emit that same array."
+      inputs:
+        workspace: "one spec, AC-01 annotated in tests/a_test.go through tests/h_test.go"
+        command: "specter coverage --json --strictness annotation"
+      expected_output:
+        test_files: ["tests/a_test.go", "tests/b_test.go", "tests/c_test.go", "tests/d_test.go", "tests/e_test.go", "tests/f_test.go", "tests/g_test.go", "tests/h_test.go"]
+        identical_across_five_runs: true
+      references_constraints: ["C-37"]
+      priority: high
+
+    - id: AC-54
+      description: "A workspace of six schema-invalid specs, three missing `objective` and three declaring `tier: 9`, all six declaring empty constraints and criteria lists, emits parse_error_patterns in one fixed order over twenty consecutive runs. Ordering by count alone leaves the two tied pairs in map order, which varied run to run before this change."
+      inputs:
+        workspace: "specs/bado1..3.spec.yaml missing objective, specs/badc1..3.spec.yaml with tier: 9, all 6 with empty constraints and acceptance_criteria"
+        command: "specter coverage --json --strictness annotation"
+      expected_output:
+        parse_error_patterns: '[{"type":"minItems","path":"spec.acceptance_criteria","count":6},{"type":"minItems","path":"spec.constraints","count":6},{"type":"required","path":"spec","count":3},{"type":"validation","path":"spec.tier","count":3}]'
+        first_pattern_files: ["specs/badc1.spec.yaml", "specs/badc2.spec.yaml", "specs/badc3.spec.yaml", "specs/bado1.spec.yaml", "specs/bado2.spec.yaml", "specs/bado3.spec.yaml"]
+        identical_across_twenty_runs: true
+      references_constraints: ["C-37"]
+      priority: high
+
+    - id: AC-55
+      description: "Five consecutive `specter coverage --json --strictness annotation` runs on one unchanged workspace holding both the eight annotated test files of AC-53 and the six invalid specs of AC-54 write five byte-identical documents. The assertion compares the SHA-256 of stdout across the five runs. Before this change five runs produced five different hashes."
+      inputs:
+        workspace: "one valid spec covered by 8 test files, plus 6 schema-invalid specs"
+        runs: 5
+      expected_output:
+        distinct_stdout_hashes: 1
+      references_constraints: ["C-37"]
+      priority: critical
+
+    - id: AC-56
+      description: "`specter explain` prints the integer the coverage table prints because it calls the shared formatter, not because its own arithmetic happens to agree. On a workspace of two Tier 1 specs, one with 17 of 21 criteria annotated and one with 7 of 9, `specter explain wide-spec` prints `Coverage: 81% (17/21 ACs)` and `specter explain nine-spec` prints `Coverage: 77% (7/9 ACs)`, matching table cells of `81%` and `77%`. Two ratios are used because each one kills a different wrong formatter. 17 of 21 is 80.952, which stores as 81.0 and floors to 81, while the integer division this surface used before 1.16.0 gives 80; a formatter that rounds the stored value also gives 81 here and is not caught. 7 of 9 is 77.777, which stores as 77.8 and floors to 77, while a formatter rounding the stored value gives 78; integer division also gives 77 here and is not caught. AC-44's 2 of 3 cannot catch the integer division, because it and the floor of the rounded value both print 66 there, which is how this surface shipped unpinned. The workspace has no `.specter-results.json` and no `specter.yaml`, so `explain` and `coverage --strictness annotation` read the same structural input: this criterion pins which formatter runs, not which input it reads."
+      inputs:
+        workspace: "specs/wide.spec.yaml (tier 1, 21 criteria, AC-01 through AC-17 annotated) and specs/nine.spec.yaml (tier 1, 9 criteria, AC-01 through AC-07 annotated), each annotated in its own test file; no specter.yaml and no .specter-results.json"
+        commands: ["specter explain wide-spec", "specter explain nine-spec", "specter coverage --strictness annotation"]
+      expected_output:
+        wide_explain_line_contains: "Coverage: 81% (17/21 ACs)"
+        nine_explain_line_contains: "Coverage: 77% (7/9 ACs)"
+        wide_table_cell: "81%"
+        nine_table_cell: "77%"
+        explain_exit_code: 0
+        coverage_exit_code: 1
+      references_constraints: ["C-35"]
+      priority: critical
+
+    - id: AC-57
+      description: "The per-spec line `specter doctor` prints beneath a failing coverage check uses the shared formatter. On the AC-56 workspace, `specter doctor` prints `    nine-spec: 77% coverage (T1 requires 100%)` and `    wide-spec: 81% coverage (T1 requires 100%)`, both indented four spaces, and exits 1. The two ratios do the same two jobs here as in AC-56: the `%.0f` formatter this line used before 1.16.0 prints 78% for nine-spec, and a formatter dividing covered by total itself prints 80% for wide-spec, so one fixture kills both. No ratio in AC-44 reaches this line at all, because AC-44 does not run `doctor`. The workspace carries no `specter.yaml` and no `.specter-results.json`, so this criterion pins the formatter only. It makes no claim about which strictness `doctor` applies (`bugs/SP-SP-038`) and none about doctor's manifest health line, which stays with spec-doctor C-18."
+      inputs:
+        workspace: "the AC-56 workspace"
+        command: "specter doctor"
+      expected_output:
+        stdout_contains: ["    nine-spec: 77% coverage (T1 requires 100%)", "    wide-spec: 81% coverage (T1 requires 100%)"]
+        exit_code: 1
+      references_constraints: ["C-35"]
+      priority: high
+
+    - id: AC-58
+      description: "The approval-gate demotion emits a stored value the rest of the report could have produced. A Tier 3 spec declares three criteria, all three annotated and all three carrying a passing results entry, and AC-02 and AC-03 carry `approval_gate: true` with no `approval_date`. `specter coverage --json --strictness zero-tolerance` demotes both gated criteria, emits `coverage_pct` of exactly 33.3 for that entry, and exits 3. The ratio is 1 of 3 because its exact quotient is not representable in float64: a recompute doing its own division emits 33.333333333333336, which C-35(a) forbids. Nothing else reads that number, because the existing approval-gate criteria AC-29 and AC-34 assert exit codes and message text only."
+      inputs:
+        spec: "tier 3, three criteria, AC-02 and AC-03 declaring approval_gate: true with approval_date unset, all three annotated in one test file"
+        results_file: '{"results":[{"spec_id":"gate-spec","ac_id":"AC-01","status":"passed"},{"spec_id":"gate-spec","ac_id":"AC-02","status":"passed"},{"spec_id":"gate-spec","ac_id":"AC-03","status":"passed"}]}'
+        command: "specter coverage --json --strictness zero-tolerance"
+      expected_output:
+        coverage_pct: 33.3
+        serialized_field: '"coverage_pct": 33.3'
+        covered_acs: ["AC-01"]
+        uncovered_acs: ["AC-02", "AC-03"]
+        threshold: 50
+        passes_threshold: false
+        exit_code: 3
+      references_constraints: ["C-35", "C-26"]
+      priority: critical
+
+    - id: AC-59
+      description: "The summary header prints the floor of the exact mean, not the floor of a float sum. Three Tier 3 specs, each declaring `coverage_threshold: 30`, are covered 1 of 3, 4 of 9 and 1 of 3, so they store 33.3, 44.4 and 33.3. The exact mean is 37.0, and `specter coverage --strictness annotation` prints `Spec Coverage Report — 3 specs · 37% avg coverage` above a table whose alpha-spec and gamma-spec cells read `33%` and whose beta-spec cell reads `44%`, exiting 0. The row order among the three is not part of this claim, because all three sit in one sort bucket at one tier and C-15 does not order within that. Those ratios are chosen because accumulating the three values left to right in float64 gives 110.99999999999999, whose third reads 36.99999999999999 and floors to 36, which is what the 1.16.0 header printed. It is the smallest fixture of its kind: no three specs declaring fewer than fifteen criteria in total reproduce the error. The reported case, three specs at 2 of 49, 5 of 41 and 7 of 51 storing 4.1, 12.2 and 13.7 with an exact mean of 10.0 and a printed header of 9, is the same defect at 141 criteria. A header that rounds its mean also prints 37 here, so this criterion does not decide between rounding and an exact floor; AC-48 does, where a rounded mean prints 67 above a cell of 66."
+      inputs:
+        spec_a: "alpha-spec: tier 3, coverage_threshold: 30, 3 criteria, AC-01 annotated"
+        spec_b: "beta-spec: tier 3, coverage_threshold: 30, 9 criteria, AC-01 through AC-04 annotated"
+        spec_c: "gamma-spec: tier 3, coverage_threshold: 30, 3 criteria, AC-01 annotated"
+        command: "specter coverage --strictness annotation"
+      expected_output:
+        header_line: "Spec Coverage Report — 3 specs · 37% avg coverage"
+        tier_line: "  Tier 3: 3/3 passing (100%)"
+        alpha_spec_cell: "33%"
+        beta_spec_cell: "44%"
+        gamma_spec_cell: "33%"
+        exit_code: 0
+      references_constraints: ["C-35", "C-16"]
+      priority: high
+
+
+    - id: AC-60
+      description: "Rule 1 fails a criterion with no test, and the tier does not excuse it. Workspace: a Tier 3 spec with two acceptance criteria, threshold 50, where AC-01 carries a source annotation with a passing runner-visible result and AC-02 carries no annotation anywhere. A results file exists. With `settings.annotation.permissive: false` declared, `specter coverage` reports AC-02 as a rule-1 violation at error severity and exits 2. The same workspace under `settings.strictness: annotation` reports 1 of 2 covered, 50 percent, at or above the Tier 3 threshold, and exits 0. That contrast is the criterion: the tier arithmetic is unchanged and the verdict inverts, which is what part (b) requires."
+      inputs:
+        spec: "tier 3, two criteria, threshold 50"
+        ac_01: "source annotation plus a passing result"
+        ac_02: "no annotation anywhere"
+        manifest: "settings.annotation.permissive: false"
+      expected_output:
+        rule1_violations_on_no_test_line: ["AC-02"]
+        severity: "error"
+        exit_code: 2
+        same_workspace_under_strictness_annotation_exit: 0
+      references_constraints: ["C-38"]
+      priority: critical
+
+    - id: AC-61
+      description: "permissive decides rule 1 severity and nothing else. The AC-60 workspace, unchanged byte for byte except `permissive: true`, still reports AC-02 on the `no test:` line and exits 0. The pair is what pins part (c): the violation is still found and still reported as a rule-1 violation, so `permissive` is a severity switch rather than a scope switch, and an implementation that suppresses it under permissive fails. The assertion names the `no test:` line rather than the bare id, because under the ladder AC-02 already appears on the `uncovered:` line, so asserting the id alone would pass without the model being implemented at all."
+      inputs:
+        workspace: "identical to AC-60"
+        manifest: "settings.annotation.permissive: true"
+      expected_output:
+        rule1_violations_on_no_test_line: ["AC-02"]
+        severity: "warning"
+        exit_code: 0
+        violation_still_reported_as_rule1: true
+      references_constraints: ["C-38"]
+      priority: critical
+
+    - id: AC-62
+      description: "Rule 3 is a separate failure with a separate code. Workspace: a Tier 1 spec, threshold 100, with two criteria that BOTH carry source annotations, where AC-01 has a passing result and AC-02 has a failing one. So there is no rule-1 violation: every criterion has a test. With `settings.annotation.permissive: false`, `specter coverage` exits 1 and not 2, because the failure is a pass rate below the threshold rather than a missing test. An implementation that routes both failures to one code fails this criterion, which is the distinction part (e) exists to draw."
+      inputs:
+        spec: "tier 1, two criteria, threshold 100"
+        ac_01: "annotation plus a passing result"
+        ac_02: "annotation plus a failing result"
+        manifest: "settings.annotation.permissive: false"
+      expected_output:
+        rule1_violations: []
+        exit_code: 1
+        not_exit_code: 2
+      references_constraints: ["C-38"]
+      priority: critical
+
+    - id: AC-63
+      description: "A declared annotation block requires a results file. On the AC-60 workspace with `.specter-results.json` deleted and `settings.annotation.permissive: false` declared, `specter coverage` fails rather than falling back to a structural check, and its message names the missing file. Part (f) is what this pins, and the reason is stated as a negative: without it, adding an `annotation` block to a manifest whose effective strictness was `threshold` would drop the results requirement, so a key that reads as stricter would produce a weaker gate."
+      inputs:
+        workspace: "AC-60's workspace with .specter-results.json removed"
+        manifest: "settings.annotation.permissive: false"
+      expected_output:
+        exits_nonzero: true
+        message_names_results_file: true
+        falls_back_to_structural: false
+      references_constraints: ["C-38"]
+      priority: high
+    - id: AC-64
+      description: "A zero-tolerance workspace whose spec carries a gate-violating criterion, a plainly covered criterion, and a criterion with no annotation reports the gate-violating one as uncovered in declaration order, not appended after the others."
+      inputs:
+        spec: "AC-01 approval_gate with no date and a passing result, AC-02 annotated and passing, AC-03 unannotated"
+        command: "coverage --strictness zero-tolerance --json"
+      expected_output:
+        covered_acs: ["AC-02"]
+        uncovered_acs: ["AC-01", "AC-03"]
+      references_constraints: ["C-39"]
+      priority: high
+
+    - id: AC-65
+      description: "An entry whose only covered criterion is demoted reports `covered_acs` as an empty array. It must never marshal as null, because the JSON contract declares it a non-nullable array and a consumer iterating it would throw."
+      inputs:
+        spec: "one criterion, annotated, passing result, approval_gate with no date"
+        command: "coverage --strictness zero-tolerance --json"
+      expected_output:
+        covered_acs_is_empty_array: true
+        covered_acs_is_null: false
+      references_constraints: ["C-39", "C-14"]
+      priority: high
+
+    - id: AC-66
+      description: "`coverage` and `sync` classify every criterion identically for the same workspace, because both read one classification and neither carries its own. Asserted on a workspace exercising the gate demotion, a failing result, and an unannotated criterion at once."
+      inputs:
+        commands: ["coverage --strictness zero-tolerance --json", "sync --strictness zero-tolerance --json"]
+      expected_output:
+        per_criterion_verdicts_identical: true
+      references_constraints: ["C-39"]
+      priority: high
+
+    - id: AC-67
+      description: "The approval gate fires under the annotation model, and `permissive` does not soften it. A workspace declaring `settings.annotation` with one acceptance criterion carrying `approval_gate: true` and no `approval_date` exits 3 under `specter coverage`, with `permissive: true` and with `permissive: false` alike. The same workspace under `settings.strictness: zero-tolerance` also exits 3, so the amendment adds a path rather than moving one. A workspace carrying both an unmet approval gate and a criterion with no test exits 2 under `permissive: false`, because rule 1 is evaluated first per C-40(d), and names BOTH violations on stderr in that one run per C-40(e). Asserting the code alone would be satisfied by an implementation that exits inside the rule-1 branch and never reaches the gate, which is what every surface does today. Measured before the amendment on `release/v0.15.0`, on two workspaces identical but for the manifest: the ladder exited 3 with its error line, and the annotation model exited 0 with nothing on stderr. Every case is asserted under `--json` as well as in text mode, per C-40(c), and asserts the cause line and not only the integer, because the defect measured was a silent zero and a silent 3 would satisfy a code-only assertion."
+      inputs:
+        annotation_permissive_true: "settings.annotation.permissive: true, one AC with approval_gate: true and no approval_date"
+        annotation_permissive_false: "the same workspace with permissive: false"
+        ladder: "the same workspace under settings.strictness: zero-tolerance"
+        both_violations: "permissive: false, one unmet approval gate and one criterion with no test"
+        both_violations_stderr: "the run's stderr, which must name both"
+      expected_output:
+        annotation_permissive_true_exit_code: 3
+        annotation_permissive_false_exit_code: 3
+        ladder_exit_code: 3
+        both_violations_exit_code: 2
+        both_violations_name_rule_1_on_stderr: true
+        both_violations_name_the_approval_gate_on_stderr: true
+        single_gate_names_the_cause_on_stderr: true
+        coverage_json_exit_code: 3
+        coverage_json_names_the_cause_on_stderr: true
+      references_constraints: ["C-40"]
+      priority: critical
+
+    - id: AC-68
+      description: "The stream label is optional and back-compatible. A results file whose entries carry no `stream` field produces exactly the report it produces today, field for field. A file whose entries all carry `stream: default` produces the same report as that file with the field removed, because missing means `default`. A file split into two labeled streams, holding the same facts, produces the same coverage verdict as the unsplit file, per C-41: the worst-status resolution of C-33 already spans streams. The split file and the unsplit file are compared field for field rather than by percentage, because a percentage can agree by accident."
+      inputs:
+        legacy_file: "entries with no stream field"
+        explicit_default: "the same entries carrying stream: default"
+        split_file: "the same facts split across two labeled streams"
+      expected_output:
+        legacy_matches_today: true
+        explicit_default_matches_legacy: true
+        split_matches_unsplit_field_for_field: true
+      references_constraints: ["C-41"]
+      priority: critical
+
+    - id: AC-69
+      description: "A stream that ran and produced nothing is distinguishable from one that never ran. A results file declaring a stream in `streams` with a scanned count above zero and an extracted count of zero reports that stream as present and empty. A results file that never names the stream reports it as absent. The two MUST NOT resolve to the same state, because they are a stream that found nothing and a pipeline that did not execute, and reading the second as the first is the failure direction SSRB-103 section 4 names. The `streams` array is emitted in ascending name order, and two runs over an unchanged workspace produce byte-identical arrays."
+      inputs:
+        ran_and_empty: "streams: [{name: js, scanned: 12, extracted: 0}], no entries for js"
+        never_ran: "streams omits js entirely"
+        two_runs: "the same workspace, twice"
+      expected_output:
+        ran_and_empty_is_visible: true
+        never_ran_is_distinguishable_from_ran_and_empty: true
+        streams_array_is_byte_identical_across_runs: true
+      references_constraints: ["C-42"]
+      priority: critical
+
+    - id: AC-70
+      description: "The covered rule, in both directions. A criterion with one entry reporting `passed` in one stream and one entry reporting `failed` in another is NOT covered, because every stream holding an entry must report passed. A criterion with entries reporting `passed` in two streams IS covered. A criterion that no stream reported on is NOT covered, and this is the case that a rule written without C-43's first clause gets wrong: it would be vacuously covered over an empty set. Asserted directly rather than through a percentage, because the vacuous-truth failure changes a verdict and can leave a percentage looking plausible."
+      inputs:
+        mixed: "passed in stream a, failed in stream b"
+        both_passed: "passed in stream a, passed in stream b"
+        unreported: "declared criterion, no entry in any stream"
+      expected_output:
+        mixed_is_covered: false
+        both_passed_is_covered: true
+        unreported_is_covered: false
+      references_constraints: ["C-43"]
+      priority: critical
+
+    - id: AC-71
+      description: "The streams object reports packages that produced zero test events. A results file whose stream declares that count carries it through a parse and a marshal, and the count is independent of the extracted count: a stream can extract results and still hold packages that emitted nothing. A stream declaring zero for it and a stream omitting it are the same state, because the count is a number and zero is its absence. The field is named for what was observed and the criterion says so: the assertion is on the count reaching the artifact, not on any claim about why a package was silent."
+      inputs:
+        stream_with_silent_packages: "streams: [{name: go, scanned: 40, extracted: 3, zero_test_event_packages: 2}]"
+        stream_with_none: "the same stream with the count at zero"
+      expected_output:
+        count_survives_the_round_trip: true
+        count_is_independent_of_extracted: true
+        zero_and_omitted_are_the_same_state: true
+      references_constraints: ["C-42"]
+      priority: high
+
+    - id: AC-72
+      description: "Stream validation refuses an inconsistent artifact and does so identically on every command that reads it. An entry naming a non-default stream absent from the block is refused, while an entry belonging to `default` is accepted whether it carries no label or names `default` outright. The exemption is from declaration and from nothing else: a block that declares `default` with an `extracted` count below the number of default entries is refused exactly as any other stream would be. Without that case an implementation could skip validation for `default` wholesale and pass. A block declaring one name twice is refused, and so is a block declaring an empty name. A stream whose `extracted` count is below the number of entries carrying its label is refused, while one whose count is above is accepted, because collapse and merge both legitimately leave extraction higher than surviving entries. Each refusal names the stream, and an index in a refusal points into the artifact as written rather than into the array after C-42's sort, asserted on a fixture whose offending row is not already at its normalized position. A refusal standing alone exits in the evidence band; a refusal beside a gate that shipped earlier leaves that gate's code in place and is still reported. The threshold case is the one that matters most to assert: the tier threshold is the last shipped gate, so a code inserted anywhere before it passes every other coexistence case here. Whichever code is chosen, it is the same on `coverage`, `coverage --json`, `sync` and `sync --json` alike, per `spec-sync` C-11. A file with no `streams` key at all is untouched by every rule here, because there is nothing to be inconsistent with and C-14 promises such a file behaves as it did. A file carrying `streams: []` is not that file: the key is present and declares nothing, so a labeled entry beside it is undeclared and refused. Under `--json` the refusal appears in the emitted report rather than replacing it, per C-10."
+      inputs:
+        undeclared_stream: "an entry labeled js with no js in the streams block"
+        duplicate_name: "streams declaring go twice"
+        empty_name: "streams declaring an entry whose name is empty"
+        extracted_below_entries: "streams declaring go extracted 1 with two go entries"
+        negative_count_scanned: "streams declaring go with scanned -1"
+        negative_count_extracted: "streams declaring go with extracted -1"
+        negative_count_zero_test_events: "streams declaring go with zero_test_event_packages -1"
+        negative_count_several_fields: "one stream row with all three counts negative"
+        extracted_above_entries: "streams declaring go extracted 5 with two go entries"
+        no_block: "a legacy file with no streams block"
+        empty_block_with_labels: "streams: [] beside an entry labeled go"
+        null_block_with_labels: "streams: null beside an entry labeled go, which the JSON decoder gives the reader as the same nil slice an absent key does"
+        unlabeled_beside_declared: "a block declaring go only, with go entries and unlabeled entries beside them"
+        explicit_default_undeclared: "an entry naming default with no default in the block"
+        default_declared_and_undercounted: "streams declaring default extracted 1 beside two default entries"
+        multiple_violations: "one artifact reaching every tie-breaker: entries naming undeclared stream alpha at result positions 0 and 3, an entry naming undeclared stream zeta at result position 1, and empty-name rows at stream positions 1 and 2. Same-kind repeats on purpose, because violations of differing kinds sort on kind alone and never compare the later keys"
+        expected_sequence: "empty_stream_name/stream_index 1, empty_stream_name/stream_index 2, undeclared_stream/alpha/result_index 0, undeclared_stream/alpha/result_index 3, undeclared_stream/zeta/result_index 1. Every element carries its one coordinate, zeta included, and the sequence shows stream ordering beating result position: zeta sits last though its entry precedes alpha's second"
+        coordinate_at_zero: "the alpha entry at result position 0, whose coordinate is the value an omitempty encoder drops"
+        unsorted_block: "an artifact whose offending row sits at a position the ascending-by-name sort moves it away from"
+        alongside_rule_1: "an inconsistent artifact in a workspace that also has a criterion with no test"
+        alongside_approval_gate: "an inconsistent artifact in a workspace that also has an unmet approval gate"
+        alongside_zero_tolerance: "an inconsistent artifact in a workspace where an annotated criterion did not pass under zero-tolerance"
+        alongside_threshold: "an inconsistent artifact in a workspace below its tier threshold and failing nothing else"
+        alongside_permissive_warning: "an inconsistent artifact beside a rule-1 warning under permissive true"
+      expected_output:
+        undeclared_stream_refused: true
+        duplicate_name_refused: true
+        empty_name_refused: true
+        extracted_below_entries_refused: true
+        negative_count_refused_for_each_of_the_three_fields: true
+        several_negative_fields_produce_one_violation: true
+        the_message_names_every_negative_field_in_fixed_order: true
+        negative_extracted_suppresses_extracted_below_entries: true
+        extracted_above_entries_accepted: true
+        no_block_accepted: true
+        empty_block_with_labels_refused: true
+        null_block_with_labels_refused: true
+        unlabeled_beside_declared_accepted: true
+        explicit_default_undeclared_accepted: true
+        default_declared_and_undercounted_refused: true
+        refusal_names_the_stream: true
+        empty_name_refusal_gives_the_array_position: true
+        json_refusal_still_emits_a_document: true
+        json_document_carries_results_validation_errors: true
+        every_violation_is_collected_not_the_first: true
+        order_is_deterministic_across_runs: true
+        no_two_violations_share_a_full_sort_key: true
+        results_are_counted_once_not_per_stream: true
+        order_matches_the_exact_sequence_c44_states: true
+        ordered_tuples_match_expected_sequence_literally: true
+        stream_tie_breaker_is_exercised_by_same_kind_violations: true
+        result_index_tie_breaker_is_exercised: true
+        stream_index_tie_breaker_is_exercised: true
+        a_zero_coordinate_is_present_in_the_document: true
+        index_points_into_the_file_not_the_sorted_array: true
+        standalone_violation_exits_in_the_evidence_band: true
+        alongside_rule_1_keeps_code_2: true
+        alongside_approval_gate_keeps_code_3: true
+        alongside_zero_tolerance_keeps_code_2: true
+        alongside_threshold_keeps_code_1: true
+        alongside_permissive_warning_exits_in_the_evidence_band: true
+        coexisting_shipped_gate_still_reports_the_stream_error: true
+        each_error_carries_kind_stream_message_and_one_coordinate: true
+        same_code_on_every_surface: true
+      references_constraints: ["C-44"]
+      priority: critical
+
   changelog:
+    - version: "1.26.0"
+      date: "2026-08-30"
+      author: "specter-team"
+      type: minor
+      description: "C-10 said `coverage --json` MUST always emit a document. The word was read as covering the parse case it names, and seven other early returns in coverageCmd write nothing: a rejected manifest, an invalid --strictness value, --scope without --strict, --strict against annotation strictness, an unknown --scope domain, zero-tolerance with no annotated test files, and an unmet results precondition. C-10 now names the boundary that makes always checkable: once Cobra has entered RunE, every JSON-mode return emits a document, and what Cobra itself rejects is outside the promise because the command never ran. The document gains stop_reason, distinct from parse_errors, because reporting a rejected manifest as a spec that failed to parse is a different fault with a different fix. The wire shape is additive by decision and not by inference: entries and summary stay required and carry an empty list and a zeroed summary on a refusal, as uncomputed placeholders. The discriminated union was considered and rejected as breaking for every consumer at once. The cost of that choice is stated rather than left to be discovered: a zeroed summary beside an empty entries list is exactly what a clean empty workspace looks like, so spec-vscode C-33 carries the consumer obligation to read stop_reason first. AC-74 binds all seven refusals independently, a control, and the four gates, each asserting its own cause before its exit code so an earlier gate cannot stand in for a later one. The wire type is fixed here rather than left open: stop_reason is an object with a non-empty kind and message, omitted when the run reached the report, with kind one of manifest_error, invalid_flag, unknown_scope or unmet_precondition. A bare string was rejected, because collapsing the machine-readable half into the human-readable one forces every consumer to parse prose to decide what happened. Saying only structured and non-empty permitted two conforming implementations no consumer could read at once. AC-74 previously said a refusal must not fabricate entries or a summary, which contradicted the required placeholder shape rather than describing it; it now states that entries [] and the zero summary are placeholders whose meaning is guarded by stop_reason. Additive per the classifier: specter diff reports [additive]."
+
+    - version: "1.25.0"
+      date: "2026-08-26"
+      author: "specter-team"
+      type: minor
+      description: "C-17 states what `--failing` may change. It described the table and the empty-table line and then said nothing about exit codes, and AC-17 closed with `Exit code respects threshold, not the filter`, which is the reading the implementation took: the empty-table path carries its own threshold-only verdict and returns above the shared gates. Measured at 0e3e037: a workspace at 100 percent with an unmet approval gate under a declared annotation block exits 3 plain and 0 under the flag, and one with an inconsistent streams block exits 20 plain and 0 under the flag, both silently. The three gates that hold are the three that either fire on a spec already below 100 percent or demote one to get there, so the filter keeps a row and the early return never fires. The rule is now a property of the flag rather than a list of gates, because a list goes stale the next time a gate is added, which is how this one broke. AC-73 binds the two gates that can be skipped, a coexistence case so precedence and complete reporting survive the path, and a control so the fix cannot be a blanket refusal to return early. `bugs/SP-SP-074`."
+
+    - version: "1.24.0"
+      date: "2026-08-26"
+      author: "specter-team"
+      type: minor
+      description: "C-44 names the third artifact shape. It said presence is the key and then explained the distinction with two shapes, an absent key and an explicit empty array, which left `streams: null` unstated. Go decodes an absent key and an explicit null to the same nil slice, so an implementation reading presence off the decoded value treats a null block as legacy and validates nothing. Measured on the 3A5 implementation: `{\"streams\": null}` beside a labeled entry produced zero violations where `{\"streams\": []}` beside the same entry produced one. The rule now requires presence to be read from the document as written rather than from the decoded value, and says why: the decoder erases exactly the distinction the rule turns on. Minor rather than patch, because AC-72 gains an input and an expected output and `spec-diff` C-05 classifies that as additive. Found in review of the implementation commit, not by the criteria, which is recorded here because the criteria are what should have found it."
+
+    - version: "1.23.0"
+      date: "2026-08-26"
+      author: "specter-team"
+      type: minor
+      description: "Roadmap 3A5. C-44 states five consistency rules a `streams` block must satisfy and requires them in the shared pure builder rather than in a command, which is the point of the item: a rule wired into `coverage` alone is `bugs/done/SP-SP-058`, where `sync` returned a different verdict for the same workspace. The `extracted` rule is one-sided on purpose. Collapse within a stream per `spec-ingest` C-08, and `--merge` summing across inputs, both leave extraction legitimately higher than surviving entries, so only the lower direction is incoherent, and a two-sided rule would refuse honest files. A file with no `streams` key is untouched, because C-14 promises such a file behaves as it did; a file carrying `streams: []` is a present block declaring nothing and is not that file. `default` never requires declaration, since C-41 makes an unlabeled entry and one naming `default` the same stream, and that exemption is what lets a project adopt `--stream` one job at a time rather than across every job at once. It exempts declaration and nothing else. A refusal appears in the emitted `--json` document as a `results_validation_errors` array with a defined element shape, because asserting only that a document exists is satisfied by one that says nothing about the refusal."
+
+    - version: "1.22.0"
+      date: "2026-08-25"
+      author: "specter-team"
+      type: minor
+      description: "C-42's streams object gains a third count, packages that produced zero test events, rehomed from roadmap item 3B5 because it belongs with the metadata that makes stream absence observable. Worded as observed rather than diagnosed: a runner emitting no test event for a package may have failed to build it, may have filtered every test out, or may have been handed a package with no tests, and `ingest` cannot tell those apart from runner output alone. Calling it a build failure would be a diagnosis the artifact cannot support. AC-71 asserts it, and binds that a zero count and an omitted one are the same state rather than only the round trip. Minor, not patch. The C-42 edit alone is description-only, but AC-71 is a new criterion and `spec-diff` C-05 classifies a new AC as additive. An earlier draft read the C-42 edit and called the whole change patch, which is overriding the classifier with a reading of one half of the diff."
+    - version: "1.21.0"
+      date: "2026-08-25"
+      author: "specter-team"
+      type: minor
+      description: "Roadmap 3A1 to 3A3, the multi-stream evidence foundation, per SSRB-103. C-41 adds the optional `stream` opaque label with missing-means-default and fixes the merge key at `(spec_id, ac_id, stream)`. C-42 adds the top-level `streams` array, which is what separates a stream that ran and found nothing from one that never ran; a per-entry label cannot, because both leave zero entries. C-43 states the covered rule once for every strictness model. Additive rather than a rewrite, and that is a finding rather than a convenience: C-33 already resolves a pair across every matching entry with worst-status-wins, and two entries from two streams both match, so the multi-stream verdict IS the existing merge over criteria that have entries. That is why a split cannot move the number, and why C-21 and C-33 are untouched. What is genuinely new is the absent-entry half of C-43 and the stream metadata of C-42."
+    - version: "1.20.0"
+      date: "2026-08-25"
+      author: "specter-team"
+      type: minor
+      description: "C-40 and AC-67 state the approval gate under `settings.annotation`, per `bugs/SP-SP-071`. SSRB-104 section 7.5 decided `approval gate unmet` maps to code 3 and that the trigger survives the ladder's retirement; roadmap item 1D-b shipped that table's code-2 row and not its code-3 row. C-26 is untouched and still true, which is the point: `GoverningStrictness()` returns `threshold` for a declared annotation block and C-26 makes `approval_gate` metadata-only under `threshold`, so the code was faithful to the spec and the spec was what never covered the model. `permissive` does not govern this gate. It was introduced for rule 1, whose subject is whether evidence exists, and an unmet approval gate is a human sign-off rather than missing evidence, so letting `permissive: true` downgrade it would turn an adoption switch into a blanket bypass. C-40(c) fixes the order at rule 1 first, matching the ladder's code-2-before-code-3 precedence and keeping ascending-code order, so `coverage` and `sync` cannot diverge on a workspace carrying both. C-40(d) requires both diagnostics to be written before the exit. That is a new requirement rather than a description: today each gate prints and exits inside its own branch, so a workspace with both violations names one. It is a MUST because (c) depends on it, the case for ascending-code order being that the integer is not the whole report."
+    - version: "1.19.1"
+      date: "2026-08-23"
+      author: "specter-team"
+      type: patch
+      description: "C-35(a) named `DemoteApprovalGateViolations` as a second producer of coverage_pct. C-39 removed that pass, so the clause referenced a function that no longer exists. There is one producer now and the exception is gone. Text only."
+    - version: "1.19.0"
+      date: "2026-08-23"
+      author: "specter-team"
+      type: minor
+      description: "Add C-39/AC-64..66: the zero-tolerance approval-gate demotion is part of classifying a criterion rather than a second pass over a finished report. Roadmap item 1C. The behavior shipped as the GH #94 fix and was stated only in spec-sync C-09(b), which cited spec-coverage semantics spec-coverage never wrote down. Stating it here also pins two things the second pass got wrong: a demoted criterion was appended to the uncovered list rather than placed in declaration order, and an entry whose every covered criterion was demoted marshaled covered_acs as null (bugs/SP-SP-067)."
+    - version: "1.18.0"
+      date: "2026-08-22"
+      author: "specter-team"
+      type: minor
+      description: "Roadmap item 1D-b. C-38 applies the SSRB-104 section 1 model when settings.annotation is declared, replacing the strictness ladder for that workspace. Rule 1, every criterion must have a test, is separated from rule 3, the pass rate among criteria that do, because the single ladder could not express them as different failures. They get different exit codes per SSRB-104 section 7.5, promoted from observation to decision: 2 for a missing test, 1 for a rate below the tier. permissive decides rule 1 severity and nothing else per section 7.4, since tier routing would emit info for a Tier 3 criterion and not fail, contradicting the rule. A declared block requires a results file per section 7.9, so a key that reads as stricter cannot produce a weaker gate. AC-60 through AC-63 pin the four parts, each with the contrast that makes it falsifiable."
+    - version: "1.17.0"
+      date: "2026-08-17"
+      author: "specter-team"
+      type: minor
+      description: "v0.15 phase 1B loop-back, closing two findings against the 1.16.0 criteria. C-35 bound five percentage surfaces and 1.16.0 pinned two of them, so reverting `explain`, doctor's per-spec line or the approval-gate demotion shipped green (`bugs/SP-SP-041`). AC-56, AC-57 and AC-58 give the three a criterion each, at ratios where the wrong formatter and the right one differ: 17 of 21 separates the floor of the rounded value from integer division, 7 of 9 separates it from a rounding formatter, and 1 of 3 separates `CoveragePercent` from a recompute doing its own division. C-35 now names all five sites, and clause (a) states that every producer of `coverage_pct` calls `CoveragePercent`, the demotion recompute included. C-35(e) states the summary header's rule apart from the per-spec rule and fixes the regression 1.16.0 introduced (`bugs/SP-SP-040`): routing the header average through `FormatCoveragePct` floored a float sum, so three specs storing 4.1, 12.2 and 13.7 read 9 against an exact mean of 10.0. The header keeps the floor and gains an exact mean, computed as integer tenths, because rounding the mean would reinstate a header of 67 above a cell of 66. AC-59 pins the smallest fixture that reproduces the error and AC-48 is reworded to match, with its values unchanged."
+    - version: "1.16.0"
+      date: "2026-08-16"
+      author: "specter-team"
+      type: minor
+      description: "v0.15 phase 1B, five prerequisite defect fixes in coverage. C-33 replaces first-match results lookup with worst-status-across-matches, so row order in `.specter-results.json` stops deciding the answer; two files describing identical facts reported 0% and 100% before. C-34 counts distinct pairs in the zero-tolerance message rather than entries, and pins InvalidStatuses as entry-counting so the dedupe is not applied too widely. C-35 settles the percentage contract: `coverage_pct` rounds half up to one decimal, human-readable surfaces floor it, and the gate compares the stored value, so the integer the table prints is an integer that passes as a threshold. C-36 makes a declared threshold of 0 mean zero at both the spec and manifest layers, by presence detection, per the decision of 2026-06-10. C-37 gives every map-derived array in `coverage --json` a total order, including the count tie in parse_error_patterns that the original report missed, so the document is byte-comparable across runs."
     - version: "1.15.0"
       date: "2026-06-11"
       author: "specter-team"

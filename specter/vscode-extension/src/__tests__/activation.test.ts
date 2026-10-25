@@ -90,7 +90,7 @@ describe('[spec-vscode/AC-01] resolveManifestPath', () => {
   });
 
   it('without isDirectory predicate, directory paths get their parent searched (backwards compat)', () => {
-    // Matches the pre-v0.8.1 behaviour for callers who still pass a file path
+    // Matches the pre-v0.8.1 behavior for callers who still pass a file path
     // and leave isDirectory off. The found manifest is one directory up.
     const found = resolveManifestPath(
       '/home/user/project/spec.yaml',             // file path — not a directory

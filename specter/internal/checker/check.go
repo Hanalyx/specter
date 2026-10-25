@@ -7,6 +7,7 @@ package checker
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Hanalyx/specter/internal/resolver"
@@ -21,7 +22,6 @@ type CheckDiagnostic struct {
 	SpecID         string `json:"spec_id"`
 	ConstraintID   string `json:"constraint_id,omitempty"`
 	ConstraintType string `json:"constraint_type,omitempty"`
-	ChangeType     string `json:"change_type,omitempty"`
 	Details        string `json:"details,omitempty"`
 }
 
@@ -39,10 +39,94 @@ type CheckSummary struct {
 
 // CheckOptions configures the check run.
 type CheckOptions struct {
-	TierOverride     int
-	PreviousVersions map[string]*schema.SpecAST
-	Strict           bool // C-07: upgrade all warning/info diagnostics to error
-	WarnOnDraft      bool // C-08: emit warning for specs with status: draft
+	TierOverride int
+	// Strict upgrades warning and info diagnostics to error, per C-07, except
+	// the kinds nonPromotable names below.
+	Strict      bool
+	WarnOnDraft bool // C-08: emit warning for specs with status: draft
+	// Concrete opts into the C-16 concreteness rule. C-17: it is off by
+	// default because `inputs` and `expected_output` are optional in the
+	// canonical schema, so a criterion carrying neither is valid and failing a
+	// build on it would be a gate failing on correct input.
+	Concrete bool
+
+	// ExtraDiagnostics are diagnostics the caller assembled from sources this
+	// package cannot see: the manifest-derived tier_conflict and
+	// domain_tier_conflict, and the test-annotation families both the check
+	// command and sync build from test file contents. They join the run's own
+	// diagnostics BEFORE the C-07 strict upgrade and before the summary, which
+	// is the whole reason this field exists.
+	//
+	// The command used to append them to the returned result instead. That put
+	// them past the upgrade loop, so both kept severity warning under --strict
+	// and `check --strict` exited 0 on a workspace spec-manifest C-35 says it
+	// should fail. Nothing failed when that happened, because the rule lived in
+	// one place and the diagnostics arrived in another.
+	//
+	// C-07 requires one owner for the upgrade over the complete set. Passing
+	// them in rather than promoting them at the call site is what keeps that
+	// true: a second promotion step would be a private copy of the
+	// non-promotable set, which is enumerated once, below.
+	ExtraDiagnostics []CheckDiagnostic
+}
+
+// nonPromotable is the set C-07 names: kinds --strict does not upgrade.
+//
+// structural_conflict, per C-15(b). An advisory posture that holds until
+// someone passes --strict holds until CI runs, which is the same as not
+// holding.
+//
+// unreachable_annotation_unknown, per C-10. The scanner could not recognize
+// the test shape, so it has found no defect to report. Promoting it would fail
+// a build on the checker's own blind spot, and C-10 states in its own terms
+// that this kind is always a warning regardless of strictness.
+//
+// Enumerated here and nowhere else. Adding a kind is an amendment to C-07, not
+// a local choice at a call site.
+var nonPromotable = map[string]bool{
+	"structural_conflict":            true,
+	"unreachable_annotation_unknown": true,
+}
+
+// vagueSeverityByTier is the C-16 gradient. It is a separate table from
+// orphanSeverityByTier because the two rules are independent: changing one
+// should not silently move the other.
+var vagueSeverityByTier = map[int]string{
+	1: "error",
+	2: "warning",
+	3: "info",
+}
+
+// checkConcreteness reports every criterion carrying neither `inputs` nor
+// `expected_output`. C-16.
+//
+// Presence only. Whether "completes within budget" is a checkable assertion is
+// semantic reading, and a rule that rejects the word "gracefully" is theater.
+func checkConcreteness(graph *resolver.SpecGraph, ids []string) []CheckDiagnostic {
+	var diagnostics []CheckDiagnostic
+	for _, id := range ids {
+		node := graph.Nodes[id]
+		if node == nil {
+			continue
+		}
+		severity := vagueSeverityByTier[node.Spec.Tier]
+		if severity == "" {
+			severity = "warning"
+		}
+		for _, ac := range node.Spec.AcceptanceCriteria {
+			if len(ac.Inputs) > 0 || len(ac.ExpectedOutput) > 0 {
+				continue
+			}
+			diagnostics = append(diagnostics, CheckDiagnostic{
+				Kind:     "vague_criterion",
+				Severity: severity,
+				Message: fmt.Sprintf("Criterion %s in %q carries neither inputs nor expected_output, so nothing states what it asserts",
+					ac.ID, node.Spec.ID),
+				SpecID: node.Spec.ID,
+			})
+		}
+	}
+	return diagnostics
 }
 
 // Tier-based severity for orphan constraints.
@@ -64,9 +148,9 @@ var CoverageThresholdByTier = map[int]int{
 // C-01: Detects orphan constraints.
 // C-02: Tier-based severity.
 // C-03: Structural conflict detection.
-// C-04: Breaking change classification.
 // C-05: Zero false positives for structural checks.
 // C-06: Pure function.
+// C-13: Duplicate acceptance criterion ids within one spec.
 func CheckSpecs(graph *resolver.SpecGraph, opts *CheckOptions) *CheckResult {
 	if opts == nil {
 		opts = &CheckOptions{}
@@ -100,57 +184,76 @@ func CheckSpecs(graph *resolver.SpecGraph, opts *CheckOptions) *CheckResult {
 	// Rule 2: Structural conflicts (AC-03)
 	diagnostics = append(diagnostics, checkStructuralConflicts(graph)...)
 
-	// Rule 3: Breaking changes (AC-04, AC-05)
-	if opts.PreviousVersions != nil {
-		for id, node := range graph.Nodes {
-			prev, ok := opts.PreviousVersions[id]
-			if !ok {
-				continue
-			}
-			changes := ClassifyChanges(prev, &node.Spec)
-			for _, change := range changes {
-				kind := "patch_change"
-				severity := "info"
-				if change.Classification == "breaking" {
-					kind = "breaking_change"
-					severity = "error"
-				} else if change.Classification == "additive" {
-					kind = "additive_change"
-				}
-				diagnostics = append(diagnostics, CheckDiagnostic{
-					Kind:       kind,
-					Severity:   severity,
-					Message:    fmt.Sprintf("%s: %s", node.Spec.ID, change.Description),
-					SpecID:     node.Spec.ID,
-					ChangeType: change.Classification,
-					Details:    change.Field,
-				})
-			}
-		}
+	// Rule 3 was breaking-change classification and is gone. spec-check 2.0.0
+	// retracted C-04, AC-04 and AC-05, and `spec-diff` owns version comparison.
+	// Nothing ever populated CheckOptions.PreviousVersions, so this branch never
+	// ran while its three criteria reported covered off tests that called
+	// ClassifyChanges directly (bugs/SP-SP-018).
+
+	// Rule 4: Duplicate acceptance criterion ids (AC-21 through AC-27)
+	//
+	// Severity is error at every tier, so this reads node.Spec directly and
+	// ignores opts.TierOverride. Spec ids are visited in sorted order, because
+	// graph.Nodes is a map and a human diffing two runs should see the same
+	// list twice.
+	specIDs := make([]string, 0, len(graph.Nodes))
+	for id := range graph.Nodes {
+		specIDs = append(specIDs, id)
+	}
+	sort.Strings(specIDs)
+	for _, id := range specIDs {
+		diagnostics = append(diagnostics, checkDuplicateACIDs(&graph.Nodes[id].Spec)...)
 	}
 
-	// C-07: strict mode — upgrade warnings and info to errors
+	// C-16 / C-17: opt-in, and off unless asked for. Reuses the sorted id list
+	// above for the same reason it exists.
+	if opts.Concrete {
+		diagnostics = append(diagnostics, checkConcreteness(graph, specIDs)...)
+	}
+
+	// C-07: everything the run reports joins the list before the upgrade, so
+	// the upgrade owns the complete set rather than whatever this function
+	// happened to produce.
+	diagnostics = append(diagnostics, opts.ExtraDiagnostics...)
+
+	// C-07: strict mode, upgrade warnings and info to errors, except the kinds
+	// C-07 names as non-promotable. The exemptions live here rather than at the
+	// emit sites because this loop is what would undo them, and one copy of the
+	// set is the point: a second would not know what the set contains.
 	if opts.Strict {
 		for i := range diagnostics {
+			if nonPromotable[diagnostics[i].Kind] {
+				continue
+			}
 			if diagnostics[i].Severity == "warning" || diagnostics[i].Severity == "info" {
 				diagnostics[i].Severity = "error"
 			}
 		}
 	}
 
-	result := &CheckResult{Diagnostics: diagnostics}
+	return &CheckResult{Diagnostics: diagnostics, Summary: summarize(diagnostics)}
+}
+
+// summarize counts the final diagnostics. C-07 requires the summary to be
+// computed once, after the upgrade, from the list the run reports.
+//
+// A function rather than a loop inline, so "computed once" is a property a
+// reader and a guard can both check by counting call sites. The command used
+// to count its own diagnostics into the summary as it appended them, which
+// reported as a warning what the run reported as an error.
+func summarize(diagnostics []CheckDiagnostic) CheckSummary {
+	var s CheckSummary
 	for _, d := range diagnostics {
 		switch d.Severity {
 		case "error":
-			result.Summary.Errors++
+			s.Errors++
 		case "warning":
-			result.Summary.Warnings++
+			s.Warnings++
 		case "info":
-			result.Summary.Info++
+			s.Info++
 		}
 	}
-
-	return result
+	return s
 }
 
 // checkOrphanConstraints finds constraints not referenced by any AC.
@@ -194,13 +297,25 @@ func checkOrphanConstraints(spec *schema.SpecAST) []CheckDiagnostic {
 func checkStructuralConflicts(graph *resolver.SpecGraph) []CheckDiagnostic {
 	var diagnostics []CheckDiagnostic
 
-	absenceKeywords := []string{"absent", "missing", "not provided", "not present", "is empty", "is null", "without"}
-	requiredKeywords := []string{"MUST", "required", "MUST be present", "MUST exist", "mandatory"}
+	// C-21: the absence vocabulary moved into the attachment scanner, which
+	// needs it split into predicates and heads rather than as one flat list.
+	// C-19: only ` MUST` is here, because it is the only keyword extraction can
+	// turn into a subject. `required`, `MUST be present`, `MUST exist` and
+	// `mandatory` used to sit in this list, set the required flag, and then
+	// produce an empty subject a few lines below, so every constraint matching
+	// one of them was discarded. They were removed rather than made to work:
+	// the check is advisory under C-15 and C-05 declines to bound its false
+	// positives, so matching more constraints buys more noise.
+	//
+	// ` MUST` is matched case sensitively, so a constraint written with a
+	// lowercase `must` is invisible. That is a false negative in an advisory
+	// check and is left as it is, deliberately.
+	requiredKeywords := []string{"MUST"}
 
+	// C-20: every edge, not only `requires`. A `conflicts_with` edge is where a
+	// contradiction check has the strongest reason to look, and it was the one
+	// place this did not look at all.
 	for _, edge := range graph.Edges {
-		if edge.Relationship != "requires" {
-			continue
-		}
 		upstream, ok1 := graph.Nodes[edge.To]
 		downstream, ok2 := graph.Nodes[edge.From]
 		if !ok1 || !ok2 {
@@ -226,27 +341,43 @@ func checkStructuralConflicts(graph *resolver.SpecGraph) []CheckDiagnostic {
 			}
 
 			for _, ac := range downstream.Spec.AcceptanceCriteria {
-				acDesc := strings.ToLower(ac.Description)
-				if !strings.Contains(acDesc, strings.ToLower(subject)) {
-					continue
-				}
-				for _, kw := range absenceKeywords {
-					if strings.Contains(acDesc, strings.ToLower(kw)) {
-						severity := "error"
-						if constraint.Enforcement != "" {
-							severity = constraint.Enforcement
-						}
-						diagnostics = append(diagnostics, CheckDiagnostic{
-							Kind:           "structural_conflict",
-							Severity:       severity,
-							Message:        fmt.Sprintf("Structural conflict: %q constraint %s requires %q but %q %s handles it as absent", upstream.Spec.ID, constraint.ID, subject, downstream.Spec.ID, ac.ID),
-							SpecID:         downstream.Spec.ID,
-							ConstraintID:   constraint.ID,
-							ConstraintType: constraint.Type,
-							Details:        fmt.Sprintf("Upstream: %s | Downstream AC: %s", desc, ac.Description),
-						})
-						break
-					}
+				// C-21: attachment, not co-occurrence. The absence expression
+				// has to predicate the subject.
+				//
+				// There is no substring pre-filter above this. There used to
+				// be, asking whether the lowercased subject appeared anywhere
+				// in the criterion, and it is the co-occurrence test C-21
+				// replaces. Keeping it would also have re-broken the article
+				// case: a subject of "The audit record" is not a substring of
+				// "without an audit record", so the criterion never reached
+				// the scanner that strips the article.
+				if AbsenceAttachesToSubject(subject, ac.Description) {
+					// C-15(a): always info. The upstream constraint's
+					// `enforcement` field says how strictly the constraint
+					// binds the system, not how much to trust a lexical
+					// match on a sentence. Reading it here let a Tier 1
+					// constraint make a heuristic fail a build.
+					severity := "info"
+					diagnostics = append(diagnostics, CheckDiagnostic{
+						Kind:     "structural_conflict",
+						Severity: severity,
+						Message:  fmt.Sprintf("Structural conflict: %q constraint %s requires %q but %q %s handles it as absent", upstream.Spec.ID, constraint.ID, subject, downstream.Spec.ID, ac.ID),
+						SpecID:   downstream.Spec.ID,
+						// C-18: qualified with the spec that owns it. The
+						// header renders as "<SpecID> <ConstraintID>", and
+						// SpecID is the downstream spec, so a bare upstream
+						// id here reads as one of the downstream spec's own
+						// constraints. A reader looking it up finds nothing,
+						// or finds a different constraint sharing the id.
+						ConstraintID:   upstream.Spec.ID + "/" + constraint.ID,
+						ConstraintType: constraint.Type,
+						Details:        fmt.Sprintf("Upstream: %s | Downstream AC: %s", desc, ac.Description),
+					})
+					// No break. Every criterion that conflicts with this
+					// constraint is reported. The old code broke out of the
+					// keyword loop here, which left the criterion loop running;
+					// a bare break in this position would instead stop after
+					// the first criterion and silently drop the rest.
 				}
 			}
 		}
@@ -262,78 +393,4 @@ func extractSubject(description string) string {
 		return strings.TrimSpace(description[:idx])
 	}
 	return ""
-}
-
-// VersionChange represents a classified change between spec versions.
-type VersionChange struct {
-	Classification string `json:"classification"`
-	Field          string `json:"field"`
-	Description    string `json:"description"`
-}
-
-// ClassifyChanges compares two spec versions and classifies changes.
-func ClassifyChanges(v1, v2 *schema.SpecAST) []VersionChange {
-	var changes []VersionChange
-
-	// Constraint changes
-	v1c := make(map[string]*schema.Constraint)
-	for i := range v1.Constraints {
-		v1c[v1.Constraints[i].ID] = &v1.Constraints[i]
-	}
-	v2c := make(map[string]*schema.Constraint)
-	for i := range v2.Constraints {
-		v2c[v2.Constraints[i].ID] = &v2.Constraints[i]
-	}
-
-	for id := range v1c {
-		if _, ok := v2c[id]; !ok {
-			changes = append(changes, VersionChange{"breaking", "constraints." + id, "Constraint " + id + " was removed"})
-		}
-	}
-	for id := range v2c {
-		if _, ok := v1c[id]; !ok {
-			changes = append(changes, VersionChange{"additive", "constraints." + id, "Constraint " + id + " was added"})
-		}
-	}
-
-	// AC changes
-	v1ac := make(map[string]bool)
-	for _, ac := range v1.AcceptanceCriteria {
-		v1ac[ac.ID] = true
-	}
-	v2ac := make(map[string]bool)
-	for _, ac := range v2.AcceptanceCriteria {
-		v2ac[ac.ID] = true
-	}
-
-	for id := range v1ac {
-		if !v2ac[id] {
-			changes = append(changes, VersionChange{"breaking", "acceptance_criteria." + id, "Acceptance criterion " + id + " was removed"})
-		}
-	}
-	for id := range v2ac {
-		if !v1ac[id] {
-			changes = append(changes, VersionChange{"additive", "acceptance_criteria." + id, "Acceptance criterion " + id + " was added"})
-		}
-	}
-
-	return changes
-}
-
-// HighestClassification returns the most severe classification.
-func HighestClassification(changes []VersionChange) string {
-	if len(changes) == 0 {
-		return "none"
-	}
-	for _, c := range changes {
-		if c.Classification == "breaking" {
-			return "breaking"
-		}
-	}
-	for _, c := range changes {
-		if c.Classification == "additive" {
-			return "additive"
-		}
-	}
-	return "patch"
 }

@@ -5,7 +5,14 @@ import * as path from 'path';
 
 import { shouldActivate, resolveManifestPath, createClientKey, isSpecFilePath } from './activation';
 import {
-  resolveBinaryPath,
+  planBinaryResolution,
+  planRedownload,
+  privateCliDir,
+  installUserCopy,
+  privateVersionFor,
+  BinaryPlan,
+  shellInstallDecision,
+  terminalInvocation,
   buildDownloadUrl,
   defaultCachePath,
   resolveLatestVersion,
@@ -27,7 +34,6 @@ import {
   findNearestSpecAnnotation,
 } from './annotations';
 import {
-  formatStatusBar,
   classifyNotification,
   buildFileDecoration,
   buildACDecorations,
@@ -39,6 +45,9 @@ import {
   matchFileInIndex,
   CoverageReportStore,
   findEntryBySpecFile,
+  reportStopReasons,
+  isFolderRefused,
+  statusBarPresentation,
 } from './coverage';
 import { buildConstraintHover, resolveDefinitionTarget } from './navigation';
 import { buildInsightCards, computeInsightsStatus, formatSpecContextForAI, shouldShowWalkthrough } from './insights';
@@ -50,6 +59,7 @@ import * as os from 'os';
 import type {
   SpecIndex,
   CoverageReport,
+  MergedCoverageReport,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -66,8 +76,11 @@ let specIndex: SpecIndex = { specs: {} };
 // workspace. Paths inside each stored report are normalized to absolute
 // against the owning folder's CLI cwd at ingestion time (AC-33), so
 // downstream consumers need no folder context. Aggregate views read
-// coverageReports.merged() — identical to the folder's own report in a
-// single-root workspace.
+// coverageReports.merged(), which returns MergedCoverageReport in every case,
+// including a single-root workspace. There it carries the same entries,
+// summary and parse errors as the folder's own report, but it is not that
+// object: spec-vscode C-33 requires the aggregate type always, so a lone
+// refused folder cannot hand back a report carrying a singular stopReason.
 const coverageReports = new CoverageReportStore({
   resolve: (base, p) => path.resolve(base, p),
   isAbsolute: p => path.isAbsolute(p),
@@ -78,6 +91,9 @@ const coverageReports = new CoverageReportStore({
 const coverageErrorFolders = new Set<string>();
 let statusBarItem: vscode.StatusBarItem | null = null;
 let binaryPath: string | null = null;
+// C-34: where the running CLI came from, so the shell PATH command knows
+// whether the user already has a CLI of their own.
+let lastPlan: BinaryPlan | null = null;
 const rateLimiter = new NotificationRateLimiter({ windowMs: 60_000 });
 let treeProvider: SpecterTreeProvider | null = null;
 let specterTreeView: vscode.TreeView<unknown> | null = null;
@@ -137,7 +153,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // One-time prompt for existing users (and anyone whose rc file doesn't
   // include ~/.specter/bin): offer to run the shell-path command so the
   // CLI works from external terminals. Non-blocking — fire and forget.
-  void maybePromptAddCliToShellPath(ctx, specterBinDir);
+  // C-34: only when the shell PATH command would have something to do.
+  // A user with their own CLI on PATH, in range or out, has nothing to add.
+  const shellDecision = lastPlan ? shellInstallDecision(lastPlan, defaultCachePath()) : null;
+  if (shellDecision?.addPath) {
+    // The prompt offers what the command will do: install only when the
+    // decision says so, not merely because the extension runs its own copy.
+    void maybePromptAddCliToShellPath(ctx, specterBinDir, shellDecision.install);
+  }
 
   // If the workspace has no specs or manifest, we're done. Commands are
   // registered, the binary is available, the walkthrough fired if needed.
@@ -278,8 +301,21 @@ function teardownFolder(folder: vscode.WorkspaceFolder): void {
 async function resolveBinary(ctx: vscode.ExtensionContext): Promise<string | null> {
   const cfg = vscode.workspace.getConfiguration('specter');
   const workspaceSetting = cfg.get<string>('binaryPath') || null;
+  const nodeFs = require('fs');
 
-  const { resolved, source } = resolveBinaryPath({
+  const range = ctx.extension.packageJSON?.specterCli?.range as string | undefined;
+  if (!range) {
+    vscode.window.showErrorMessage(
+      'Specter: this extension build declares no supported CLI range (package.json specterCli.range). Reinstall the extension.',
+      { modal: true },
+    );
+    return null;
+  }
+  const privateVersion = await resolvePrivateVersion(ctx);
+  if (!privateVersion) return null;
+
+  // C-34: the decision is a pure plan. Everything below only carries it out.
+  const plan = planBinaryResolution({
     workspaceSetting,
     which: name => {
       try {
@@ -288,94 +324,95 @@ async function resolveBinary(ctx: vscode.ExtensionContext): Promise<string | nul
       } catch { return null; }
     },
     fs: {
-      exists: p => { try { require('fs').accessSync(p); return true; } catch { return false; } },
+      exists: p => { try { nodeFs.accessSync(p); return true; } catch { return false; } },
       isExecutable: p => {
-        try { require('fs').accessSync(p, require('fs').constants.X_OK); return true; }
+        try { nodeFs.accessSync(p, nodeFs.constants.X_OK); return true; }
         catch { return false; }
       },
     },
-    cachePath: defaultCachePath(),
+    // C-01: a candidate counts only if it is a real binary that answers
+    // --version. A corrupt file on PATH is not a candidate, wherever it is.
+    probeVersion: p => (isBinaryFile(p) ? getCachedBinaryVersion(p) : null),
+    userBinPath: defaultCachePath(),
+    privateDir: privateCliDir(),
+    privateVersion,
+    range,
+    platform: process.platform,
   });
+  lastPlan = plan;
 
-  const cachePath = defaultCachePath();
-
-  if (resolved) {
-    // Always validate the resolved binary — regardless of source. A corrupt
-    // file in ~/.specter/bin that also happens to be on the shell PATH would
-    // otherwise slip through as source='path' and every specter invocation
-    // would fail silently. See issue: https://github.com/Hanalyx/specter/issues
-    if (!isBinaryFile(resolved) || !getCachedBinaryVersion(resolved)) {
-      // If the corrupt file is the cache path we own, delete it and fall
-      // through to auto-download. Otherwise it's user-provided (workspace
-      // setting or something else on PATH) — don't touch it, just prompt.
-      if (resolved === cachePath) {
-        try { require('fs').unlinkSync(resolved); } catch { /* ignore */ }
-        // fall through to auto-download
-      } else {
-        const pick = await vscode.window.showErrorMessage(
-          `Specter binary at ${resolved} (via ${source}) is not a valid executable. ` +
-          `It may be a corrupt download or a stale file. Re-download to ${cachePath}?`,
-          'Re-download', 'Cancel',
-        );
-        if (pick === 'Re-download') {
-          return downloadBinary(ctx);
-        }
-        return null;
-      }
-    } else {
-      // Valid binary. Auto-update if CLI version != extension version.
-      const cliVersion = getCachedBinaryVersion(resolved);
-      const extVersion = vscode.extensions.getExtension('Hanalyx.specter-vscode')?.packageJSON?.version as string | undefined;
-      if (cliVersion && extVersion && cliVersion !== extVersion) {
-        const autoDownload = cfg.get<boolean>('autoDownload', true);
-        if (autoDownload) {
-          const updated = await downloadBinary(ctx);
-          if (updated) return updated;
-        }
-      }
-      return resolved;
-    }
+  for (const sk of plan.skipped) {
+    outputChannel?.appendLine(
+      `Specter: not using ${sk.path} (version ${sk.version}); this extension supports ${sk.range}. ` +
+      'The file was left unchanged. The extension uses its own copy instead.',
+    );
   }
 
-  // Auto-download
-  const autoDownload = cfg.get<boolean>('autoDownload', true);
-  if (!autoDownload) {
+  if (plan.source === 'workspace-setting') {
+    // C-01: validated regardless of source. A path the user named is never
+    // modified; an invalid one is reported and the run stops.
+    if (!isBinaryFile(plan.resolved) || !getCachedBinaryVersion(plan.resolved)) {
+      vscode.window.showErrorMessage(
+        `Specter binary at ${plan.resolved} (via specter.binaryPath) is not a valid executable. Fix or clear the setting.`,
+        { modal: true },
+      );
+      return null;
+    }
+    return plan.resolved;
+  }
+
+  if (!plan.download) return plan.resolved;
+
+  if (!cfg.get<boolean>('autoDownload', true)) {
     vscode.window.showErrorMessage(
       'Specter binary not found. Set specter.binaryPath or enable specter.autoDownload.',
       { modal: true },
     );
     return null;
   }
-
-  return downloadBinary(ctx);
+  // The private copy is the extension's own: a stale or corrupt file there
+  // is replaced. Nothing else is ever unlinked from here.
+  try { nodeFs.unlinkSync(plan.download.target); } catch { /* absent */ }
+  return downloadBinary(ctx, plan.download);
 }
 
-async function downloadBinary(ctx: vscode.ExtensionContext): Promise<string | null> {
-  const cfg = vscode.workspace.getConfiguration('specter');
-  const versionSetting = cfg.get<string>('version', '');
+/**
+ * C-27: the version the private copy should be. The extension's own version
+ * unless specter.version names another or asks for the latest release.
+ */
+async function resolvePrivateVersion(ctx: vscode.ExtensionContext): Promise<string | null> {
+  const versionSetting = vscode.workspace.getConfiguration('specter').get<string>('version', '');
+  let wanted: string;
+  try {
+    wanted = privateVersionFor(versionSetting, ctx.extension.packageJSON);
+  } catch (e) {
+    vscode.window.showErrorMessage(`Specter: ${e instanceof Error ? e.message : String(e)}`, { modal: true });
+    return null;
+  }
+  if (wanted !== 'latest') return wanted;
+  try {
+    return await resolveLatestVersion();
+  } catch (e) {
+    vscode.window.showErrorMessage(`Specter: could not resolve the latest release: ${e}`, { modal: true });
+    return null;
+  }
+}
+
+async function downloadBinary(ctx: vscode.ExtensionContext, target: { version: string; target: string }): Promise<string | null> {
 
   return vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: 'Downloading Specter CLI…', cancellable: false },
     async (progress) => {
       try {
-        // 1. Resolve version — default pins the CLI to the extension's own
-        // version, so v0.10.0 VSIX always fetches v0.10.0 CLI. 'latest' opts
-        // in to whatever GitHub's /releases/latest points at, and any other
-        // string is treated as a pinned semver.
+        // 1. The version and the target come from the plan (C-34): always
+        // the private copy, never the user's.
         progress.report({ message: 'resolving version…' });
-        let version: string;
-        if (versionSetting === 'latest') {
-          version = await resolveLatestVersion();
-        } else if (versionSetting) {
-          version = versionSetting;
-        } else {
-          version = ctx.extension.packageJSON.version as string;
-        }
+        const version = target.version;
 
         // 2. Build download URL
         const dlOpts = { version, os: process.platform, arch: process.arch };
         const url = buildDownloadUrl(dlOpts);
-        const targetPath = defaultCachePath();
+        const targetPath = target.target;
         const archiveName = assetName(dlOpts);
         const format: 'tar.gz' | 'zip' = process.platform === 'win32' ? 'zip' : 'tar.gz';
 
@@ -464,6 +501,7 @@ const ADD_PATH_PROMPT_DISMISSED_KEY = 'specter.addPathPromptDismissed';
 async function maybePromptAddCliToShellPath(
   ctx: vscode.ExtensionContext,
   binDir: string,
+  installFirst: boolean,
 ): Promise<void> {
   const fs = require('fs');
 
@@ -478,8 +516,10 @@ async function maybePromptAddCliToShellPath(
   if (!shouldPromptAddPath(rcContents, binDir, dismissed)) return;
 
   const pick = await vscode.window.showInformationMessage(
-    `Specter CLI is installed at ${binDir} but not on your shell PATH. ` +
-    `Run \`specter\` from external terminals by adding it to ${cfg.rcFile}.`,
+    installFirst
+      ? `The Specter CLI is available to VS Code but not to your shell. Install a copy at ${binDir} and add it to ${cfg.rcFile}?`
+      : `Specter CLI is installed at ${binDir} but not on your shell PATH. ` +
+        `Run \`specter\` from external terminals by adding it to ${cfg.rcFile}.`,
     'Add to PATH',
     "Don't show again",
   );
@@ -500,8 +540,35 @@ async function runCoverageForFolder(key: string, client: SpecterClient): Promise
     const result = await client.coverage();
     // AC-54: store under the folder key; AC-33: normalize CLI-relative
     // paths against the owning folder's CLI cwd at ingestion time.
-    coverageReports.set(key, result as unknown as CoverageReport, client.cliCwd);
+    //
+    // No cast. coverage() returns CoverageReport, the same declaration the
+    // store holds, so the two cannot drift. The `as unknown as` that used to
+    // sit here erased the compiler's ability to notice when they did.
+    coverageReports.set(key, result, client.cliCwd);
     const report = coverageReports.get(key)!;
+
+    // spec-vscode C-33: name any refused folder in the Output channel, after
+    // the store write so the aggregate reflects this run. The aggregate, not
+    // this folder's report: a refusal has to arrive with the folder that
+    // produced it, and a singular report carries no folder identity at all.
+    const merged = coverageReports.merged();
+    if (outputChannel) {
+      reportStopReasons(outputChannel, merged);
+    }
+
+    // spec-vscode C-33: refusal state is read BEFORE entries, summary or parse
+    // errors. A refused run carries an empty entries list and no parse errors,
+    // so the branch below would take it for a clean measurement: update the
+    // status bar from a zero-entry aggregate and delete the folder from
+    // coverageErrorFolders. A run that measured nothing would be recorded as a
+    // run that found nothing wrong.
+    if (isFolderRefused(merged, key)) {
+      setStatusBarError('Specter: coverage did not run. Click to view details.');
+      coverageErrorFolders.add(key);
+      treeProvider?.refresh();
+      return;
+    }
+
     updateSpecIndex(report);
 
     // v0.9.0: parse errors flow through the report now, not a rejected
@@ -520,17 +587,19 @@ async function runCoverageForFolder(key: string, client: SpecterClient): Promise
       setStatusBarError('Specter: parse errors. Click to view details.');
       coverageErrorFolders.add(key);
     } else {
-      updateStatusBar(coverageReports.merged());
+      updateStatusBar(merged);
       coverageErrorFolders.delete(key);
     }
     treeProvider?.refresh();
   } catch (e) {
-    // runAllowingNonZero only rejects for real spawn failures (ENOENT,
-    // aborted, malformed JSON). These are process-level problems, not
-    // per-spec parse failures — surface as an error state with no report.
+    // AC-59: the run yielded no parseable document, either because it failed
+    // to spawn or because stdout carried nothing the client could read. Those
+    // are process-level problems, not per-spec parse failures. The stored
+    // report and the folder's diagnostics stay as they were, because an empty
+    // sidebar would claim a clean workspace that was never measured.
+    if (isAborted(e)) return;
     const msg = e instanceof Error ? e.message : String(e);
-    outputChannel?.appendLine(`[${new Date().toISOString()}] coverage run failed for ${key}:`);
-    outputChannel?.appendLine('  ' + msg);
+    outputChannel?.appendLine(`[${new Date().toISOString()}] coverage failed for ${key}: ${msg}`);
     setStatusBarError('Specter coverage failed. Click to view details.');
     coverageErrorFolders.add(key);
   }
@@ -561,11 +630,18 @@ function pushCoverageParseDiagnostics(
     const abs = resolveWorkspacePath(file);
     const uri = vscode.Uri.file(abs);
     const vsDiags = diagnostics.map(d => {
+      // C-32 binds the range that reaches the collection, so the builder's
+      // range arrives here unchanged, the way toVscodeDiagnostic passes the
+      // check and parse ranges. This site used to clamp the end character to
+      // 1,000,000. Under C-32 the end is a constant the builder sets, so the
+      // clamp guarded no input and only re-decided a value the spec fixes. It
+      // could also invert a range, because the start character comes from the
+      // CLI and was never clamped.
       const range = new vscode.Range(
         d.range.start.line,
         d.range.start.character,
         d.range.end.line,
-        Math.min(d.range.end.character, 1_000_000),
+        d.range.end.character,
       );
       const diag = new vscode.Diagnostic(
         range,
@@ -577,6 +653,31 @@ function pushCoverageParseDiagnostics(
     });
     dc.set(uri, vsDiags);
   }
+}
+
+/**
+ * C-18, C-30: deactivation cancels whatever is in flight. A run the extension
+ * canceled itself is not a failure and is not reported as one.
+ */
+function isAborted(err: unknown): boolean {
+  return err instanceof Error && err.message === 'aborted';
+}
+
+/**
+ * AC-59: name the command and the file in a failed invocation, so the
+ * Output-channel line reads `check failed for <file>: <message>` rather than a
+ * bare CLI error. The original message is kept whole, which is what lets a
+ * spawn failure name its own errno (AC-60). A cancellation is rethrown
+ * untouched so the caller can still tell it apart.
+ */
+function failedInvocation(command: string, target: string): (err: unknown) => never {
+  return (err: unknown): never => {
+    if (isAborted(err)) {
+      throw err;
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`${command} failed for ${target}: ${msg}`);
+  };
 }
 
 /**
@@ -618,33 +719,22 @@ function updateSpecIndex(report: CoverageReport): void {
   }
 }
 
-function updateStatusBar(report: CoverageReport | null): void {
-  if (!statusBarItem || !report) return;
-  const entries = report.entries ?? [];
-  const hasT1OrT2Failure = entries.some(
-    e => !e.passesThreshold && (e.tier === 1 || e.tier === 2),
-  );
-  const totalPct = entries.length === 0
-    ? 0
-    : Math.round(entries.reduce((s, e) => s + e.coveragePct, 0) / entries.length);
-  const failing = entries.filter(e => !e.passesThreshold).length;
+function updateStatusBar(report: MergedCoverageReport | null): void {
+  if (!statusBarItem) return;
 
-  const result = formatStatusBar({
-    totalSpecs: entries.length,
-    coveragePct: totalPct,
-    failing,
-    hasT1OrT2Failure,
-  });
-
-  if (typeof result === 'string') {
-    statusBarItem.text = result;
-    statusBarItem.backgroundColor = undefined;
-  } else {
-    statusBarItem.text = result.text;
-    statusBarItem.backgroundColor = result.colorToken
-      ? new vscode.ThemeColor(result.colorToken)
-      : undefined;
+  // The wrapper applies the decision and holds no policy of its own. The rule
+  // lives in statusBarPresentation, where its outcome is testable; a copy here
+  // would be a second rule that can disagree with the tested one.
+  const presentation = statusBarPresentation(report);
+  if (presentation.kind === 'hidden') return;
+  if (presentation.kind === 'error') {
+    setStatusBarError(presentation.message);
+    return;
   }
+  statusBarItem.text = presentation.text;
+  statusBarItem.backgroundColor = presentation.colorToken
+    ? new vscode.ThemeColor(presentation.colorToken)
+    : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -925,7 +1015,6 @@ function registerProviders(ctx: vscode.ExtensionContext): void {
         const decorations = buildACDecorations({
           coveredACs: entry.coveredACs ?? [],
           uncoveredACs: entry.uncoveredACs ?? [],
-          gapACs: [],
         });
 
         const lenses: vscode.CodeLens[] = [];
@@ -988,10 +1077,14 @@ function registerDiagnosticHooks(ctx: vscode.ExtensionContext): void {
             );
           } catch (err) {
             // AC-48: route to Output channel instead of silent ignore.
+            // AC-59: the existing diagnostics stay put. replace() runs on the
+            // success path only, so a failed run never empties the panel.
+            if (isAborted(err)) return;
             const msg = err instanceof Error ? err.message : String(err);
             outputChannel?.appendLine(
-              `[${new Date().toISOString()}] on-type parse failed for ${e.document.uri.fsPath}: ${msg}`,
+              `[${new Date().toISOString()}] parse failed for ${e.document.uri.fsPath}: ${msg}`,
             );
+            setStatusBarError('Specter: parse failed. Click to view details.');
           }
         }, 400),
       );
@@ -1009,13 +1102,13 @@ function registerDiagnosticHooks(ctx: vscode.ExtensionContext): void {
 
       try {
         const [parseResult, checkResult] = await Promise.all([
-          client.parse(doc.uri.fsPath),
-          client.check(),
+          client.parse(doc.uri.fsPath).catch(failedInvocation('parse', doc.uri.fsPath)),
+          client.check().catch(failedInvocation('check', doc.uri.fsPath)),
         ]);
 
         const diags = buildDiagnostics({
           parseErrors: parseResult.errors,
-          checkDiagnostics: checkResult.diagnostics as any,
+          checkDiagnostics: checkResult.diagnostics,
         });
         replacer.replace(doc.uri.fsPath, diags.map(d => toVscodeDiagnostic(d)));
 
@@ -1071,7 +1164,7 @@ function registerDiagnosticHooks(ctx: vscode.ExtensionContext): void {
                     );
                   } else {
                     const terminal = vscode.window.createTerminal('Specter Diff');
-                    terminal.sendText(`specter diff ${fsPath}@HEAD ${fsPath}`);
+                    terminal.sendText(terminalInvocation(binaryPath, `diff ${fsPath}@HEAD ${fsPath}`));
                     terminal.show();
                   }
                 }
@@ -1079,7 +1172,19 @@ function registerDiagnosticHooks(ctx: vscode.ExtensionContext): void {
             }
           } catch { /* diff not available — new file or not a git repo */ }
         }
-      } catch { /* ignore */ }
+      } catch (err) {
+        // AC-59, C-26: an invocation that produced no parseable document
+        // failed, whatever it exited with. Report it and leave the folder's
+        // diagnostics alone. Replacing them with an empty set would put an
+        // empty Problems panel in front of the user, which claims a clean
+        // workspace that was never checked. No notification: the Output
+        // channel and the status bar are the surfacing (C-30).
+        if (!isAborted(err)) {
+          const msg = err instanceof Error ? err.message : String(err);
+          outputChannel?.appendLine(`[${new Date().toISOString()}] ${msg}`);
+          setStatusBarError('Specter: on-save run failed. Click to view details.');
+        }
+      }
     }),
   );
 
@@ -1281,7 +1386,7 @@ function registerCommands(ctx: vscode.ExtensionContext): void {
       });
       terminal.show();
       // Don't execute — let the user pick the source directory.
-      terminal.sendText('specter reverse ', false);
+      terminal.sendText(terminalInvocation(binaryPath, 'reverse '), false);
     }),
   );
 
@@ -1324,6 +1429,20 @@ function registerCommands(ctx: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('specter.addCliToShellPath', async () => {
       const fs = require('fs');
       const binDir = path.dirname(defaultCachePath());
+
+      // C-34: the one permitted write to the user's copy, and only when the
+      // extension is running its own copy. A CLI already on PATH is the
+      // user's; putting ~/.specter/bin ahead of it would shadow it.
+      const decision = lastPlan ? shellInstallDecision(lastPlan, defaultCachePath()) : null;
+      if (!decision || !decision.addPath) {
+        vscode.window.showInformationMessage(`Specter: ${decision?.reason ?? 'no CLI is resolved yet. Nothing was installed.'}`);
+        return;
+      }
+      if (decision.install && binaryPath) {
+        const install = installUserCopy(binaryPath, defaultCachePath());
+        outputChannel?.appendLine(`Specter: ${install.message}`);
+      }
+
       const shell = process.env.SHELL || '';
       const cfg = detectShellConfig({ shell, platform: process.platform, home: os.homedir() }, binDir);
 
@@ -1370,9 +1489,13 @@ function registerCommands(ctx: vscode.ExtensionContext): void {
   // downloadBinary always writes a new copy, then re-runs activation wiring.
   ctx.subscriptions.push(
     vscode.commands.registerCommand('specter.redownloadCli', async () => {
-      const cachePath = defaultCachePath();
-      try { require('fs').unlinkSync(cachePath); } catch { /* ignore */ }
-      const resolved = await downloadBinary(ctx);
+      // C-34: refreshes the extension's own copy and nothing else. The
+      // user's ~/.specter/bin/specter is not touched.
+      const version = await resolvePrivateVersion(ctx);
+      if (!version) return;
+      const plan = planRedownload({ privateDir: privateCliDir(), version, platform: process.platform });
+      try { require('fs').unlinkSync(plan.download.target); } catch { /* ignore */ }
+      const resolved = await downloadBinary(ctx, plan.download);
       if (!resolved) return;
       binaryPath = resolved;
       for (const folder of (vscode.workspace.workspaceFolders ?? [])) {
@@ -1599,7 +1722,7 @@ function escapeAttr(s: string): string {
 // ---------------------------------------------------------------------------
 
 type TreeElement = { kind: 'spec'; specID: string; file: string; children: TreeElement[] }
-  | { kind: 'ac'; id: string; icon: 'covered' | 'uncovered' | 'gap'; children: TreeElement[] }
+  | { kind: 'ac'; id: string; icon: 'covered' | 'uncovered'; children: TreeElement[] }
   | { kind: 'testFile'; path: string }
   | { kind: 'message'; label: string; detail?: string; iconId?: string }
   | { kind: 'parseErrorGroup'; label: string; children: TreeElement[] }

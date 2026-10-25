@@ -1,6 +1,6 @@
 spec:
   id: spec-ingest
-  version: "1.3.0"
+  version: "4.0.0"
   status: approved
   tier: 1
 
@@ -50,7 +50,7 @@ spec:
       enforcement: error
 
     - id: C-02
-      description: "MUST parse go test -json newline-delimited output — each line is a JSON object with at least {Action, Package, Test}. Actions pass/fail/skip map to passed/failed/skipped; actions run/output/pause/cont are non-terminal and ignored for status determination."
+      description: "MUST parse go test -json newline-delimited output — each line is a JSON object with at least {Action, Package, Test}. Actions pass/fail/skip map to passed/failed/skipped; actions run/output/pause/cont are non-terminal and ignored for status determination. An event with an empty `Test` field is package-level rather than malformed, and from 1.6.0 it is read rather than discarded. A package whose terminal event arrives with no test event before it produced zero test events, which is the count C-16 records. Discarding these events is why that signal was unavailable: they are the only place a runner says anything about a package that emitted no test at all."
       type: technical
       enforcement: error
 
@@ -80,7 +80,7 @@ spec:
       enforcement: error
 
     - id: C-08
-      description: "When the same (spec_id, ac_id) pair appears across multiple test results, the emitted entry MUST use the worst status in order errored > failed > skipped > passed. Rationale: one failing test covering AC-07 is sufficient to demote AC-07; a passing test does not heal a failing sibling."
+      description: "When the same (spec_id, ac_id, stream) key appears across multiple test results, the emitted entry MUST use the worst status in order errored > failed > skipped > passed. Rationale: one failing test covering AC-07 is sufficient to demote AC-07; a passing test does not heal a failing sibling. The key gained `stream` in 1.5.0, per `spec-coverage` C-41. Collapsing is per stream, so one run of one stream still emits one entry per pair and a file carrying no `stream` field behaves exactly as it did. Two streams reporting on one criterion emit two entries, which is the point: they are two facts rather than a contradiction to resolve, and collapsing them here would destroy the distinction the foundation exists to record. The verdict over those two entries is unchanged and lives in `spec-coverage` C-33 and C-43."
       type: business
       enforcement: error
 
@@ -104,34 +104,92 @@ spec:
       type: technical
       enforcement: error
 
+    - id: C-13
+      description: "When a criterion carries entries from more than one stream, the writer MUST emit them worst-status-first, ranked errored, failed, skipped, passed. This is a rule about the order of rows in the file, not about their content, and it exists for one reader: a consumer that resolves a pair by first match rather than across every entry. Specter itself does not, per `spec-coverage` C-33, but the results file is a published artifact that other tools read, and a first-match reader over a best-first file reports the optimistic answer. Measured on the roadmap's constructed fixture at item 3A3: worst-first and today's single-stream format both report 33 percent, and best-first reports 83 percent on identical facts. The whole file MUST also carry a defined total order so two runs over an unchanged workspace are byte-identical, ascending by spec id, then criterion id, then status rank worst-first, then stream name. Rationale: an artifact assembled from a map otherwise keeps map iteration order, and a CI job diffing two runs sees churn that is not a change. This is the same argument `spec-coverage` C-37 makes for the coverage document, applied to the file this command writes."
+      type: technical
+      enforcement: error
+
+    - id: C-14
+      description: "`specter ingest --stream <name>` MUST label every entry the invocation produces with that name, and MUST reject an empty one. One invocation writes one stream, which is what matches CI: streams run as separate jobs, and a job knows its own name and nothing about its siblings. Without the flag, entries carry no label and read as `default` per `spec-coverage` C-41, so an existing pipeline that never learns the flag exists keeps writing exactly the file it wrote before. The name is opaque and is not validated against a list: `unit`, `live` and `mutation` are ordinary values, and reserving them would make the foundation unusable for the requests that motivated SSRB-103. Rationale: the label has to come from somewhere, and the producer is the only party that knows which body of evidence a run represents. A consumer labeling files at read time is the alternative SSRB-103 section 6 weighed and set aside, because it leaves a results file that is not self-describing and lets two invocations disagree about what one file means."
+      type: technical
+      enforcement: error
+
+    - id: C-15
+      description: "`specter ingest --merge <file>...` MUST build its output from the named results files alone and MUST NOT read the existing output first. This is the opposite of the accumulation C-11 requires for `--junit` and `--go-test`, and both are correct for their case. Accumulating is right when one run assembles one stream from several runner files. It is wrong across runs, because a criterion that passed in the previous run and produced no entry in this one keeps its stale passing entry, which hides exactly the absence the stream foundation exists to make visible. `--merge` therefore replaces rather than layers, and a stream re-run is a stream replaced. Entries from the named files merge on `(spec_id, ac_id, stream)` per C-08, so two files carrying different streams both survive and two files carrying the same stream collapse worst-status-wins. The `streams` blocks of the named files merge by name, and a stream declared in more than one input sums its counts. `--merge` combined with `--junit`, `--go-test` or `--stream` in one invocation MUST be refused rather than given a precedence rule, because the two modes disagree about what the output is built from and a silent winner would make the artifact depend on flag order. **The prospective merged artifact MUST satisfy `spec-coverage` C-44 before any output is written.** When it would not, `--merge` MUST refuse: it writes nothing, leaves an existing output byte-identical, exits non-zero, and names the stream the artifact fails on. Two inputs that are each valid alone can combine into one that is not, because a file declaring its streams merged with a file carrying labeled entries and no block yields an artifact that declares one and not the other. C-44 exempts `--merge` from validating its **inputs**, and that exemption is right: a merge reads a file as a producer assembling a new one rather than as a consumer judging a workspace. It says nothing about the artifact a merge emits. A producer that writes what its own consumer refuses has moved the failure one command later and named a stream the operator never wrote. The rule is stated against C-44 rather than restated here, so the two cannot drift: a rule added to C-44 binds this refusal on the day it lands. **The prospective artifact MUST also be one `coverage` can read at all, which means it MUST NOT exceed the same `MaxResultsFileBytes` cap C-17 applies to a single input.** Two inputs that each pass C-17 can sum past it, and a merge that writes a file the consumer cannot open has moved the failure one command later in exactly the way this rule exists to stop. **The two refusals MUST be distinguishable in the message**, because they need different responses: an inconsistent artifact is repaired by declaring a stream, and an oversized one is not repairable by editing a block. Reporting a size refusal as an inconsistency sends an operator to look for a stream that is not the problem."
+      type: technical
+      enforcement: error
+
+    - id: C-16
+      description: "`ingest` MUST write a `streams` entry when the run names a stream, carrying the counts `spec-coverage` C-42 defines: inputs scanned, results extracted, and packages that produced zero test events. The entry is written even when extraction found nothing, which is the whole point: a stream that ran and found nothing and a stream that never ran both leave zero result entries, and only this block separates them. `--merge` carries the `streams` blocks of its named inputs through to the output per C-15, so a merged file keeps the metadata its inputs recorded. **A run that names no stream MUST NOT write the block**, and that is a deliberate trade rather than an oversight. C-14 promises an unlabeled run writes exactly the file it wrote before, and a top-level block appearing in a pipeline that never asked for one would break that promise and make this cycle non-additive for every existing producer. The cost is real and belongs in the open: an unlabeled run forgoes the silent-package signal, so a package that produced no test events goes unrecorded there exactly as it did before. Passing `--stream` is what buys the signal, and any wording that offers it to an unlabeled run is claiming something this constraint refuses. The zero-test-event count comes from go test -json package-level events per C-02, and it is named for what was observed. `ingest` cannot tell a package that failed to build from one whose tests were all filtered out or one that has no tests, so the count MUST NOT be reported as a build failure in the artifact, in the summary line, or in the field name. Rationale, roadmap item 3B5 rehomed into 3A: a package that fails to build emits no test event, so every criterion it would have covered silently disappears from the results, and a coverage run over that file reports the remaining criteria as the whole truth."
+      type: technical
+      enforcement: error
+
+    - id: C-17
+      description: "`specter ingest --merge` MUST refuse to read an input whose on-disk size exceeds `MaxResultsFileBytes` (16 MiB, the same cap `internal/coverage` applies to the file it reads), and MUST refuse it by stat before `os.ReadFile`, not after. Reading first and checking afterward is not a cap: the allocation has already happened. The stderr message names the file, the size and the limit, matching the wording `spec-diff` C-12 and `spec-check` C-12 use so an operator meets one phrasing across the toolchain. Rationale: a `.specter-results.json` is a CI artifact, and a malicious or merely broken runner can commit a multi-gigabyte one. `internal/coverage` has capped its read of exactly this shape since v0.13's security audit, and `--merge` introduced a second reader of the same artifact with no cap, which reopens the class the first fix closed. Two readers of one file shape must agree on the limit, so the constant is declared once per package and a test fails when the two disagree, per the class-of-bug rule that a load-bearing invariant is enforced in CI rather than remembered."
+      type: technical
+      enforcement: error
+
   depends_on:
     - spec_id: spec-coverage
-      version_range: "^1.9.0"
+      version_range: "^1.24.0"
       relationship: requires
 
   acceptance_criteria:
     - id: AC-01
       description: "ParseJUnit given a Surefire XML document with one <testcase name='engine-transaction/AC-07 serializes per host'> and no <failure> child returns one TestResult with SpecID='engine-transaction', ACID='AC-07', Status='passed'."
+      inputs:
+        parser: "ParseJUnit"
+        document: "Surefire XML with one <testcase name='engine-transaction/AC-07 serializes per host'> and no child element"
+      expected_output:
+        result_count: 1
+        spec_id: "engine-transaction"
+        ac_id: "AC-07"
+        status: "passed"
       references_constraints: ["C-01", "C-03"]
       priority: critical
 
     - id: AC-02
       description: "ParseJUnit given a <testcase> with a <failure> child returns Status='failed'; given a <skipped> child returns Status='skipped'; given an <error> child returns Status='errored'. No child means passed."
+      inputs:
+        parser: "ParseJUnit"
+        testcase_children: ["<failure>", "<skipped>", "<error>", "none"]
+      expected_output:
+        status_per_child: ["failed", "skipped", "errored", "passed"]
       references_constraints: ["C-01", "C-05"]
       priority: critical
 
     - id: AC-03
       description: "ParseGoTest given `{\"Action\":\"pass\",\"Package\":\"p\",\"Test\":\"TestAuthService/AC-03\"}\\n` returns one TestResult with ACID='AC-03', Status='passed'. SpecID derived from the package path's final component mapping (`auth-service` for `.../auth-service`) or explicit annotation in a preceding output line."
+      inputs:
+        parser: "ParseGoTest"
+        line: "{\"Action\":\"pass\",\"Package\":\"p\",\"Test\":\"TestAuthService/AC-03\"}"
+      expected_output:
+        result_count: 1
+        ac_id: "AC-03"
+        status: "passed"
+        spec_id_source: "final component of the package path, or an explicit annotation in a preceding output line"
       references_constraints: ["C-02", "C-03"]
       priority: critical
 
     - id: AC-04
       description: "ParseGoTest actions `pass`, `fail`, `skip` map to statuses `passed`, `failed`, `skipped` respectively. Action `output` with body containing `// @spec foo\\n// @ac AC-NN` is absorbed as annotation context for the current test."
+      inputs:
+        parser: "ParseGoTest"
+        actions: ["pass", "fail", "skip", "output"]
+        output_body: "// @spec foo\n// @ac AC-NN"
+      expected_output:
+        status_per_action: ["passed", "failed", "skipped", "absorbed as annotation context"]
       references_constraints: ["C-02", "C-05"]
       priority: high
 
     - id: AC-05
       description: "A test whose name, classname, and body contain no spec or AC annotation is silently dropped from ParseJUnit output — the returned slice contains no entry for it, and no error is returned."
+      inputs:
+        parser: "ParseJUnit"
+        testcase: "no spec or AC annotation in name, classname or body"
+      expected_output:
+        entry_returned: false
+        error_returned: false
       references_constraints: ["C-04"]
       priority: high
 
@@ -151,11 +209,29 @@ spec:
 
     - id: AC-07
       description: "MergeResults given two TestResult entries for (spec-a, AC-07) — one passed, one failed — returns a single entry with Status='failed'. The worst-status rule (errored > failed > skipped > passed) deterministically resolves conflicts."
+      inputs:
+        function: "MergeResults"
+        entries: ["(spec-a, AC-07) passed", "(spec-a, AC-07) failed"]
+      expected_output:
+        result_count: 1
+        status: "failed"
+        rule: "worst status wins, errored > failed > skipped > passed"
       references_constraints: ["C-08"]
       priority: high
 
     - id: AC-08
       description: "The CLI `specter ingest --junit fixture.xml --output out.json` exits 0 and writes out.json. `specter ingest --go-test fixture.json --output out.json` does the same for go test JSON. Missing input file: exit non-zero with an error on stderr. Missing --output: default to `.specter-results.json`."
+      inputs:
+        commands:
+          - "specter ingest --junit fixture.xml --output out.json"
+          - "specter ingest --go-test fixture.json --output out.json"
+          - "specter ingest --junit missing.xml"
+          - "specter ingest --junit fixture.xml"
+      expected_output:
+        exit_code_on_success: 0
+        output_file_written: true
+        exit_code_on_missing_input: "non-zero, with an error on stderr"
+        default_output_path: ".specter-results.json"
       references_constraints: ["C-01", "C-02", "C-06"]
       priority: high
 
@@ -171,6 +247,15 @@ spec:
 
     - id: AC-10
       description: "`specter ingest --junit fixture.xml --verbose` on the same 5-testcase fixture emits the C-09 summary PLUS three additional stderr lines, one per dropped testcase, in input order. Each line starts with `  dropped: ` followed by the testcase name and the reason text. Without --verbose, only the summary line is emitted. Rationale: --verbose keeps CI logs compact by default while making diagnostics available on demand."
+      inputs:
+        command: "specter ingest --junit fixture.xml --verbose"
+        fixture: "5 testcases, 3 of which are dropped"
+      expected_output:
+        summary_line_emitted: true
+        dropped_lines: 3
+        dropped_line_order: "input order"
+        dropped_line_prefix: "  dropped: "
+        without_verbose: "summary line only"
       references_constraints: ["C-10"]
       priority: medium
 
@@ -199,7 +284,182 @@ spec:
       references_constraints: ["C-12"]
       priority: critical
 
+    - id: AC-13
+      description: "Row order protects a first-match reader. A results file whose criterion carries a `failed` entry in one stream and a `passed` entry in another emits the failed row first. On the roadmap's constructed fixture the worst-first file and today's single-stream format both report 33 percent to a first-match reader, and a best-first file reports 83 percent on the same facts, so the best-first ordering MUST fail the guard. The fixture is constructed and fixed, so those literals may be asserted; a corpus percentage may not. Two runs of one binary over an unchanged workspace produce byte-identical files."
+      inputs:
+        mixed_criterion: "one criterion with failed in stream a and passed in stream b"
+        fixture: "the roadmap 3A3 fixture"
+        two_runs: "the same workspace, twice"
+      expected_output:
+        failed_row_precedes_passed_row: true
+        worst_first_first_match_percentage: 33
+        best_first_first_match_percentage: 83
+        two_runs_are_byte_identical: true
+      references_constraints: ["C-13"]
+      priority: high
+
+    - id: AC-14
+      description: "`ingest --stream go` labels every entry it writes with `go`, and the same inputs without the flag write no label at all. The two files differ only in that field: parsed and compared, every other value matches, so the flag adds a label and changes no result. An empty value for `--stream` is refused with a non-zero exit rather than writing an unlabeled file, because a producer that meant to name a stream and named nothing should learn that from the run and not from a coverage report weeks later."
+      inputs:
+        with_flag: "ingest --go-test out.json --stream go"
+        without_flag: "ingest --go-test out.json"
+        empty_flag: "ingest --go-test out.json with an empty --stream value"
+      expected_output:
+        every_entry_labeled: true
+        unlabeled_file_matches_except_for_the_label: true
+        empty_stream_exits_non_zero: true
+      references_constraints: ["C-14"]
+      priority: critical
+
+    - id: AC-15
+      description: "`ingest --merge a.json b.json` writes an output built from a and b alone. Given an existing output holding a criterion that neither input mentions, that criterion is absent afterward, which is the behavior that separates `--merge` from accumulation and the reason it exists: a re-run of a stream replaces it rather than layering on a stale pass. Two inputs carrying different streams both survive. Two inputs carrying the same stream and the same criterion collapse to the worst status. `--merge` passed alongside `--junit`, `--go-test` or `--stream` exits non-zero."
+      inputs:
+        stale_output: "an existing .specter-results.json holding s/AC-99"
+        inputs_to_merge: "a.json carrying stream go, b.json carrying stream js"
+        conflicting_flags: "--merge a.json --go-test out.json"
+      expected_output:
+        stale_criterion_is_absent: true
+        both_streams_survive: true
+        same_stream_collapses_worst_status: true
+        conflicting_flags_exit_non_zero: true
+      references_constraints: ["C-15"]
+      priority: critical
+
+    - id: AC-18
+      description: >-
+        `ingest --merge` refuses to write an artifact `coverage` would reject,
+        and writes nothing when it refuses. Given one input that declares a
+        `streams` block and one carrying entries labeled from a stream no input
+        declares, the command exits non-zero and names that stream. No output
+        file is created when none existed, and an existing output is unchanged
+        byte for byte, because a partial or replaced artifact on a refused merge
+        is worse than the artifact it refused: it destroys the file the operator
+        still had. A control merge of two consistent inputs is required beside
+        the refusal, so the check cannot be satisfied by refusing everything.
+        A declared but empty `streams` block is the case this criterion missed,
+        and missing it shipped a laundering path: `[]` and an absent key are the
+        same Go value in the producer and different bytes to the consumer, so an
+        input declaring `streams: []` beside a labeled entry serialized with no
+        block at all, and the artifact `coverage` exits 20 on became one it
+        accepts. Key presence MUST therefore survive read, merge and
+        serialization. A merge whose inputs declared the block declares it, even
+        when the merged block is empty, and a merge whose inputs never declared
+        it MUST still omit it, because C-14 promises an unlabeled producer keeps
+        writing exactly the file it wrote before. `streams: null` is a third
+        shape and it is declared, not absent: `spec-coverage` C-44 reads an
+        explicit null as a declared block, so a merge MUST refuse a null block
+        beside a labeled entry exactly as it refuses an empty one. Binding the
+        empty case alone leaves the null case open, and a producer that reads
+        null as absent restores the whole laundering path through a shape the
+        consumer still rejects. A null block carrying no labels merges, and is
+        normalized to `[]` on the way out, because the artifact should state
+        the same thing in one shape rather than two.
+      inputs:
+        declared_input: "a file whose streams block declares go, with go-labeled entries"
+        undeclared_input: "a file carrying js-labeled entries and no streams block"
+        no_prior_output: "the output path does not exist"
+        existing_output: "the output path holds an artifact from an earlier run"
+        control: "two inputs that each declare every stream their entries name"
+        oversized: "two inputs that each pass C-17's per-input cap and whose merged artifact exceeds it"
+        declared_empty_block_with_label: "one input whose streams block is declared and empty, carrying an entry labeled ghost"
+        declared_empty_block_no_label: "one input whose streams block is declared and empty, carrying no labeled entries"
+        legacy_no_streams_key: "one input carrying no streams key at all, with no labeled entries"
+        null_block_with_label: "one input whose streams key is an explicit null, carrying an entry labeled ghost"
+        null_block_no_label: "one input whose streams key is an explicit null, carrying no labeled entries"
+      expected_output:
+        refusal_exit_code_non_zero: true
+        refusal_names_the_undeclared_stream: true
+        no_output_file_created_when_none_existed: true
+        existing_output_unchanged_byte_for_byte: true
+        control_merge_is_written: true
+        oversized_merge_is_refused: true
+        oversized_refusal_names_the_size_not_a_stream: true
+        declared_empty_block_with_label_is_refused: true
+        declared_empty_block_survives_as_an_empty_array: true
+        legacy_absent_key_stays_absent: true
+        null_block_with_label_is_refused: true
+        null_block_no_label_is_declared_and_normalized_to_an_empty_array: true
+      references_constraints: ["C-15"]
+      priority: critical
+
+    - id: AC-16
+      description: "`ingest --stream go` writes a streams entry, and writes it even when nothing was extracted. The same inputs with no `--stream` write no block at all, per C-16 and C-14's back-compat promise, and that case is asserted rather than assumed: an unconditional block would make this cycle non-additive for every existing producer. A run whose inputs yield no results still declares its stream with a scanned count above zero and an extracted count of zero, which is what distinguishes it from a stream that never ran. A go test -json input holding a package whose terminal event arrives with no test event contributes to the zero-test-event count. Neither the artifact nor the summary line calls that a build failure, because `ingest` cannot tell a build failure from a filtered-out package or a package with no tests."
+      inputs:
+        empty_extraction: "ingest --stream go over a runner file scanning 12 cases and matching no annotation"
+        no_stream_flag: "the same inputs with no --stream"
+        silent_package: "go test -json output with a package-level terminal event and no test event"
+      expected_output:
+        stream_entry_written_when_extraction_is_empty: true
+        no_stream_flag_writes_no_streams_block: true
+        zero_test_event_package_counted: true
+        artifact_does_not_claim_a_build_failure: true
+        summary_line_does_not_claim_a_build_failure: true
+        field_name_does_not_claim_a_build_failure: true
+      references_constraints: ["C-16"]
+      priority: critical
+
+    - id: AC-17
+      description: "`ingest --merge` on an input larger than 16 MiB exits non-zero before the file is unmarshaled, with stderr naming the file and containing `exceeds` and `byte limit`. A file exactly at the cap is accepted, so the boundary is a limit rather than an off-by-one. The two declarations of the cap, `internal/ingest` and `internal/coverage`, are asserted equal, because a reader that capped at a different figure would accept a file its sibling refuses and the artifact's meaning would depend on which command read it."
+      inputs:
+        oversize: "a --merge input one byte over 16 MiB"
+        at_cap: "a --merge input of exactly 16 MiB"
+      expected_output:
+        oversize_exit_code_non_zero: true
+        oversize_refused_before_unmarshal: true
+        oversize_stderr_contains: ["exceeds", "byte limit"]
+        at_cap_accepted: true
+        both_packages_declare_the_same_cap: true
+      references_constraints: ["C-17"]
+      priority: high
+
   changelog:
+    - version: "4.0.0"
+      date: "2026-08-30"
+      author: "specter-team"
+      type: major
+      description: "AC-18 binds `streams: null`, the third shape of the key and the one 3.0.0 left open. The implementation already handled it, so this is a guard over correct behavior rather than a fix, and it was measured as unguarded before it was written: changing the presence test to read an explicit null as absent restores the laundering path in full, and the entire test suite still passes. `spec-coverage` C-44 reads a null block as declared, so a merge must refuse null beside a labeled entry exactly as it refuses an empty one. Binding only the empty case is what let a one-line change reopen a P1 with every gate green. The criterion also binds normalization: a null block with no labels merges and is written as `[]`, so the artifact states one thing in one shape. Major, not minor. AC-18 gains two inputs and `spec-diff` C-05 classifies an inputs change as breaking. Nothing depends on `spec-ingest`, so nothing cascades."
+
+    - version: "3.0.0"
+      date: "2026-08-30"
+      author: "specter-team"
+      type: major
+      description: "AC-18 gains the declared-but-empty `streams` block, the case that let `--merge` launder an artifact its own consumer refuses. Measured at b3d02c9: an input carrying `streams: []` beside an entry labeled `ghost` exits 20 at `coverage`, and the same content through `ingest --merge` exits 0 and writes an output `coverage` then accepts. C-15 already required the prospective artifact to satisfy C-44 before anything is written, so this is a violated contract rather than an undecided policy, and C-15 needs no new clause. The fault is that key presence did not survive the producer: `ReadResultsFile` returned only the decoded rows, and `serializeResultsFile` emitted the key only when the block was non-empty, so the evidence C-44 turns on was gone before the validator saw it. `internal/coverage` already solves this with a `json.RawMessage` wire field and a presence flag, and the producer gains the mirror. AC-18 also binds the two halves a naive fix would break: a declared empty block survives as `streams: []`, and an input that never declared the key keeps C-14's back-compat omission. Major, not minor. AC-18 gains three inputs, and `spec-diff` C-05 classifies an `inputs` change as breaking; `specter diff` over this change reports `[breaking]`. Nothing depends on `spec-ingest`, so nothing cascades."
+
+    - version: "2.0.0"
+      date: "2026-08-27"
+      author: "specter-team"
+      type: major
+      description: "Two corrections to what 1.8.0 shipped, both found in review of the implementation. C-15 required the prospective artifact to satisfy C-44 and said nothing about size, while the implementation validated by reading the artifact back through the consumer's reader, which caps at MaxResultsFileBytes. Measured: two 8.6 MiB inputs, each well under C-17's per-input cap, merge to 30.8 MiB and are refused. That refusal is defensible, since a file the consumer cannot open is the same failure one command later, but it was unspecified and it was reported as an inconsistency. C-15 now binds it and requires the two refusals to be distinguishable, because they need different responses: a stream can be declared, a size cannot be edited away. The `spec-coverage` floor rises from ^1.22.0 to ^1.24.0. C-15 names C-44, which does not exist below 1.23.0 and does not cover the `streams: null` shape below 1.24.0, so the old range admitted versions where this rule cannot be satisfied. Major, not minor. AC-18 gains an input, and `spec-diff` C-05 classifies an `inputs` change as breaking; running `specter diff` over this change reports `[breaking]`. Reported as such and followed rather than reasoned around, which is the mistake this cycle already made once on `spec-coverage` 1.22.0 and recorded there. Nothing depends on `spec-ingest`, so nothing cascades. `bugs/SP-SP-075`."
+
+    - version: "1.8.0"
+      date: "2026-08-26"
+      author: "specter-team"
+      type: minor
+      description: "C-15 gains the rule that a merge must not write what `coverage` refuses. Measured at 0e3e037: merging a file that declares its streams with a file carrying labeled entries and no block exits 0 and writes an artifact whose entries name a stream it does not declare, which `coverage` then exits 20 on. Both inputs are accepted and neither is inconsistent alone, so the merge creates the fault and reports success. C-44's exemption covers a merge's inputs and says nothing about its output, which is the gap. The rule is stated against C-44 rather than restated, so a rule added there binds this refusal without a second edit. AC-18 binds the refusal, that the stream is named, that no file is created when none existed, that an existing output survives byte for byte, and a control merge so the check cannot be met by refusing everything. Refusing rather than repairing: the alternative is synthesizing a `streams` row for a label the merge never observed, which means inventing `scanned` and `extracted` counts. `bugs/SP-SP-075`."
+
+    - version: "1.7.0"
+      date: "2026-08-26"
+      author: "specter-team"
+      type: minor
+      description: "C-17 caps the size of a `--merge` input at 16 MiB, refused by stat before the read rather than after it, because reading first and checking afterward is not a cap. Found in review of the 1.6.0 implementation. `internal/coverage` has capped its read of this exact artifact since the v0.13 security audit, and `--merge` introduced a second reader with none, reopening the class the first fix closed. The wording of the refusal matches `spec-diff` C-12 and `spec-check` C-12 so an operator meets one phrasing across the toolchain. AC-17 also asserts the two packages declare the same figure, since a reader capping differently would accept what its sibling refuses."
+
+    - version: "1.6.0"
+      date: "2026-08-25"
+      author: "specter-team"
+      type: minor
+      description: "Roadmap 3A4, plus item 3B5 rehomed into it. C-14 adds `--stream`, which labels one invocation's entries, because a CI job knows its own name and nothing about its siblings. C-15 adds `--merge`, which builds from the named files alone and is deliberately the opposite of C-11's accumulation: accumulating is right within one run and wrong across runs, where a criterion that passed before and produced no entry now keeps a stale pass. C-16 requires the streams entry to be written even when extraction found nothing, since that is the only thing separating a stream that ran and found nothing from one that never ran. C-02 stops discarding package-level events: an event with an empty Test field is where a runner says a package produced no test at all, and discarding it is why that signal was unavailable. The count is named for what was observed and MUST NOT be called a build failure anywhere, because a silent package may equally have had every test filtered out or have no tests. AC-16 binds all three places the constraint names: the artifact, the summary line, and the field. C-16 binds to a run that names a stream, and an unlabeled run writes no block, because C-14 promises such a run writes exactly the file it wrote before and an unconditional block would make this cycle non-additive for every existing producer. The trade is stated in C-16 rather than left to be discovered: an unlabeled run forgoes the silent-package signal. The `spec-coverage` floor rises to 1.22.0, the version that added the third count C-16 relies on. That version is a minor rather than the patch an earlier draft assigned it: the C-42 edit is description-only, but the same change adds AC-71, and `spec-diff` C-05 classifies a new AC as additive."
+
+    - version: "1.5.0"
+      date: "2026-08-25"
+      author: "specter-team"
+      type: minor
+      description: "Roadmap 3A1 and 3A3. C-08's merge key gains `stream`, so collapsing is per stream and two streams reporting on one criterion emit two entries rather than one. Collapsing them would destroy exactly the distinction the foundation exists to record: they are two facts, not a contradiction to resolve. A file carrying no `stream` field behaves as it did. C-13 states the writer's row order, worst-status-first within a criterion, plus a total order over the whole file. The row order is not for Specter, which resolves across every entry per `spec-coverage` C-33. It is for a published artifact's other readers: a first-match consumer over a best-first file reports 83 percent where the facts give 33. The `spec-coverage` floor rises to 1.21.0 in the same change, because C-08 now names C-41 and C-43 and a range that admitted 1.9.0 would let this spec resolve against a version where neither exists."
+    - version: "1.4.0"
+      date: "2026-08-23"
+      author: "specter-team"
+      type: minor
+      description: "Backfill inputs and expected_output on the eight criteria that carried neither: AC-01 to AC-05, AC-07, AC-08 and AC-10. Every block is derived from the criterion's own description, which already stated its inputs and outputs in prose. Prerequisite for roadmap 2C2, which makes concreteness an error at Tier 1; spec-ingest held all eight of Tier 1's gaps, so this is what lets the gate ship green."
+
     - version: "1.3.0"
       date: "2026-04-25"
       author: "specter-team"

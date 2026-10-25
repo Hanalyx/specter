@@ -1,6 +1,6 @@
 spec:
   id: spec-reverse
-  version: "1.3.0"
+  version: "1.8.0"
   status: draft
   tier: 2
 
@@ -45,7 +45,7 @@ spec:
         - "Output validation via parser.ParseSpec() round-trip"
         - "Auto-detection of language adapter from file extensions"
         - "Summary report after extraction: counts of constraints, assertions, gaps, and files needing attention"
-        - "Handoff line pointing first-time users at `specter explain <spec-id>` to triage gaps in each generated draft"
+        - "Handoff line pointing first-time users at `specter explain <spec-id>` to review the criteria in each generated draft"
       excludes:
         - "AI-assisted gap filling or context generation"
         - "Tree-sitter or full AST parsing"
@@ -56,7 +56,7 @@ spec:
 
   constraints:
     - id: C-01
-      description: "MUST define an Adapter interface with methods: Name, Detect, IsTestFile, ExtractRoutes, ExtractConstraints, ExtractAssertions, ExtractImports, InferSystemName"
+      description: "MUST define an Adapter interface with methods: Name, Detect, IsTestFile, SourceKeyForTest, ExtractRoutes, ExtractConstraints, ExtractAssertions, ExtractImports, InferSystemName"
       type: technical
       enforcement: error
 
@@ -121,9 +121,34 @@ spec:
       enforcement: error
 
     - id: C-14
-      description: "After the C-13 summary line (and only when at least one spec was generated, non-empty result), `specter reverse` MUST emit a handoff line: `Run \\`specter explain <first-spec-id>\\` to triage gaps in each generated draft.` where <first-spec-id> is the id of the lexicographically-first generated spec (or any deterministic choice; first-by-creation-order is acceptable as long as the choice is reproducible across runs over identical input). The line is suppressed under --json output to keep machine-readable output clean. Rationale: closes the v0.2 carry-over UX gap where `reverse` ended silently and left first-time users without a next-step."
+      description: "After the C-13 summary line (and only when at least one spec was generated, non-empty result), `specter reverse` MUST emit a handoff line: `Run \\`specter explain <first-spec-id>\\` to review the criteria in each generated draft.` where <first-spec-id> is the id of the lexicographically-first generated spec (or any deterministic choice; first-by-creation-order is acceptable as long as the choice is reproducible across runs over identical input). The line is suppressed under --json output to keep machine-readable output clean. The line MUST name a capability the command it points at actually has. It said `to triage gaps` for three releases while `specter explain` had no gap handling at all, so the mandated next step did not exist. `explain` lists every acceptance criterion with its coverage status and points at `specter explain <id>:<ac-id>` for annotation examples, which is review, not gap triage. Rationale: closes the v0.2 carry-over UX gap where `reverse` ended silently and left first-time users without a next-step."
       type: business
       enforcement: warning
+
+    - id: C-15
+      description: "Every constraint `specter reverse` writes MUST omit the `enforcement` key, so the tier default applies. This covers both the constraints extracted from source and the placeholder constraint synthesized when extraction found none (the schema requires `minItems: 1`). Rationale: `enforcement` overrides the tier-based severity `spec-check` assigns to a diagnostic about that constraint, and the schema documents it as opt-in (\"Omit to use the tier default\"). Generated specs are `status: draft` and `tier: 3`, both of which say the spec is not yet load-bearing; stamping `enforcement: error` contradicts that and makes every unreferenced generated constraint fail `check` at error severity. A constraint that no acceptance criterion references is an expected state of a draft, not a build failure. An author who later decides a specific constraint is always-error sets the key themselves."
+      type: technical
+      enforcement: error
+
+    - id: C-16
+      description: "Spec ids MUST be unique within a single `specter reverse` run. When two groups produce the same id, every member of the colliding set is disambiguated by prepending parent directory segments of its source path, adding one segment at a time until the set is distinct, and skipping any segment the id already carries so a generic-filename id is not doubled. A path with no segments left takes a numeric suffix instead. Disambiguation MUST be deterministic: the same set of files produces the same ids regardless of the order they were supplied in. Each id that changes MUST produce an `id_collision` diagnostic at warning severity naming the original id and the files involved, because the operator's id no longer matches the obvious basename and nothing else would tell them."
+      type: technical
+      enforcement: error
+
+    - id: C-17
+      description: "Under file grouping, a test file MUST be grouped with the source file it tests, when the adapter can name that source and that source is present in the input. The adapter names it through `SourceKeyForTest`, which returns the source path, or an empty string when it cannot map the test. A test file whose mapping is unknown, or whose named source is absent from the input, forms its own group as it does today. Rationale: gap detection (C-04) runs over one group, so a source file grouped apart from its test is compared against zero assertions and every constraint it carries is reported UNTESTED even when a test for it exists in the tree. Directory grouping already places colocated files in one group and is unchanged. A test file held in a separate `__tests__` or `tests` directory is out of scope for this constraint, because directory grouping puts it in a group of its own."
+      type: technical
+      enforcement: error
+
+    - id: C-18
+      description: "`--json` selects the report format and MUST NOT decide whether files are written. Only `--dry-run` suppresses writing. `specter reverse --json` therefore writes generated specs to the output directory exactly as a non-JSON run does, including the default output directory when `-o` is not given, and honors the existing skip-on-exists rule. `--json --dry-run` writes nothing and still reports. Under `--json`, stdout MUST carry exactly one JSON document and no other bytes: the per-spec GENERATED and SKIPPED lines go to stderr, which extends AC-19's pure machine-readable output to the write path. A write error is reported on stderr and exits non-zero with no JSON on stdout, matching what the non-JSON path does when a write fails mid-loop. Rationale: `-o` was accepted and silently ignored under `--json`, so the command reported specs generated and left the directory empty, at exit 0."
+      type: technical
+      enforcement: error
+
+    - id: C-19
+      description: "The placeholder acceptance criterion synthesized when extraction found none MUST NOT carry `gap: true`. `gap` asserts that a constraint has no covering assertion. The placeholder is not about a constraint; it exists only because the schema requires `minItems: 1`, and flagging it makes a statement about the extractor finding nothing indistinguishable from a measured finding. C-13 counts criteria with `gap: true`, so the placeholder inflates that count: `go-chi/chi` reported `0 constraints, 21 gaps`, which cannot be read as a gap count at all. C-13's definition is unchanged; the placeholder simply stops qualifying."
+      type: technical
+      enforcement: error
 
   acceptance_criteria:
     - id: AC-01
@@ -329,12 +354,161 @@ spec:
       references_constraints: ["C-13", "C-14"]
       priority: high
 
+    - id: AC-20
+      description: "Generated spec YAML carries no `enforcement` key on any constraint, on both the extracted-constraint path and the synthesized-placeholder path. Asserted against the marshaled YAML rather than the struct field, because an empty string field and an absent key are different documents and only the second one takes the tier default."
+      inputs:
+        case_a: "source file with validation rules, so constraints are extracted from it"
+        case_b: "source file with no extractable constraints, so the minItems placeholder is synthesized"
+      expected_output:
+        yaml_contains_enforcement_key: false
+        placeholder_constraint_emitted: true
+        constraint_count_minimum: 1
+      references_constraints: ["C-15"]
+      priority: high
+
+    - id: AC-21
+      description: "Two source files with the same basename in different directories produce two distinct spec ids, and the resulting set of specs contains no duplicate id."
+      inputs:
+        source_files: ["internal/coverage/coverage.go", "internal/diff/coverage.go"]
+        both_yield_basename: "coverage"
+      expected_output:
+        distinct_ids: true
+        duplicate_ids_in_result: 0
+        ids_derive_from_path_segments: true
+      references_constraints: ["C-16"]
+      priority: high
+
+    - id: AC-22
+      description: "Disambiguation is deterministic. The same set of files supplied in a different order produces the same id for the same file, so a second run over an unchanged tree does not rename anything."
+      inputs:
+        run_a_order: ["internal/coverage/coverage.go", "internal/diff/coverage.go"]
+        run_b_order: ["internal/diff/coverage.go", "internal/coverage/coverage.go"]
+      expected_output:
+        id_per_source_file_is_identical_across_runs: true
+      references_constraints: ["C-16"]
+      priority: high
+
+    - id: AC-23
+      description: "Every id changed by disambiguation produces an `id_collision` diagnostic at warning severity, naming the id that collided. Without it the operator has no way to learn that the generated id is not the basename."
+      inputs:
+        source_files: ["internal/coverage/coverage.go", "internal/diff/coverage.go"]
+      expected_output:
+        diagnostic_kind: "id_collision"
+        diagnostic_severity: "warning"
+        diagnostic_names_original_id: "coverage"
+      references_constraints: ["C-16"]
+      priority: high
+
+    - id: AC-24
+      description: "A source file and its test produce one spec, not two, and that spec carries both the constraints extracted from the source and the acceptance criteria derived from the test's assertions. A test file whose source is absent from the input still produces its own spec."
+      inputs:
+        source_files: ["user.go with two validate tags"]
+        test_files: ["user_test.go asserting one of them", "orphan_test.go whose source is not supplied"]
+      expected_output:
+        spec_count: 2
+        merged_spec_has_constraints: true
+        merged_spec_has_test_derived_criteria: true
+        orphan_test_still_produces_a_spec: true
+      references_constraints: ["C-17"]
+      priority: high
+
+    - id: AC-25
+      description: "A constraint whose test is present in the input is not reported as a gap. Grouped apart from its assertions, gap detection compares the constraint against an empty assertion list and marks it UNTESTED, which is a false gap rather than a missing one."
+      inputs:
+        source_file: "user.go declaring Name as required"
+        test_file: "user_test.go with a case asserting a missing name is rejected"
+      expected_output:
+        gap_count_for_the_tested_constraint: 0
+      references_constraints: ["C-17", "C-04"]
+      priority: high
+
+    - id: AC-26
+      description: "`specter reverse --json -o DIR` writes the generated spec files to DIR, and stdout parses as exactly one JSON document with no other bytes preceding or following it."
+      inputs:
+        flags: ["--json", "-o DIR"]
+        source_files: ["a source file the adapter can extract from"]
+      expected_output:
+        files_written_to_dir: true
+        stdout_is_exactly_one_json_document: true
+        per_spec_lines_on_stdout: false
+      references_constraints: ["C-18"]
+      priority: high
+
+    - id: AC-27
+      description: "`specter reverse --json --dry-run -o DIR` writes nothing and still emits the JSON report. `--dry-run` is the only flag that suppresses writing."
+      inputs:
+        flags: ["--json", "--dry-run", "-o DIR"]
+      expected_output:
+        files_written_to_dir: false
+        json_report_emitted: true
+      references_constraints: ["C-18"]
+      priority: high
+
+    - id: AC-28
+      description: "When a write fails under `--json`, the error goes to stderr and the command exits non-zero with no JSON document on stdout, so a consumer cannot read a partial run as a successful one."
+      inputs:
+        flags: ["--json", "-o DIR"]
+        condition: "DIR cannot be created, because a plain file occupies its path"
+      expected_output:
+        exit_code_nonzero: true
+        stdout_empty: true
+        error_on_stderr: true
+      references_constraints: ["C-18"]
+      priority: medium
+
+    - id: AC-29
+      description: "A group that extracted nothing produces a placeholder acceptance criterion that does not carry `gap: true`, so the C-13 gap count reports only measured findings. A run that extracts no constraints reports zero gaps."
+      inputs:
+        source_file: "a file with no extractable constraints or assertions in its group"
+      expected_output:
+        placeholder_ac_emitted: true
+        placeholder_ac_gap_flag: false
+        gap_count_when_no_constraints_extracted: 0
+      references_constraints: ["C-19", "C-13"]
+      priority: high
+
+    - id: AC-30
+      description: "The C-14 handoff line names a capability `specter explain` has. It must not tell the operator to triage gaps, which `explain` does not do."
+      inputs:
+        extracted_specs: ["user.spec.yaml"]
+        json_mode: false
+      expected_output:
+        handoff_line_contains: "specter explain"
+        handoff_line_mentions_gap_triage: false
+      references_constraints: ["C-14"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
       relationship: requires
 
   changelog:
+    - version: "1.8.0"
+      date: "2026-08-23"
+      author: "specter-team"
+      type: minor
+      description: "Add C-19/AC-29 and correct C-14/AC-30: the synthesized placeholder criterion stops carrying gap: true, and the handoff line stops naming a capability `specter explain` does not have. Closes SP-065 and the separable half of SP-064. The wider question of what `gap` should assert is deferred by owner decision; only what was broken is fixed here."
+    - version: "1.7.0"
+      date: "2026-08-23"
+      author: "specter-team"
+      type: minor
+      description: "Add C-18/AC-26..28: `--json` selects the report format and does not suppress writing; only `--dry-run` does. Closes SP-061. `--json` returned above the write loop, so `reverse --json -o DIR` reported SpecsGenerated and wrote nothing, at exit 0. Stdout stays a single JSON document because the per-spec lines move to stderr."
+    - version: "1.6.0"
+      date: "2026-08-23"
+      author: "specter-team"
+      type: minor
+      description: "Add C-17/AC-24/AC-25 and extend C-01 with SourceKeyForTest: under file grouping a test file joins the source it tests. Closes SP-063. Every file was its own group, so a source file's constraints were compared against zero assertions and all of them were reported UNTESTED. Measured on the 12-repo corpus: go-playground/validator reported 86 constraints, 105 assertions and 86 gaps, every constraint flagged untested in a repository that tests them."
+    - version: "1.5.0"
+      date: "2026-08-23"
+      author: "specter-team"
+      type: minor
+      description: "Add C-16/AC-21..23: spec ids are unique within a run, disambiguated deterministically by path, and each rename is reported. Closes SP-060. Ids came from the file basename, with the parent directory prepended only for basenames on a hardcoded allowlist of generic names. Collisions come from domain vocabulary the allowlist cannot anticipate. Measured on the 12-repo real-world corpus: 10 of 12 repositories produced a workspace `resolve` rejected, 422 colliding ids in one of them."
+    - version: "1.4.0"
+      date: "2026-08-23"
+      author: "specter-team"
+      type: minor
+      description: "Add C-15/AC-20: generated constraints omit `enforcement` so the tier default applies. Closes SP-062. `reverse` stamped `enforcement: error` on every constraint it wrote, including the synthesized placeholder, which overrode the tier-3 `info` default and made every unreferenced generated constraint an error. Measured on the 12-repo real-world corpus: the two repositories whose output cleared `resolve` both failed `check`, 37 and 61 diagnostics, all `orphan_constraint`, none at info."
     - version: "1.3.0"
       date: "2026-05-15"
       author: "specter-team"

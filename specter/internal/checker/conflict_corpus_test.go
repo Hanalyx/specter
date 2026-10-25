@@ -1,0 +1,284 @@
+// conflict_corpus_test.go -- roadmap 2A3. The three corpora structural-conflict
+// detection is measured against, committed as data.
+//
+// `bugs/done/SP-SP-004` records why these are the deliverable rather than any
+// particular matcher: every pass on that bug measured false positives and true
+// positives, reported a rule that looked good, and missed the class that only
+// appears once you write down the sentences that must NOT fire.
+//
+// These tests characterize the SHIPPED behavior, including where it is wrong.
+// Five of nine non-conflicts still fire, all of them the enforcement class:
+// a conflict and an enforcement are lexically identical and no rule over the
+// subject and the absence expression can separate them. C-22 forbids
+// describing this rule as eliminating false positives for that reason.
+// A run that changes any count fails, which is the point: the numbers move
+// deliberately or not at all.
+//
+// @spec spec-check
+package checker
+
+import (
+	"testing"
+
+	"github.com/Hanalyx/specter/internal/resolver"
+	"github.com/Hanalyx/specter/internal/schema"
+)
+
+// conflictCase is one upstream constraint against one downstream criterion,
+// with the verdict a careful reader gives it.
+type conflictCase struct {
+	constraint string
+	criterion  string
+	// conflict is the ground truth: does the criterion actually contradict the
+	// constraint? Set by a human, never by the detector.
+	conflict bool
+	// fires records what the shipped detector does today. Where it disagrees
+	// with conflict, the case is a known defect and the note says which.
+	fires bool
+	note  string
+}
+
+// trueConflicts: the criterion genuinely contradicts the constraint.
+//
+// The first is the only true positive that was committed before 2A3.
+var trueConflicts = []conflictCase{
+	{"email MUST be required", "Process checkout when email is absent", true, true, "the original suite fixture"},
+	{"email MUST be required", "Guest checkout succeeds when email is missing", true, true, "copular, missing"},
+	{"email MUST be required", "Order is accepted without email", true, true, "backward, without"},
+	{"email MUST be required", "Submit the form when email is not provided", true, true, "copular, negated"},
+	{"email MUST be required", "Checkout proceeds when the email is empty", true, true, "article before subject"},
+	{"The refresh token MUST be present on every request", "Session renews when the refresh token is absent", true, true, "multi-word subject"},
+	{"The refresh token MUST be present on every request", "Renewal succeeds without the refresh token", true, true, "backward, multi-word"},
+	{"api_key MUST be supplied by the caller", "Request is served when api_key is missing", true, true, "snake_case subject"},
+	{"A tenant id MUST accompany every write", "Write is accepted when a tenant id is not present", true, true, "article, negated"},
+	{"The signature header MUST be verified", "Webhook is processed when the signature header is absent", true, true, "long subject"},
+	{"user_id MUST be non-empty", "Lookup returns a record when user_id is empty", true, true, "empty as the predicate"},
+	// The only true positive the shipped detector misses. extractSubject keeps
+	// the article, so the subject is "The audit record" and the criterion says
+	// "an audit record".
+	// Detected since C-21 strips the leading article from the extracted
+	// subject. It was the only true conflict the co-occurrence rule missed.
+	{"The audit record MUST be written", "Deletion completes without an audit record", true, true, "backward, indefinite article"},
+}
+
+// nearMisses: the subject and an absence word both appear and there is no
+// conflict. Six of seven fired under co-occurrence; five of seven fire under
+// C-21. Add the two ciProximitySurvivors below and the totals are eight of nine
+// then five of nine, which is the pair C-22 and AC-44 state. This is the corpus
+// that refuted the bound-rule fix, and it is the reason `structural_conflict`
+// is advisory under C-15.
+var nearMisses = []conflictCase{
+	{"email MUST be required", "Registration fails when email is absent", false, true,
+		"FALSE POSITIVE: the criterion ENFORCES the constraint. Lexically identical to the first true conflict; only the outcome verb differs"},
+	{"email MUST be required", "Error is returned when email is missing", false, true,
+		"FALSE POSITIVE: enforcement, different verb"},
+	{"email MUST be required", "Validation rejects a payload without email", false, true,
+		"FALSE POSITIVE: enforcement, backward form"},
+	{"email MUST be required", "Confirm that email is not absent before sending", false, true,
+		"FALSE POSITIVE: double negation, means present"},
+	// Silent under C-21: "absent" predicates "The phone number", not the
+	// subject, so nothing attaches.
+	{"email MUST be required", "The phone number is absent from the email template", false, false,
+		"correctly silent: the absence predicates a different noun"},
+	// Fires under C-21 where it did not under co-occurrence, because `present`
+	// is in the predicate list so that "is not present" matches. A bare "is
+	// present" matches too. One of the two false positives C-21 introduces.
+	{"The refresh token MUST be present on every request", "Audit log records that the refresh token is present", false, true,
+		"FALSE POSITIVE: 'is present' matches the predicate used for 'is not present'"},
+	// Silent under C-21: the backward shape needs the subject immediately
+	// after the absence word, and "regard to" intervenes.
+	{"api_key MUST be supplied by the caller", "Rate limit applies without regard to api_key", false, false,
+		"correctly silent: 'without' governs 'regard', not the subject"},
+}
+
+// ciProximitySurvivors are the two real-corpus cases that survive a word
+// boundary plus proximity tightening. SP-004 asks for them by name, so a later
+// simplification to a proximity rule cannot pass unnoticed.
+var ciProximitySurvivors = []conflictCase{
+	// Both silent under C-21. They survive word boundaries plus proximity,
+	// which is why SP-004 asks for them by name: a later simplification back
+	// to a proximity rule would fire on them again and this table would catch
+	// it.
+	{"CI MUST validate the PR title", "in a ci environment without a controlling terminal", false, false,
+		"correctly silent: nothing attaches to the subject"},
+	{"CI MUST validate the PR title", "any ci script that pipes confirmation tokens) without", false, false,
+		"correctly silent: nothing attaches to the subject"},
+}
+
+func detectorFires(c conflictCase) bool {
+	upstream := makeSpec("up", 1)
+	upstream.Constraints = []schema.Constraint{{ID: "C-01", Description: c.constraint}}
+	upstream.AcceptanceCriteria = []schema.AcceptanceCriterion{
+		{ID: "AC-01", Description: "covers it", ReferencesConstraints: []string{"C-01"}},
+	}
+	downstream := makeSpec("down", 2)
+	downstream.Constraints = []schema.Constraint{{ID: "C-01", Description: "downstream"}}
+	downstream.AcceptanceCriteria = []schema.AcceptanceCriterion{
+		{ID: "AC-01", Description: c.criterion, ReferencesConstraints: []string{"C-01"}},
+	}
+	g := makeGraph(
+		map[string]*resolver.SpecNode{
+			"up":   {Spec: upstream, File: "u.yaml"},
+			"down": {Spec: downstream, File: "d.yaml"},
+		},
+		[]resolver.SpecEdge{{From: "down", To: "up", Relationship: "requires"}},
+	)
+	for _, d := range CheckSpecs(g, nil).Diagnostics {
+		if d.Kind == "structural_conflict" {
+			return true
+		}
+	}
+	return false
+}
+
+// @ac AC-03
+// Every case behaves as recorded. A change to the matcher moves one of these
+// and fails here, which forces the change to be deliberate.
+func TestConflictCorpus_MatchesRecordedBehavior(t *testing.T) {
+	all := append(append(append([]conflictCase{}, trueConflicts...), nearMisses...), ciProximitySurvivors...)
+	for _, c := range all {
+		t.Run("spec-check/AC-03 "+c.note, func(t *testing.T) {
+			if got := detectorFires(c); got != c.fires {
+				t.Errorf("detector fires=%v, recorded %v\n  constraint: %s\n  criterion:  %s\n  note: %s",
+					got, c.fires, c.constraint, c.criterion, c.note)
+			}
+		})
+	}
+}
+
+// @ac AC-03
+// @ac AC-44
+// The accuracy of the shipped detector, stated as numbers rather than left to
+// be inferred from the table above. AC-44 requires the three corpora to be
+// measured together and the numbers recorded, which is what this asserts.
+//
+// These are not aspirational. They are what ships, and they are the argument
+// for C-15 making the diagnostic advisory: a check wrong on six of seven
+// non-conflicts cannot be a gate.
+func TestConflictCorpus_AccuracyIsRecorded(t *testing.T) {
+	t.Run("spec-check/AC-44 accuracy is measured on three corpora and recorded", func(t *testing.T) {
+		var detected, missed int
+		for _, c := range trueConflicts {
+			if detectorFires(c) {
+				detected++
+			} else {
+				missed++
+			}
+		}
+		var falsePositives int
+		for _, c := range append(append([]conflictCase{}, nearMisses...), ciProximitySurvivors...) {
+			if detectorFires(c) {
+				falsePositives++
+			}
+		}
+
+		// C-21 attachment. AC-44 records these three, so they move
+		// deliberately or not at all.
+		const (
+			wantDetected       = 12
+			wantMissed         = 0
+			wantFalsePositives = 5
+		)
+		if detected != wantDetected || missed != wantMissed {
+			t.Errorf("true conflicts: %d detected, %d missed; recorded %d and %d",
+				detected, missed, wantDetected, wantMissed)
+		}
+		if falsePositives != wantFalsePositives {
+			t.Errorf("false positives: %d of %d non-conflicts fired; recorded %d",
+				falsePositives, len(nearMisses)+len(ciProximitySurvivors), wantFalsePositives)
+		}
+
+		// The third corpus, this repository's own specs, is asserted by
+		// `make dogfood` rather than here: it runs `specter check` over the
+		// real corpus on every invocation, so a fire would appear in its
+		// output. Loading specs/ from a unit test would couple the package to
+		// the repository layout for no extra signal.
+	})
+}
+
+// @ac AC-42
+// The subject matches on whole-token boundaries. `ci` inside "producing" and
+// "exercises" is what the co-occurrence rule matched, and it is the sharpest
+// demonstration available that the old rule was not doing word matching.
+func TestConflictCorpus_SubjectMatchesOnTokenBoundaries(t *testing.T) {
+	for _, criterion := range []string{
+		"a step producing artifacts without a cache",
+		"the suite exercises the path without a fixture",
+	} {
+		t.Run("spec-check/AC-42 token boundaries", func(t *testing.T) {
+			c := conflictCase{constraint: "CI MUST validate the PR title", criterion: criterion}
+			if detectorFires(c) {
+				t.Errorf("fired on %q; `ci` appears only inside a longer word", criterion)
+			}
+		})
+	}
+}
+
+// @ac AC-43
+// Both attachment shapes are detected, listed separately so a regression in
+// one is not masked by the other.
+func TestConflictCorpus_BothAttachmentShapesDetected(t *testing.T) {
+	forward := []string{
+		"Process checkout when email is absent",
+		"Submit the form when email is not provided",
+		"Checkout proceeds when the email is empty",
+	}
+	backward := []string{
+		"Order is accepted without email",
+	}
+	for _, criterion := range forward {
+		t.Run("spec-check/AC-43 forward shape", func(t *testing.T) {
+			if !detectorFires(conflictCase{constraint: "email MUST be required", criterion: criterion}) {
+				t.Errorf("forward shape missed: %q", criterion)
+			}
+		})
+	}
+	for _, criterion := range backward {
+		t.Run("spec-check/AC-43 backward shape", func(t *testing.T) {
+			if !detectorFires(conflictCase{constraint: "email MUST be required", criterion: criterion}) {
+				t.Errorf("backward shape missed: %q", criterion)
+			}
+		})
+	}
+	t.Run("spec-check/AC-43 backward shape with a stripped article", func(t *testing.T) {
+		if !detectorFires(conflictCase{
+			constraint: "The audit record MUST be written",
+			criterion:  "Deletion completes without an audit record",
+		}) {
+			t.Error("the leading article on the extracted subject was not stripped")
+		}
+	})
+}
+
+// @ac AC-43
+// The forward window is pinned from both directions.
+//
+// It was unguarded when first written: setting maxInterveningWords to 0 or to
+// 99 changed nothing any test could see, which makes the constant arbitrary.
+// A mutation run only revealed that after `-count=1` defeated Go's test cache,
+// which had been reporting the unmutated result.
+func TestConflictCorpus_ForwardWindowIsBounded(t *testing.T) {
+	cases := []struct {
+		name      string
+		criterion string
+		want      bool
+	}{
+		{"copula adjacent", "Process checkout when email is absent", true},
+		{"one intervening word", "Process checkout when email here is absent", true},
+		{"three intervening words", "Process checkout when email in the payload is absent", true},
+		// Five words out, the copula belongs to something else. Without a
+		// bound, any absence predicate later in the sentence attaches.
+		{"five intervening words", "Process checkout when email in the request payload body is absent", false},
+	}
+	for _, c := range cases {
+		t.Run("spec-check/AC-43 forward window: "+c.name, func(t *testing.T) {
+			got := detectorFires(conflictCase{
+				constraint: "email MUST be required",
+				criterion:  c.criterion,
+			})
+			if got != c.want {
+				t.Errorf("%q fired=%v, want %v", c.criterion, got, c.want)
+			}
+		})
+	}
+}

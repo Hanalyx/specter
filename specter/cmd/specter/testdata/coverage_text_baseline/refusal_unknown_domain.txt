@@ -1,0 +1,6 @@
+exit=1
+--- stdout ---
+--- stderr ---
+warn: no test files contained @spec/@ac annotations — coverage will report 0% for every spec
+      set settings.tests_glob in specter.yaml or pass --tests <glob>
+error: unknown domain "no-such-domain". valid domains: 

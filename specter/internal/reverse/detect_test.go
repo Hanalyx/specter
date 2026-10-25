@@ -19,6 +19,7 @@ func (m *mockAdapter) Detect(path, content string) bool {
 	return false
 }
 func (m *mockAdapter) IsTestFile(path string) bool                         { return false }
+func (m *mockAdapter) SourceKeyForTest(path string) string                 { return "" }
 func (m *mockAdapter) ExtractRoutes(path, content string) []ExtractedRoute { return nil }
 func (m *mockAdapter) ExtractConstraints(path, content string) []ExtractedConstraint {
 	return nil

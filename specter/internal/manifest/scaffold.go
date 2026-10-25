@@ -27,10 +27,12 @@ func ScaffoldManifestWithContext(name, description string, specIDs []string, can
 		// C-28 / AC-42: schema_version is the first field — declared first
 		// in the struct so yaml.Marshal emits it ahead of system:.
 		SchemaVersion: 1,
+		// C-39: no system.tier. C-36 deprecates it and it warns on every
+		// run, so scaffolding it made a fresh workspace warn on its first
+		// check. Each spec declares its own tier.
 		System: SystemConfig{
 			Name:        name,
 			Description: description,
-			Tier:        2,
 		},
 		Settings: Settings{
 			SpecsDir: "specs",
@@ -60,9 +62,10 @@ func ScaffoldManifestWithContext(name, description string, specIDs []string, can
 	default:
 		domainDescription = "Add spec IDs here as you create them. See the spec-manifest spec for the schema."
 	}
+	// C-39: no domain tier. It is a checked assertion (C-35), so a
+	// scaffolded value could disagree with a spec the operator writes.
 	m.Domains = map[string]DomainConfig{
 		"default": {
-			Tier:        2,
 			Description: domainDescription,
 			Specs:       specIDs,
 		},

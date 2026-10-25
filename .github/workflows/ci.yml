@@ -9,6 +9,10 @@ on:
     paths: ['specter/**', '.github/**', 'CONTRIBUTING.md']
   workflow_dispatch:
 
+# Every job only reads the repository, so the token gets read access and nothing more.
+permissions:
+  contents: read
+
 defaults:
   run:
     working-directory: specter
@@ -48,6 +52,10 @@ jobs:
 
       - name: Test (race detector)
         run: go test -race ./...
+
+      - name: Release gate tests
+        working-directory: .
+        run: bash .github/scripts/release-gate.test.sh
 
       - name: Build
         run: go build -o bin/specter ./cmd/specter/

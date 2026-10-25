@@ -10,26 +10,42 @@ import type { SpecterParseError, SpecterCheckDiagnostic, CoverageParseError } fr
 // Fixtures
 // ---------------------------------------------------------------------------
 
-const parseError: SpecterParseError = {
-  file: '/project/specs/auth.spec.yaml',
-  line: 12,
-  col: 3,
-  message: "Missing required field 'id'",
-  code: 'required',
-};
+// Both fixtures are the shapes `specter parse --json` and `specter check
+// --json` actually emit, per spec-vscode C-32. They were wrong until v1.9.0:
+// the parse fixture supplied `col` and `code`, which the CLI names `column`
+// and `type`, and the check fixture supplied a `line`, which check diagnostics
+// carry in no form. The `NaN` ranges that produced were invisible because
+// every assertion here read a field the mock had invented.
+//
+// The casts are here because `types.ts` still declares those fields and
+// declares `line` as required on both. They become no-ops once the
+// declarations match the CLI (spec-vscode AC-67, AC-72, AC-73) and should be
+// dropped then.
 
-const checkDiagnostic: SpecterCheckDiagnostic = {
+// A YAML syntax error, which is the only parse error the CLI emits with a
+// position. It carries `line` and never `column`: `parser.ParseError.Column`
+// is declared but no code path assigns it.
+const parseError = {
+  file: '/project/specs/auth.spec.yaml',
+  path: '',
+  type: 'yaml_syntax',
+  message: 'yaml: line 12: mapping values are not allowed in this context',
+  line: 12,
+} as unknown as SpecterParseError;
+
+// A check diagnostic, which carries `kind`, `severity`, `message`, and the
+// spec id on every one, and no position of any kind.
+const checkDiagnostic = {
   kind: 'orphan_constraint',
   severity: 'warning',
   specID: 'auth',
   constraintID: 'C-03',
   message: "Constraint C-03 in 'auth' is not referenced by any acceptance criterion",
   file: '/project/specs/auth.spec.yaml',
-  line: 8,
-};
+} as unknown as SpecterCheckDiagnostic;
 
 // ---------------------------------------------------------------------------
-// AC-03: On-type debounce — parse only, 400ms
+// AC-03: On-type debounce, parse only, 400ms
 // ---------------------------------------------------------------------------
 
 // @ac AC-03
@@ -64,9 +80,11 @@ describe('[spec-vscode/AC-03] buildDiagnostics', () => {
     expect(diags).toHaveLength(1);
     const d = diags[0];
     expect(d.severity).toBe('error');
-    expect(d.range.start.line).toBe(11); // VS Code is 0-indexed; specter line 12 → 11
-    expect(d.range.start.character).toBe(2); // col 3 → 2
-    expect(d.message).toContain("Missing required field 'id'");
+    expect(d.range.start.line).toBe(11); // VS Code is 0-indexed; specter line 12 becomes 11
+    // The CLI emits no column on a parse error, and C-32 says an absent
+    // position is 0 rather than arithmetic on `undefined`.
+    expect(d.range.start.character).toBe(0);
+    expect(d.message).toContain('mapping values are not allowed');
   });
 
   it('maps an orphan_constraint warning to DiagnosticSeverity Warning', () => {
@@ -86,7 +104,7 @@ describe('[spec-vscode/AC-03] buildDiagnostics', () => {
 });
 
 // ---------------------------------------------------------------------------
-// AC-04: Atomic replacement — DiagnosticReplacer never appends
+// AC-04: Atomic replacement. DiagnosticReplacer never appends
 // ---------------------------------------------------------------------------
 
 // @ac AC-04
@@ -133,7 +151,7 @@ describe('[spec-vscode/AC-04] DiagnosticReplacer', () => {
   });
 });
 
-// shouldRunCoverageForFile tests removed in v1.7.0 — the helper is gone
+// shouldRunCoverageForFile tests removed in v1.7.0 because the helper is gone
 // (spec-vscode AC-55: on-save refreshes the saved file's folder report
 // wholesale; the slash-comment regex trigger is prohibited).
 

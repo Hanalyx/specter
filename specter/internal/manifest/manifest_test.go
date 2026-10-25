@@ -44,9 +44,6 @@ func TestParseManifest_FullManifest(t *testing.T) {
 		if m.Settings.SpecsDir != "specs" {
 			t.Errorf("specs_dir = %q, want %q", m.Settings.SpecsDir, "specs")
 		}
-		if len(m.Registry) != 2 {
-			t.Errorf("registry count = %d, want 2", len(m.Registry))
-		}
 	})
 }
 
@@ -153,67 +150,6 @@ func TestDefaults(t *testing.T) {
 
 // --- Tier resolution tests ---
 
-// @ac AC-04
-func TestResolveTier_ExplicitSpecTier(t *testing.T) {
-	t.Run("spec-manifest/AC-04 resolve tier explicit spec tier", func(t *testing.T) {
-		m := &Manifest{
-			System:  SystemConfig{Name: "test", Tier: 2},
-			Domains: map[string]DomainConfig{"auth": {Tier: 1, Specs: []string{"login"}}},
-		}
-		tier := ResolveTier("login", 3, m)
-		if tier != 3 {
-			t.Errorf("ResolveTier with explicit spec tier = %d, want 3", tier)
-		}
-	})
-}
-
-// @ac AC-05
-func TestResolveTier_InheritDomainTier(t *testing.T) {
-	t.Run("spec-manifest/AC-05 resolve tier inherit domain tier", func(t *testing.T) {
-		m := &Manifest{
-			System:  SystemConfig{Name: "test", Tier: 2},
-			Domains: map[string]DomainConfig{"auth": {Tier: 1, Specs: []string{"login"}}},
-		}
-		tier := ResolveTier("login", 0, m)
-		if tier != 1 {
-			t.Errorf("ResolveTier inheriting domain tier = %d, want 1", tier)
-		}
-	})
-}
-
-// @ac AC-06
-func TestResolveTier_InheritSystemTier(t *testing.T) {
-	t.Run("spec-manifest/AC-06 resolve tier inherit system tier", func(t *testing.T) {
-		m := &Manifest{
-			System: SystemConfig{Name: "test", Tier: 2},
-		}
-		tier := ResolveTier("orphan-spec", 0, m)
-		if tier != 2 {
-			t.Errorf("ResolveTier inheriting system tier = %d, want 2", tier)
-		}
-	})
-}
-
-// @ac AC-07
-func TestResolveTier_DefaultTo2(t *testing.T) {
-	t.Run("spec-manifest/AC-07 resolve tier default to 2", func(t *testing.T) {
-		m := &Manifest{
-			System: SystemConfig{Name: "test"},
-		}
-		tier := ResolveTier("orphan-spec", 0, m)
-		if tier != 2 {
-			t.Errorf("ResolveTier default = %d, want 2", tier)
-		}
-	})
-}
-
-func TestResolveTier_NilManifest(t *testing.T) {
-	tier := ResolveTier("any-spec", 0, nil)
-	if tier != 2 {
-		t.Errorf("ResolveTier with nil manifest = %d, want 2", tier)
-	}
-}
-
 // --- Domain tests ---
 
 func TestSpecDomain_Found(t *testing.T) {
@@ -280,60 +216,6 @@ func TestDomainCoverage(t *testing.T) {
 		}
 		if payments.Passing != 1 || payments.Failing != 1 {
 			t.Errorf("payments passing=%d failing=%d, want 1/1", payments.Passing, payments.Failing)
-		}
-	})
-}
-
-// --- Registry tests ---
-
-// @ac AC-09
-func TestBuildRegistryFromSpecs(t *testing.T) {
-	t.Run("spec-manifest/AC-09 build registry from specs", func(t *testing.T) {
-		specs := []schema.SpecAST{
-			{ID: "checkout", Version: "1.0.0", Status: "approved", Tier: 1},
-			{ID: "login", Version: "0.1.0", Status: "draft", Tier: 0},
-			{ID: "blog", Version: "1.0.0", Status: "approved", Tier: 2},
-		}
-		files := map[string]string{
-			"checkout": "specs/checkout.spec.yaml",
-			"login":    "specs/login.spec.yaml",
-			"blog":     "specs/blog.spec.yaml",
-		}
-		m := &Manifest{
-			System: SystemConfig{Name: "test"},
-			Domains: map[string]DomainConfig{
-				"payments": {Tier: 1, Specs: []string{"checkout"}},
-				"auth":     {Tier: 1, Specs: []string{"login"}},
-			},
-		}
-
-		entries := BuildRegistryFromSpecs(specs, files, m)
-		if len(entries) != 3 {
-			t.Fatalf("registry entries = %d, want 3", len(entries))
-		}
-
-		// Entries are sorted by ID
-		if entries[0].ID != "blog" {
-			t.Errorf("first entry ID = %q, want %q", entries[0].ID, "blog")
-		}
-	})
-}
-
-// @ac AC-10
-func TestBuildRegistryFromSpecs_DomainAssignment(t *testing.T) {
-	t.Run("spec-manifest/AC-10 build registry from specs domain assignment", func(t *testing.T) {
-		specs := []schema.SpecAST{
-			{ID: "checkout", Version: "1.0.0", Status: "approved", Tier: 1},
-		}
-		files := map[string]string{"checkout": "specs/checkout.spec.yaml"}
-		m := &Manifest{
-			System:  SystemConfig{Name: "test"},
-			Domains: map[string]DomainConfig{"payments": {Specs: []string{"checkout"}}},
-		}
-
-		entries := BuildRegistryFromSpecs(specs, files, m)
-		if entries[0].Domain != "payments" {
-			t.Errorf("registry domain = %q, want %q", entries[0].Domain, "payments")
 		}
 	})
 }

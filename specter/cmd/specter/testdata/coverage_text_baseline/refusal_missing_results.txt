@@ -1,0 +1,4 @@
+exit=1
+--- stdout ---
+--- stderr ---
+error: strictness "threshold" requires .specter-results.json — run 'specter ingest' first, or use --strictness annotation for structural coverage

@@ -1,0 +1,12 @@
+exit=1
+--- stdout ---
+Spec Coverage Report — 1 specs · 50% avg coverage
+  Tier 1: 0/1 passing (0%)
+
+Spec ID                                   Tier   ACs      Covered   Coverage   Status
+----------------------------------------------------------------------------------
+cov-spec                                  T1     2        1         50%        FAIL
+  uncovered: AC-02
+
+1 specs: 0 passing, 1 failing
+--- stderr ---

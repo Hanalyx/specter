@@ -18,6 +18,10 @@ on:
     paths: ['specter/**', '.github/**']
   workflow_dispatch:
 
+# Every job only reads the repository, so the token gets read access and nothing more.
+permissions:
+  contents: read
+
 defaults:
   run:
     working-directory: specter
@@ -59,7 +63,7 @@ jobs:
 
       - name: Vulnerability scan
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
           govulncheck ./...
 
       - name: Build
@@ -210,7 +214,7 @@ jobs:
             --adapter=${{ matrix.adapter }} \
             --dry-run \
             --json \
-            /tmp/target-repo/${{ matrix.path }} > /tmp/result.json 2>&1 || true
+            /tmp/target-repo/${{ matrix.path }} > /tmp/result.json || true
 
       - name: Validate results
         run: |

@@ -28,6 +28,7 @@ vscode-extension/junit.xml
 
 # Claude Code instructions
 CLAUDE.md
+.claude/
 
 # Codex / agent instructions
 AGENTS.md
@@ -38,6 +39,17 @@ research/
 # Local docs not yet ready to ship
 docs/DOC_STYLE_GUIDE.md
 docs/roadmap/
+
+# Design records, local-only as of 2026-08-16
+docs/design/
+
+# Reviewer proposals, local-only as of 2026-08-24. Same category as
+# docs/design/: they critique in-flight work and name open defects.
+docs/reviewer/
+
+# Working context notes, local-only as of 2026-08-28. Same category again:
+# they track in-flight obligations and go stale the moment the work lands.
+docs/context/
 
 # Planning surface — local-only as of 2026-05-07
 BACKLOG.md

@@ -46,9 +46,9 @@ export const UserSchema = z.object({
 			t.Errorf("expected C-13 summary line in output, got:\n%s", out)
 		}
 
-		// Handoff line per C-14: "Run `specter explain <id>` to triage
-		// gaps in each generated draft."
-		if !strings.Contains(out, "Run `specter explain") || !strings.Contains(out, "to triage gaps") {
+		// Handoff line per C-14: "Run `specter explain <id>` to review the
+		// criteria in each generated draft."
+		if !strings.Contains(out, "Run `specter explain") || !strings.Contains(out, "to review the criteria") {
 			t.Errorf("expected C-14 handoff line in output, got:\n%s", out)
 		}
 	})
@@ -71,7 +71,11 @@ export const PaymentSchema = z.object({
 			t.Fatal(err)
 		}
 
-		out, code := runCLI(t, dir, "reverse", "--dry-run", "--json")
+		// Streams split, not combined. AC-19 is a claim about stdout, and
+		// CombinedOutput cannot express it: it would pass while prose went to
+		// stdout as long as the bytes happened to parse, and fail while stdout
+		// was correct as soon as anything reached stderr.
+		out, _, code := runCLISplit(t, dir, "reverse", "--dry-run", "--json")
 		if code != 0 {
 			t.Fatalf("expected reverse --dry-run --json exit 0, got %d. output:\n%s", code, out)
 		}
@@ -80,7 +84,7 @@ export const PaymentSchema = z.object({
 		if strings.Contains(out, "Found ") && strings.Contains(out, "across") {
 			t.Errorf("expected --json mode to suppress C-13 summary line, got:\n%s", out)
 		}
-		if strings.Contains(out, "to triage gaps in each generated draft") {
+		if strings.Contains(out, "to review the criteria in each generated draft") {
 			t.Errorf("expected --json mode to suppress C-14 handoff line, got:\n%s", out)
 		}
 
@@ -88,6 +92,37 @@ export const PaymentSchema = z.object({
 		var parsed map[string]interface{}
 		if err := json.Unmarshal([]byte(out), &parsed); err != nil {
 			t.Errorf("expected --json output to be valid JSON, got parse error: %v\noutput:\n%s", err, out)
+		}
+	})
+}
+
+// @ac AC-30
+// C-14 requires the handoff to name something `specter explain` can do. It
+// said "to triage gaps" for three releases while internal/explain had no gap
+// handling at all, so the mandated next step did not exist.
+func TestReverseSummary_HandoffNamesSomethingExplainDoes(t *testing.T) {
+	t.Run("spec-reverse/AC-30 handoff names something explain does", func(t *testing.T) {
+		dir := t.TempDir()
+		tsContent := `import { z } from 'zod';
+export const OrderSchema = z.object({
+  total: z.number().positive(),
+});
+`
+		if err := os.WriteFile(filepath.Join(dir, "order.ts"), []byte(tsContent), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		out, code := runCLI(t, dir, "reverse", "--dry-run")
+		if code != 0 {
+			t.Fatalf("expected exit 0, got %d. output:\n%s", code, out)
+		}
+		if !strings.Contains(out, "Run `specter explain") {
+			t.Fatalf("no handoff line at all, so there is nothing to check:\n%s", out)
+		}
+		if strings.Contains(out, "triage gaps") {
+			t.Errorf("the handoff tells the operator to triage gaps, and `specter explain` " +
+				"has no gap handling. C-14 requires the line to name a capability the " +
+				"command it points at actually has.")
 		}
 	})
 }

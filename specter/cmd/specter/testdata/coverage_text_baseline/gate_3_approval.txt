@@ -1,0 +1,13 @@
+exit=3
+--- stdout ---
+Spec Coverage Report — 1 specs · 0% avg coverage
+  Tier 3: 0/1 passing (0%)
+
+Spec ID                                   Tier   ACs      Covered   Coverage   Status
+----------------------------------------------------------------------------------
+cov-spec                                  T3     1        0         0%         NONE
+  uncovered: AC-01
+
+1 specs: 0 passing, 1 failing
+--- stderr ---
+error: zero-tolerance strictness — 1 AC(s) carry approval_gate=true with unset approval_date

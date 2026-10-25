@@ -1,0 +1,4 @@
+exit=1
+--- stdout ---
+--- stderr ---
+error: --strictness "bogus" is not a valid value (allowed: annotation, threshold, zero-tolerance)
