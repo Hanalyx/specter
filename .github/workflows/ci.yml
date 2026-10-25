@@ -9,6 +9,10 @@ on:
     paths: ['specter/**', '.github/**', 'CONTRIBUTING.md']
   workflow_dispatch:
 
+# Every job only reads the repository, so the token gets read access and nothing more.
+permissions:
+  contents: read
+
 defaults:
   run:
     working-directory: specter

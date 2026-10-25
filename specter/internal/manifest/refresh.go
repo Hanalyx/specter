@@ -95,8 +95,8 @@ func RefreshManifestDomains(existing *Manifest, discoveredIDs []string) (*Manife
 	// (C-16) already enforces `domains:` always has a default; this guard
 	// is for pre-existing manifests written by other tools.
 	if _, ok := out.Domains["default"]; !ok {
+		// C-39: do not copy system.tier into the synthesized domain.
 		out.Domains["default"] = DomainConfig{
-			Tier:        existing.System.Tier,
 			Description: "Default domain",
 			Specs:       newDefault,
 		}

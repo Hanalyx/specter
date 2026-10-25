@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "3.1.1"
+  version: "3.3.0"
   status: draft
   tier: 2
 
@@ -105,7 +105,7 @@ spec:
       enforcement: error
 
     - id: C-13
-      description: "MUST provide spec file templates (api-endpoint, service, auth, data-model) via specter init --template that produce valid draft .spec.yaml files passing ParseSpec()"
+      description: "MUST provide spec file templates (api-endpoint, service, auth, data-model) via specter init --template that produce valid draft .spec.yaml files passing ParseSpec(). C-40 says where the file is written, and C-41 requires it to pass `specter check` as well."
       type: technical
       enforcement: error
 
@@ -155,7 +155,7 @@ spec:
       enforcement: error
 
     - id: C-23
-      description: "`specter init --ai <tool>` MUST write a per-tool AI instruction file with a `<!-- specter:begin v1 --> ... <!-- specter:end -->` fenced region containing the v0.11 instruction template (preflight, Convention A, validation gate, on-demand explain references). The fenced region's tool-target path is: `claude` → `CLAUDE.md`, `codex` → `AGENTS.md`, `cursor` → `.cursor/rules/specter.md`, `copilot` → `.github/copilot-instructions.md` (body capped at 4KB), `gemini` → `GEMINI.md`. Re-runs MUST replace only the fenced region; out-of-fence content is preserved byte-for-byte. `--ai claude` checks for an existing `AGENTS.md` and writes `@AGENTS.md` import directive instead of inlining the body when one exists."
+      description: "`specter init --ai <tool>` MUST write a per-tool AI instruction file with a `<!-- specter:begin v1 --> ... <!-- specter:end -->` fenced region containing the instruction template whose content C-38 defines. The fenced region's tool-target path is: `claude` → `CLAUDE.md`, `codex` → `AGENTS.md`, `cursor` → `.cursor/rules/specter.md`, `copilot` → `.github/copilot-instructions.md` (body capped at 4KB), `gemini` → `GEMINI.md`. Re-runs MUST replace only the fenced region; out-of-fence content is preserved byte-for-byte. `--ai claude` checks for an existing `AGENTS.md` and writes `@AGENTS.md` import directive instead of inlining the body when one exists."
       type: technical
       enforcement: error
 
@@ -226,6 +226,22 @@ spec:
       enforcement: error
     - id: C-37
       description: "`pre-push-check` MUST classify each changed implementation file by content, not by name alone. A file whose contents at the pushed base and at the pushed head are equal after canonical formatting is not an implementation change and MUST NOT block. For Go, canonical formatting is the standard library printer over the parsed file with every import declaration merged into one sorted group. That is the form left behind by `goimports` grouping and `gofmt` reflow, and it is computed in process with no external formatter. Both blobs come from the pushed range, never from the working tree or the index. The rule fails closed. A file in a language with no canonical form in this tool counts as an implementation change. A file whose base or head cannot be read or parsed counts, and the hook says which file it could not compare. A file added or deleted in the range counts. No flag, commit trailer, or manifest key can declare a range format-only; the tool decides from the two blobs or it does not decide. Comment edits and blank lines that `gofmt` preserves are not formatter normalization and still count. Rationale: `goimports` moving one import between groups changes two lines and no symbol, and the hook blocked the push. The only way through was `git push --no-verify`, which disables every check rather than the one that misfired. A gate whose false positives are cleared by disabling the gate teaches people to disable the gate."
+      type: technical
+      enforcement: error
+    - id: C-38
+      description: "Every inline instruction body that `init --ai <tool>` writes MUST give the agent a gate it can run in any project. This covers the claude body written when no `AGENTS.md` exists, and the codex, cursor, copilot and gemini bodies. The body MUST name these steps in working order. Before coding, the agent runs `specter check --concrete`. It reads each criterion's `inputs`, `expected_output` and `error_cases` in the spec file. It reads `specter explain annotation`, and it writes both parts on every test: the `// @spec` and `// @ac` source comments, and the pair in the runner output by Convention A or Convention B. `coverage --strict` reports an AC uncovered when either part is missing. To validate, it runs the project's own test command so that the command writes JUnit XML or `go test -json` output. It then runs `specter ingest --junit <file>` or `specter ingest --go-test <file>`, and then `specter coverage --strict`, whose exit 0 is the gate. Before declaring done, it runs `specter diff` against the spec as it stood before the work, with `--exit-code`. The body MUST NOT name a build target that exists only in Specter's own repository, such as `make dogfood-strict`. It MUST say that `specter.yaml` governs the gate and that, under a `settings.annotation` block, an AC with no test fails unless `permissive` is true. It MUST NOT name `settings.strictness`, which SSRB-104 deprecates. The `@AGENTS.md` import body of C-23 carries no steps of its own and is exempt. Rationale: an adopter's agent reads this file as its only instruction. The earlier body told it to run `make dogfood-strict`, which exists only in Specter's Makefile. It never said how test results reach `coverage --strict`, so an agent that followed it could not run the gate."
+      type: technical
+      enforcement: error
+    - id: C-39
+      description: "`specter init` in scaffold mode MUST NOT write `system.tier`, and MUST NOT write a `tier` under any domain. `specter init --refresh`, when it synthesizes a missing default domain, MUST NOT copy `system.tier` into it. Rationale: C-36 deprecates `system.tier` and warns on every run, and SSRB-106 section 7.2 says `init` should stop writing it. A domain tier is a checked assertion under C-35, so a scaffolded one can disagree with a spec the operator writes and raise a `domain_tier_conflict` the operator never asked for. A fresh workspace warned on its own first `check`."
+      type: technical
+      enforcement: error
+    - id: C-40
+      description: "`specter init` in scaffold mode MUST create the directory its manifest names in `settings.specs_dir` when that directory does not exist. `specter init --template <name>` MUST write `<name>.spec.yaml` into the specs directory, creating it when needed. The specs directory is the nearest `specter.yaml`'s `settings.specs_dir`, resolved against that manifest's directory, or `specs` under the current directory when no manifest exists. When the nearest `specter.yaml` exists and is rejected, `init --template` MUST exit non-zero and write no file. Rationale: the template was written to the current directory. Under a manifest, discovery walks only `settings.specs_dir`, so `parse` found no specs and exited 1, and `check` checked none."
+      type: technical
+      enforcement: error
+    - id: C-41
+      description: "Every template `init --template` provides MUST pass both `specter check` and `specter check --concrete` on a fresh workspace: exit 0, with no `orphan_constraint` and no `vague_criterion` diagnostic. Each template constraint is referenced by at least one of its acceptance criteria. Each criterion carries `inputs` and `expected_output`, with placeholder values that show the shape, and a criterion about a failure also carries `error_cases`. After writing the file, `init --template` names `specter check --concrete` as the next command. Rationale: all four templates failed `check`, with 13 orphan-constraint errors between them, so the first spec a new adopter generated was one the tool rejected. The `init --ai` body sends an agent to `check --concrete` before coding (C-38). On the four templates, `check --concrete` from a binary built at commit 951759f exited 1 with 18 errors and 9 warnings: the 13 orphan-constraint errors, 5 `vague_criterion` errors from the Tier 1 `auth` template, and 9 `vague_criterion` warnings from the other three."
       type: technical
       enforcement: error
 
@@ -476,7 +492,7 @@ spec:
       priority: high
 
     - id: AC-30
-      description: "`specter init --ai claude` in a workspace with no AGENTS.md writes `CLAUDE.md` containing the inline v0.11 instruction body wrapped in fenced markers."
+      description: "`specter init --ai claude` in a workspace with no AGENTS.md writes `CLAUDE.md` containing the inline instruction body C-38 defines, wrapped in fenced markers."
       inputs:
         command: "specter init --ai claude"
         workspace_has_agents_md: false
@@ -488,7 +504,7 @@ spec:
       priority: critical
 
     - id: AC-31
-      description: "`specter init --ai codex` writes `AGENTS.md` containing the v0.11 instruction body wrapped in fenced markers."
+      description: "`specter init --ai codex` writes `AGENTS.md` containing the instruction body C-38 defines, wrapped in fenced markers."
       inputs:
         command: "specter init --ai codex"
       expected_output:
@@ -498,7 +514,7 @@ spec:
       priority: critical
 
     - id: AC-32
-      description: "`specter init --ai cursor` writes `.cursor/rules/specter.md` (creating the parent directory if needed) containing the v0.11 instruction body wrapped in fenced markers."
+      description: "`specter init --ai cursor` writes `.cursor/rules/specter.md` (creating the parent directory if needed) containing the instruction body C-38 defines, wrapped in fenced markers."
       inputs:
         command: "specter init --ai cursor"
       expected_output:
@@ -519,7 +535,7 @@ spec:
       priority: high
 
     - id: AC-34
-      description: "`specter init --ai gemini` writes `GEMINI.md` containing the v0.11 instruction body wrapped in fenced markers."
+      description: "`specter init --ai gemini` writes `GEMINI.md` containing the instruction body C-38 defines, wrapped in fenced markers."
       inputs:
         command: "specter init --ai gemini"
       expected_output:
@@ -1049,6 +1065,77 @@ spec:
       references_constraints: ["C-37"]
       priority: high
 
+    - id: AC-73
+      description: "For each of claude with no `AGENTS.md`, codex, cursor, copilot and gemini, the rendered body contains `specter check --concrete`, `inputs`, `expected_output`, `error_cases`, `specter explain annotation`, the words `source comments` in any case, `// @spec`, `// @ac`, `Convention A`, `Convention B`, `JUnit XML`, `go test -json`, `specter ingest --junit`, `specter ingest --go-test`, `specter coverage --strict` and `Exit 0 is the gate`. One line holds both `specter diff` and `--exit-code`. The first `specter check --concrete` comes before the first `specter ingest`. That comes before the first `specter coverage --strict`, which comes before the first `specter diff`. Every body contains `settings.annotation`. No body contains `make dogfood-strict` or `settings.strictness`. The same assertion rejects four control bodies, so each kind of check is shown to fire: the body with the old `make dogfood-strict` line appended, the body with a `specter diff` line placed first, an empty body, and the body with a `settings.strictness` line appended."
+      inputs:
+        tools: "claude (no AGENTS.md), codex, cursor, copilot, gemini"
+        control_dogfood: "the current body with `Run make dogfood-strict before declaring work done.` appended"
+        control_order: "the current body with a `specter diff ... --exit-code` line placed before it"
+        control_empty: "an empty body"
+        control_deprecated_key: "the current body with a `settings.strictness` line appended"
+      expected_output:
+        required_content_present_for_every_tool: true
+        commands_in_working_order: true
+        dogfood_target_absent_for_every_tool: true
+        deprecated_strictness_key_absent_for_every_tool: true
+        every_control_body_rejected: true
+      references_constraints: ["C-38"]
+      priority: critical
+
+    - id: AC-74
+      description: "On an empty directory, `specter init` writes a `specter.yaml` with no `tier` key under `system` or under any domain, and `specter check` then exits 0 with no `deprecated` line and no `domain_tier_conflict` diagnostic. Separately, `RefreshManifestDomains` on a manifest declaring `system.tier: 2` and no default domain returns a synthesized default domain whose tier is unset."
+      inputs:
+        workspace: "an empty directory"
+        commands: "specter init, then specter check"
+        refresh_manifest: "system.tier: 2 and no domains block"
+      expected_output:
+        manifest_has_system_tier: false
+        manifest_has_domain_tier: false
+        check_exit_code: 0
+        check_output_contains_deprecated: false
+        check_output_contains_domain_tier_conflict: false
+        refreshed_default_domain_tier: 0
+      references_constraints: ["C-39"]
+      priority: high
+
+    - id: AC-75
+      description: "On an empty directory, `specter init` creates `specs/`. `specter init --template api-endpoint` then writes `specs/api-endpoint.spec.yaml` and no `api-endpoint.spec.yaml` in the current directory, and `specter parse` exits 0 and names the file. With a manifest declaring `specs_dir: custom`, the template lands in `custom/` and the directory is created. With no manifest, it lands in `specs/`. Run from a subdirectory of a workspace that has a manifest, it lands in the manifest's `specs/`, not in a `specs/` under the subdirectory. With a `specter.yaml` that does not parse, `init --template` exits non-zero and writes no spec file anywhere."
+      inputs:
+        case_after_init: "specter init, then specter init --template api-endpoint"
+        case_custom_dir: "specter.yaml with settings.specs_dir: custom, no custom/ directory"
+        case_no_manifest: "no specter.yaml"
+        case_subdirectory: "specter init at the root, then specter init --template service run from src/pkg"
+        case_rejected_manifest: "specter.yaml containing an unknown settings key"
+      expected_output:
+        init_creates_specs_dir: true
+        template_path_after_init: "specs/api-endpoint.spec.yaml"
+        template_in_cwd: false
+        parse_exit_code: 0
+        template_path_custom_dir: "custom/api-endpoint.spec.yaml"
+        template_path_no_manifest: "specs/api-endpoint.spec.yaml"
+        template_path_from_subdirectory: "specs/service.spec.yaml at the manifest root"
+        template_in_subdirectory_specs: false
+        rejected_manifest_exit_code: "non-zero"
+        rejected_manifest_writes_file: false
+      references_constraints: ["C-40", "C-13"]
+      priority: high
+
+    - id: AC-76
+      description: "For each of `api-endpoint`, `service`, `auth` and `data-model`, a fresh directory runs `specter init`, then `specter init --template <name>`, then `specter check` and `specter check --concrete`. Both exit 0. Neither output contains `orphan_constraint`, `vague_criterion` or `warn`. The output of `init --template` names `specter check --concrete` and does not name `specter sync`. The precondition that `parse` finds the file under `specs/` is asserted first, so the criterion cannot pass on a `check` that saw no spec."
+      inputs:
+        templates: "api-endpoint, service, auth, data-model"
+        commands: "specter init, specter init --template <name>, specter check, specter check --concrete"
+      expected_output:
+        template_found_by_check: true
+        check_exit_code: 0
+        check_concrete_exit_code: 0
+        orphan_constraint_diagnostics: 0
+        vague_criterion_diagnostics: 0
+        warnings: 0
+        next_step_hint: "specter check --concrete"
+      references_constraints: ["C-41", "C-13"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -1058,6 +1145,16 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "3.3.0"
+      date: "2026-10-22"
+      author: "specter-team"
+      type: minor
+      description: "The first-run path now runs clean. C-39 stops `init` from writing `system.tier` and domain tiers, and stops `init --refresh` from copying `system.tier` into a default domain it synthesizes. Before, a fresh workspace warned on its own first `check` (`bugs/SP-SP-056`). C-40 makes `init` create the directory `settings.specs_dir` names, and makes `init --template` write into it. The template had landed in the current directory, which discovery under a manifest does not walk, so `parse` found nothing. C-41 requires every template to pass `check` and `check --concrete`, and makes `init --template` name `check --concrete` as the next command. All four had failed `check`, with 13 orphan-constraint errors between them, and `check --concrete` with 18 errors and 9 warnings, measured with a binary built at commit 951759f. C-13 now points at C-40 and C-41. AC-74, AC-75 and AC-76 bind the three. AC-30, AC-31, AC-32 and AC-34 now name the body C-38 defines instead of the stale phrase `v0.11 instruction body`, a wording change only. Minor: three new constraints and three new criteria."
+    - version: "3.2.0"
+      date: "2026-10-22"
+      author: "specter-team"
+      type: minor
+      description: "C-38 defines what the `init --ai` instruction body tells the agent to run. The old body named `make dogfood-strict`, a target that exists only in Specter's own Makefile, and never mentioned `specter ingest`. An adopter's agent that followed it could not run the gate. The body now names a generic sequence. It runs `check --concrete` before coding and reads the spec file's `inputs`, `expected_output` and `error_cases`. It reads `explain annotation` and writes both the source comments and the runner-visible pair on every test. It runs the project's own test command to write JUnit XML or `go test -json` output, and runs `ingest`. Then `coverage --strict` is the gate, and `diff --exit-code` runs before declaring done. C-23 now defers to C-38 for the body's content. AC-73 binds every inline body and the order of the steps, with four control bodies that show each check fires. The body describes the `settings.annotation` model and does not name `settings.strictness`, which SSRB-104 deprecates. Minor: one new constraint and one new criterion, as in 3.1.0, where C-22 deferred to the new C-37."
     - version: "3.1.1"
       date: "2026-09-13"
       author: "specter-team"
