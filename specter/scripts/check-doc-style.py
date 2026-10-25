@@ -316,7 +316,7 @@ PHRASE_RES = [(p, re.compile(re.escape(p), re.I)) for p in HYPE_PHRASES]
 EM_DASH = re.compile("—")
 EMOJI = re.compile(
     "[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U00002B00-\U00002BFF"
-    "\U0001F1E6-\U0001F1FF\U0000FE00-\U0000FE0F]"
+    "\U0000FE00-\U0000FE0F]"
 )
 INLINE_CODE = re.compile(r"`[^`]*`")
 FENCE = re.compile(r"^\s*```")
