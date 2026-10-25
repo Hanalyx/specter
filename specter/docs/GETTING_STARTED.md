@@ -96,7 +96,7 @@ Expand-Archive specter.zip -DestinationPath "$env:USERPROFILE\.specter\bin"
 [Environment]::SetEnvironmentVariable("Path", "$env:Path;$env:USERPROFILE\.specter\bin", "User")
 ```
 
-**Build from source (Go 1.22+):**
+**Build from source (Go 1.27.3+):**
 ```bash
 git clone https://github.com/Hanalyx/specter.git
 cd specter/specter && make build
