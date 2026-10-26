@@ -1,6 +1,6 @@
 spec:
   id: spec-vscode
-  version: "7.1.0"
+  version: "7.2.0"
   status: draft
   tier: 2
 
@@ -688,13 +688,15 @@ spec:
       priority: high
 
     - id: AC-35
-      description: "The Coverage sidebar's parse-error message uses CoverageReport.specCandidatesCount and parseErrorPatterns to diagnose the shape of failure. When every discovered spec file hit the same parse error pattern (the top pattern's distinct file count, `files.length`, equals spec_candidates_count, and that count is greater than one), the message names this as `schema version drift` and points at `specter doctor`. A pattern whose `count` exceeds its file count, because each file carries several errors of that kind, still names drift when its files cover every candidate. One file whose error count equals the candidate count does not. spec-coverage C-13 defines `count` as the number of matching parse errors, and spec-coverage C-37 and AC-13 define `files` as the distinct files. When patterns are heterogeneous, the generic `open the Problems panel` guidance applies. When specCandidatesCount > 0 and parseErrors is empty but entries is also empty, the message names a manifest-misconfiguration case (domains excluding the specs) instead of suggesting `specter init`."
+      description: "The Coverage sidebar's parse-error message uses CoverageReport.specCandidatesCount and parseErrorPatterns to diagnose the shape of failure. When every discovered spec file hit the same parse error pattern (the top pattern's distinct file count, `files.length`, equals spec_candidates_count, and that count is greater than one), the group label names `schema drift` with the pattern's type and path, and the group's tooltip says every failing spec hit the same error and tells the user to run `specter doctor` for a full report. A pattern whose `count` exceeds its file count, because each file carries several errors of that kind, still names drift when its files cover every candidate. One file whose error count equals the candidate count does not. spec-coverage C-13 defines `count` as the number of matching parse errors, and spec-coverage C-37 and AC-13 define `files` as the distinct files. When the pattern does not cover every candidate, the label is the bare failure count, the group's tooltip is the generic parse-failure text, and each failing file's node carries its own error message as description and tooltip. The sidebar does not point at the Problems panel. When specCandidatesCount > 0 and parseErrors is empty but entries is also empty, the message names a manifest-misconfiguration case (domains excluding the specs) instead of suggesting `specter init`."
       inputs:
         several_errors_per_file: "spec_candidates_count 2; top pattern required at spec with count 6 and files [a.yaml, b.yaml]"
         one_file_many_errors: "spec_candidates_count 3; top pattern required at spec with count 3 and files [a.yaml]"
       expected_output:
         several_errors_per_file_names_drift: true
         one_file_many_errors_names_drift: false
+        several_errors_per_file_tooltip_names_doctor: true
+        one_file_many_errors_tooltip: "Spec files the CLI could not parse. Each child opens the failing file."
       references_constraints: ["C-10"]
       priority: high
 
@@ -1703,6 +1705,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "7.2.0"
+      date: "2026-10-26"
+      author: "specter-team"
+      type: minor
+      description: "AC-35 is reworded, not added, per `bugs/SP-SP-097`. Since v0.9.0 it said the drift message points at `specter doctor` and that mixed failures get `open the Problems panel` guidance, and the sidebar showed neither. The drift group's tooltip now tells the user to run `specter doctor` for a full report. For mixed failures the criterion now describes what the sidebar does: a bare failure count, the generic tooltip, and each failing file's error on its own node. It names the label's text, `schema drift`, in place of `schema version drift`. The drift condition is unchanged from 7.1.0."
     - version: "7.1.0"
       date: "2026-10-26"
       author: "specter-team"
