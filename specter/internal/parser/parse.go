@@ -237,12 +237,10 @@ func flattenValidationErrors(ve *jsonschema.ValidationError) []ParseError {
 		path := locationToPath(ve.InstanceLocation)
 
 		// C-03: the validator reports every unknown key under a mapping in
-		// one error, listed in Go map order. Emit one error per key, sorted,
-		// so none is dropped and the output is the same on every run.
+		// one error, listed in Go map order. Emit one error per key so none
+		// is dropped. sortParseErrors in ParseSpec puts them in a stable order.
 		if ap, ok := ve.ErrorKind.(*kind.AdditionalProperties); ok && len(ap.Properties) > 0 {
-			names := append([]string(nil), ap.Properties...)
-			sort.Strings(names)
-			for _, name := range names {
+			for _, name := range ap.Properties {
 				errors = append(errors, ParseError{
 					Path:    path,
 					Type:    "additionalProperties",
