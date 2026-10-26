@@ -570,3 +570,58 @@ spec:
 		}
 	})
 }
+
+// @ac AC-34
+// Parse now emits one additionalProperties entry per unknown field. Apply
+// must fire strip-trust-level when trust_level is any one of those entries,
+// whichever position it holds, and leave the other field in place.
+func TestApply_StripsTrustLevelBesideAnotherUnknownField(t *testing.T) {
+	yamlIn := `spec:
+  id: legacy-spec
+  version: "1.0.0"
+  status: draft
+  tier: 3
+  trust_level: high
+  legacy_owner: payments-team
+  context:
+    system: test
+  objective:
+    summary: test
+  constraints:
+    - id: C-01
+      description: "MUST something"
+  acceptance_criteria:
+    - id: AC-01
+      description: "test"
+      references_constraints: ["C-01"]
+`
+	entry := func(field string) coverage.ParseErrorEntry {
+		return coverage.ParseErrorEntry{
+			File:    "legacy.spec.yaml",
+			Path:    "spec",
+			Type:    "additionalProperties",
+			Message: "Unknown field '" + field + "'. Remove it or check for a typo in the field name.",
+		}
+	}
+	orders := map[string][]coverage.ParseErrorEntry{
+		"legacy_owner first": {entry("legacy_owner"), entry("trust_level")},
+		"trust_level first":  {entry("trust_level"), entry("legacy_owner")},
+	}
+	for name, parseErrors := range orders {
+		t.Run("spec-doctor/AC-34 "+name, func(t *testing.T) {
+			result, err := Apply([]byte(yamlIn), parseErrors)
+			if err != nil {
+				t.Fatalf("Apply returned error: %v", err)
+			}
+			if len(result.Applied) != 1 || result.Applied[0] != "strip-trust-level" {
+				t.Errorf("Applied = %v, want [strip-trust-level]", result.Applied)
+			}
+			if strings.Contains(string(result.Content), "trust_level") {
+				t.Errorf("trust_level should be stripped; got:\n%s", result.Content)
+			}
+			if !strings.Contains(string(result.Content), "legacy_owner: payments-team") {
+				t.Errorf("legacy_owner must stay in place; got:\n%s", result.Content)
+			}
+		})
+	}
+}

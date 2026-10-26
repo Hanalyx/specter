@@ -88,11 +88,21 @@ func humanizeRequired(path, rawMsg string) string {
 	}
 }
 
+// humanizeAdditional names the first field in a raw validator message. The
+// parser's own path passes each field to humanizeAdditionalField instead,
+// because the raw message lists every unknown field in map order.
 func humanizeAdditional(path, rawMsg string) string {
 	field := ""
 	if m := additionalPropRe.FindStringSubmatch(rawMsg); len(m) > 1 {
 		field = m[1]
 	}
+	return humanizeAdditionalField(path, field)
+}
+
+// humanizeAdditionalField builds the message for one unknown field. The
+// "Unknown field '<name>'" shape is read by internal/migrate and by the VS
+// Code quick fix, so it must not change.
+func humanizeAdditionalField(path, field string) string {
 	// Special case: context was extensible pre-v0.7.0. Tell users explicitly
 	// what to do instead of just "unknown field".
 	if strings.Contains(path, "context") && field != "" {

@@ -1,6 +1,6 @@
 spec:
   id: spec-doctor
-  version: "1.10.2"
+  version: "1.11.0"
   status: draft
   tier: 2
 
@@ -255,6 +255,19 @@ spec:
         file_unchanged_on_disk: true
         exit_code: 0
       references_constraints: ["C-12"]
+      priority: high
+
+    - id: AC-34
+      description: "`specter doctor --fix` in a workspace whose one spec carries `trust_level: high` and one other unknown field under `spec:` applies `strip-trust-level` on every run, and `--fix --dry-run` reports the rewrite on every run. The other unknown field stays in the file and `specter parse` still reports it. Rationale: the rewrite matches a parse error that names `trust_level`. Before `bugs/SP-SP-091` was fixed, parse named one unknown field chosen by map order, so the rewrite fired on about half of runs."
+      inputs:
+        file_before: "spec with trust_level: high and legacy_owner: payments-team under spec:"
+        commands: ["specter doctor --fix --dry-run", "specter doctor --fix --yes"]
+      expected_output:
+        dry_run_reports_strip_trust_level: "every run"
+        trust_level_removed: "every run"
+        other_unknown_field_kept: true
+        parse_after_rewrite_reports_other_field: true
+      references_constraints: ["C-11"]
       priority: high
 
     - id: AC-14
@@ -516,6 +529,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "1.11.0"
+      date: "2026-10-26"
+      author: "specter-team"
+      type: minor
+      description: "AC-34 pins `strip-trust-level` firing on every run when another unknown field sits beside `trust_level`, per `bugs/SP-SP-091`. Measured on 0.15.1 before the fix: with `trust_level` and one other unknown field, `--fix --dry-run` reported the rewrite in 10 of 20 runs and `--fix --yes` removed `trust_level` in 11 of 20. The control with `trust_level` alone was 20 of 20 in both. The rewrite was correct; the parse error it reads named a field chosen by map order. AC-34 sits after AC-13 because it extends AC-12."
     - version: "1.10.2"
       date: "2026-08-30"
       author: "specter-team"
