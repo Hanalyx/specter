@@ -43,11 +43,19 @@ func humanizeError(errType, path, rawMsg string) string {
 	}
 }
 
+// humanizeRequired names the first field in a raw validator message. The
+// parser's own path passes each missing field to humanizeRequiredField
+// instead, because the raw message lists every missing field in one string.
 func humanizeRequired(path, rawMsg string) string {
 	prop := ""
 	if m := missingPropRe.FindStringSubmatch(rawMsg); len(m) > 1 {
 		prop = m[1]
 	}
+	return humanizeRequiredField(path, prop)
+}
+
+// humanizeRequiredField builds the C-09 message for one missing field.
+func humanizeRequiredField(path, prop string) string {
 	switch prop {
 	case "id":
 		return "Missing required field 'id'. Add a kebab-case identifier, e.g. id: payment-create-intent"
