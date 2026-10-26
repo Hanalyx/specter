@@ -1,0 +1,20 @@
+spec:
+  id: test-criterion-missing-id
+  version: "1.0.0"
+  status: draft
+  tier: 3
+
+  context:
+    system: Test system
+
+  objective:
+    summary: This spec has an acceptance criterion with no id.
+
+  constraints:
+    - id: C-01
+      description: "MUST name the AC-NN form when a criterion id is missing"
+
+  acceptance_criteria:
+    # The id is intentionally missing.
+    - description: "Should fail required validation on the criterion's id"
+      references_constraints: ["C-01"]

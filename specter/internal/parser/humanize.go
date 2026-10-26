@@ -58,6 +58,15 @@ func humanizeRequired(path, rawMsg string) string {
 func humanizeRequiredField(path, prop string) string {
 	switch prop {
 	case "id":
+		// A constraint or criterion id has its own form, so the spec-level
+		// kebab-case hint would send the author to a value parse rejects.
+		// bugs/SP-SP-095.
+		if strings.Contains(path, "constraints") {
+			return "Missing required field 'id'. Add an id in C-NN form, e.g. id: C-01"
+		}
+		if strings.Contains(path, "acceptance_criteria") {
+			return "Missing required field 'id'. Add an id in AC-NN form, e.g. id: AC-01"
+		}
 		return "Missing required field 'id'. Add a kebab-case identifier, e.g. id: payment-create-intent"
 	case "version":
 		return "Missing required field 'version'. Add a semantic version, e.g. version: \"1.0.0\""
