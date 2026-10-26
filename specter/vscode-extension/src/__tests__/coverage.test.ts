@@ -555,6 +555,9 @@ describe('[spec-vscode/AC-35] buildCoverageTreeRoot (v0.9.0) — drift diagnosis
     if (nodes[0].kind !== 'parseErrorGroup') return;
     expect(nodes[0].label.toLowerCase()).toContain('schema drift');
     expect(nodes[0].label).toContain('spec.objective');
+    // bugs/SP-SP-097: the drift group's tooltip points at specter doctor.
+    // Read through a cast so the test compiles before the type has the field.
+    expect((nodes[0] as unknown as { detail?: string }).detail).toContain('Run specter doctor for a full report');
   });
 
   // bugs/SP-SP-094: the pattern's count is its number of errors (spec-coverage
@@ -582,6 +585,9 @@ describe('[spec-vscode/AC-35] buildCoverageTreeRoot (v0.9.0) — drift diagnosis
     if (nodes[0].kind !== 'parseErrorGroup') return;
     expect(nodes[0].label).toContain('schema drift');
     expect(nodes[0].label).toContain('required at spec');
+    // bugs/SP-SP-097: the drift group's tooltip points at specter doctor.
+    // Read through a cast so the test compiles before the type has the field.
+    expect((nodes[0] as unknown as { detail?: string }).detail).toContain('Run specter doctor for a full report');
   });
 
   it('does not claim schema drift when one spec carries as many errors as there are candidates', () => {
@@ -603,6 +609,8 @@ describe('[spec-vscode/AC-35] buildCoverageTreeRoot (v0.9.0) — drift diagnosis
     if (nodes[0].kind !== 'parseErrorGroup') return;
     expect(nodes[0].label).toBe('Failed to parse: 1 file(s)');
     expect(nodes[0].label).not.toContain('schema drift');
+    // bugs/SP-SP-097: no drift, so no doctor tooltip; the renderer's generic text applies.
+    expect((nodes[0] as unknown as { detail?: string }).detail).toBeUndefined();
   });
 
   it('does not claim schema drift when parse errors are heterogeneous', () => {
@@ -623,6 +631,8 @@ describe('[spec-vscode/AC-35] buildCoverageTreeRoot (v0.9.0) — drift diagnosis
     expect(nodes[0].kind).toBe('parseErrorGroup');
     if (nodes[0].kind !== 'parseErrorGroup') return;
     expect(nodes[0].label.toLowerCase()).not.toContain('schema drift');
+    // bugs/SP-SP-097: no drift, so no doctor tooltip; the renderer's generic text applies.
+    expect((nodes[0] as unknown as { detail?: string }).detail).toBeUndefined();
   });
 
   it('surfaces manifest-misconfiguration when candidates exist but no parse errors and no entries', () => {
