@@ -9,10 +9,12 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Hanalyx/specter/internal/schema"
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/santhosh-tekuri/jsonschema/v6/kind"
 	"gopkg.in/yaml.v3"
 )
 
@@ -136,6 +138,7 @@ func ParseSpec(yamlContent string) ParseResult {
 
 		errors := flattenValidationErrors(validationErr)
 		if len(errors) > 0 {
+			sortParseErrors(errors)
 			return ParseResult{OK: false, Errors: errors}
 		}
 	}
@@ -210,12 +213,45 @@ func sortedKeys(m map[string]bool) []string {
 	return keys
 }
 
+// sortParseErrors puts validation errors in one stable order: by path, then
+// type, then message. The validator visits a document's mappings in Go map
+// order, so without this the same bytes print their errors in a different
+// order from run to run (spec-parse AC-21).
+func sortParseErrors(errs []ParseError) {
+	sort.SliceStable(errs, func(i, j int) bool {
+		if errs[i].Path != errs[j].Path {
+			return errs[i].Path < errs[j].Path
+		}
+		if errs[i].Type != errs[j].Type {
+			return errs[i].Type < errs[j].Type
+		}
+		return errs[i].Message < errs[j].Message
+	})
+}
+
 // flattenValidationErrors converts nested jsonschema validation errors into flat ParseErrors.
 func flattenValidationErrors(ve *jsonschema.ValidationError) []ParseError {
 	var errors []ParseError
 
 	if len(ve.Causes) == 0 {
 		path := locationToPath(ve.InstanceLocation)
+
+		// C-03: the validator reports every unknown key under a mapping in
+		// one error, listed in Go map order. Emit one error per key, sorted,
+		// so none is dropped and the output is the same on every run.
+		if ap, ok := ve.ErrorKind.(*kind.AdditionalProperties); ok && len(ap.Properties) > 0 {
+			names := append([]string(nil), ap.Properties...)
+			sort.Strings(names)
+			for _, name := range names {
+				errors = append(errors, ParseError{
+					Path:    path,
+					Type:    "additionalProperties",
+					Message: humanizeAdditionalField(path, name),
+				})
+			}
+			return errors
+		}
+
 		errType := extractErrorType(ve)
 		errors = append(errors, ParseError{
 			Path:    path,
