@@ -522,9 +522,10 @@ describe('[spec-vscode/AC-36] buildCoverageTreeRoot (v0.9.0) — mixed pass + fa
         { file: 'b.yaml', type: 'required', path: 'spec.objective', message: 'missing' },
         { file: 'c.yaml', type: 'required', path: 'spec.objective', message: 'missing' },
       ],
-      parseErrorPatterns: [{ type: 'required', path: 'spec.objective', count: 3 }],
+      parseErrorPatterns: [{ type: 'required', path: 'spec.objective', count: 3, files: ['a.yaml', 'b.yaml', 'c.yaml'] }],
     };
     const nodes = buildCoverageTreeRoot(report);
+    expect(nodes[0].kind).toBe('parseErrorGroup');
     if (nodes[0].kind !== 'parseErrorGroup') return;
     expect(nodes[0].label.toLowerCase()).toContain('schema drift');
     expect(nodes[0].label).toContain('spec.objective');
@@ -545,14 +546,63 @@ describe('[spec-vscode/AC-35] buildCoverageTreeRoot (v0.9.0) — drift diagnosis
         { file: 'c.yaml', type: 'required', path: 'spec.objective', message: 'missing' },
       ],
       parseErrorPatterns: [
-        { type: 'required', path: 'spec.objective', count: 3 },
+        { type: 'required', path: 'spec.objective', count: 3, files: ['a.yaml', 'b.yaml', 'c.yaml'] },
       ],
     };
     const nodes = buildCoverageTreeRoot(report);
     expect(nodes).toHaveLength(1);
+    expect(nodes[0].kind).toBe('parseErrorGroup');
     if (nodes[0].kind !== 'parseErrorGroup') return;
     expect(nodes[0].label.toLowerCase()).toContain('schema drift');
     expect(nodes[0].label).toContain('spec.objective');
+  });
+
+  // bugs/SP-SP-094: the pattern's count is its number of errors (spec-coverage
+  // C-13), so drift is decided by its distinct files. These two cases are the
+  // ones where count and files disagree.
+  it('names schema drift when each spec carries several errors of the one pattern', () => {
+    const report: CoverageReport = {
+      entries: [],
+      summary: { totalSpecs: 0, passing: 0, failing: 0, fullyCovered: 0, partiallyCovered: 0, uncovered: 0 },
+      specCandidatesCount: 2,
+      parseErrors: [
+        { file: 'a.yaml', type: 'required', path: 'spec', message: "Missing required field 'context'" },
+        { file: 'a.yaml', type: 'required', path: 'spec', message: "Missing required field 'status'" },
+        { file: 'a.yaml', type: 'required', path: 'spec', message: "Missing required field 'tier'" },
+        { file: 'b.yaml', type: 'required', path: 'spec', message: "Missing required field 'context'" },
+        { file: 'b.yaml', type: 'required', path: 'spec', message: "Missing required field 'status'" },
+        { file: 'b.yaml', type: 'required', path: 'spec', message: "Missing required field 'tier'" },
+      ],
+      parseErrorPatterns: [
+        { type: 'required', path: 'spec', count: 6, files: ['a.yaml', 'b.yaml'] },
+      ],
+    };
+    const nodes = buildCoverageTreeRoot(report);
+    expect(nodes[0].kind).toBe('parseErrorGroup');
+    if (nodes[0].kind !== 'parseErrorGroup') return;
+    expect(nodes[0].label).toContain('schema drift');
+    expect(nodes[0].label).toContain('required at spec');
+  });
+
+  it('does not claim schema drift when one spec carries as many errors as there are candidates', () => {
+    const report: CoverageReport = {
+      entries: [],
+      summary: { totalSpecs: 0, passing: 0, failing: 0, fullyCovered: 0, partiallyCovered: 0, uncovered: 0 },
+      specCandidatesCount: 3,
+      parseErrors: [
+        { file: 'a.yaml', type: 'required', path: 'spec', message: "Missing required field 'context'" },
+        { file: 'a.yaml', type: 'required', path: 'spec', message: "Missing required field 'status'" },
+        { file: 'a.yaml', type: 'required', path: 'spec', message: "Missing required field 'tier'" },
+      ],
+      parseErrorPatterns: [
+        { type: 'required', path: 'spec', count: 3, files: ['a.yaml'] },
+      ],
+    };
+    const nodes = buildCoverageTreeRoot(report);
+    expect(nodes[0].kind).toBe('parseErrorGroup');
+    if (nodes[0].kind !== 'parseErrorGroup') return;
+    expect(nodes[0].label).toBe('Failed to parse: 1 file(s)');
+    expect(nodes[0].label).not.toContain('schema drift');
   });
 
   it('does not claim schema drift when parse errors are heterogeneous', () => {
@@ -565,11 +615,12 @@ describe('[spec-vscode/AC-35] buildCoverageTreeRoot (v0.9.0) — drift diagnosis
         { file: 'b.yaml', type: 'enum', path: 'spec.status', message: 'bad' },
       ],
       parseErrorPatterns: [
-        { type: 'required', path: 'spec.objective', count: 1 },
-        { type: 'enum', path: 'spec.status', count: 1 },
+        { type: 'required', path: 'spec.objective', count: 1, files: ['a.yaml'] },
+        { type: 'enum', path: 'spec.status', count: 1, files: ['b.yaml'] },
       ],
     };
     const nodes = buildCoverageTreeRoot(report);
+    expect(nodes[0].kind).toBe('parseErrorGroup');
     if (nodes[0].kind !== 'parseErrorGroup') return;
     expect(nodes[0].label.toLowerCase()).not.toContain('schema drift');
   });
