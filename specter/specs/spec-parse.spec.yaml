@@ -306,7 +306,7 @@ spec:
       priority: high
 
     - id: AC-21
-      description: "All schema validation errors for one file come out in one stable order, sorted by path, then error type, then message. A spec with unknown fields under `spec:`, `context:` and `objective:` returns the same ordered list on every parse. Rationale: the validator visits the mappings of a document in Go map order, so the errors from different mappings arrived in a different order from run to run, even once each mapping's own errors were sorted."
+      description: "All schema validation errors for one file come out in one stable order, sorted by path, then error type, then message. A spec with unknown fields under `spec:`, `context:` and `objective:` returns the same ordered list on every parse. Rationale: the validator visits the mappings of a document in Go map order, so the errors from different mappings arrived in a different order from run to run."
       inputs:
         file: "testdata/invalid/unknown-fields-several-mappings.spec.yaml"
         mappings_with_unknown_fields: ["spec", "spec.context", "spec.objective"]
