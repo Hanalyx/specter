@@ -1,0 +1,17 @@
+spec:
+  id: test-missing-three-required
+  version: "1.0.0"
+  # status, tier and context are all missing. The validator reports the three
+  # names in one error, so a parser that keeps one name drops the other two.
+
+  objective:
+    summary: This spec is missing three required fields that must each be reported.
+
+  constraints:
+    - id: C-01
+      description: "MUST report every missing required field"
+
+  acceptance_criteria:
+    - id: AC-01
+      description: "Should fail required validation once per missing field"
+      references_constraints: ["C-01"]
