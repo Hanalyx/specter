@@ -562,7 +562,9 @@ export function buildCoverageTreeRoot(
     }
     const candidates = report.specCandidatesCount ?? byFile.size;
     const top = report.parseErrorPatterns?.[0];
-    const topDominant = !!top && top.count === candidates && candidates > 1;
+    // A pattern's count is its number of errors (spec-coverage C-13), so drift
+    // is decided by its distinct files. bugs/SP-SP-094.
+    const topDominant = !!top && (top.files?.length ?? 0) === candidates && candidates > 1;
     // Label names the shape when it's a drift pattern; stays generic otherwise.
     const label = topDominant
       ? `Failed to parse: ${byFile.size} file(s) — schema drift (${top.type}${top.path ? ` at ${top.path}` : ''})`
