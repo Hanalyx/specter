@@ -524,3 +524,78 @@ func TestDoctor_Fix_BetaGate_NonTTY_WithContent_Errors(t *testing.T) {
 		}
 	})
 }
+
+// legacySpecWithTrustLevelAndOwner carries trust_level beside a second
+// unknown field under spec:, the shape bugs/SP-SP-091 measured.
+const legacySpecWithTrustLevelAndOwner = `spec:
+  id: legacy-spec
+  version: "1.0.0"
+  status: draft
+  tier: 3
+  trust_level: high
+  legacy_owner: payments-team
+  context:
+    system: test
+  objective:
+    summary: test
+  constraints:
+    - id: C-01
+      description: "MUST something"
+  acceptance_criteria:
+    - id: AC-01
+      description: "test"
+      references_constraints: ["C-01"]
+`
+
+// @ac AC-34
+// Every run reports and applies strip-trust-level, the other unknown field
+// stays, and parse still reports it. Each run is a fresh process, so Go map
+// order differs between runs. Before the fix, parse named one of the two
+// fields at random, and 20 runs all applying the rewrite had odds near one
+// in a million.
+func TestDoctor_Fix_StripsTrustLevelBesideAnotherUnknownField(t *testing.T) {
+	t.Run("spec-doctor/AC-34 rewrite applies on every run beside another unknown field", func(t *testing.T) {
+		const runs = 20
+		var dryMissed, fixMissed, ownerLost, ownerUnreported int
+		for i := 0; i < runs; i++ {
+			dir := t.TempDir()
+			specPath := filepath.Join(dir, "specs", "legacy.spec.yaml")
+			_ = os.MkdirAll(filepath.Dir(specPath), 0755)
+			_ = os.WriteFile(specPath, []byte(legacySpecWithTrustLevelAndOwner), 0644)
+
+			dry, _ := runCLI(t, dir, "doctor", "--fix", "--dry-run")
+			if !strings.Contains(dry, "legacy.spec.yaml (strip-trust-level)") {
+				dryMissed++
+			}
+
+			_, _ = runCLI(t, dir, "doctor", "--fix", "--yes")
+			after, err := os.ReadFile(specPath)
+			if err != nil {
+				t.Fatalf("run %d: read after fix: %v", i+1, err)
+			}
+			if strings.Contains(string(after), "trust_level") {
+				fixMissed++
+			}
+			if !strings.Contains(string(after), "legacy_owner: payments-team") {
+				ownerLost++
+			}
+
+			parsed, code := runCLI(t, dir, "parse", specPath)
+			if code == 0 || !strings.Contains(parsed, "Unknown field 'legacy_owner'") {
+				ownerUnreported++
+			}
+		}
+		if dryMissed != 0 {
+			t.Errorf("dry run omitted strip-trust-level in %d of %d runs", dryMissed, runs)
+		}
+		if fixMissed != 0 {
+			t.Errorf("--fix --yes left trust_level in place in %d of %d runs", fixMissed, runs)
+		}
+		if ownerLost != 0 {
+			t.Errorf("legacy_owner was removed in %d of %d runs", ownerLost, runs)
+		}
+		if ownerUnreported != 0 {
+			t.Errorf("parse did not report legacy_owner after the fix in %d of %d runs", ownerUnreported, runs)
+		}
+	})
+}
