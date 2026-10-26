@@ -735,3 +735,40 @@ func assertNoValidatorText(t *testing.T, errs []ParseError) {
 		}
 	}
 }
+
+// @ac AC-23
+func TestParseMissingIDHintNamesTheFormForItsPath(t *testing.T) {
+	t.Run("spec-parse/AC-23 a missing id gets the hint for its own id form", func(t *testing.T) {
+		cases := []struct {
+			name, fixture, path, want string
+		}{
+			{"constraint", "invalid/constraint-missing-id-and-description.spec.yaml", "spec.constraints[0]",
+				"Missing required field 'id'. Add an id in C-NN form, e.g. id: C-01"},
+			{"criterion", "invalid/criterion-missing-id.spec.yaml", "spec.acceptance_criteria[0]",
+				"Missing required field 'id'. Add an id in AC-NN form, e.g. id: AC-01"},
+			{"spec", "invalid/missing-id.spec.yaml", "spec",
+				"Missing required field 'id'. Add a kebab-case identifier, e.g. id: payment-create-intent"},
+		}
+		for _, c := range cases {
+			result := ParseSpec(readFixture(t, c.fixture))
+			if result.OK {
+				t.Fatalf("%s: expected parse to fail on a missing id", c.name)
+			}
+			var idErrs []ParseError
+			for _, e := range result.Errors {
+				if e.Type == "required" && strings.Contains(e.Message, "required field 'id'") {
+					idErrs = append(idErrs, e)
+				}
+			}
+			if len(idErrs) != 1 {
+				t.Fatalf("%s: expected one required error for id, got %d: %+v", c.name, len(idErrs), result.Errors)
+			}
+			if idErrs[0].Path != c.path {
+				t.Errorf("%s: expected path %q, got %q", c.name, c.path, idErrs[0].Path)
+			}
+			if idErrs[0].Message != c.want {
+				t.Errorf("%s: expected message %q, got %q", c.name, c.want, idErrs[0].Message)
+			}
+		}
+	})
+}
