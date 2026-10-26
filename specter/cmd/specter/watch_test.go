@@ -11,6 +11,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -302,7 +303,11 @@ func TestWatch_CtrlC_ExitsZero(t *testing.T) {
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
 		select {
-		case <-done:
+		case err := <-done:
+			var exitErr *exec.ExitError
+			if err != nil && !errors.As(err, &exitErr) {
+				t.Fatalf("wait for watch process: %v", err)
+			}
 		case <-time.After(3 * time.Second):
 			t.Fatal("watch did not exit within 3s after SIGINT")
 		}

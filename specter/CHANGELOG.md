@@ -23,6 +23,8 @@ Unreleased changes accumulate under `## Unreleased`. Every user-visible change a
 
 ### Security
 
+- Building Specter from source now needs Go 1.27.3 or later, up from 1.25.13. Go no longer supports the 1.25 line. On Go 1.25.13, `govulncheck -show verbose` reported 14 standard-library vulnerabilities that are fixed only in Go 1.26.9 and 1.26.10. None was reachable from Specter's code, and one affects Windows only. A binary built with Go 1.27.3 carries none of the 14. Release binaries and CI pick up the new version from `go.mod`. Three findings in `golang.org/x/sys` and `golang.org/x/text` remain, and Specter's code does not call them.
+
 - The `specter-sync` composite action verifies the release archive before it extracts it. It downloads `checksums.txt` from the same release and compares the archive's sha256 with the one entry that names it. A missing checksums file, a missing or repeated entry, a malformed hash, or a mismatch fails the step. Before this, the action piped `curl` into `tar` with no check. The action does not verify the cosign signature on `checksums.txt`. The cache key changed to `specter-<os>-<version>-v2`, so every runner downloads and verifies once more instead of restoring a binary the older action cached without a check. A cache hit after that restores a binary that passed verification. spec-ci-action C-03, AC-03, C-06 and AC-06.
 
 - Verify a release signature against the exact workflow identity. Earlier notes gave an unanchored `--certificate-identity-regexp`, which also accepts a signature made by a copy of the release workflow on another branch. Use:
