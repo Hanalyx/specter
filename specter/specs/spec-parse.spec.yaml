@@ -1,6 +1,6 @@
 spec:
   id: spec-parse
-  version: "1.3.0"
+  version: "1.4.0"
   status: approved
   tier: 1
 
@@ -291,7 +291,38 @@ spec:
       references_constraints: ["C-11"]
       priority: critical
 
+    - id: AC-20
+      description: "A spec with several unknown fields under one mapping returns one `additionalProperties` ParseError per field. Each error names its own field, and the errors come in sorted field-name order. A spec with three unknown fields under `spec:`, written in non-sorted source order, returns three such errors, and 20 consecutive parses of the same bytes return identical output. Rationale: the validator reports every unknown key in one error, listed in Go map order. Keeping only the first name dropped the rest and changed which one was named from run to run, which C-03 forbids."
+      inputs:
+        file: "testdata/invalid/multiple-unknown-fields.spec.yaml"
+        unknown_fields_in_source_order: ["zz_legacy_owner", "aa_trust_level_note", "mm_reviewer"]
+        consecutive_parses: 20
+      expected_output:
+        additional_properties_error_count: 3
+        fields_in_order: ["aa_trust_level_note", "mm_reviewer", "zz_legacy_owner"]
+        message_shape: "Unknown field '<name>'. Remove it or check for a typo in the field name."
+        all_parses_identical: true
+      references_constraints: ["C-03", "C-09"]
+      priority: high
+
+    - id: AC-21
+      description: "All schema validation errors for one file come out in one stable order, sorted by path, then error type, then message. A spec with unknown fields under `spec:`, `context:` and `objective:` returns the same ordered list on every parse. Rationale: the validator visits the mappings of a document in Go map order, so the errors from different mappings arrived in a different order from run to run, even once each mapping's own errors were sorted."
+      inputs:
+        file: "testdata/invalid/unknown-fields-several-mappings.spec.yaml"
+        mappings_with_unknown_fields: ["spec", "spec.context", "spec.objective"]
+        consecutive_parses: 50
+      expected_output:
+        paths_in_order: ["spec", "spec", "spec.context", "spec.context", "spec.objective", "spec.objective"]
+        all_parses_identical: true
+      references_constraints: ["C-03", "C-09"]
+      priority: high
+
   changelog:
+    - version: "1.4.0"
+      date: "2026-10-26"
+      author: "specter-team"
+      type: minor
+      description: "AC-20 pins one `additionalProperties` error per unknown field, in sorted order, per `bugs/SP-SP-091`. Parse used to name only the first field in the validator's message, which lists them in Go map order, so it dropped the rest and named a different one from run to run. Dropping fields already violated C-03 before any criterion pinned it. AC-21 pins one stable order for every schema validation error in a file, sorted by path, then type, then message, because the validator visits mappings in Go map order too."
     - version: "1.3.0"
       date: "2026-08-25"
       author: "specter-team"
