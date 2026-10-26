@@ -281,7 +281,7 @@ type ParseErrorEntry struct {
 type ParseErrorPattern struct {
 	Type        string   `json:"type"`           // e.g. "required", "enum"
 	Path        string   `json:"path,omitempty"` // e.g. "spec.objective"
-	Count       int      `json:"count"`          // how many specs hit this
+	Count       int      `json:"count"`          // parse errors matching the pattern, not specs (spec-coverage C-13); Files holds the distinct files
 	ExampleFile string   `json:"example_file,omitempty"`
 	Files       []string `json:"files,omitempty"`
 }

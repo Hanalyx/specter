@@ -1,6 +1,6 @@
 spec:
   id: spec-parse
-  version: "1.4.0"
+  version: "1.5.0"
   status: approved
   tier: 1
 
@@ -317,7 +317,35 @@ spec:
       references_constraints: ["C-03", "C-09"]
       priority: high
 
+    - id: AC-22
+      description: "A spec missing two or more required fields under one mapping returns one `required` ParseError per missing field. Each error names its own field and carries that field's C-09 hint. No message contains a raw JSON Schema path (`at '`) or the validator's wording (`missing propert`). A spec missing `status`, `tier` and `context` returns three such errors at path `spec`, sorted by message, and `parse --json` types each one `required`. A constraint missing both `id` and `description` returns two such errors at path `spec.constraints[0]`. 20 consecutive parses of the same bytes return identical output. Because each error is typed `required`, doctor's pattern analysis reports `[required]` for a workspace of such specs. Rationale: the validator reports every missing name in one error. For two or more names its message says `missing properties`, which the singular match missed, so the error was typed `validation` and its raw text reached the user with the JSON Schema path in it. C-09 forbids that output, and keeping only the first name would drop the rest, which C-07 forbids."
+      inputs:
+        file: "testdata/invalid/missing-three-required.spec.yaml"
+        missing_fields: ["status", "tier", "context"]
+        nested_file: "testdata/invalid/constraint-missing-id-and-description.spec.yaml"
+        consecutive_parses: 20
+        doctor_workspace: "two copies of the missing-three-required fixture under specs/"
+      expected_output:
+        required_error_count: 3
+        error_type: "required"
+        fields_in_order: ["context", "status", "tier"]
+        status_message_contains: "draft, approved, deprecated"
+        tier_message_contains: "1 (critical)"
+        context_message_contains: "context block"
+        message_does_not_contain: ["at '", "missing propert"]
+        nested_required_error_count: 2
+        nested_path: "spec.constraints[0]"
+        all_parses_identical: true
+        doctor_pattern_type: "required"
+      references_constraints: ["C-07", "C-09"]
+      priority: high
+
   changelog:
+    - version: "1.5.0"
+      date: "2026-10-26"
+      author: "specter-team"
+      type: minor
+      description: "AC-22 pins one `required` error per missing field, per `bugs/SP-SP-093`. When two or more required fields were missing, the validator's message said `missing properties`, in the plural. The type match looked only for the singular, so the error fell through to `validation`, and its raw text reached the user with the JSON Schema path in it. C-09 already forbade that output, and C-07 already forbade dropping the other names, before any criterion pinned either case."
     - version: "1.4.0"
       date: "2026-10-26"
       author: "specter-team"

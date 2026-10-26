@@ -205,3 +205,37 @@ domains:
 		}
 	})
 }
+
+// @spec spec-manifest
+// @ac AC-77
+//
+// bugs/SP-SP-093: init's drift note compared the pattern's error count with
+// the number of failing files. Each spec here carries three required errors at
+// spec, so the count is six for two files and the note used to go silent.
+func TestInit_DriftNote_CountsFilesNotErrors(t *testing.T) {
+	t.Run("spec-manifest/AC-77 drift note fires when each failing spec has several errors of one pattern", func(t *testing.T) {
+		data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "invalid", "missing-three-required.spec.yaml"))
+		if err != nil {
+			t.Fatalf("read fixture: %v", err)
+		}
+		dir := t.TempDir()
+		writeSpec(t, dir, "a.spec.yaml", string(data))
+		writeSpec(t, dir, "b.spec.yaml", string(data))
+
+		out, _ := runCLI(t, dir, "init")
+
+		// Precondition: both specs failed and init reached its pattern report.
+		if !strings.Contains(out, "2 spec file(s) were discovered but could not be parsed") {
+			t.Fatalf("expected init to report two unparsed specs, so this case reaches the drift note.\noutput:\n%s", out)
+		}
+		if !strings.Contains(out, `Every failing spec hit the same error: [required] at "spec".`) {
+			t.Errorf("expected the drift line naming [required] at \"spec\".\noutput:\n%s", out)
+		}
+		if !strings.Contains(out, "schema version drift") {
+			t.Errorf("expected the schema drift advice.\noutput:\n%s", out)
+		}
+		if strings.Contains(out, "occurrence(s)") {
+			t.Errorf("init printed the occurrence list instead of the drift note.\noutput:\n%s", out)
+		}
+	})
+}

@@ -1,0 +1,20 @@
+spec:
+  id: test-constraint-missing-id-and-description
+  version: "1.0.0"
+  status: draft
+  tier: 3
+
+  context:
+    system: Test system
+
+  objective:
+    summary: This spec has a constraint missing both of its required fields.
+
+  constraints:
+    # Neither id nor description is present, so the validator reports both
+    # names in one error at this constraint's path.
+    - type: technical
+
+  acceptance_criteria:
+    - id: AC-01
+      description: "Should fail required validation once per missing constraint field"

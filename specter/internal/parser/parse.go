@@ -250,6 +250,21 @@ func flattenValidationErrors(ve *jsonschema.ValidationError) []ParseError {
 			return errors
 		}
 
+		// C-07 and C-09: the validator reports every missing required field
+		// in one error, and for two or more its message says "missing
+		// properties". Emit one required error per field so each gets its
+		// own message and none is dropped. bugs/SP-SP-093.
+		if rq, ok := ve.ErrorKind.(*kind.Required); ok && len(rq.Missing) > 0 {
+			for _, name := range rq.Missing {
+				errors = append(errors, ParseError{
+					Path:    path,
+					Type:    "required",
+					Message: humanizeRequiredField(path, name),
+				})
+			}
+			return errors
+		}
+
 		errType := extractErrorType(ve)
 		errors = append(errors, ParseError{
 			Path:    path,

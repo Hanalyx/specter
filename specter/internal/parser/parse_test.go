@@ -626,3 +626,112 @@ func TestParseNamesAnUnknownFieldWithAQuoteInFull(t *testing.T) {
 		}
 	})
 }
+
+// @ac AC-22
+func TestParseReportsEveryMissingRequiredField(t *testing.T) {
+	t.Run("spec-parse/AC-22 one required error per missing field, each with its C-09 hint", func(t *testing.T) {
+		yaml := readFixture(t, "invalid/missing-three-required.spec.yaml")
+		first := ParseSpec(yaml)
+		if first.OK {
+			t.Fatal("expected parse to fail on three missing required fields")
+		}
+
+		// Sorted by message, so the field order is context, status, tier.
+		// Each hint is the text humanizeRequired gives that field alone.
+		type want struct{ field, hint string }
+		wants := []want{
+			{"'context'", "context block"},
+			{"'status'", "draft, approved, deprecated"},
+			{"'tier'", "1 (critical)"},
+		}
+		if len(first.Errors) != len(wants) {
+			t.Fatalf("expected %d errors, got %d: %+v", len(wants), len(first.Errors), first.Errors)
+		}
+		for i, w := range wants {
+			e := first.Errors[i]
+			if e.Type != "required" {
+				t.Errorf("error %d: expected type required, got %s: %s", i, e.Type, e.Message)
+			}
+			if e.Path != "spec" {
+				t.Errorf("error %d: expected path %q, got %q", i, "spec", e.Path)
+			}
+			if !strings.Contains(e.Message, "Missing required field "+w.field) {
+				t.Errorf("error %d: expected the message to name %s, got %q", i, w.field, e.Message)
+			}
+			if !strings.Contains(e.Message, w.hint) {
+				t.Errorf("error %d: expected the C-09 hint %q, got %q", i, w.hint, e.Message)
+			}
+		}
+		assertNoValidatorText(t, first.Errors)
+
+		for i := 0; i < 20; i++ {
+			again := ParseSpec(yaml)
+			if len(again.Errors) != len(first.Errors) {
+				t.Fatalf("parse %d: expected %d errors, got %d", i+2, len(first.Errors), len(again.Errors))
+			}
+			for j := range first.Errors {
+				if again.Errors[j] != first.Errors[j] {
+					t.Fatalf("parse %d, error %d: expected %+v, got %+v", i+2, j, first.Errors[j], again.Errors[j])
+				}
+			}
+		}
+	})
+}
+
+// @ac AC-22
+func TestParseReportsEveryMissingRequiredFieldInAConstraint(t *testing.T) {
+	t.Run("spec-parse/AC-22 a constraint missing id and description gives two required errors", func(t *testing.T) {
+		yaml := readFixture(t, "invalid/constraint-missing-id-and-description.spec.yaml")
+		result := ParseSpec(yaml)
+		if result.OK {
+			t.Fatal("expected parse to fail on a constraint with no id and no description")
+		}
+
+		const path = "spec.constraints[0]"
+		if len(result.Errors) != 2 {
+			t.Fatalf("expected 2 errors, got %d: %+v", len(result.Errors), result.Errors)
+		}
+		named := map[string]bool{}
+		for _, e := range result.Errors {
+			if e.Type != "required" || e.Path != path {
+				t.Errorf("expected a required error at %q, got [%s] %q: %s", path, e.Type, e.Path, e.Message)
+			}
+			for _, f := range []string{"id", "description"} {
+				if strings.Contains(e.Message, "required field '"+f+"'") {
+					named[f] = true
+				}
+			}
+		}
+		for _, f := range []string{"id", "description"} {
+			if !named[f] {
+				t.Errorf("no error names the missing field %q: %+v", f, result.Errors)
+			}
+		}
+		// The description message is the constraint-specific one, which shows
+		// the per-field message still sees the path.
+		wantDesc := "Constraint is missing required field 'description'. Each constraint must have a description"
+		found := false
+		for _, e := range result.Errors {
+			if e.Message == wantDesc {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected the message %q, got %+v", wantDesc, result.Errors)
+		}
+		assertNoValidatorText(t, result.Errors)
+	})
+}
+
+// assertNoValidatorText fails when a message carries the validator's own
+// wording or a raw JSON Schema path, which C-09 forbids.
+func assertNoValidatorText(t *testing.T, errs []ParseError) {
+	t.Helper()
+	for _, e := range errs {
+		for _, bad := range []string{"at '", "missing propert"} {
+			if strings.Contains(e.Message, bad) {
+				t.Errorf("message carries validator text %q: %s", bad, e.Message)
+			}
+		}
+	}
+}

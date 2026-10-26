@@ -1,6 +1,6 @@
 spec:
   id: spec-manifest
-  version: "3.3.0"
+  version: "3.4.0"
   status: draft
   tier: 2
 
@@ -1136,6 +1136,18 @@ spec:
       references_constraints: ["C-41", "C-13"]
       priority: high
 
+    - id: AC-77
+      description: "`specter init` in a workspace where every discovered spec fails to parse with the same (type, path) pattern prints the line `Every failing spec hit the same error` naming that pattern, followed by the schema drift advice. This holds when each failing spec carries several errors of that pattern. Two copies of a spec missing `status`, `tier` and `context` give three `required` errors at `spec` per file, and init still names `[required] at \"spec\"` and prints the advice. Rationale: C-16 covers the drift case for the manifest init writes, and this is the same case on init's own output. Init used to compare the pattern's error count with the number of failing files. A pattern with several errors per file outnumbered the files, so the note went silent exactly when the drift was widest. The comparison is now the number of files the pattern covers."
+      inputs:
+        workspace: "two copies of testdata/invalid/missing-three-required.spec.yaml under specs/"
+        command: "specter init"
+      expected_output:
+        drift_line: "Every failing spec hit the same error: [required] at \"spec\"."
+        drift_advice_contains: "schema version drift"
+        occurrence_list_printed: false
+      references_constraints: ["C-16"]
+      priority: high
+
   depends_on:
     - spec_id: spec-parse
       version_range: "^1.0.0"
@@ -1145,6 +1157,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "3.4.0"
+      date: "2026-10-26"
+      author: "specter-team"
+      type: minor
+      description: "AC-77 pins init's schema drift note for a workspace where every spec fails with one pattern, per `bugs/SP-SP-093`. Init compared the pattern's error count with the number of failing files, so a pattern with several errors per file hid the note. No constraint named the note, so AC-77 sits under C-16, which already covers the drift case for the manifest init writes."
     - version: "3.3.0"
       date: "2026-10-22"
       author: "specter-team"
