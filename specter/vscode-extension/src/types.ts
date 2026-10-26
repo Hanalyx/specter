@@ -392,6 +392,12 @@ export interface SpecTreeRootSpec {
 export interface ParseErrorGroupNode {
   kind: 'parseErrorGroup';
   label: string;
+  /**
+   * The group's tooltip. Set only when the label names schema drift, to point
+   * the user at `specter doctor`. Left undefined otherwise, so the renderer's
+   * generic parse-failure text applies (spec-vscode AC-35).
+   */
+  detail?: string;
   children: ParseErrorFileNode[];
 }
 

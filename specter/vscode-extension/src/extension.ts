@@ -1725,7 +1725,7 @@ type TreeElement = { kind: 'spec'; specID: string; file: string; children: TreeE
   | { kind: 'ac'; id: string; icon: 'covered' | 'uncovered'; children: TreeElement[] }
   | { kind: 'testFile'; path: string }
   | { kind: 'message'; label: string; detail?: string; iconId?: string }
-  | { kind: 'parseErrorGroup'; label: string; children: TreeElement[] }
+  | { kind: 'parseErrorGroup'; label: string; detail?: string; children: TreeElement[] }
   | { kind: 'parseErrorFile'; file: string; message: string; line?: number };
 
 /**
@@ -1806,7 +1806,7 @@ class SpecterTreeProvider implements vscode.TreeDataProvider<TreeElement> {
         const item = new vscode.TreeItem(el.label, vscode.TreeItemCollapsibleState.Expanded);
         item.iconPath = new vscode.ThemeIcon('error');
         item.contextValue = 'specterParseErrorGroup';
-        item.tooltip = 'Spec files the CLI could not parse. Each child opens the failing file.';
+        item.tooltip = el.detail ?? 'Spec files the CLI could not parse. Each child opens the failing file.';
         return item;
       }
       case 'parseErrorFile': {
@@ -1853,7 +1853,7 @@ class SpecterTreeProvider implements vscode.TreeDataProvider<TreeElement> {
           return { kind: 'message' as const, label: n.label, detail: n.detail, iconId: n.iconId };
         }
         if (n.kind === 'parseErrorGroup') {
-          const group: TreeElement = { kind: 'parseErrorGroup', label: n.label, children: [] };
+          const group: TreeElement = { kind: 'parseErrorGroup', label: n.label, detail: n.detail, children: [] };
           group.children = n.children.map(c => {
             const leaf: TreeElement = { kind: 'parseErrorFile', file: c.file, message: c.message, line: c.line };
             this.parentMap.set(leaf as object, group);

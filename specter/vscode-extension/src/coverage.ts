@@ -569,9 +569,15 @@ export function buildCoverageTreeRoot(
     const label = topDominant
       ? `Failed to parse: ${byFile.size} file(s) — schema drift (${top.type}${top.path ? ` at ${top.path}` : ''})`
       : `Failed to parse: ${byFile.size} file(s)`;
+    // bugs/SP-SP-097: drift is the case one command explains, so the tooltip
+    // points at it. A plain string: tree item tooltips here are not Markdown.
+    const detail = topDominant
+      ? 'Every failing spec hit the same error. This is the signature of schema drift: the specs may have been written against an older Specter schema. Run specter doctor for a full report.'
+      : undefined;
     roots.push({
       kind: 'parseErrorGroup',
       label,
+      detail,
       children: Array.from(byFile, ([file, info]) => ({
         kind: 'parseErrorFile' as const,
         file,
