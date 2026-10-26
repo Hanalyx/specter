@@ -1,0 +1,28 @@
+spec:
+  id: test-unknown-fields-several-mappings
+  version: "1.0.0"
+  status: draft
+  tier: 2
+  # Two unknown keys in each of three mappings, written in non-sorted
+  # order, so a stable sorted result proves the parser orders the errors.
+  zz_root: "x"
+  aa_root: "x"
+
+  objective:
+    summary: This spec carries unknown fields in three mappings.
+    zz_obj: "x"
+    aa_obj: "x"
+
+  context:
+    system: Test system
+    zz_ctx: "x"
+    aa_ctx: "x"
+
+  constraints:
+    - id: C-01
+      description: "MUST report every unknown field in a stable order"
+
+  acceptance_criteria:
+    - id: AC-01
+      description: "Should fail additionalProperties validation in three mappings"
+      references_constraints: ["C-01"]

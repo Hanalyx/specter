@@ -504,3 +504,125 @@ func TestParse_SpecTitleOptional(t *testing.T) {
 		}
 	})
 }
+
+// @ac AC-20
+func TestParseReportsEveryUnknownFieldSorted(t *testing.T) {
+	t.Run("spec-parse/AC-20 one error per unknown field, sorted and stable", func(t *testing.T) {
+		yaml := readFixture(t, "invalid/multiple-unknown-fields.spec.yaml")
+		first := ParseSpec(yaml)
+		if first.OK {
+			t.Fatal("expected parse to fail on three unknown fields")
+		}
+
+		var fields []string
+		for _, e := range first.Errors {
+			if e.Type != "additionalProperties" {
+				t.Fatalf("fixture must fail only on unknown fields, got %s error: %s", e.Type, e.Message)
+			}
+			if e.Path != "spec" {
+				t.Errorf("expected path %q, got %q", "spec", e.Path)
+			}
+			fields = append(fields, e.Message)
+		}
+
+		want := []string{
+			"Unknown field 'aa_trust_level_note'. Remove it or check for a typo in the field name.",
+			"Unknown field 'mm_reviewer'. Remove it or check for a typo in the field name.",
+			"Unknown field 'zz_legacy_owner'. Remove it or check for a typo in the field name.",
+		}
+		if len(fields) != len(want) {
+			t.Fatalf("expected %d additionalProperties errors, got %d: %q", len(want), len(fields), fields)
+		}
+		for i := range want {
+			if fields[i] != want[i] {
+				t.Errorf("error %d: expected %q, got %q", i, want[i], fields[i])
+			}
+		}
+
+		for i := 0; i < 50; i++ {
+			again := ParseSpec(yaml)
+			if len(again.Errors) != len(first.Errors) {
+				t.Fatalf("parse %d: expected %d errors, got %d", i+2, len(first.Errors), len(again.Errors))
+			}
+			for j := range first.Errors {
+				if again.Errors[j] != first.Errors[j] {
+					t.Fatalf("parse %d, error %d: expected %+v, got %+v", i+2, j, first.Errors[j], again.Errors[j])
+				}
+			}
+		}
+	})
+}
+
+// @ac AC-21
+func TestParseOrdersErrorsAcrossMappings(t *testing.T) {
+	t.Run("spec-parse/AC-21 errors from several mappings come out in one stable order", func(t *testing.T) {
+		yaml := readFixture(t, "invalid/unknown-fields-several-mappings.spec.yaml")
+		first := ParseSpec(yaml)
+		if first.OK {
+			t.Fatal("expected parse to fail on unknown fields in three mappings")
+		}
+
+		type want struct{ path, field string }
+		wants := []want{
+			{"spec", "'aa_root'"},
+			{"spec", "'zz_root'"},
+			{"spec.context", "'context.aa_ctx'"},
+			{"spec.context", "'context.zz_ctx'"},
+			{"spec.objective", "'aa_obj'"},
+			{"spec.objective", "'zz_obj'"},
+		}
+		if len(first.Errors) != len(wants) {
+			t.Fatalf("expected %d errors, got %d: %+v", len(wants), len(first.Errors), first.Errors)
+		}
+		for i, w := range wants {
+			e := first.Errors[i]
+			if e.Type != "additionalProperties" || e.Path != w.path || !strings.Contains(e.Message, "Unknown field "+w.field) {
+				t.Errorf("error %d: want %s at %q, got [%s] %q: %s", i, w.field, w.path, e.Type, e.Path, e.Message)
+			}
+		}
+
+		for i := 0; i < 50; i++ {
+			again := ParseSpec(yaml)
+			if len(again.Errors) != len(first.Errors) {
+				t.Fatalf("parse %d: expected %d errors, got %d", i+2, len(first.Errors), len(again.Errors))
+			}
+			for j := range first.Errors {
+				if again.Errors[j] != first.Errors[j] {
+					t.Fatalf("parse %d, error %d: expected %+v, got %+v", i+2, j, first.Errors[j], again.Errors[j])
+				}
+			}
+		}
+	})
+}
+
+// @ac AC-20
+func TestParseNamesAnUnknownFieldWithAQuoteInFull(t *testing.T) {
+	t.Run("spec-parse/AC-20 a field name with an apostrophe is printed as written", func(t *testing.T) {
+		yaml := `spec:
+  id: test-quote-field
+  version: "1.0.0"
+  status: draft
+  tier: 2
+  it's: "x"
+  context:
+    system: Test system
+  objective:
+    summary: A spec with an unknown field whose name holds an apostrophe.
+  constraints:
+    - id: C-01
+      description: "MUST name the field as written"
+  acceptance_criteria:
+    - id: AC-01
+      description: "Should name it's in full"
+      references_constraints: ["C-01"]
+`
+		result := ParseSpec(yaml)
+		if result.OK || len(result.Errors) != 1 {
+			t.Fatalf("expected exactly one error, got OK=%v errors=%+v", result.OK, result.Errors)
+		}
+		want := "Unknown field 'it's'. Remove it or check for a typo in the field name."
+		if result.Errors[0].Message != want {
+			t.Errorf("expected %q, got %q", want, result.Errors[0].Message)
+		}
+	})
+}

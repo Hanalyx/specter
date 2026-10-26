@@ -1,0 +1,25 @@
+spec:
+  id: test-multiple-unknown-fields
+  version: "1.0.0"
+  status: draft
+  tier: 2
+  # Three unknown keys in non-sorted source order. A test that sees them
+  # sorted proves the parser sorts, not that it keeps source order.
+  zz_legacy_owner: "payments-team"
+  aa_trust_level_note: "reviewed"
+  mm_reviewer: "someone"
+
+  context:
+    system: Test system
+
+  objective:
+    summary: This spec carries three unknown fields that must each be reported.
+
+  constraints:
+    - id: C-01
+      description: "MUST report every unknown field"
+
+  acceptance_criteria:
+    - id: AC-01
+      description: "Should fail additionalProperties validation once per unknown field"
+      references_constraints: ["C-01"]
