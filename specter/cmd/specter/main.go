@@ -2198,7 +2198,7 @@ func initCmd() *cobra.Command {
 				patterns := coverage.SummarizeParseErrors(initParseErrors)
 				if len(patterns) > 0 {
 					top := patterns[0]
-					if top.Count == unparsedFiles && unparsedFiles > 1 {
+					if len(top.Files) == unparsedFiles && unparsedFiles > 1 {
 						pathPart := ""
 						if top.Path != "" {
 							pathPart = fmt.Sprintf(" at %q", top.Path)
