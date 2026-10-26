@@ -1,6 +1,6 @@
 spec:
   id: spec-parse
-  version: "1.5.0"
+  version: "1.6.0"
   status: approved
   tier: 1
 
@@ -340,7 +340,28 @@ spec:
       references_constraints: ["C-07", "C-09"]
       priority: high
 
+    - id: AC-23
+      description: "When a constraint is missing `id`, the `required` error's message names the C-NN form with an example, `id: C-01`. When an acceptance criterion is missing `id`, the message names the AC-NN form with an example, `id: AC-01`. When the spec itself is missing `id`, the message still names a kebab-case identifier. All three keep the prefix `Missing required field 'id'.`, so a consumer matching on that text still matches. Rationale: the hint for every missing `id` was the spec-level one, so a constraint or criterion author who followed it wrote `id: payment-create-intent`, which parse then rejected with a `pattern` error. C-09 requires the message to describe the fix, and that hint described the wrong one."
+      inputs:
+        constraint_file: "testdata/invalid/constraint-missing-id-and-description.spec.yaml"
+        criterion_file: "testdata/invalid/criterion-missing-id.spec.yaml"
+        spec_file: "testdata/invalid/missing-id.spec.yaml"
+      expected_output:
+        constraint_message: "Missing required field 'id'. Add an id in C-NN form, e.g. id: C-01"
+        constraint_path: "spec.constraints[0]"
+        criterion_message: "Missing required field 'id'. Add an id in AC-NN form, e.g. id: AC-01"
+        criterion_path: "spec.acceptance_criteria[0]"
+        spec_message: "Missing required field 'id'. Add a kebab-case identifier, e.g. id: payment-create-intent"
+        spec_path: "spec"
+      references_constraints: ["C-09"]
+      priority: high
+
   changelog:
+    - version: "1.6.0"
+      date: "2026-10-26"
+      author: "specter-team"
+      type: minor
+      description: "AC-23 pins the missing-`id` hint for each place an `id` can be missing, per `bugs/SP-SP-095`. Every missing `id` got the spec-level hint, a kebab-case identifier such as `payment-create-intent`. A constraint or criterion author who followed it wrote a value that parse then rejected with a `pattern` error. C-09 already required the message to describe the fix before any criterion pinned the nested case."
     - version: "1.5.0"
       date: "2026-10-26"
       author: "specter-team"
