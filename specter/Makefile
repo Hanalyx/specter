@@ -184,7 +184,7 @@ release-check: prerelease
 	echo ""; \
 	echo "  7. Publish:"; \
 	echo "       npx vsce publish --packagePath $$VSIX"; \
-	echo "     For non-trivial changes, prefer --pre-release first."; \
+	echo "     For non-trivial changes, publish as --pre-release first."; \
 	echo ""; \
 	echo "Every step is mandatory. See RELEASING.md for the full gate."; \
 	echo "============================================================"
