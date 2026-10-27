@@ -133,11 +133,13 @@ specter parse
 #   error [pattern] spec.constraints[0].id: Constraint ID must match the C-NN pattern (e.g. C-01, C-02). Use uppercase C followed by a dash and two digits
 ```
 
-**`specter resolve`.** Builds the dependency graph across all specs and validates it. Catches circular dependencies and references to specs that don't exist.
+**`specter resolve`.** Builds the dependency graph across all specs and validates it. Catches circular dependencies and references to specs that don't exist. The `did you mean` and `fix` lines that follow a dangling reference are cut from this sample.
 
 ```bash
 specter resolve
 
+# Spec Graph: 3 specs, 2 dependencies
+#
 # error [dangling_reference] Spec "spec-auth" depends on "spec-session" which does not exist
 # error [circular_dependency] Circular dependency detected: spec-a -> spec-b -> spec-a
 ```

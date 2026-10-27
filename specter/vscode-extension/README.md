@@ -58,7 +58,7 @@ A CodeLens above each requirement in your spec file tells you whether a test cov
 
 ### Catch spec errors before you save
 
-Schema mistakes in `.spec.yaml` files, such as missing required fields, appear in the Problems panel within half a second of typing. Broken cross-spec references and orphaned constraints appear when you save. The same feedback loop TypeScript gives you for code, now for specs.
+Schema mistakes in `.spec.yaml` files, such as missing required fields, appear in the Problems panel shortly after you stop typing. Broken cross-spec references and orphaned constraints appear when you save. The same feedback loop TypeScript gives you for code, now for specs.
 
 ### Write `@spec` and `@ac` annotations in seconds
 
@@ -108,7 +108,7 @@ A hint appears above any test function not yet linked to a spec, suggesting the 
 
 - VS Code 1.85 or later
 - A workspace containing `specter.yaml` or at least one `*.spec.yaml` file
-- The `specter` binary, downloaded automatically on first use when no supported version is on PATH or at `~/.specter/bin/specter`
+- The `specter` binary, downloaded automatically on first use when no supported version is on PATH or at `~/.specter/bin/specter`, unless `specter.binaryPath` names an existing file or `specter.autoDownload` is false
 
 ---
 

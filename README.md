@@ -117,6 +117,8 @@ specter ingest --junit test-results.xml   # or --go-test results.json
 specter sync
 ```
 
+`specter ingest` counts a test only when the spec and criterion ids reach the runner's output. Put the `spec-id/AC-NN` token in the test name or classname, or print both markers from the test body. The `// @spec` and `// @ac` source comments alone are not enough.
+
 [Full installation guide and first spec walkthrough](specter/docs/GETTING_STARTED.md)
 
 [Ready-to-use AI prompts for every stage of the loop](specter/docs/AI_PROMPTS.md)
