@@ -8,7 +8,7 @@ It exists because of extension releases v0.8.0 to v0.8.3. There were four patch 
 
 ## The gate
 
-Every step is mandatory. Steps 2 and 7 were added after a skipped check shipped a bug.
+Every step is mandatory.
 
 ### 1. CI green
 
@@ -52,7 +52,7 @@ Open View, Output, Specter, or run **Specter: Show Output Log**. Expect no unexp
 
 ### 7. Human verifies and signs off
 
-A person reproduces the change in a live VS Code window and confirms it matches intent. A test report or an agent's statement does not satisfy this step. This step was missed during the v0.8.x releases, which is why the gate exists.
+A person reproduces the change in a live VS Code window and confirms it matches intent. A test report or an agent's statement does not satisfy this step. This step did not exist during the v0.8.x releases, which is why the gate exists.
 
 ### 8. Only then run `vsce publish`
 
@@ -74,7 +74,7 @@ npx vsce publish --packagePath specter-vscode-X.Y.Z.vsix
 
 A pushed tag starts the CLI release. The Pre-Release Test Suite runs on the tag, and `release.yml` builds and signs only after a read-only gate job allows it. The gate lives in `.github/scripts/release-gate.sh`. It allows a release only when all of these hold:
 
-- The tag is an annotated tag named `vX.Y.Z`, or `vX.Y.Z-suffix` for a pre-release. Create a signed annotated tag with `git tag -s vX.Y.Z -m "vX.Y.Z"`. If you have no signing key configured, `git tag -a` also satisfies the gate. The gate does not verify signatures. It checks only that the tag is annotated, named vX.Y.Z, on main, with a matching VERSION and a passed Pre-Release run.
+- The tag is an annotated tag named `vX.Y.Z`, or `vX.Y.Z-suffix` for a pre-release. Create a signed annotated tag with `git tag -s vX.Y.Z -m "vX.Y.Z"`. If you have no signing key configured, `git tag -a` also satisfies the gate. The gate does not verify signatures.
 - The tag points at a commit on `main`.
 - `specter/VERSION` at that commit matches the tag without its `v`.
 - The Pre-Release Test Suite passed on the push of that tag, at that commit.
