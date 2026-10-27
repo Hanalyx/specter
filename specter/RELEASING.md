@@ -20,7 +20,7 @@ Every job in `ci.yml` passes in GitHub Actions. Required, and not sufficient on 
 code --install-extension specter-vscode-X.Y.Z.vsix --force
 ```
 
-A green test run is not the same as VS Code loading the package. The v0.6.5 to v0.6.6 bug shipped a stale `out/` directory inside the VSIX; see GOTCHAS #1 and #2.
+A green test run is not the same as VS Code loading the package. The v0.6.5 VSIX shipped a stale `out/` directory, fixed in v0.6.6 (commit 0c28155); see GOTCHAS #1 and #2.
 
 ### 3. Reload, then open a known-working test workspace
 
@@ -30,7 +30,7 @@ The `specter/` repo itself is a good choice. The Coverage sidebar should list ev
 
 A directory whose `.spec.yaml` files fail Specter's schema (for example, specs written in an older custom schema). Check three things:
 
-- **Coverage sidebar.** It shows a collapsible group labeled `Failed to parse: N file(s)`, with one child per failing file. Clicking a child opens that file. Suppose every spec in the workspace failed with the same error type at the same path, and there are at least two. Then the label adds `schema drift` with the error's type and path, for example `schema drift (required at spec)`. The group's tooltip also tells you to run `specter doctor`. Otherwise, the label is the bare count. The sidebar shows the empty-state message only when the workspace has no specs and no parse errors.
+- **Coverage sidebar.** It shows a collapsible group labeled `Failed to parse: N file(s)`, with one child per failing file. Clicking a child opens that file. Suppose every spec in the workspace failed with the same error type at the same path, and there are at least two. Then the label adds `schema drift` with the error's type and its path when there is one, for example `schema drift (required at spec)`. The group's tooltip also tells you to run `specter doctor`. Otherwise, the label is the bare count. The sidebar shows the empty-state message only when the workspace has no specs and no parse errors.
 - **Status bar.** It reads `Specter: error` on the error background. Its tooltip reads "Specter: parse errors. Click to view details."
 - **Output channel.** It lists each parse error under a line that counts them, one line per error with the file and message.
 
