@@ -148,7 +148,7 @@ prerelease: check test-race vulncheck dogfood
 
 # Release gate. Packages the VSIX and prints the mandatory human-verification
 # checklist. Does NOT run vsce publish under any circumstance.
-# See CLAUDE.md > "Release discipline" for why every step matters.
+# See RELEASING.md for the full gate and why every step matters.
 release-check: prerelease
 	@VER=$$(node -e "console.log(require('./vscode-extension/package.json').version)"); \
 	VSIX=vscode-extension/specter-vscode-$$VER.vsix; \
@@ -186,6 +186,5 @@ release-check: prerelease
 	echo "       npx vsce publish --packagePath $$VSIX"; \
 	echo "     For non-trivial changes, prefer --pre-release first."; \
 	echo ""; \
-	echo "Skipping a step is not a shortcut, it's a commitment to"; \
-	echo "ship a broken version. See RELEASING.md for the full gate."; \
+	echo "Every step is mandatory. See RELEASING.md for the full gate."; \
 	echo "============================================================"
