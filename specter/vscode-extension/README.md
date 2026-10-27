@@ -56,9 +56,9 @@ Specter SDD surfaces both problems in the editor, continuously, as you work.
 
 A CodeLens above each requirement in your spec file tells you whether a test covers it: a check mark when at least one does, a slashed circle when none does. There are two states, not three. An earlier version of this page promised a gray "intentionally excluded" state, and spec-vscode 5.0.0 retracted it: `coverage --json` emits no such classification, so the extension has nothing to render it from. The Coverage sidebar shows the same two states as green and red icons, and the status bar shows the aggregate across all specs.
 
-### Catch spec errors before you save
+### Catch spec errors when you save
 
-Schema mistakes in `.spec.yaml` files, such as missing required fields, appear in the Problems panel shortly after you stop typing. Broken cross-spec references and orphaned constraints appear when you save. The same feedback loop TypeScript gives you for code, now for specs.
+Schema mistakes in `.spec.yaml` files, such as missing required fields, appear in the Problems panel when you save the file. With auto-save on, that is shortly after you stop typing. Broken cross-spec references and orphaned constraints also appear when you save.
 
 ### Write `@spec` and `@ac` annotations in seconds
 
@@ -92,7 +92,7 @@ A hint appears above any test function not yet linked to a spec, suggesting the 
 
 ## How the SDD Workflow Looks in VS Code
 
-**1. Write the spec.** Create a `.spec.yaml` file. Specter validates it immediately, schema errors appear in the Problems panel before you save.
+**1. Write the spec.** Create a `.spec.yaml` file. Specter validates it when you save, and schema errors appear in the Problems panel.
 
 **2. Annotate the test.** Use `// @spec` and `// @ac` completions to link your test function to a requirement. The CodeLens above that requirement turns into a check mark.
 
@@ -108,7 +108,7 @@ A hint appears above any test function not yet linked to a spec, suggesting the 
 
 - VS Code 1.85 or later
 - A workspace containing `specter.yaml` or at least one `*.spec.yaml` file
-- The `specter` binary, downloaded automatically on first use when no supported version is on PATH or at `~/.specter/bin/specter`, unless `specter.binaryPath` names an existing file or `specter.autoDownload` is false
+- The `specter` binary. The extension downloads it on first use when no supported version is on PATH or at `~/.specter/bin/specter`. It does not when `specter.binaryPath` names an existing file or `specter.autoDownload` is false.
 
 ---
 

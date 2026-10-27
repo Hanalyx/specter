@@ -117,7 +117,7 @@ specter ingest --junit test-results.xml   # or --go-test results.json
 specter sync
 ```
 
-`specter ingest` counts a test only when the spec and criterion ids reach the runner's output. Put the `spec-id/AC-NN` token in the test name or classname, or print both markers from the test body. The `// @spec` and `// @ac` source comments alone are not enough.
+`specter ingest` counts a test only when the spec and criterion ids reach the runner's output. Put the `spec-id/AC-NN` token in the test name or classname, or print `// @spec <id>` and `// @ac AC-NN` lines from the test body. Each printed marker needs a comment prefix, `//`, `#` or `*`, before it. The `// @spec` and `// @ac` source comments alone are not enough.
 
 [Full installation guide and first spec walkthrough](specter/docs/GETTING_STARTED.md)
 
@@ -127,7 +127,7 @@ specter sync
 
 ## VS Code Extension
 
-The **Specter SDD** extension brings the SDD loop into the editor: live coverage decorations, spec diagnostics as you type, annotation completions, intent drift alerts, and a one-command AI context bridge.
+The **Specter SDD** extension brings the SDD loop into the editor: live coverage decorations, spec diagnostics on save, annotation completions, intent drift alerts, and a one-command AI context bridge.
 
 [Install from the VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=Hanalyx.specter-vscode)
 
