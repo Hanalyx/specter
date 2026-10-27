@@ -263,7 +263,7 @@ The lesson isn't "write more unit tests" alone, the real gap was the absence of 
 - `make release-check` packages the VSIX and prints the checklist. It does not run `vsce publish`, that stays manual so the operator cannot forget step 7 (human sign-off).
 - Headless `@vscode/test-electron` integration tests are the planned long-term backstop.
 
-**Rule:** Marketplace is a distribution channel, not a test harness. Every publish must ship behavior that has already been verified by a person in a live VS Code window. If that person is me or an AI agent, the verification must be demonstrated (screenshot, recorded session, or reproducible script), not asserted. The first user to install should be the hundred-and-first person to see the feature work, not the first.
+**Rule:** Marketplace is a distribution channel, not a test harness. Every publish must ship behavior that has already been verified by a person in a live VS Code window. An agent may run the checks and attach the evidence (screenshot, recorded session, or reproducible script). A person still performs step 7 of `RELEASING.md` and signs off. The first user to install should be the hundred-and-first person to see the feature work, not the first.
 
 ---
 
