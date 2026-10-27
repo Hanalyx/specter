@@ -8,6 +8,12 @@ Unreleased changes accumulate under `## Unreleased`. Every user-visible change a
 
 ## Unreleased
 
+---
+
+## v0.15.3 - 2026-10-26
+
+The CLI and the VS Code extension ship together at 0.15.3. With `specter.version` empty, the extension fetches CLI 0.15.3 by default. This release collects six weeks of parse, init, sidebar and CI action fixes since v0.15.1. It adds no new commands or settings.
+
 ### Changed
 
 - `specter init --ai <tool>` writes a validation gate an adopter's agent can run. The old body told the agent to run `make dogfood-strict`, a target that exists only in Specter's own Makefile, and never mentioned `specter ingest`. The new body tells the agent to run `specter check --concrete` before coding and to read each criterion's `inputs`, `expected_output` and `error_cases`. It points at `specter explain annotation` and tells the agent to write both parts on every test: the `// @spec` and `// @ac` source comments, and the pair in the runner output by Convention A or Convention B. To validate, the agent runs the project's own tests to JUnit XML or `go test -json`, then `specter ingest`, then `specter coverage --strict`. Before declaring done, it runs `specter diff ... --exit-code` against the commit it started from. Re-run `specter init --ai <tool>` to pick up the new body. Content outside the fenced region is kept. spec-manifest C-38 and AC-73.
