@@ -56,7 +56,7 @@ Specter SDD surfaces both problems in the editor, continuously, as you work.
 
 A CodeLens above each requirement in your spec file tells you whether a test covers it: a check mark when at least one does, a slashed circle when none does. There are two states, not three. An earlier version of this page promised a gray "intentionally excluded" state, and spec-vscode 5.0.0 retracted it: `coverage --json` emits no such classification, so the extension has nothing to render it from. The Coverage sidebar shows the same two states as green and red icons, and the status bar shows the aggregate across all specs.
 
-### Catch spec errors when you save
+### Catch spec errors as you save
 
 Schema mistakes in `.spec.yaml` files, such as missing required fields, appear in the Problems panel when you save the file. With auto-save on, that is shortly after you stop typing. Broken cross-spec references and orphaned constraints also appear when you save.
 
