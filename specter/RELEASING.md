@@ -2,17 +2,17 @@
 
 This document defines the gate that must be satisfied before any `vsce publish` (VS Code extension) or `git push origin vX.Y.Z` (CLI release).
 
-It exists because v0.8.0 to v0.8.3 of the extension (four patch releases in one day, each fixing a bug the first real user hit on install) proved that running `make check` and `vsce package` is not sufficient to ship. Marketplace is a distribution channel, not a test harness.
+It exists because of extension releases v0.8.0 to v0.8.3. There were four patch releases in one day, each fixing a bug the first real user hit on install. They proved that running `make check` and `vsce package` is not sufficient to ship. Marketplace is a distribution channel, not a test harness.
 
 ---
 
 ## The gate
 
-Every step is mandatory. Each one has caught a shipped bug.
+Every step is mandatory. Steps 2 and 7 were added after a skipped check shipped a bug.
 
 ### 1. CI green
 
-CI passes in GitHub Actions on the commit you release: vet, lint, the Go tests with and without the race detector, dogfood, `make dogfood-strict`, and the extension's jest suite. CI does not run `make check` itself, but it runs each of its parts. Required, and not sufficient on its own.
+Every job in `ci.yml` passes in GitHub Actions. Required, and not sufficient on its own.
 
 ### 2. Install the packaged VSIX locally
 
@@ -30,7 +30,7 @@ The `specter/` repo itself is a good choice. The Coverage sidebar should list ev
 
 A directory whose `.spec.yaml` files fail Specter's schema (for example, specs written in an older custom schema). Check three things:
 
-- **Coverage sidebar.** It shows a collapsible group labeled `Failed to parse: N file(s)`, with one child per failing file. Clicking a child opens that file. When every spec in the workspace failed with the same error, and there are at least two, the label adds `schema drift` and the error, for example `schema drift (required at spec)`, and the group's tooltip tells you to run `specter doctor`. When the failures differ, the label is the bare count. The sidebar shows the empty-state message only when the workspace has no specs and no parse errors.
+- **Coverage sidebar.** It shows a collapsible group labeled `Failed to parse: N file(s)`, with one child per failing file. Clicking a child opens that file. Suppose every spec in the workspace failed with the same error, and there are at least two. Then the label adds `schema drift` and the error, for example `schema drift (required at spec)`. The group's tooltip also tells you to run `specter doctor`. Otherwise, the label is the bare count. The sidebar shows the empty-state message only when the workspace has no specs and no parse errors.
 - **Status bar.** It reads `Specter: error` on the error background. Its tooltip reads "Specter: parse errors. Click to view details."
 - **Output channel.** It lists each parse error under a line that counts them, one line per error with the file and message.
 
@@ -52,11 +52,11 @@ Open View, Output, Specter, or run **Specter: Show Output Log**. Expect no unexp
 
 ### 7. Human verifies and signs off
 
-A person reproduces the change in a live VS Code window and confirms it matches intent. A test report or an agent's statement does not satisfy this step. This step was skipped in each v0.8.x release, which is why the gate exists.
+A person reproduces the change in a live VS Code window and confirms it matches intent. A test report or an agent's statement does not satisfy this step. This step was missed during the v0.8.x releases, which is why the gate exists.
 
 ### 8. Only then run `vsce publish`
 
-For non-trivial changes (schema shifts, new UI surfaces, binary-download code, new CLI flags), publish as `--pre-release` first and keep it on the pre-release channel long enough for issues to surface before promoting to stable.
+For non-trivial changes (schema shifts, new UI surfaces, binary-download code, new CLI flags), publish as `--pre-release` first. Keep it on the pre-release channel long enough for issues to surface before you promote it to stable.
 
 Stable-only publishes are reserved for small, low-risk patches.
 
@@ -74,7 +74,7 @@ npx vsce publish --packagePath specter-vscode-X.Y.Z.vsix
 
 A pushed tag starts the CLI release. The Pre-Release Test Suite runs on the tag, and `release.yml` builds and signs only after a read-only gate job allows it. The gate lives in `.github/scripts/release-gate.sh`. It allows a release only when all of these hold:
 
-- The tag is an annotated tag named `vX.Y.Z`, or `vX.Y.Z-suffix` for a pre-release. Create a signed annotated tag with `git tag -s vX.Y.Z -m "vX.Y.Z"`. If you have no signing key configured, `git tag -a` also satisfies the gate, which checks only that the tag is annotated.
+- The tag is an annotated tag named `vX.Y.Z`, or `vX.Y.Z-suffix` for a pre-release. Create a signed annotated tag with `git tag -s vX.Y.Z -m "vX.Y.Z"`. If you have no signing key configured, `git tag -a` also satisfies the gate. The gate does not verify signatures. It checks only that the tag is annotated, named vX.Y.Z, on main, with a matching VERSION and a passed Pre-Release run.
 - The tag points at a commit on `main`.
 - `specter/VERSION` at that commit matches the tag without its `v`.
 - The Pre-Release Test Suite passed on the push of that tag, at that commit.
