@@ -1,6 +1,6 @@
 # Specter SDD for VS Code
 
-**Bring the spec→test→implement loop into your editor.**
+**Bring the spec, test, implement loop into your editor.**
 
 In Spec-Driven Development, the specification is the source of truth, not the code. Tests trace to acceptance criteria through `@spec` and `@ac` annotations, and each spec has to meet its tier threshold before the pipeline passes. This extension makes that discipline visible and low-friction: you see what's covered, what drifted, and what your AI assistant needs, without switching windows.
 
@@ -10,12 +10,12 @@ In Spec-Driven Development, the specification is the source of truth, not the co
 
 New to Specter? Open the built-in walkthrough directly in VS Code:
 
-> `Ctrl+Shift+P` → **Welcome: Open Walkthrough** → **Get Started with Specter**
+> Press `Ctrl+Shift+P`, run **Welcome: Open Walkthrough**, and choose **Get Started with Specter**.
 
 It covers install, generating specs from your code, closing gaps with AI, annotating tests, and locking coverage into CI, all without leaving the editor.
 
 Prefer a written guide?
-- **[QuickStart](https://github.com/Hanalyx/specter/blob/main/specter/docs/QUICKSTART.md).** 5-minute path: install → specs → tests → CI
+- **[QuickStart](https://github.com/Hanalyx/specter/blob/main/specter/docs/QUICKSTART.md).** 5-minute path: install, specs, tests, CI
 - **[Getting Started](https://github.com/Hanalyx/specter/blob/main/specter/docs/GETTING_STARTED.md).** Full walkthrough with AI prompts at every step
 
 ---
@@ -32,9 +32,9 @@ The intended workflow is a collaboration between you and your AI coding assistan
 4. **You review**, the spec and tests are the approval gate; you validate that the AI correctly captured your intent before any implementation begins
 5. **The AI implements**, with the spec as the contract and the tests as the verification
 
-Specter validates the artifacts in front of it, not the order you wrote them in. It checks that every spec parses and resolves. It measures coverage from the `@spec` and `@ac` annotations in your tests, and fails `specter sync` when a spec sits below its tier threshold. That makes the rules infrastructure rather than a suggestion.
+Specter validates the artifacts in front of it, not the order you wrote them in. It checks that every spec parses and resolves. It measures coverage from the `@spec` and `@ac` annotations in your tests. By default it counts an annotated criterion only when its test passed, in the results you load with `specter ingest`. It fails `specter sync` when a spec sits below its tier threshold. That makes the rules infrastructure rather than a suggestion.
 
-**The core mission: guide your AI coding assistant through spec → test → implement → eval in the right order, every time, with your intent preserved throughout.**
+**The core mission: guide your AI coding assistant through spec, test, implement and eval in the right order, every time, with your intent preserved throughout.**
 
 ---
 
@@ -58,7 +58,7 @@ A CodeLens above each requirement in your spec file tells you whether a test cov
 
 ### Catch spec errors before you save
 
-Mistakes in `.spec.yaml` files appear in the Problems panel within half a second of typing, missing required fields, broken cross-spec references, orphaned constraints. The same feedback loop TypeScript gives you for code, now for specs.
+Schema mistakes in `.spec.yaml` files, such as missing required fields, appear in the Problems panel within half a second of typing. Broken cross-spec references and orphaned constraints appear when you save. The same feedback loop TypeScript gives you for code, now for specs.
 
 ### Write `@spec` and `@ac` annotations in seconds
 
@@ -78,7 +78,7 @@ Go-to-definition works on spec cross-references: jump from a `depends_on` refere
 
 ### See the full picture when something fails
 
-Open the Specter sidebar to browse specs → requirements → test files in a tree. When something is below threshold, an Insights panel shows a plain-English explanation: what's uncovered, what the requirements actually say, and which constraints are affected.
+Open the Specter sidebar to browse specs, their requirements, and the test files that cover them in a tree. When something is below threshold, an Insights panel shows a plain-English explanation: what's uncovered, what the requirements actually say, and which constraints are affected.
 
 ### Hand your AI the full contract
 
@@ -108,7 +108,7 @@ A hint appears above any test function not yet linked to a spec, suggesting the 
 
 - VS Code 1.85 or later
 - A workspace containing `specter.yaml` or at least one `*.spec.yaml` file
-- The `specter` binary, downloaded automatically on first use if not found on PATH
+- The `specter` binary, downloaded automatically on first use when no supported version is on PATH or at `~/.specter/bin/specter`
 
 ---
 
@@ -133,7 +133,7 @@ The annotations are plain comments, no build step, no framework, works in any la
 |---|---|---|
 | `specter.binaryPath` | `""` | Path to the specter binary. Leave empty to auto-resolve: a CLI on PATH or at `~/.specter/bin/specter` is used when its version is one the extension supports, and otherwise the extension uses its own copy under `~/.specter/cli`. A path set here must be a working binary that answers `--version`, but it is not checked against the supported range, because it is your explicit choice. A path that does not exist is ignored and resolution continues. Machine-scoped; workspace settings are ignored. |
 | `specter.autoDownload` | `true` | Download the extension's own CLI copy when no supported CLI is found. |
-| `specter.version` | `""` | Version of the extension's own CLI copy. Empty means "match the extension version"; `latest` tracks the newest GitHub release. A supported CLI on PATH is used regardless. Machine-scoped; workspace settings are ignored. |
+| `specter.version` | `""` | Version of the extension's own CLI copy. Empty means the CLI version this extension build declares, which can differ from the extension's own version; `latest` tracks the newest GitHub release. A supported CLI on PATH is used regardless. Machine-scoped; workspace settings are ignored. |
 | `specter.showInsightsOnFailure` | `true` | Open Insights panel automatically when a spec fails threshold. |
 
 ---

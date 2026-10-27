@@ -33,9 +33,9 @@ The intended workflow is a collaboration between you and your AI coding assistan
 4. **You review:** the spec and tests are the approval gate; you validate that the AI correctly captured your intent before any implementation begins
 5. **The AI implements:** with the spec as the contract and the tests as the verification
 
-Specter validates the artifacts in front of it, not the order you wrote them in. It checks that every spec parses and resolves. It measures coverage from the `@spec` and `@ac` annotations in your tests, and fails `specter sync` when a spec sits below its tier threshold. That makes the rules infrastructure rather than a suggestion.
+Specter validates the artifacts in front of it, not the order you wrote them in. It checks that every spec parses and resolves. It measures coverage from the `@spec` and `@ac` annotations in your tests. By default it counts an annotated criterion only when its test passed, in the results you load with `specter ingest`. It fails `specter sync` when a spec sits below its tier threshold. That makes the rules infrastructure rather than a suggestion.
 
-**The core mission: guide your AI coding assistant through spec → test → implement → eval in the right order, every time, with your intent preserved throughout.**
+**The core mission: guide your AI coding assistant through spec, test, implement and eval in the right order, every time, with your intent preserved throughout.**
 
 ---
 
@@ -110,13 +110,13 @@ Specter runs four stages in sequence, and `specter sync` runs all four for you. 
 ```
 .spec.yaml files
       │
-   [parse]      Schema validation — missing fields, invalid IDs, wrong types
+   [parse]      Schema validation: missing fields, invalid IDs, wrong types
       │
-  [resolve]     Dependency graph — cycles, dangling refs, version mismatches
+  [resolve]     Dependency graph: cycles, dangling refs, version mismatches
       │
-   [check]      Structural analysis — orphan constraints, spec conflicts
+   [check]      Structural analysis: orphan constraints, spec conflicts
       │
-  [coverage]    Traceability — ACs without tests, below-threshold tiers
+  [coverage]    Traceability: ACs without tests, below-threshold tiers
 
   specter sync  Runs all four in this order. Exits non-zero on any failure.
 ```
@@ -138,8 +138,6 @@ specter parse
 ```bash
 specter resolve
 
-# Spec Graph: 1 specs, 0 dependencies
-#
 # error [dangling_reference] Spec "spec-auth" depends on "spec-session" which does not exist
 # error [circular_dependency] Circular dependency detected: spec-a -> spec-b -> spec-a
 ```
@@ -164,12 +162,13 @@ The default strictness is `threshold`, which is outcome-verified: it requires
 alone.
 
 ```bash
-specter coverage
+specter coverage --strictness annotation
 
-# Spec ID          Tier  ACs  Covered  Coverage  Status
-# ─────────────────────────────────────────────────────
-# spec-auth        T1    6    4        67%       FAIL  ← below 100% threshold
-# spec-payments    T2    5    5        100%      PASS
+# Spec ID                                   Tier   ACs      Covered   Coverage   Status
+# ----------------------------------------------------------------------------------
+# spec-auth                                 T1     6        4         66%        FAIL
+#   uncovered: AC-05, AC-06
+# spec-payments                             T2     5        5         100%       PASS
 ```
 
 **`specter sync`.** Runs all four stages and exits 0 only when everything passes. Put this in CI.
@@ -189,7 +188,7 @@ spec:
     system: Auth service
     description: >
       Handles new user account creation. Email is the primary identifier.
-      Passwords are hashed with bcrypt before storage — never stored in plaintext.
+      Passwords are hashed with bcrypt before storage, never stored in plaintext.
 
   objective:
     summary: >
@@ -197,8 +196,8 @@ spec:
       Return a session token on success.
     scope:
       excludes:
-        - "Social login (OAuth) — separate spec"
-        - "Email verification — handled post-registration"
+        - "Social login (OAuth), separate spec"
+        - "Email verification, handled post-registration"
 
   constraints:
     - id: C-01
@@ -283,7 +282,7 @@ Specs map to programming type concepts one-for-one:
 | Type system | Specter equivalent |
 |---|---|
 | Type definition | Constraint. Defines what's allowed |
-| Function signature | Acceptance criterion. Input → expected output |
+| Function signature | Acceptance criterion. Input and expected output |
 | Import statement | `depends_on`. A formal contract between specs |
 | Type error | Spec conflict. Caught before code runs |
 | Unused variable | Orphan constraint. No AC references it |
@@ -321,7 +320,7 @@ specter/
 ```bash
 make check           # gofmt-check, go vet, golangci-lint, go test, go build. The CI gate
 make dogfood         # run specter against its own specs (annotation-counting gate)
-make dogfood-strict  # mechanical eval gate: go test -json + jest → specter ingest → coverage --strict
+make dogfood-strict  # mechanical eval gate: go test -json + jest, then specter ingest, then coverage --strict
 make build-all       # cross-compile for linux/darwin/windows
 ```
 
@@ -331,7 +330,7 @@ No package in `internal/` imports the CLI framework; `cmd/specter/` owns flag pa
 
 ## Dogfooding
 
-Specter validates its own specs. The current dogfood set has 15 specs covering the CLI pipeline and VS Code extension. The strict gate verifies test results with `go test -json`, Jest JUnit output, `specter ingest`, and `coverage --strict`.
+Specter validates its own specs. The dogfood set covers the CLI pipeline and VS Code extension. The strict gate verifies test results with `go test -json`, Jest JUnit output, `specter ingest`, and `coverage --strict`.
 
 These figures are outcome-verified: they come from `make dogfood-strict`, which
 runs the tests, feeds the results through `specter ingest`, and gates on them. A
@@ -354,7 +353,7 @@ Spec ID                                   Tier   ACs      Covered   Coverage   S
 spec-diff                                 T2     19       18        94%        PASS
   uncovered: AC-11
   no test: AC-11
-spec-manifest                             T2     62       61        98%        PASS
+spec-manifest                             T2     72       71        98%        PASS
   uncovered: AC-29
   no test: AC-29
 ...

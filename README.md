@@ -33,17 +33,17 @@ All checks passed.
 
 Specter is content-agnostic. A `.spec.yaml` can describe runtime behavior, data invariants, security policy, schema contracts, architecture rules, or any other component contract. Anything with constraints and acceptance criteria qualifies. The pipeline validates the shape, not the category.
 
-**→ [Get started with Specter](specter/README.md)**
+**[Get started with Specter](specter/README.md)**
 
 ---
 
 ## Mastering SDD: The Book
 
-**Mastering Spec-Driven Development** is a 17-chapter course that teaches the full discipline: why natural language fails, how to write specs that AI can execute reliably, how to enforce the spec→test→implement loop, and how to scale SDD across teams and agents.
+**Mastering Spec-Driven Development** is a 17-chapter course that teaches the full discipline: why natural language fails, how to write specs that AI can execute reliably, how to enforce the spec, test, implement loop, and how to scale SDD across teams and agents.
 
 The book defines the methodology. Specter provides the infrastructure to enforce the checks you adopt.
 
-**→ [Read the book](sddbook/INDEX.md)**
+**[Read the book](sddbook/INDEX.md)**
 
 ---
 
@@ -59,16 +59,16 @@ The intended workflow is a collaboration between you and your AI coding assistan
 4. **You review:** the spec and tests are the approval gate; you validate that the AI correctly captured your intent before any implementation begins
 5. **The AI implements:** with the spec as the contract and the tests as the verification
 
-Specter validates the artifacts in front of it, not the order you wrote them in. It checks that every spec parses and resolves. It measures coverage from the `@spec` and `@ac` annotations in your tests, and fails `specter sync` when a spec sits below its tier threshold. That makes the rules infrastructure rather than a suggestion.
+Specter validates the artifacts in front of it, not the order you wrote them in. It checks that every spec parses and resolves. It measures coverage from the `@spec` and `@ac` annotations in your tests. By default it counts an annotated criterion only when its test passed, in the results you load with `specter ingest`. It fails `specter sync` when a spec sits below its tier threshold. That makes the rules infrastructure rather than a suggestion.
 
-**The core mission: guide your AI coding assistant through spec → test → implement → eval in the right order, every time, with your intent preserved throughout.**
+**The core mission: guide your AI coding assistant through spec, test, implement and eval in the right order, every time, with your intent preserved throughout.**
 
 ---
 
 ## The Core Loop
 
 ```
-Write spec  →  Validate spec  →  Generate code  →  Annotate tests  →  Enforce coverage
+Write spec  ->  Validate spec  ->  Generate code  ->  Annotate tests  ->  Enforce coverage
      ↑                                                                        |
      └────────────────── Refine spec when intent drifts ────────────────────┘
 ```
@@ -80,7 +80,7 @@ Every step in this loop has a Specter command behind it:
 | Validate spec | `specter parse` | Schema correctness, required fields, valid IDs |
 | Link specs | `specter resolve` | Dependencies, no cycles, version compatibility |
 | Check structure | `specter check` | Orphan constraints, structural conflicts |
-| Enforce coverage | `specter coverage` | Tests trace to ACs by annotation; each spec meets its tier threshold |
+| Enforce coverage | `specter coverage` | Tests trace to ACs by annotation and, by default, passed; each spec meets its tier threshold |
 | Gate CI | `specter sync` | All of the above; exits non-zero on any failure |
 
 ---
@@ -111,13 +111,15 @@ sudo mv specter /usr/local/bin/
 # Validate your first spec
 specter parse my-feature.spec.yaml
 
-# Run the full pipeline
+# Load your test results, then run the full pipeline.
+# The default strictness counts a criterion only when its test passed.
+specter ingest --junit test-results.xml   # or --go-test results.json
 specter sync
 ```
 
-→ [Full installation guide and first spec walkthrough](specter/docs/GETTING_STARTED.md)
+[Full installation guide and first spec walkthrough](specter/docs/GETTING_STARTED.md)
 
-→ [Ready-to-use AI prompts for every stage of the loop](specter/docs/AI_PROMPTS.md)
+[Ready-to-use AI prompts for every stage of the loop](specter/docs/AI_PROMPTS.md)
 
 ---
 
@@ -125,7 +127,7 @@ specter sync
 
 The **Specter SDD** extension brings the SDD loop into the editor: live coverage decorations, spec diagnostics as you type, annotation completions, intent drift alerts, and a one-command AI context bridge.
 
-→ [Install from the VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=Hanalyx.specter-vscode)
+[Install from the VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=Hanalyx.specter-vscode)
 
 ---
 
