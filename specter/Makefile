@@ -148,7 +148,7 @@ prerelease: check test-race vulncheck dogfood
 
 # Release gate. Packages the VSIX and prints the mandatory human-verification
 # checklist. Does NOT run vsce publish under any circumstance.
-# See CLAUDE.md > "Release discipline" for why every step matters.
+# See RELEASING.md for the full gate and why every step matters.
 release-check: prerelease
 	@VER=$$(node -e "console.log(require('./vscode-extension/package.json').version)"); \
 	VSIX=vscode-extension/specter-vscode-$$VER.vsix; \
@@ -166,14 +166,15 @@ release-check: prerelease
 	echo "       code --install-extension $$VSIX --force"; \
 	echo ""; \
 	echo "  2. Reload VS Code and open a KNOWN-WORKING workspace"; \
-	echo "     (the specter/ repo itself, 15 dogfood specs)."; \
-	echo "     Verify: Coverage sidebar populates with spec entries."; \
+	echo "     (the specter/ repo itself)."; \
+	echo "     Verify: Coverage sidebar lists every dogfood spec."; \
 	echo ""; \
 	echo "  3. Reload VS Code and open a KNOWN-FAILING workspace"; \
 	echo "     (one whose specs do not parse Specter's schema)."; \
-	echo "     Verify: sidebar shows the empty-state message AND"; \
-	echo "     status bar shows the error state AND Output channel"; \
-	echo "     contains the parse errors."; \
+	echo "     Verify: sidebar shows a 'Failed to parse: N file(s)'"; \
+	echo "     group with one child per failing file AND status bar"; \
+	echo "     reads 'Specter: error' AND Output channel lists"; \
+	echo "     each parse error."; \
 	echo ""; \
 	echo "  4. Exercise every changed code path end-to-end."; \
 	echo ""; \
@@ -183,8 +184,7 @@ release-check: prerelease
 	echo ""; \
 	echo "  7. Publish:"; \
 	echo "       npx vsce publish --packagePath $$VSIX"; \
-	echo "     For non-trivial changes, prefer --pre-release first."; \
+	echo "     For non-trivial changes, publish as --pre-release first."; \
 	echo ""; \
-	echo "Skipping a step is not a shortcut, it's a commitment to"; \
-	echo "ship a broken version. See RELEASING.md for the full gate."; \
+	echo "Every step is mandatory. See RELEASING.md for the full gate."; \
 	echo "============================================================"

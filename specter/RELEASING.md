@@ -2,17 +2,17 @@
 
 This document defines the gate that must be satisfied before any `vsce publish` (VS Code extension) or `git push origin vX.Y.Z` (CLI release).
 
-It exists because the v0.8.0 → v0.8.3 extension thrash (four patch releases in one day, each fixing a bug the first real user hit on install) proved that running `make check` and `vsce package` is not sufficient to ship. Marketplace is a distribution channel, not a test harness.
+It exists because of extension releases v0.8.0 to v0.8.3. There were four patch releases in one day, each fixing a bug the first real user hit on install. They proved that running `make check` and `vsce package` is not sufficient to ship. Marketplace is a distribution channel, not a test harness.
 
 ---
 
 ## The gate
 
-Every step is mandatory. Skipping a step is not a shortcut. It is a commitment to ship a broken version.
+Every step is mandatory.
 
 ### 1. CI green
 
-`make check`, dogfood, and extension jest all pass in GitHub Actions. Not optional, not sufficient alone.
+Every job in `ci.yml` passes in GitHub Actions. Required, and not sufficient on its own.
 
 ### 2. Install the packaged VSIX locally
 
@@ -20,15 +20,21 @@ Every step is mandatory. Skipping a step is not a shortcut. It is a commitment t
 code --install-extension specter-vscode-X.Y.Z.vsix --force
 ```
 
-CI building the VSIX is not the same as VS Code loading it. The v0.6.5 → v0.6.6 bug (stale `out/` directory shipped in the VSIX) was invisible to CI.
+A green test run is not the same as VS Code loading the package. The v0.6.5 VSIX shipped a stale `out/` directory, fixed in v0.6.6 (commit 0c28155); see GOTCHAS #1 and #2.
 
 ### 3. Reload, then open a known-working test workspace
 
-The `specter/` repo itself is a good choice (15 dogfood specs as of v0.10.0, after `spec-ingest` was added). The Coverage sidebar should populate with real entries, not the empty-state message.
+The `specter/` repo itself is a good choice. The Coverage sidebar should list every dogfood spec, not the empty-state message.
 
 ### 4. Reload, then open a known-failing test workspace
 
-A directory whose `.spec.yaml` files fail Specter's schema (e.g. specs written in an older custom schema). The Coverage sidebar should show the empty-state message, the status bar should be in the error state, and the Output channel should contain the parse errors.
+A directory whose `.spec.yaml` files fail Specter's schema (for example, specs written in an older custom schema). Check three things:
+
+- **Coverage sidebar.** It shows a collapsible group labeled `Failed to parse: N file(s)`, with one child per failing file. Clicking a child opens that file. Suppose every spec in the workspace failed with the same error type at the same path, and there are at least two. Then the label adds `schema drift` with the error's type and its path when there is one, for example `schema drift (required at spec)`. The group's tooltip also tells you to run `specter doctor`. Otherwise, the label is the bare count. The sidebar shows the empty-state message only when the workspace has no specs and no parse errors.
+- **Status bar.** It reads `Specter: error` on the error background. Its tooltip reads "Specter: parse errors. Click to view details."
+- **Output channel.** It lists each parse error under a line that counts them, one line per error with the file and message.
+
+The sidebar group is in `vscode-extension/src/coverage.ts`. The status bar and the Output channel lines are in `vscode-extension/src/extension.ts`, where the coverage run handles parse errors.
 
 ### 5. Exercise every changed code path
 
@@ -42,15 +48,15 @@ If a change doesn't obviously route through one of these, write down the path it
 
 ### 6. Check the Output channel
 
-`View → Output → Specter`. No unexplained red entries during normal use.
+Open the Output panel from the View menu and pick Specter in its dropdown, or run **Specter: Show Output Log**. Expect no unexplained red entries during normal use.
 
 ### 7. Human verifies and signs off
 
-No AI / automated "I think it works" substitutes here. The person cutting the release reproduces the change in a live VS Code window and confirms the behavior matches intent. This is the step that has repeatedly failed during v0.8.x and is the reason this gate exists.
+A person reproduces the change in a live VS Code window and confirms it matches intent. A test report or an agent's statement does not satisfy this step. This step did not exist during the v0.8.x releases, which is why the gate exists.
 
 ### 8. Only then run `vsce publish`
 
-For non-trivial changes (schema shifts, new UI surfaces, binary-download code, new CLI flags), publish as `--pre-release` first and keep it on the pre-release channel long enough for issues to surface before promoting to stable.
+For non-trivial changes (schema shifts, new UI surfaces, binary-download code, new CLI flags), publish as `--pre-release` first. Keep it on the pre-release channel long enough for issues to surface before you promote it to stable.
 
 Stable-only publishes are reserved for small, low-risk patches.
 
@@ -68,7 +74,7 @@ npx vsce publish --packagePath specter-vscode-X.Y.Z.vsix
 
 A pushed tag starts the CLI release. The Pre-Release Test Suite runs on the tag, and `release.yml` builds and signs only after a read-only gate job allows it. The gate lives in `.github/scripts/release-gate.sh`. It allows a release only when all of these hold:
 
-- The tag is an annotated tag named `vX.Y.Z`, or `vX.Y.Z-suffix` for a pre-release. Create it with `git tag -a`.
+- The tag is an annotated tag named `vX.Y.Z`, or `vX.Y.Z-suffix` for a pre-release. Create a signed annotated tag with `git tag -s vX.Y.Z -m "vX.Y.Z"`. If you have no signing key configured, `git tag -a` also satisfies the gate. The gate does not verify signatures.
 - The tag points at a commit on `main`.
 - `specter/VERSION` at that commit matches the tag without its `v`.
 - The Pre-Release Test Suite passed on the push of that tag, at that commit.
@@ -108,11 +114,11 @@ The ruleset history records who disabled and re-enabled it, and when. Do not mov
 
 ## The helper
 
-`make release-check` automates the first half of the gate. It runs `make prerelease` (check + vulncheck + dogfood + cross-compile + VSIX package), then prints this checklist to remind the operator of steps 2–7. It does **not** run `vsce publish` under any circumstance. That stays manual so the operator cannot forget to verify.
+`make release-check` automates the first half of the gate. It runs `make prerelease`: `make check`, the race-detector tests, govulncheck, dogfood, the cross-compile, and the extension's typecheck, lint, tests, and VSIX package. Then it prints a checklist of steps 2 to 8, numbered 1 to 7. It does **not** run `vsce publish` under any circumstance. That stays manual so you cannot skip the verification.
 
 ```bash
 make release-check
-# ... prints the checklist, then exits. You then perform steps 2–7 by hand
+# ... prints the checklist, then exits. You then perform gate steps 2 to 7 by hand
 #     before running vsce publish.
 ```
 
