@@ -166,14 +166,15 @@ release-check: prerelease
 	echo "       code --install-extension $$VSIX --force"; \
 	echo ""; \
 	echo "  2. Reload VS Code and open a KNOWN-WORKING workspace"; \
-	echo "     (the specter/ repo itself, 15 dogfood specs)."; \
-	echo "     Verify: Coverage sidebar populates with spec entries."; \
+	echo "     (the specter/ repo itself)."; \
+	echo "     Verify: Coverage sidebar lists every dogfood spec."; \
 	echo ""; \
 	echo "  3. Reload VS Code and open a KNOWN-FAILING workspace"; \
 	echo "     (one whose specs do not parse Specter's schema)."; \
-	echo "     Verify: sidebar shows the empty-state message AND"; \
-	echo "     status bar shows the error state AND Output channel"; \
-	echo "     contains the parse errors."; \
+	echo "     Verify: sidebar shows a 'Failed to parse: N file(s)'"; \
+	echo "     group with one child per failing file AND status bar"; \
+	echo "     reads 'Specter: error' AND Output channel lists"; \
+	echo "     each parse error."; \
 	echo ""; \
 	echo "  4. Exercise every changed code path end-to-end."; \
 	echo ""; \
