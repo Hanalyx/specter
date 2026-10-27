@@ -1,6 +1,6 @@
 # Close the gaps
 
-Open any generated spec — it will look like this:
+Open any generated spec. It will look like this:
 
 ```yaml
 spec:
@@ -45,6 +45,6 @@ specter parse specs/user-create.spec.yaml
 PASS specs/user-create.spec.yaml — user-create@1.0.0
 ```
 
-The extension also validates in real-time — schema errors appear in the Problems panel as you type.
+The extension also validates each spec when you save it. Schema errors appear in the Problems panel; with auto-save on, that is shortly after you stop typing.
 
 > **Tip:** Use **Specter: Copy Spec Context for AI** (right-click any `.spec.yaml`) to copy the spec as a structured AI prompt preamble before asking your AI to implement it.
