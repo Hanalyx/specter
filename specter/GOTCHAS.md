@@ -60,7 +60,7 @@ find src -name '*.ts' -newer out/extension.js
 
 **How it bit us:** Someone ran `go build` in `specter/` (no `-o` flag). Go named the output after the package dir: `./specter`. It got committed. When both `./specter` and `./bin/specter` existed, running one versus the other produced different results, the old one lacked gap-exclusion logic, the new one had it. Took non-trivial debugging to notice they were different binaries.
 
-**What's in place now:** `/specter` is in `.gitignore`. Canonical build path is `make build` → `bin/specter`.
+**What's in place now:** `/specter` is in `.gitignore`. Canonical build path is `make build`, which writes `bin/specter`.
 
 **Rule:** don't run bare `go build`. Use `make build` or `go build -o bin/specter ./cmd/specter/`.
 
@@ -201,7 +201,7 @@ The switch was case-sensitive with only uppercase cases. Lowercase values fell t
 
 goreleaser uses `name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"`, Go's values, so every asset is `specter_<version>_<linux|darwin|windows>_<amd64|arm64>.<ext>`. None of the reporter conventions match directly; every install caller must translate.
 
-**What's in place now:** all install snippets in README.md, QUICKSTART.md, GETTING_STARTED.md translate `uname` → `GOOS`/`GOARCH` and resolve version via the GitHub API. The VS Code extension's `normaliseArch` lowercases its input so it handles both uppercase (runner.arch) and lowercase (process.arch). The composite GitHub Action in `.github/actions/specter-sync/action.yml` also does the translation.
+**What's in place now:** all install snippets in README.md, QUICKSTART.md, GETTING_STARTED.md translate `uname` into `GOOS`/`GOARCH` and resolve version via the GitHub API. The VS Code extension's `normaliseArch` lowercases its input so it handles both uppercase (runner.arch) and lowercase (process.arch). The composite GitHub Action in `.github/actions/specter-sync/action.yml` also does the translation.
 
 **Rule:** when writing any install-command example, never use `uname -m`, `uname -s`, `process.arch`, or `runner.arch` raw in the URL. Always translate. And never omit the version, there is no version-less alias (goreleaser could be configured to emit one but currently doesn't).
 
@@ -246,7 +246,7 @@ Five fabricated flags in production code. The CLI rejects unknown flags (Cobra d
 
 ## 18. Marketplace is NOT a test harness (humans must verify before publish)
 
-**Symptom:** Four patch releases of the VS Code extension in a single day (v0.8.0 → v0.8.1 → v0.8.2 → v0.8.3), each one fixing a bug that the first real user hit the moment they installed. Users see the auto-update notification every few hours and each install reveals another regression. Damages credibility.
+**Symptom:** Four patch releases of the VS Code extension in a single day (v0.8.0, v0.8.1, v0.8.2 and v0.8.3), each one fixing a bug that the first real user hit the moment they installed. Users see the auto-update notification every few hours and each install reveals another regression. Damages credibility.
 
 **Cause:** The pre-publish loop was:
 1. Write code
@@ -267,11 +267,10 @@ The lesson isn't "write more unit tests" alone, the real gap was the absence of 
 
 ---
 
-## 19. VS Code extension and CLI versions must stay in lockstep
+## 19. Publish the VSIX only after the CLI release it fetches exists
 
-**Symptom:** Extension v0.6.5 queries `api.github.com/.../releases/latest`, gets back e.g. v0.6.5, then tries to download `.../releases/download/v0.6.5/...`. If the GitHub release for that tag doesn't exist yet, you get 404 "Not Found" in the body (see #3).
+**Symptom:** Extension v0.6.5 queries `api.github.com/.../releases/latest`, gets back, for example, v0.6.5, then tries to download `.../releases/download/v0.6.5/...`. If the GitHub release for that tag doesn't exist yet, you get 404 "Not Found" in the body (see #3).
 
-**Rule:** when bumping version:
-1. Bump `VERSION` (CLI) AND `vscode-extension/package.json` (extension) together.
-2. Push the git tag first so the GitHub Release goes live.
-3. Only THEN publish the VSIX to Marketplace. If the VSIX is live before the tag, the first user to install gets "Not Found" written to `~/.specter/bin/specter`.
+**What's in place now (v0.15.2+):** The extension's version no longer has to match the CLI's; v0.15.2 was an extension-only release. Each build declares the CLI it fetches under `specterCli.default` in `vscode-extension/package.json`, and `cliDefault.test.ts` fails when that value differs from `VERSION`. The extension downloads that version, not `releases/latest`, into its private copy under `~/.specter/cli/`.
+
+**Rule:** push the CLI tag first, so the GitHub release for `specterCli.default` exists. Only then publish the VSIX to Marketplace. If the VSIX is live before the release, its download of the private CLI copy fails for every user without a supported CLI already installed.
