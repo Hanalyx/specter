@@ -488,18 +488,18 @@ Once `specter sync` passes locally, add it to your CI pipeline. This is the gate
 
 **GitHub Actions (composite action, pinned version, preferred):**
 ```yaml
-- uses: Hanalyx/specter/specter/.github/actions/specter-sync@v0.15.1
+- uses: Hanalyx/specter/specter/.github/actions/specter-sync@v0.15.3
   with:
-    version: 0.15.1
+    version: 0.15.3
 ```
 
 The action lives in the `specter/` subdirectory of the `Hanalyx/specter` repository, so the path
 repeats `specter`. The tag after `@` selects the action's own code. The `version` input selects the
 binary it downloads. Pin both.
 
-The action on `main` checks the archive's sha256 against the release's `checksums.txt` before it
-extracts the binary. It fails the step on a mismatch or a missing file. The action at `v0.15.1`
-does not run that check. Move the tag forward to the first release that includes it.
+The action at `v0.15.3` and later checks the archive's sha256 against the release's `checksums.txt`
+before it extracts the binary. It fails the step on a mismatch or a missing file. Tags before
+v0.15.3 do not run that check.
 
 **Or inline download (if you can't use the composite action):**
 ```yaml
@@ -509,7 +509,7 @@ does not run that check. Move the tag forward to the first release that includes
     set -euo pipefail
     case "${{ runner.os }}" in Linux) OS=linux ;; macOS) OS=darwin ;; *) echo "Unsupported OS: ${{ runner.os }}. Linux and macOS only." >&2; exit 1 ;; esac
     case "${{ runner.arch }}" in X64) ARCH=amd64 ;; ARM64) ARCH=arm64 ;; esac
-    VERSION=0.15.1   # pin a version; don't rely on "latest" in CI
+    VERSION=0.15.3   # pin a version; don't rely on "latest" in CI
     FILE="specter_${VERSION}_${OS}_${ARCH}.tar.gz"
     BASE="https://github.com/Hanalyx/specter/releases/download/v${VERSION}"
     curl -fsSLO "${BASE}/${FILE}"
