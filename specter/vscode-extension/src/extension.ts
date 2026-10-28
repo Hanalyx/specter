@@ -1048,6 +1048,8 @@ function registerDiagnosticHooks(ctx: vscode.ExtensionContext): void {
   const debounceMap = new Map<string, NodeJS.Timeout>();
 
   // On-type debounce: 400ms, parse only (AC-03)
+  // client.parse gets the file path, so the run reports the file on disk,
+  // not the buffer (AC-03).
   ctx.subscriptions.push(
     vscode.workspace.onDidChangeTextDocument(e => {
       // AC-40: `specter parse` is spec-schema-only. Running it against the

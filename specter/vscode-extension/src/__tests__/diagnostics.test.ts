@@ -45,7 +45,7 @@ const checkDiagnostic = {
 } as unknown as SpecterCheckDiagnostic;
 
 // ---------------------------------------------------------------------------
-// AC-03: On-type debounce, parse only, 400ms
+// AC-03: edit schedules a parse-only run of the file on disk, 400ms debounce
 // ---------------------------------------------------------------------------
 
 // @ac AC-03
