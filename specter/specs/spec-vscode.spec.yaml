@@ -1,6 +1,6 @@
 spec:
   id: spec-vscode
-  version: "7.2.0"
+  version: "7.3.0"
   status: draft
   tier: 2
 
@@ -16,7 +16,8 @@ spec:
 
       Architecture: TypeScript extension (~800 lines), thin wrapper over the specter
       CLI JSON API. No LSP process. Per-workspace SpecterClient instances. On-save
-      full diagnostics, on-type parse-only feedback, transparent binary auto-download.
+      full diagnostics, a parse-only re-check of the saved file 400ms after an edit,
+      and transparent binary auto-download.
 
     assumptions:
       - "The specter CLI is the source of truth — extension logic never reimplements pipeline rules"
@@ -46,7 +47,7 @@ spec:
       includes:
         - "Specter binary discovery and auto-download from GitHub Releases"
         - "On-save diagnostics for .spec.yaml files (parse + check)"
-        - "On-type parse-only feedback with 400ms debounce"
+        - "Parse-only re-check of the file on disk 400ms after an edit; unsaved buffer content is not parsed"
         - "Coverage gutter decorations on both spec and test files"
         - "Hover providers: constraint linkage, AC description, spec context"
         - "Annotation completions (@spec, @ac) in test files"
@@ -86,7 +87,7 @@ spec:
       enforcement: error
 
     - id: C-04
-      description: "MUST run specter parse --json on type (debounced 400ms) and specter check --json + specter coverage --json on save. MUST serialize invocations per-workspace — never two concurrent specter processes against the same manifest."
+      description: "MUST run specter parse --json against the file on disk 400ms after the last edit to a .spec.yaml, and specter check --json plus specter coverage --json on save. The CLI reads the saved file, so edits that are not yet saved do not reach it. MUST serialize invocations per-workspace: never two concurrent specter processes against the same manifest."
       type: technical
       enforcement: error
 
@@ -528,7 +529,7 @@ spec:
       priority: critical
 
     - id: AC-03
-      description: "Typing in a .spec.yaml file triggers specter parse --json after 400ms debounce; errors appear in the Problems panel within 800ms of stopping typing"
+      description: "Editing a .spec.yaml file schedules specter parse --json with a 400ms debounce. The run receives the file path and reports the file on disk. A schema error present only in the unsaved buffer produces no diagnostic until the file is saved; with auto-save on, that is shortly after typing stops."
       references_constraints: ["C-03", "C-04", "C-18"]
       priority: critical
 
@@ -1705,6 +1706,11 @@ spec:
       relationship: requires
 
   changelog:
+    - version: "7.3.0"
+      date: "2026-10-28"
+      author: "specter-team"
+      type: minor
+      description: "C-04 and AC-03 are reworded, not added, per SP-SP-099. Both promised feedback while typing: parse on type, and errors in the Problems panel within 800ms of stopping. The on-type handler passes the file path to specter parse --json, and the CLI reads the file on disk. An error that exists only in the unsaved buffer produces no diagnostic until the file is saved. C-04 now says the parse runs against the file on disk 400ms after the last edit, and that unsaved edits do not reach the CLI. AC-03 says the same from the editor's side and drops the 800ms clause, which no test measured. The handler is unchanged; a buffer-to-CLI parse mode is a later candidate."
     - version: "7.2.0"
       date: "2026-10-26"
       author: "specter-team"
