@@ -1,6 +1,6 @@
 spec:
   id: spec-resolve
-  version: "1.3.0"
+  version: "1.4.0"
   status: approved
   tier: 1
 
@@ -77,7 +77,7 @@ spec:
       enforcement: error
 
     - id: C-07
-      description: "MUST produce a typed SpecGraph object with nodes, edges, and topological ordering"
+      description: "MUST produce a typed SpecGraph object with nodes, edges, and topological ordering. The topological order MUST be the same on every run over the same input. A spec appears after every spec it depends on. Among the specs whose dependencies are all already listed, the smallest spec id goes first. The diagnostics resolve appends for dangling references, version mismatches and invalid semver ranges MUST be emitted in spec id order, so their order does not depend on map iteration."
       type: technical
       enforcement: error
 
@@ -92,7 +92,7 @@ spec:
       enforcement: warning
 
     - id: C-10
-      description: "MUST enrich dangling_reference diagnostics with: list of existing spec IDs, Levenshtein-distance closest match(es), and a suggested fix file path"
+      description: "MUST enrich dangling_reference diagnostics with: list of existing spec IDs, Levenshtein-distance closest match(es), and a suggested fix file path. Suggestions are ordered by edit distance, then by spec id for equal distance, and the list is the same on every run over the same input."
       type: technical
       enforcement: error
 
@@ -295,7 +295,54 @@ spec:
       references_constraints: ["C-03", "C-04"]
       priority: critical
 
+    - id: AC-16
+      description: "Tied did-you-mean suggestions come out in spec id order, and the list is the same on every run. Fixture: three specs. spec-auth depends on spec-session, which does not exist. spec-a and spec-b exist and have no dependencies. All three candidates are at Levenshtein distance 7 from spec-session, under the threshold of 8 (len(target)/2 + 2), so distance alone cannot order them. The dangling_reference diagnostic for spec-auth carries exactly the suggestions [spec-a, spec-auth, spec-b], and 20 resolutions of the same input produce that exact list every time."
+      inputs:
+        specs: ["spec-auth.spec.yaml (depends on spec-session)", "spec-a.spec.yaml (no dependencies)", "spec-b.spec.yaml (no dependencies)"]
+        missing_target: "spec-session"
+        edit_distance_of_each_candidate: 7
+        threshold: 8
+        resolutions: 20
+      expected_output:
+        type: "Diagnostic"
+        kind: "dangling_reference"
+        spec_id: "spec-auth"
+        suggestions: ["spec-a", "spec-auth", "spec-b"]
+        deterministic_across_runs: true
+      references_constraints: ["C-10"]
+      priority: high
+
+    - id: AC-17
+      description: "The topological order is the same on every run when the graph admits several valid orders. Fixture: a depends on b and on c; b, c and d have no dependencies. The rule is stated on the final output: a spec appears after every spec it depends on, and among the specs whose dependencies are all already listed, the smallest id goes first. Derivation: b, c and d start ready, so b goes first, then c. Once c is listed, a has every dependency listed and sorts before d, so a goes third and d last. The order is exactly [b, c, a, d] on each of 20 resolutions of the same input."
+      inputs:
+        specs: ["a.spec.yaml (depends on b, c)", "b.spec.yaml (no dependencies)", "c.spec.yaml (no dependencies)", "d.spec.yaml (no dependencies)"]
+        resolutions: 20
+      expected_output:
+        type: "[]string"
+        topological_order: ["b", "c", "a", "d"]
+        deterministic_across_runs: true
+      references_constraints: ["C-07"]
+      priority: high
+
+    - id: AC-18
+      description: "Diagnostics for dangling references come out in spec id order on every run. Fixture: spec-zeta depends on missing-z and spec-alpha depends on missing-a; neither target exists. Both resolutions report two dangling_reference diagnostics, spec-alpha first and spec-zeta second, on each of 20 resolutions of the same input. The same ordering rule applies to version_mismatch and invalid-range diagnostics, which the same loop emits."
+      inputs:
+        specs: ["spec-zeta.spec.yaml (depends on missing-z)", "spec-alpha.spec.yaml (depends on missing-a)"]
+        resolutions: 20
+      expected_output:
+        type: "Diagnostic[]"
+        kind: "dangling_reference"
+        spec_ids_in_order: ["spec-alpha", "spec-zeta"]
+        deterministic_across_runs: true
+      references_constraints: ["C-07"]
+      priority: high
+
   changelog:
+    - version: "1.4.0"
+      date: "2026-10-29"
+      author: "specter-team"
+      type: minor
+      description: "Make resolve output the same on every run. C-07 now requires a topological order that is identical across runs: a spec appears after every spec it depends on, and among the specs whose dependencies are all already listed, the smallest spec id goes first. C-07 also requires the dangling_reference, version_mismatch and invalid-range diagnostics in spec id order. C-10 now requires suggestions ordered by edit distance, then by spec id for equal distance. Adds AC-16, AC-17 and AC-18. Before this, the resolution order, the diagnostics and the did-you-mean list followed Go map iteration order, so the same workspace printed a different order each run and byte comparison of resolve --json churned on unchanged input (SP-SP-098, SP-SP-051)."
     - version: "1.3.0"
       date: "2026-06-11"
       author: "specter-team"

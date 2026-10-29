@@ -86,15 +86,21 @@ func ResolveSpecs(inputs []SpecInput) *SpecGraph {
 		graph.Nodes[id] = &SpecNode{Spec: inputs[i].Spec, File: inputs[i].File}
 	}
 
-	// Collect all known spec IDs for suggestion matching (C-10)
+	// Collect all known spec IDs, sorted, for suggestion matching (C-10) and
+	// for the diagnostics loop below (C-07). graph.Nodes is a map, and the
+	// order of both the suggestion candidates and the emitted diagnostics
+	// must not depend on map iteration (AC-16, AC-18).
 	allIDs := make([]string, 0, len(graph.Nodes))
 	for id := range graph.Nodes {
 		allIDs = append(allIDs, id)
 	}
+	sort.Strings(allIDs)
 
-	// Step 2: Build edges, detect dangling refs and version mismatches
+	// Step 2: Build edges, detect dangling refs and version mismatches, in
+	// spec id order so the diagnostics come out the same on every run.
 	adjacency := make(map[string][]string) // from -> [to]
-	for id, node := range graph.Nodes {
+	for _, id := range allIDs {
+		node := graph.Nodes[id]
 		for _, dep := range node.Spec.DependsOn {
 			targetID := dep.SpecID
 
@@ -380,42 +386,45 @@ func tarjanSCC(adj [][]int, minV, n int) [][]int {
 }
 
 // topologicalSort returns nodes in dependency order (dependencies first).
+//
+// The order is the same on every run over the same input (C-07, AC-17).
+// Kahn's algorithm runs in the output direction: a node is ready once every
+// spec it depends on has been emitted, and among the ready nodes the
+// smallest spec id goes first. No reversal happens at the end, so the
+// tie-break rule holds on the final output rather than on an intermediate
+// order.
 func topologicalSort(nodes map[string]*SpecNode, adjacency map[string][]string) []string {
-	inDegree := make(map[string]int)
+	// pending counts how many dependencies of each node are not yet emitted.
+	// dependents maps a dependency to the nodes that depend on it.
+	pending := make(map[string]int, len(nodes))
+	dependents := make(map[string][]string)
 	for id := range nodes {
-		inDegree[id] = 0
-	}
-	for _, neighbors := range adjacency {
-		for _, n := range neighbors {
-			inDegree[n]++
+		pending[id] = len(adjacency[id])
+		for _, target := range adjacency[id] {
+			dependents[target] = append(dependents[target], id)
 		}
 	}
 
-	// Kahn's algorithm
-	var queue []string
-	for id, deg := range inDegree {
-		if deg == 0 {
-			queue = append(queue, id)
+	var ready []string
+	for id, n := range pending {
+		if n == 0 {
+			ready = append(ready, id)
 		}
 	}
 
-	var order []string
-	for len(queue) > 0 {
-		node := queue[0]
-		queue = queue[1:]
+	order := make([]string, 0, len(nodes))
+	for len(ready) > 0 {
+		sort.Strings(ready)
+		node := ready[0]
+		ready = ready[1:]
 		order = append(order, node)
 
-		for _, neighbor := range adjacency[node] {
-			inDegree[neighbor]--
-			if inDegree[neighbor] == 0 {
-				queue = append(queue, neighbor)
+		for _, dependent := range dependents[node] {
+			pending[dependent]--
+			if pending[dependent] == 0 {
+				ready = append(ready, dependent)
 			}
 		}
-	}
-
-	// Reverse: dependencies first (Kahn's produces dependents first)
-	for i, j := 0, len(order)-1; i < j; i, j = i+1, j-1 {
-		order[i], order[j] = order[j], order[i]
 	}
 
 	return order
