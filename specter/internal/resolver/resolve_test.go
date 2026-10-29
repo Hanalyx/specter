@@ -348,3 +348,84 @@ func TestDanglingReferenceNoSuggestionWhenFarOff(t *testing.T) {
 		t.Error("expected dangling_reference diagnostic")
 	})
 }
+
+// @ac AC-16
+func TestTiedSuggestionsAreOrderedBySpecID(t *testing.T) {
+	t.Run("spec-resolve/AC-16 tied did-you-mean suggestions come out in spec id order on every run", func(t *testing.T) {
+		// All three candidates are at Levenshtein distance 7 from spec-session,
+		// under the threshold of 8 (len(target)/2 + 2), so distance alone
+		// cannot order them.
+		inputs := []SpecInput{
+			{Spec: makeSpec("spec-auth", withDeps(dep("spec-session"))), File: "spec-auth.spec.yaml"},
+			{Spec: makeSpec("spec-a"), File: "spec-a.spec.yaml"},
+			{Spec: makeSpec("spec-b"), File: "spec-b.spec.yaml"},
+		}
+		want := []string{"spec-a", "spec-auth", "spec-b"}
+		for i := 0; i < 20; i++ {
+			g := ResolveSpecs(inputs)
+			var dangling []Diagnostic
+			for _, d := range g.Diagnostics {
+				if d.Kind == "dangling_reference" {
+					dangling = append(dangling, d)
+				}
+			}
+			if len(dangling) != 1 {
+				t.Fatalf("run %d: expected 1 dangling_reference diagnostic, got %d", i, len(dangling))
+			}
+			if dangling[0].SpecID != "spec-auth" {
+				t.Fatalf("run %d: expected diagnostic for spec-auth, got %q", i, dangling[0].SpecID)
+			}
+			if !slices.Equal(dangling[0].Suggestions, want) {
+				t.Fatalf("run %d: expected suggestions %v, got %v", i, want, dangling[0].Suggestions)
+			}
+		}
+	})
+}
+
+// @ac AC-17
+func TestTopologicalOrderIsDeterministicAmongReadyNodes(t *testing.T) {
+	t.Run("spec-resolve/AC-17 topological order is the same on every run when several orders are valid", func(t *testing.T) {
+		// a depends on b and c; b, c and d have no dependencies. b, c and d
+		// start ready, so b goes first, then c. Then a has every dependency
+		// listed and sorts before d.
+		inputs := []SpecInput{
+			{Spec: makeSpec("a", withDeps(dep("b"), dep("c"))), File: "a.spec.yaml"},
+			{Spec: makeSpec("b"), File: "b.spec.yaml"},
+			{Spec: makeSpec("c"), File: "c.spec.yaml"},
+			{Spec: makeSpec("d"), File: "d.spec.yaml"},
+		}
+		want := []string{"b", "c", "a", "d"}
+		for i := 0; i < 20; i++ {
+			g := ResolveSpecs(inputs)
+			if len(g.Diagnostics) != 0 {
+				t.Fatalf("run %d: expected 0 diagnostics, got %d", i, len(g.Diagnostics))
+			}
+			if !slices.Equal(g.TopologicalOrder, want) {
+				t.Fatalf("run %d: expected topological order %v, got %v", i, want, g.TopologicalOrder)
+			}
+		}
+	})
+}
+
+// @ac AC-18
+func TestDanglingDiagnosticsAreOrderedBySpecID(t *testing.T) {
+	t.Run("spec-resolve/AC-18 dangling_reference diagnostics come out in spec id order on every run", func(t *testing.T) {
+		inputs := []SpecInput{
+			{Spec: makeSpec("spec-zeta", withDeps(dep("missing-z"))), File: "spec-zeta.spec.yaml"},
+			{Spec: makeSpec("spec-alpha", withDeps(dep("missing-a"))), File: "spec-alpha.spec.yaml"},
+		}
+		want := []string{"spec-alpha", "spec-zeta"}
+		for i := 0; i < 20; i++ {
+			g := ResolveSpecs(inputs)
+			var got []string
+			for _, d := range g.Diagnostics {
+				if d.Kind == "dangling_reference" {
+					got = append(got, d.SpecID)
+				}
+			}
+			if !slices.Equal(got, want) {
+				t.Fatalf("run %d: expected dangling_reference diagnostics for %v in that order, got %v", i, want, got)
+			}
+		}
+	})
+}
