@@ -66,7 +66,14 @@ func closestMatches(target string, candidates []string, maxN int) []string {
 			scores = append(scores, scored{c, d})
 		}
 	}
-	sort.Slice(scores, func(i, j int) bool { return scores[i].dist < scores[j].dist })
+	// Distance first, then spec id, so every tie is decided and the list is
+	// the same on every run (C-10, AC-16).
+	sort.Slice(scores, func(i, j int) bool {
+		if scores[i].dist != scores[j].dist {
+			return scores[i].dist < scores[j].dist
+		}
+		return scores[i].id < scores[j].id
+	})
 
 	var result []string
 	for i, s := range scores {
