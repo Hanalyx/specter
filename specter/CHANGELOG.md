@@ -8,6 +8,10 @@ Unreleased changes accumulate under `## Unreleased`. Every user-visible change a
 
 ## Unreleased
 
+### Fixed
+
+- `specter resolve` prints its resolution order, its diagnostics and its "did you mean" suggestions in the same order on every run. Before, the same workspace produced a different order each run, in text and in `--json`. So byte comparison of `resolve --json` churned on unchanged input, and a reader comparing two runs could suspect the workspace had changed. Dependencies still come before dependents. Among specs that are ready at the same step, the smallest spec id goes first. Tied suggestions are ordered by spec id. Upgrade Specter; nothing in your specs or manifest changes. spec-resolve C-07, C-10, AC-16, AC-17 and AC-18.
+
 ---
 
 ## v0.15.3 - 2026-10-27
