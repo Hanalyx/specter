@@ -18,6 +18,7 @@ To start a new brief: copy [`TEMPLATE.md`](TEMPLATE.md) to `SSRB-NNN.md` (the nu
 | [104](SSRB-104.md) | Retire `settings.strictness` for `settings.annotation` | ACCEPT | 2026-08-19 |
 | [105](SSRB-105.md) | Retire the manifest `registry` section | ACCEPT | 2026-08-22 |
 | [106](SSRB-106.md) | Settle the three inert tier mechanisms | ACCEPT | 2026-08-22 |
+| [107](SSRB-107.md) | Keep, replace, or retire `constraint.validation` | NEEDS-DESIGN | Pending |
 
 ## Status legend
 
