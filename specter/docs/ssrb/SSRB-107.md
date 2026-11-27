@@ -72,13 +72,62 @@ Merge the following members into the existing constraint definition. Add the two
 }
 ```
 
-**What the report must show.** These rows are candidate criteria for SP-114.
+**Author examples.** Each example uses spec-check C-01 as it reads today. Only the evidence fields differ. The description, type, and enforcement are the same in all three, so the policy cannot change what C-01 requires.
 
-| Declaration | What the report shows |
-|---|---|
-| `false` with a reason | Waived, with the reason visible. The constraint is excluded from the verified count. |
-| Omitted | No policy declared. The constraint counts as neither verified nor waived. Linked criteria and their results still appear. |
-| `true` | Show the linked criteria, available run results and dated criterion approvals. Identify missing records. The reviewer judges which obligations those records support. |
+Example 1 requires evidence. The report can say that evidence is required and list the records it found. Establishing what those records support takes an observation, such as a test that builds specs with known orphans and compares the reported set with the expected set.
+
+```yaml
+constraints:
+  - id: C-01
+    description: "MUST detect all orphan constraints in every spec (constraints with no AC reference)"
+    type: technical
+    enforcement: error
+    evidence_required: true
+```
+
+Example 2 waives evidence. The reason is illustrative. C-01 still binds the implementation.
+
+```yaml
+constraints:
+  - id: C-01
+    description: "MUST detect all orphan constraints in every spec (constraints with no AC reference)"
+    type: technical
+    enforcement: error
+    evidence_required: false
+    evidence_waiver_reason: "The cross-spec fixture is pending. The release owner accepts the gap for this release."
+```
+
+Example 3 declares no policy. This is the current text of C-01. An existing spec reads this way without an edit and without an implied waiver.
+
+```yaml
+constraints:
+  - id: C-01
+    description: "MUST detect all orphan constraints in every spec (constraints with no AC reference)"
+    type: technical
+    enforcement: error
+```
+
+The rejected example waives evidence without a reason.
+
+```yaml
+constraints:
+  - id: C-01
+    description: "MUST detect all orphan constraints in every spec (constraints with no AC reference)"
+    type: technical
+    enforcement: error
+    evidence_required: false
+```
+
+**What the parser and report must show.** Each example was checked against the fragment above merged into the current constraint definition. Python `jsonschema` and the Go library the parser uses gave the same results. The report rows are candidate criteria for SP-114.
+
+| Example | Parser result | What the report shows |
+|---|---|---|
+| 1, `true` | Accepted | Evidence required. Show the linked criteria, available run results and dated criterion approvals. Identify missing records. The reviewer judges which obligations those records support. |
+| 2, `false` with a reason | Accepted | Waived, with the reason visible. The constraint is excluded from the verified count. |
+| 3, omitted | Accepted | No policy declared. The constraint counts as neither verified nor waived. Linked criteria and their results still appear. |
+| Rejected, `false` without a reason | Rejected with a required error naming `evidence_waiver_reason` | None. The spec fails schema validation. |
+
+A reason with `true` or with no policy is also rejected, but the Go library reports only `'not' failed` at the constraint. The parser classifies that message as a generic `validation` error, so the author would not learn which field to remove. The parser needs its own message naming `evidence_waiver_reason` and the policy. This is part of the diagnostic cost in section 4.
 
 For example, waiving runtime evidence for C-02's maximum of 20 would still leave a declared example of 22 in conflict with C-02. A schema-level example check would apply independently of the waiver. The existing `enforcement` field governs diagnostic severity. It cannot express the author's choice about evidence.
 
