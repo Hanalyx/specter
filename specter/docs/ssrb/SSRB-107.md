@@ -26,6 +26,8 @@ For a replacement, compare representative old specs and generated drafts with th
 
 Adding `evidence_required` and `evidence_waiver_reason` reaches the canonical schema, the Go model, the parser's diagnostics, the reference, AI templates, and fixtures. It also needs the per-constraint report as its reader. A field with no reader would enter the locked schema inert, which is the defect this brief exists to fix.
 
+The typed comparison candidate in section 6 adds `comparison` on a constraint and an optional `outcome` on a criterion. Both reach the same places as the evidence fields, plus the starter templates. The requirement to declare `outcome` applies only where a cited constraint declares `applies_to`. Existing criteria need no edit.
+
 ## 5. Existing coverage
 
 `references_constraints` links a criterion to a constraint. The checker uses those links to find orphans. Coverage classifies criteria using annotations and, where the mode requires it, test results. These records could support a report listing each constraint, its cited criteria, and their available results. A reviewer would still need to inspect whether the assertions expose each violation.
@@ -34,7 +36,7 @@ The stronger test for a file at the cap runs under `spec-sync/AC-14`. Its bounda
 
 C-12 also shows the limit of any link-based report. No test asserts the byte count in the warning, and no test observes whether an oversized file is read. Those gaps were found by inspecting the tests, not by following links. A report can list the criteria and records it found, and give a reviewer a place to start. It cannot show which obligation a test observed.
 
-Specter already records human sign-off on a criterion through `approval_gate` and `approval_date`. SSRB-098 rejected a per-criterion `status` field partly because it overlapped with those fields. Human review of a constraint uses that route first. A criterion names the reviewed obligation, cites the constraint, and carries the approval fields. The report can then say that AC-20 cites C-12 and records human approval on a given date. That statement is traceable. It does not make all of C-12 verified, because the other obligations still need their own evidence. `evidence_required` records an evidence policy for a constraint, not a sign-off, so it does not overlap with the approval fields.
+Specter already records human sign-off on a criterion through `approval_gate` and `approval_date`. SSRB-098 rejected a per-criterion `status` field partly because it overlapped with those fields. Human review of a constraint uses that route first. A criterion names the reviewed obligation, cites the constraint, and carries the approval fields. The report can then say that AC-20 cites C-12 and records human approval on a given date. That statement is traceable. It does not make all of C-12 verified, because the other obligations still need their own evidence. `evidence_required` records an evidence policy for a constraint, not a sign-off, so it does not overlap with the approval fields. The candidate `outcome` names the behavior a criterion specifies, not where the criterion stands in review, so it does not repeat the lifecycle status SSRB-098 rejected.
 
 The spec parser already checks the shape of a validation declaration. It accepts several operand types without tying them to individual rules. The reference and schema description claim deterministic checking by `spec-check`. Correcting that claim is useful under every option.
 
@@ -129,25 +131,96 @@ constraints:
 
 A reason with `true` or with no policy is also rejected, but the Go library reports only `'not' failed` at the constraint. The parser classifies that message as a generic `validation` error, so the author would not learn which field to remove. The parser needs its own message naming `evidence_waiver_reason` and the policy. This is part of the diagnostic cost in section 4.
 
+`specter parse --json` must keep each policy as the author wrote it. An explicit `true` is printed. An explicit `false` is printed with its reason, unchanged. An omitted policy prints neither key, not `false` and not `null`. A plain boolean cannot hold all three states, so the Go model needs a nullable value. Each printed constraint must validate against the schema again.
+
 For example, waiving runtime evidence for C-02's maximum of 20 would still leave a declared example of 22 in conflict with C-02. A schema-level example check would apply independently of the waiver. The existing `enforcement` field governs diagnostic severity. It cannot express the author's choice about evidence.
 
 **Keep the object as descriptive metadata.** Preserve existing drafts and describe exactly what the parser accepts. Identify who uses the structured metadata and what they can decide from it before locking in that meaning.
 
 **Retire the object.** Authors can state observable obligations in constraints and link focused criteria to them. A criterion can describe evidence such as a byte count in a warning or a read that must never occur. This approach relies on review to catch contradictions in examples.
 
-**Bind a typed predicate to a named example value.** Consider the predicate and the example it reads in the same decision. The existing `inputs` and `expected_output` maps can already contain integers. One candidate is to type only a value targeted by a predicate. Requiring a type declaration for every example key would have a wider migration cost.
+**Bind a typed predicate to a named example value.** Consider the predicate and the example it reads in the same decision. The existing `inputs` and `expected_output` maps can already contain integers. One candidate is to type only a value targeted by a predicate. Requiring a type declaration for every example key would have a wider migration cost. `comparison` is a working name for this candidate.
 
 | Candidate contract element | Requirement and rationale |
 |---|---|
-| Target | Identify the criterion side (input or expected output) and key. This gives the checker one value to inspect in a citing example. |
-| Operation and operand | Define the type, comparison, inclusivity, and unit where relevant. An inclusive integer maximum accepts an integer bound. String length would require its own operation and unit. |
-| Check result | Distinguish a satisfied comparison, a violated comparison, and an example the checker cannot evaluate. A missing target or wrong type cannot establish satisfaction. Decide how examples that intentionally describe error outcomes declare applicability. |
+| Target | A top-level key in the citing criterion's `inputs` or `expected_output`. This gives the checker one value to inspect in each citing example. |
+| Operation and operand | A `type` plus inclusive `minimum` and `maximum`. An exact value uses equal bounds. String length would require its own operation and unit. |
+| Applicability | An optional `applies_to`, either `success` or `rejection`. Omitted, the comparison applies to every citing criterion. |
+| Check result | Distinguish a satisfied comparison, a violated comparison, an inapplicable comparison, and an example the checker cannot evaluate. A missing target or wrong type cannot establish satisfaction. |
 
-Worked example for review: a criterion promises integer `y = x + x`; C-01 requires `y >= 1` and C-02 requires `y <= 20` for successful outputs. For `x = 10, y = 20`, both comparisons pass. For `x = 11, y = 22`, the proposed checker would identify the criterion, C-02, the output key, the observed 22, and the inclusive maximum of 20. For `x = 3, y = 8`, both comparisons pass even though the arithmetic is wrong. The feature would check supplied example values. The author still defines the input domain and the behavior outside it. Application tests supply runtime evidence.
+**Criterion outcome.** A criterion's `expected_output` does not show whether it describes a success or a rejection. Specter's starter template puts error responses in `expected_output`, such as `status: 400` with an `error_message`, and its `error_cases` entries are prose. A missing key could be an intentional rejection or a typo, so the checker cannot infer intent from field names. The candidate adds an optional `outcome` to each criterion, either `success` or `rejection`. Each field then has one job. `references_constraints` records why the criterion matters to the constraint. `outcome` records what the operation does with the criterion's inputs. `applies_to` decides whether a comparison runs. A rejection does not switch off every comparison, because a comparison can apply to rejections.
+
+Worked example for review: an operation returns integer `y = x + x` and rejects an input whose double would exceed 20.
+
+```yaml
+constraints:
+  - id: C-01
+    description: "When the operation succeeds, the returned integer y MUST be at least 1."
+    comparison:
+      applies_to: success
+      target: { source: expected_output, key: y }
+      type: integer
+      minimum: 1
+  - id: C-02
+    description: "When the operation succeeds, the returned integer y MUST be at most 20."
+    comparison:
+      applies_to: success
+      target: { source: expected_output, key: y }
+      type: integer
+      maximum: 20
+  - id: C-03
+    description: "The operation MUST reject an input whose double would exceed 20, with error out_of_range."
+  - id: C-04
+    description: "When the operation rejects an input, the response status MUST be 400."
+    comparison:
+      applies_to: rejection
+      target: { source: expected_output, key: status }
+      type: integer
+      minimum: 400
+      maximum: 400
+
+acceptance_criteria:
+  - id: AC-01
+    description: "Doubling 10 returns 20."
+    outcome: success
+    inputs: { x: 10 }
+    expected_output: { status: 200, y: 20 }
+    references_constraints: [C-01, C-02]
+  - id: AC-02
+    description: "Doubling 11 is rejected because 22 exceeds the maximum."
+    outcome: rejection
+    inputs: { x: 11 }
+    expected_output: { status: 400, error: out_of_range }
+    references_constraints: [C-02, C-03, C-04]
+```
+
+| Citing criterion declares | Expected checker result |
+|---|---|
+| AC-01, `y: 20` | C-01 and C-02 pass. |
+| AC-01, `y: 22` | C-02 is violated. The diagnostic names AC-01, C-02, `expected_output.y`, the observed 22, and the inclusive maximum 20. |
+| AC-01, `y: "20"` or `y: 20.5` | C-01 and C-02 report that `expected_output.y` must be an integer. The checker does not coerce the value. |
+| AC-01, `y: 20.0` | C-01 and C-02 pass. |
+| AC-01, `expected_output: { status: 200, yy: 20 }` | C-01 and C-02 apply, because AC-01 declares success. Both report that they cannot evaluate AC-01, because `expected_output.y` is missing. |
+| AC-02, `status: 400` | C-04 passes. C-02 is cited, and its comparison is inapplicable to a rejection. |
+| AC-02, `status: 200` | C-04 is violated. The diagnostic names AC-02, C-04, `expected_output.status`, the observed 200, and the required 400. C-02 stays inapplicable. |
+| AC-02, `y: 22` added | C-02 stays inapplicable, and the report says why. C-04 still runs. |
+| AC-02 without `outcome` | C-02 and C-04 are outcome-scoped, so the checker reports that AC-02 must declare an outcome. The diagnostic names AC-02 and each scoped constraint. |
+
+AC-02 cites C-02, and adding `y: 22` still leaves C-02's success-scoped comparison inapplicable, because AC-02 declares a rejection. The misspelled `yy` row shows the other side. A success that lacks `y` is reported as a value the checker cannot evaluate, not skipped. The checker reads applicability from `outcome` and `applies_to`, never from which keys are present.
+
+The candidate rules behind those results:
+
+- **Omitted outcome.** `outcome` stays optional for existing criteria. A criterion that cites a comparison with `applies_to` must declare its outcome. No default is assigned, so an existing rejection example is never read as a success. A comparison without `applies_to` runs on every citing criterion.
+- **Fields a rejection returns.** A bound on a successful value says nothing about which fields a rejection may return. If returning `y` on rejection is forbidden, that needs its own declared rule.
+- **Integer values.** `integer` follows JSON Schema value semantics. `20` and `20.0` are integers. `20.5` and `"20"` are not. Python `jsonschema` and the Go library the parser uses give the same results for whole, fractional, and quoted numbers, so the result does not depend on how the YAML decoder represents the number.
+- **Two outcomes.** Start with `success` and `rejection`. Add a third when a real spec demonstrates the need.
+- **No applicable examples.** If every criterion citing C-02 is a rejection, the report shows that C-02's comparison has zero applicable examples. That is a gap even with no failed comparison.
+
+The feature checks supplied example values only. For `x = 3, y = 8`, C-01 and C-02 pass even though the arithmetic is wrong. The author still defines the input domain and the behavior outside it. Application tests supply runtime evidence.
 
 ## 7. Decision
 
-NEEDS-DESIGN. Ship the policy with or after the per-constraint evidence report, which displays each constraint's policy using the rows in section 6. The release test starts with an existing constraint, shows “No policy declared,” adds a waiver and checks its displayed reason, then switches to required evidence and removes the reason. With no linked result or dated approval, the final report must identify the missing evidence. Section 3 leaves demand for typed comparisons open, and section 5 describes the limits of evidence links. Before adopting a schema change, settle the default for new specs, test the migration cases in section 4, and review the typed comparison before choosing the fate of `validation`.
+NEEDS-DESIGN. Ship the policy with or after the per-constraint evidence report, which displays each constraint's policy using the rows in section 6. The release test starts with an existing constraint, shows “No policy declared,” adds a waiver and checks its displayed reason, then switches to required evidence and removes the reason. With no linked result or dated approval, the final report must identify the missing evidence. Section 3 leaves demand for typed comparisons open, and section 5 describes the limits of evidence links. Before adopting a schema change, settle the default for new specs, test the migration cases in section 4, and review the typed comparison, including the outcome-scoped worked example in section 6, before choosing the fate of `validation`.
 
 ## 8. Reconsideration triggers
 
