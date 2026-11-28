@@ -2,7 +2,7 @@
 
 Status: NEEDS-DESIGN  
 Decided: Pending owner review  
-Source: SP-117 design discussion
+Source: design review of `constraint.validation` before the schema lock
 
 ## 1. Request
 
@@ -10,7 +10,7 @@ Decide whether to keep, replace, or retire the optional `constraint.validation` 
 
 ## 2. Origin
 
-Specter's file-size cap illustrates the reviewer's problem. In `spec-check`, C-12 requires the CLI to check the size before reading a test file. AC-20 cites C-12 and also requires a warning with the path and byte count. The CLI test exercises the cap and checks warning text and continued scanning. Reading the file first and then skipping it could produce the same output. The at-cap subtest in `check_test.go` checks for the absence of a skip warning. A silently skipped file could pass that assertion. A reviewer needs to know which observations support each claim.
+Specter's file-size cap illustrates the problem a reviewer faces. In `spec-check`, C-12 requires the CLI to check the size before reading a test file. AC-20 cites C-12 and also requires a warning with the path and byte count. The CLI test exercises the cap and checks warning text and continued scanning. Reading the file first and then skipping it could produce the same output. The at-cap subtest in `check_test.go` checks for the absence of a skip warning. A silently skipped file could pass that assertion. A reviewer needs to know which observations support each claim.
 
 The reference gives `password / min / 8` and `yaml_features / enum / [anchors, aliases]` as examples of validation. The first leaves the unit open. The second accompanies a requirement to support both YAML features. An enum of allowed values cannot establish support for both. Typing the operand alone leaves both ambiguities unresolved.
 
@@ -30,7 +30,7 @@ Adding `evidence_required` and `evidence_waiver_reason` reaches the canonical sc
 
 `references_constraints` links a criterion to a constraint. The checker uses those links to find orphans. Coverage classifies criteria using annotations and, where the mode requires it, test results. These records could support a report listing each constraint, its cited criteria, and their available results. A reviewer would still need to inspect whether the assertions expose each violation.
 
-The stronger test for a file at the cap runs under `spec-sync/AC-14`. Its boundary file supplies the only annotation and the test requires the coverage phase to pass. A report that follows only references to `spec-check/C-12` would miss that evidence. Per-constraint evidence reporting belongs under SP-114.
+The stronger test for a file at the cap runs under `spec-sync/AC-14`. Its boundary file supplies the only annotation and the test requires the coverage phase to pass. A report that follows only references to `spec-check/C-12` would miss that evidence. Closing that gap is work for the per-constraint evidence report in section 6, not for this schema change.
 
 C-12 also shows the limit of any link-based report. No test asserts the byte count in the warning, and no test observes whether an oversized file is read. Those gaps were found by inspecting the tests, not by following links. A report can list the criteria and records it found, and give a reviewer a place to start. It cannot show which obligation a test observed.
 
@@ -118,7 +118,7 @@ constraints:
     evidence_required: false
 ```
 
-**What the parser and report must show.** Each example was checked against the fragment above merged into the current constraint definition. Python `jsonschema` and the Go library the parser uses gave the same results. The report rows are candidate criteria for SP-114.
+**What the parser and report must show.** Each example was checked against the fragment above merged into the current constraint definition. Python `jsonschema` and the Go library the parser uses gave the same results. The report rows are candidate acceptance criteria for the per-constraint evidence report.
 
 | Example | Parser result | What the report shows |
 |---|---|---|
@@ -147,7 +147,7 @@ Worked example for review: a criterion promises integer `y = x + x`; C-01 requir
 
 ## 7. Decision
 
-NEEDS-DESIGN. Ship the policy with or after the SP-114 report. The release test starts with an existing constraint, shows “No policy declared,” adds a waiver and checks its displayed reason, then switches to required evidence and removes the reason. With no linked result or dated approval, the final report must identify the missing evidence. Section 3 leaves demand for typed comparisons open, and section 5 describes the limits of evidence links. Before adopting a schema change, settle the default for new specs, test the migration cases in section 4, and review the typed comparison before choosing the fate of `validation`.
+NEEDS-DESIGN. Ship the policy with or after the per-constraint evidence report, which displays each constraint's policy using the rows in section 6. The release test starts with an existing constraint, shows “No policy declared,” adds a waiver and checks its displayed reason, then switches to required evidence and removes the reason. With no linked result or dated approval, the final report must identify the missing evidence. Section 3 leaves demand for typed comparisons open, and section 5 describes the limits of evidence links. Before adopting a schema change, settle the default for new specs, test the migration cases in section 4, and review the typed comparison before choosing the fate of `validation`.
 
 ## 8. Reconsideration triggers
 
